@@ -530,6 +530,168 @@ impl Maolan {
         }
     }
 
+    pub(super) fn copy_track_from_branch(
+        &self,
+        session_root: &std::path::Path,
+        source_branch: &str,
+        source_track_name: &str,
+    ) -> Result<Task<Message>, String> {
+        use std::collections::HashSet;
+        use std::fs::File;
+        use std::io::BufReader;
+        use tracing::info;
+
+        info!(
+            "Copying track '{}' from branch '{}' into '{}'",
+            source_track_name, source_branch, self.session_branch
+        );
+
+        let current_path = session_root.join(format!("{}.json", self.session_branch));
+        let source_path = session_root.join(format!("{}.json", source_branch));
+
+        let current_json: serde_json::Value = {
+            let file = File::open(&current_path)
+                .map_err(|e| format!("Failed to open current branch: {e}"))?;
+            serde_json::from_reader(BufReader::new(file))
+                .map_err(|e| format!("Failed to parse current branch: {e}"))?
+        };
+        let source_json: serde_json::Value = {
+            let file = File::open(&source_path)
+                .map_err(|e| format!("Failed to open source branch: {e}"))?;
+            serde_json::from_reader(BufReader::new(file))
+                .map_err(|e| format!("Failed to parse source branch: {e}"))?
+        };
+
+        let source_tracks = source_json
+            .get("tracks")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "No tracks in source branch".to_string())?;
+        let source_track = source_tracks
+            .iter()
+            .find(|t| t.get("name").and_then(|v| v.as_str()) == Some(source_track_name))
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' not found in branch '{}'",
+                    source_track_name, source_branch
+                )
+            })?
+            .clone();
+
+        let current_tracks = current_json
+            .get("tracks")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "No tracks in current branch".to_string())?;
+        let existing_names: HashSet<String> = current_tracks
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+            .collect();
+
+        let target_name = if existing_names.contains(source_track_name) {
+            let mut n = 2;
+            loop {
+                let candidate = format!("{} {}", source_track_name, n);
+                if !existing_names.contains(&candidate) {
+                    break candidate;
+                }
+                n += 1;
+            }
+        } else {
+            source_track_name.to_string()
+        };
+
+        let mut target_track = source_track;
+        if let Some(obj) = target_track.as_object_mut() {
+            obj.insert("name".to_string(), serde_json::Value::String(target_name.clone()));
+        }
+
+        let mut new_current = current_json;
+
+        // Append track
+        if let Some(tracks) = new_current.get_mut("tracks").and_then(|v| v.as_array_mut()) {
+            tracks.push(target_track);
+        }
+
+        // Copy graph entry
+        if let Some(graphs) = source_json.get("graphs").and_then(|v| v.as_object()) {
+            if let Some(track_graph) = graphs.get(source_track_name) {
+                if let Some(new_graphs) = new_current.get_mut("graphs").and_then(|v| v.as_object_mut()) {
+                    new_graphs.insert(target_name.clone(), track_graph.clone());
+                }
+            }
+        }
+
+        // Copy connections that involve this track
+        let current_connections = new_current
+            .get_mut("connections")
+            .and_then(|v| v.as_array_mut())
+            .ok_or_else(|| "No connections in current branch".to_string())?;
+
+        let existing_conns: HashSet<String> = current_connections
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+
+        if let Some(connections) = source_json.get("connections").and_then(|v| v.as_array()) {
+            for conn in connections {
+                let Some(conn_obj) = conn.as_object() else {
+                    continue;
+                };
+                let from_track = conn_obj.get("from_track").and_then(|v| v.as_str());
+                let to_track = conn_obj.get("to_track").and_then(|v| v.as_str());
+
+                let involves_source = from_track == Some(source_track_name)
+                    || to_track == Some(source_track_name);
+                if !involves_source {
+                    continue;
+                }
+
+                let other_track = if from_track == Some(source_track_name) {
+                    to_track
+                } else {
+                    from_track
+                };
+                let other_exists = other_track
+                    .map(|name| existing_names.contains(name))
+                    .unwrap_or(true);
+                if !other_exists {
+                    continue;
+                }
+
+                let mut new_conn = conn.clone();
+                if let Some(new_conn_obj) = new_conn.as_object_mut() {
+                    if from_track == Some(source_track_name) {
+                        new_conn_obj.insert(
+                            "from_track".to_string(),
+                            serde_json::Value::String(target_name.clone()),
+                        );
+                    }
+                    if to_track == Some(source_track_name) {
+                        new_conn_obj.insert(
+                            "to_track".to_string(),
+                            serde_json::Value::String(target_name.clone()),
+                        );
+                    }
+                }
+
+                let conn_str = new_conn.to_string();
+                if !existing_conns.contains(&conn_str) {
+                    current_connections.push(new_conn);
+                }
+            }
+        }
+
+        let file = File::create(&current_path)
+            .map_err(|e| format!("Failed to write current branch: {e}"))?;
+        serde_json::to_writer_pretty(file, &new_current)
+            .map_err(|e| format!("Failed to serialize current branch: {e}"))?;
+
+        let session_root = session_root.to_path_buf();
+        Ok(Task::perform(
+            async move { session_root },
+            crate::message::Message::LoadSessionPath,
+        ))
+    }
+
     pub(super) fn save_track_as_template(&self, track_name: &str, path: String) -> Task<Message> {
         use tracing::info;
 

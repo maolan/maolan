@@ -562,6 +562,7 @@ pub struct Maolan {
     pending_recovery_session_dir: Option<PathBuf>,
     pending_autosave_recovery: Option<PendingAutosaveRecovery>,
     pending_open_session_dir: Option<PathBuf>,
+    pending_branch_input: String,
     pending_diagnostics_bundle_export: bool,
     diagnostics_bundle_wait_session_report: bool,
     diagnostics_bundle_wait_midi_report: bool,
@@ -857,6 +858,7 @@ impl Default for Maolan {
             pending_recovery_session_dir: None,
             pending_autosave_recovery: None,
             pending_open_session_dir: None,
+            pending_branch_input: String::new(),
             pending_diagnostics_bundle_export: false,
             diagnostics_bundle_wait_session_report: false,
             diagnostics_bundle_wait_midi_report: false,
@@ -2166,10 +2168,12 @@ impl Maolan {
         referenced.insert(cache_rel);
     }
 
-    fn referenced_session_media_paths(state: &crate::state::StateData) -> HashSet<String> {
+    fn referenced_session_media_paths_from_tracks(
+        tracks: &[crate::state::Track],
+    ) -> HashSet<String> {
         let mut referenced = HashSet::new();
 
-        for track in &state.tracks {
+        for track in tracks {
             for clip in &track.audio.clips {
                 Self::insert_referenced_session_media_path(&mut referenced, &clip.name);
                 if let Some(source_name) = clip.pitch_correction_source_name.as_deref() {
@@ -2202,6 +2206,23 @@ impl Maolan {
         }
 
         referenced
+    }
+
+    fn referenced_session_media_paths(state: &crate::state::StateData) -> HashSet<String> {
+        Self::referenced_session_media_paths_from_tracks(&state.tracks)
+    }
+
+    fn referenced_session_media_paths_from_file(path: &Path) -> io::Result<HashSet<String>> {
+        #[derive(serde::Deserialize)]
+        struct SessionFileTracks {
+            tracks: Vec<crate::state::Track>,
+        }
+
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        let session: SessionFileTracks = serde_json::from_reader(reader)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok(Self::referenced_session_media_paths_from_tracks(&session.tracks))
     }
 
     fn collect_cleanup_candidate_files(
@@ -2244,10 +2265,42 @@ impl Maolan {
         &self,
         session_root: &Path,
     ) -> Result<SessionMediaCleanupReport, String> {
-        let referenced = {
+        let mut referenced = {
             let state = self.state.blocking_read();
             Self::referenced_session_media_paths(&state)
         };
+
+        // Collect references from all branch JSON files so we don't delete
+        // media that is only used by other branches.
+        if let Ok(entries) = std::fs::read_dir(session_root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if ext != "json" {
+                    continue;
+                }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem.starts_with('.') {
+                        continue;
+                    }
+                }
+                match Self::referenced_session_media_paths_from_file(&path) {
+                    Ok(refs) => referenced.extend(refs),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to parse branch file '{}' for cleanup references: {}",
+                            path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
         let mut candidates = Vec::new();
         Self::collect_cleanup_candidate_files(
@@ -6399,6 +6452,147 @@ impl Maolan {
         .align_x(iced::Alignment::Center)
         .align_y(iced::Alignment::Center)
         .into()
+    }
+
+    fn branch_manager_view(&self) -> iced::Element<'_, Message> {
+        let mut branches: Vec<String> = Vec::new();
+        if let Some(session_dir) = self.session_dir.as_ref() {
+            if let Ok(entries) = std::fs::read_dir(session_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                                if ext == "json" && name != ".maolan" {
+                                    branches.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            branches.sort();
+        }
+
+        let current = self.session_branch.clone();
+        let mut branch_rows: Vec<iced::Element<'_, Message>> = Vec::new();
+        for branch in branches {
+            if branch == current {
+                branch_rows.push(
+                    row![
+                        text(format!("{} (current)", branch)).width(Length::Fill),
+                    ]
+                    .spacing(4)
+                    .align_y(iced::Alignment::Center)
+                    .into(),
+                );
+            } else {
+                branch_rows.push(
+                    row![
+                        text(branch.clone()).width(Length::Fill),
+                        button("Switch")
+                            .on_press(Message::BranchSwitch(branch.clone()))
+                            .style(button::secondary),
+                        button("Tracks")
+                            .on_press(Message::Show(Show::BranchTrackList(branch.clone())))
+                            .style(button::secondary),
+                        button("Merge")
+                            .on_press(Message::BranchMerge(branch.clone()))
+                            .style(button::secondary),
+                        button("Reset")
+                            .on_press(Message::BranchResetHard(branch.clone()))
+                            .style(button::danger),
+                    ]
+                    .spacing(4)
+                    .align_y(iced::Alignment::Center)
+                    .into(),
+                );
+            }
+        }
+
+        let content = column![
+            text("Branches").size(16),
+            text(format!("Current: {}", current)),
+            text("Existing branches:"),
+            column(branch_rows).spacing(6).width(Length::Fixed(400.0)),
+            row![
+                text_input("new branch name", &self.pending_branch_input)
+                    .on_input(Message::BranchInput)
+                    .width(Length::Fixed(200.0)),
+                button("Create")
+                    .on_press(Message::BranchCreate(self.pending_branch_input.clone()))
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+            button("Close")
+                .on_press(Message::Cancel)
+                .style(button::secondary),
+        ]
+        .align_x(iced::Alignment::Start)
+        .spacing(12);
+
+        container(content)
+            .style(|_theme| crate::style::app_background())
+            .padding(20)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center)
+            .into()
+    }
+
+    fn branch_track_list_view(&self, branch: &str) -> iced::Element<'_, Message> {
+        let mut track_rows: Vec<iced::Element<'_, Message>> = Vec::new();
+
+        if let Some(session_dir) = self.session_dir.as_ref() {
+            let branch_file = session_dir.join(format!("{}.json", branch));
+            if branch_file.exists() {
+                if let Ok(file) = std::fs::File::open(&branch_file) {
+                    let reader = std::io::BufReader::new(file);
+                    if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(reader) {
+                        if let Some(tracks) = json.get("tracks").and_then(|v| v.as_array()) {
+                            for track in tracks {
+                                if let Some(name) = track.get("name").and_then(|v| v.as_str()).map(String::from) {
+                                    track_rows.push(
+                                        row![
+                                            text(name.clone()).width(Length::Fill),
+                                            button("Copy")
+                                                .on_press(Message::BranchCopyTrack {
+                                                    branch: branch.to_string(),
+                                                    track_name: name,
+                                                })
+                                                .style(button::secondary),
+                                        ]
+                                        .spacing(10)
+                                        .align_y(iced::Alignment::Center)
+                                        .into(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let content = column![
+            text(format!("Tracks in '{}'", branch)).size(16),
+            column(track_rows).spacing(6).width(Length::Fixed(400.0)),
+            button("Back")
+                .on_press(Message::Show(Show::BranchManager))
+                .style(button::secondary),
+        ]
+        .align_x(iced::Alignment::Start)
+        .spacing(12);
+
+        container(content)
+            .style(|_theme| crate::style::app_background())
+            .padding(20)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center)
+            .into()
     }
 
     fn autosave_recovery_view(&self) -> iced::Element<'_, Message> {

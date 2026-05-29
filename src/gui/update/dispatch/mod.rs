@@ -335,6 +335,160 @@ impl Maolan {
         }
         match message {
             Message::Show(ref show) => return self.handle_show_message(show),
+            Message::BranchInput(ref value) => {
+                self.pending_branch_input = value.clone();
+            }
+            Message::BranchCreate(ref name) => {
+                if let Some(session_dir) = self.session_dir.clone() {
+                    let src = session_dir.join(format!("{}.json", self.session_branch));
+                    let dst = session_dir.join(format!("{}.json", name));
+                    if src.exists() {
+                        if let Err(e) = std::fs::copy(&src, &dst) {
+                            self.state.blocking_write().message =
+                                format!("Failed to create branch '{}': {}", name, e);
+                        } else {
+                            self.session_branch = name.clone();
+                            self.pending_branch_input.clear();
+                            self.state.blocking_write().message =
+                                format!("Created and switched to branch '{}'", name);
+                        }
+                    } else {
+                        self.state.blocking_write().message =
+                            format!("Source branch file '{}' not found", src.display());
+                    }
+                } else {
+                    self.state.blocking_write().message =
+                        "No session directory set. Save the session first.".to_string();
+                }
+            }
+            Message::BranchSwitch(ref name) => {
+                if let Some(session_dir) = self.session_dir.clone() {
+                    let branch_file = session_dir.join(format!("{}.json", name));
+                    if branch_file.exists() {
+                        self.session_branch = name.clone();
+                        self.modal = None;
+                        self.stop_recording_preview();
+                        self.state.blocking_write().message =
+                            format!("Switching to branch '{}'...", name);
+                        return Task::perform(
+                            async move { session_dir },
+                            Message::LoadSessionPath,
+                        );
+                    } else {
+                        self.state.blocking_write().message =
+                            format!("Branch file '{}' not found", branch_file.display());
+                    }
+                } else {
+                    self.state.blocking_write().message =
+                        "No session directory set. Save the session first.".to_string();
+                }
+            }
+            Message::BranchMerge(ref name) => {
+                if let Some(session_dir) = self.session_dir.clone() {
+                    if *name == self.session_branch {
+                        self.state.blocking_write().message =
+                            "Cannot merge a branch into itself".to_string();
+                    } else {
+                        let src = session_dir.join(format!("{}.json", name));
+                        let dst = session_dir.join(format!("{}.json", self.session_branch));
+                        if !src.exists() {
+                            self.state.blocking_write().message =
+                                format!("Branch file '{}' not found", src.display());
+                        } else if let Err(e) = std::fs::copy(&src, &dst) {
+                            self.state.blocking_write().message =
+                                format!("Failed to merge branch '{}': {}", name, e);
+                        } else {
+                            // Create a commit on the current branch recording the merge
+                            let commit_dir = session_dir
+                                .join(".maolan_commits")
+                                .join(&self.session_branch);
+                            if let Err(e) = std::fs::create_dir_all(&commit_dir) {
+                                self.state.blocking_write().message =
+                                    format!("Failed to create commit dir: {}", e);
+                            } else {
+                                let commit_filename =
+                                    chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+                                let commit_path =
+                                    commit_dir.join(format!("{}.json", commit_filename));
+                                if let Err(e) = std::fs::copy(&dst, &commit_path) {
+                                    self.state.blocking_write().message =
+                                        format!("Failed to create merge commit: {}", e);
+                                } else {
+                                    self.modal = None;
+                                    self.stop_recording_preview();
+                                    self.state.blocking_write().message = format!(
+                                        "Merged branch '{}' into '{}'",
+                                        name, self.session_branch
+                                    );
+                                    return Task::perform(
+                                        async move { session_dir },
+                                        Message::LoadSessionPath,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.state.blocking_write().message =
+                        "No session directory set. Save the session first.".to_string();
+                }
+            }
+            Message::BranchResetHard(ref name) => {
+                if let Some(session_dir) = self.session_dir.clone() {
+                    if *name == self.session_branch {
+                        self.state.blocking_write().message =
+                            "Cannot reset to the current branch".to_string();
+                    } else {
+                        let src = session_dir.join(format!("{}.json", name));
+                        let dst = session_dir.join(format!("{}.json", self.session_branch));
+                        if !src.exists() {
+                            self.state.blocking_write().message =
+                                format!("Branch file '{}' not found", src.display());
+                        } else if let Err(e) = std::fs::copy(&src, &dst) {
+                            self.state.blocking_write().message =
+                                format!("Failed to reset to branch '{}': {}", name, e);
+                        } else {
+                            self.modal = None;
+                            self.stop_recording_preview();
+                            self.state.blocking_write().message = format!(
+                                "Reset '{}' to state of branch '{}'",
+                                self.session_branch, name
+                            );
+                            return Task::perform(
+                                async move { session_dir },
+                                Message::LoadSessionPath,
+                            );
+                        }
+                    }
+                } else {
+                    self.state.blocking_write().message =
+                        "No session directory set. Save the session first.".to_string();
+                }
+            }
+            Message::BranchCopyTrack {
+                ref branch,
+                ref track_name,
+            } => {
+                if let Some(session_dir) = self.session_dir.clone() {
+                    match self.copy_track_from_branch(&session_dir, branch, track_name) {
+                        Ok(task) => {
+                            self.modal = None;
+                            self.stop_recording_preview();
+                            self.state.blocking_write().message = format!(
+                                "Copied track '{}' from branch '{}'",
+                                track_name, branch
+                            );
+                            return task;
+                        }
+                        Err(e) => {
+                            self.state.blocking_write().message = e;
+                        }
+                    }
+                } else {
+                    self.state.blocking_write().message =
+                        "No session directory set. Save the session first.".to_string();
+                }
+            }
             Message::AddTrack(crate::message::AddTrack::Submit)
             | Message::AddTrackFromTemplate { .. }
             | Message::AddGroupFromTemplate { .. }
