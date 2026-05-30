@@ -175,6 +175,14 @@ impl Maolan {
                     }
                     return Task::batch(tasks);
                 }
+                if let Some(expanded) = self.expand_request_to_folder_children(a) {
+                    let mut tasks = Vec::with_capacity(expanded.len());
+                    for action in expanded {
+                        self.maybe_record_automation_from_request(&action);
+                        tasks.push(self.send(action));
+                    }
+                    return Task::batch(tasks);
+                }
                 self.maybe_record_automation_from_request(a);
                 self.send(a.clone())
             }
@@ -186,6 +194,11 @@ impl Maolan {
                         self.transport_samples = *sample as f64;
                     }
                     if let Some(expanded) = self.expand_request_to_vca_group(action) {
+                        for expanded_action in expanded {
+                            self.maybe_record_automation_from_request(&expanded_action);
+                            tasks.push(self.send(expanded_action));
+                        }
+                    } else if let Some(expanded) = self.expand_request_to_folder_children(action) {
                         for expanded_action in expanded {
                             self.maybe_record_automation_from_request(&expanded_action);
                             tasks.push(self.send(expanded_action));

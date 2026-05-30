@@ -323,6 +323,9 @@ impl Maolan {
                 | Message::TrackGroupTemplateSaveShow(_)
                 | Message::TrackFreezeToggle { .. }
                 | Message::TrackFreezeFlatten { .. }
+                | Message::TrackToggleFolder { .. }
+                | Message::TrackSetFolder { .. }
+                | Message::TrackSetParent { .. }
                 | Message::TrackSetVcaMaster { .. }
                 | Message::TrackMidiLearnArm { .. }
                 | Message::TrackMidiLearnClear { .. }
@@ -2660,6 +2663,15 @@ impl Maolan {
                             {
                                 track.midi.editor_view_mode = mode;
                             }
+                            if let Some((is_folder, folder_open, parent_track)) =
+                                state.pending_track_folder_state.remove(name)
+                                && let Some(track) =
+                                    state.tracks.iter_mut().find(|t| &t.name == name)
+                            {
+                                track.is_folder = is_folder;
+                                track.folder_open = folder_open;
+                                track.parent_track = parent_track;
+                            }
 
                             let pending_template = state
                                 .pending_track_template_loads
@@ -2731,6 +2743,9 @@ impl Maolan {
                                 for track in &mut state.tracks {
                                     if track.vca_master.as_deref() == Some(name.as_str()) {
                                         track.vca_master = None;
+                                    }
+                                    if track.parent_track.as_deref() == Some(name.as_str()) {
+                                        track.parent_track = None;
                                     }
                                 }
                             }
@@ -3971,6 +3986,12 @@ impl Maolan {
                                 }
                             }
 
+                            for track in &mut state.tracks {
+                                if track.parent_track.as_deref() == Some(old_name.as_str()) {
+                                    track.parent_track = Some(new_name.clone());
+                                }
+                            }
+
                             if state.plugin_graph_track.as_deref() == Some(old_name) {
                                 state.plugin_graph_track = Some(new_name.clone());
                             }
@@ -4051,6 +4072,91 @@ impl Maolan {
                 return self.send(Action::TrackSetVcaMaster {
                     track_name: track_name.clone(),
                     master_track: master_track.clone(),
+                });
+            }
+            Message::TrackToggleFolder {
+                ref track_name,
+            } => {
+                {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        track.folder_open = !track.folder_open;
+                    }
+                }
+                return self.send(Action::TrackToggleFolder {
+                    track_name: track_name.clone(),
+                });
+            }
+            Message::TrackSetFolder {
+                ref track_name,
+                is_folder,
+            } => {
+                let mut child_tasks = vec![];
+                {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        let was_folder = track.is_folder;
+                        track.is_folder = is_folder;
+                        if is_folder {
+                            track.folder_open = true;
+                        } else if was_folder {
+                            // Removing folder status: remove all children
+                            let children: Vec<String> = state
+                                .tracks
+                                .iter()
+                                .filter(|t| t.parent_track.as_deref() == Some(track_name.as_str()))
+                                .map(|t| t.name.clone())
+                                .collect();
+                            for child_name in children {
+                                if let Some(child) = state.tracks.iter_mut().find(|t| t.name == child_name) {
+                                    child.parent_track = None;
+                                }
+                                child_tasks.push(self.send(Action::TrackSetParent {
+                                    track_name: child_name,
+                                    parent_name: None,
+                                }));
+                            }
+                        }
+                    }
+                }
+                child_tasks.push(self.send(Action::TrackSetFolder {
+                    track_name: track_name.clone(),
+                    is_folder,
+                }));
+                return Task::batch(child_tasks);
+            }
+            Message::TrackSetParent {
+                ref track_name,
+                ref parent_name,
+            } => {
+                let mut state = self.state.blocking_write();
+                // Prevent circular parent relationships
+                if let Some(parent) = parent_name {
+                    if parent == track_name {
+                        state.message = "Track cannot be its own parent".to_string();
+                        return Task::none();
+                    }
+                    // Check if assigning this parent would create a cycle
+                    let mut current = parent.as_str();
+                    loop {
+                        if current == track_name.as_str() {
+                            state.message = "Cannot create circular folder hierarchy".to_string();
+                            return Task::none();
+                        }
+                        if let Some(next) = state.tracks.iter().find(|t| t.name == current).and_then(|t| t.parent_track.as_deref()) {
+                            current = next;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    track.parent_track = parent_name.clone();
+                }
+                drop(state);
+                return self.send(Action::TrackSetParent {
+                    track_name: track_name.clone(),
+                    parent_name: parent_name.clone(),
                 });
             }
             Message::TrackMidiLaneChannelSelected {

@@ -1927,6 +1927,7 @@ impl Maolan {
             let mut state = self.state.blocking_write();
             state.pending_track_positions.clear();
             state.pending_track_heights.clear();
+            state.pending_track_folder_state.clear();
 
             let tracks_width = session["ui"]["tracks_width"].as_f64().ok_or_else(|| {
                 io::Error::new(
@@ -2098,6 +2099,27 @@ impl Maolan {
                         io::ErrorKind::InvalidInput,
                         "'soloed' is not boolean",
                     ));
+                }
+                {
+                    let is_folder = track.get("is_folder").and_then(Value::as_bool).unwrap_or(false);
+                    let folder_open = track.get("folder_open").and_then(Value::as_bool).unwrap_or(true);
+                    let parent_track = track.get("parent_track").and_then(Value::as_str).map(String::from);
+                    self.state.blocking_write().pending_track_folder_state.insert(
+                        name.clone(),
+                        (is_folder, folder_open, parent_track.clone()),
+                    );
+                    if is_folder {
+                        restore_actions.push(Action::TrackSetFolder {
+                            track_name: name.clone(),
+                            is_folder: true,
+                        });
+                    }
+                    if let Some(ref parent) = parent_track {
+                        restore_actions.push(Action::TrackSetParent {
+                            track_name: name.clone(),
+                            parent_name: Some(parent.clone()),
+                        });
+                    }
                 }
                 if track
                     .get("phase_inverted")

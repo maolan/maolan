@@ -65,6 +65,12 @@ struct TrackViewData {
     midi_learn_disk_monitor: bool,
     vca_master: Option<String>,
     color: Option<iced::Color>,
+    is_folder: bool,
+    folder_open: bool,
+    folder_depth: usize,
+    hidden: bool,
+    effective_muted: bool,
+    effective_soloed: bool,
 }
 
 #[derive(Clone)]
@@ -232,6 +238,52 @@ pub(super) fn track_context_menu_overlay(
                     track_name: track_name.clone(),
                 },
             ));
+        }
+    }
+
+    // Folder track options
+    items.push(menu::menu_item(
+        if track.is_folder { "Make Regular Track" } else { "Make Folder Track" },
+        Message::TrackSetFolder {
+            track_name: track_name.clone(),
+            is_folder: !track.is_folder,
+        },
+    ));
+
+    if !track.is_folder && !track.is_master {
+        // Find available folder tracks (can't be this track, can't be a child of this track)
+        let mut available_folders: Vec<String> = state
+            .tracks
+            .iter()
+            .filter(|t| {
+                t.is_folder
+                    && t.name != track_name
+                    && t.parent_track.as_deref() != Some(&track_name)
+            })
+            .map(|t| t.name.clone())
+            .collect();
+
+        if let Some(ref current_parent) = track.parent_track {
+            items.push(menu::menu_item(
+                format!("Remove from Folder ({})", current_parent),
+                Message::TrackSetParent {
+                    track_name: track_name.clone(),
+                    parent_name: None,
+                },
+            ));
+        }
+
+        if !available_folders.is_empty() {
+            available_folders.sort();
+            for folder_name in available_folders {
+                items.push(menu::menu_item(
+                    format!("Move to Folder: {}", folder_name),
+                    Message::TrackSetParent {
+                        track_name: track_name.clone(),
+                        parent_name: Some(folder_name),
+                    },
+                ));
+            }
         }
     }
 
@@ -487,6 +539,12 @@ impl Tracks {
         } else {
             0u8.hash(&mut hasher);
         }
+        track.is_folder.hash(&mut hasher);
+        track.folder_open.hash(&mut hasher);
+        track.folder_depth.hash(&mut hasher);
+        track.hidden.hash(&mut hasher);
+        track.effective_muted.hash(&mut hasher);
+        track.effective_soloed.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -615,9 +673,32 @@ impl Tracks {
                 title_badges.push(Self::info_badge(format!("CC {}", learn_count), false));
         }
 
+        let folder_toggle: Element<'static, Message> = if track.is_folder {
+            let icon = if track.folder_open { "▼" } else { "▶" };
+            button(container(text(icon).size(11))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill))
+            .width(Length::Fixed(18.0))
+            .height(Length::Fixed(18.0))
+            .padding(0)
+            .style(button::secondary)
+            .on_press(Message::TrackToggleFolder {
+                track_name: track.name.clone(),
+            })
+            .into()
+        } else {
+            Space::new().width(Length::Fixed(0.0)).into()
+        };
+
+        let indent = track.folder_depth as f32 * 12.0;
+
         let header = mouse_area(
             container(
                 row![
+                    Space::new().width(Length::Fixed(indent)),
+                    folder_toggle,
                     text(Self::trim_with_ellipsis(
                         &track.name,
                         max_name_chars as usize
@@ -627,7 +708,7 @@ impl Tracks {
                     title_badges,
                 ]
                 .align_y(Alignment::Center)
-                .spacing(6),
+                .spacing(4),
             )
             .height(Length::Fixed(TRACK_FOLDER_HEADER_HEIGHT))
             .padding([2, 6])
@@ -677,7 +758,7 @@ impl Tracks {
             .width(Length::Fixed(22.0))
             .height(Length::Fixed(22.0))
             .padding(0)
-            .style(move |theme, _state| style::mute::style(theme, track.muted))
+            .style(move |theme, _state| style::mute::style(theme, track.effective_muted))
             .on_press(Message::Request(Action::TrackToggleMute(
                 track.name.clone(),
             )))
@@ -695,7 +776,7 @@ impl Tracks {
             .height(Length::Fixed(22.0))
             .padding(0)
             .style(move |theme, _state| {
-                style::solo::style(theme, track.soloed, track.solo_upstream)
+                style::solo::style(theme, track.effective_soloed, track.solo_upstream)
             })
             .on_press(Message::Request(Action::TrackToggleSolo(
                 track.name.clone(),
@@ -988,11 +1069,14 @@ impl Tracks {
         let vca_strip = container(row![Space::new().width(Length::Fixed(4.0)), vca_strip])
             .width(Length::Fixed(vca_strip_width + 4.0))
             .height(Length::Fill);
-        let track_body = container(track_ui)
-            .id(track.name.clone())
-            .width(Length::Fill)
-            .height(Length::Fixed(height))
-            .padding([4, 6])
+        let track_body = container(row![
+            Space::new().width(Length::Fixed(indent)),
+            track_ui.width(Length::Fill)
+        ])
+        .id(track.name.clone())
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .padding([4, 6])
             .style(move |_theme| container::Style {
                 background: Some(Background::Color(outer_body_bg)),
                 border: Border {
@@ -1040,6 +1124,7 @@ impl Tracks {
                     if !processed.insert(target_name.clone()) {
                         continue;
                     }
+                    // Follow explicit audio connections
                     for conn in &state.connections {
                         if conn.kind == maolan_engine::kind::Kind::Audio
                             && conn.to_track == target_name
@@ -1047,6 +1132,15 @@ impl Tracks {
                         {
                             upstream_track_names.insert(conn.from_track.clone());
                             to_process.push(conn.from_track.clone());
+                        }
+                    }
+                    // Follow folder parent relationships (children feed into parent)
+                    for track in &state.tracks {
+                        if track.parent_track.as_deref() == Some(target_name.as_str())
+                            && !soloed_track_names.contains(&track.name)
+                        {
+                            upstream_track_names.insert(track.name.clone());
+                            to_process.push(track.name.clone());
                         }
                     }
                 }
@@ -1104,6 +1198,12 @@ impl Tracks {
                             midi_learn_disk_monitor: track.midi_learn_disk_monitor.is_some(),
                             vca_master: track.vca_master.clone(),
                             color: track.color,
+                            is_folder: track.is_folder,
+                            folder_open: track.folder_open,
+                            folder_depth: track.folder_depth(&state.tracks),
+                            hidden: track.is_inside_closed_folder(&state.tracks),
+                            effective_muted: track.effective_muted(&state.tracks),
+                            effective_soloed: track.effective_soloed(&state.tracks),
                         },
                     )
                 })
@@ -1181,11 +1281,15 @@ impl Tracks {
                 })
             })
             .collect();
-        let children: Vec<Element<'_, Message>> = tracks
+        let filtered: Vec<_> = tracks
             .into_iter()
             .enumerate()
-            .map(|(visible_index, (index, track))| {
-                let vca = vca_view_data[visible_index].clone();
+            .zip(vca_view_data.into_iter())
+            .filter(|((_, (_, track)), _)| !track.hidden)
+            .collect();
+        let children: Vec<Element<'_, Message>> = filtered
+            .into_iter()
+            .map(|((_visible_index, (index, track)), vca)| {
                 let hash = Self::track_row_render_hash(&track, track_width_px, index, vca.as_ref());
                 lazy(hash, move |_| {
                     Self::render_track_row(track.clone(), track_width_px, index, vca.clone())
