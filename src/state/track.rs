@@ -181,6 +181,12 @@ pub struct Track {
     pub vca_master: Option<String>,
     #[serde(default)]
     pub frozen: bool,
+    #[serde(default)]
+    pub is_folder: bool,
+    #[serde(default)]
+    pub folder_open: bool,
+    #[serde(default)]
+    pub parent_track: Option<String>,
     pub height: f32,
     #[serde(default)]
     pub primary_audio_ins: usize,
@@ -247,6 +253,9 @@ impl Track {
             midi_learn_disk_monitor: None,
             vca_master: None,
             frozen: false,
+            is_folder: false,
+            folder_open: true,
+            parent_track: None,
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
             midi_lane_channels: vec![None; midi_ins],
@@ -403,6 +412,74 @@ impl Track {
         let layout = self.lane_layout();
         let lane_span = layout.lane_height + TRACK_SUBTRACK_GAP;
         layout.header_height + (layout.audio_lanes + layout.midi_lanes + lane) as f32 * lane_span
+    }
+
+    pub fn folder_depth(&self, all_tracks: &[Track]) -> usize {
+        let mut depth = 0;
+        let mut current = self.parent_track.as_deref();
+        while let Some(parent_name) = current {
+            depth += 1;
+            current = all_tracks
+                .iter()
+                .find(|t| t.name == parent_name)
+                .and_then(|t| t.parent_track.as_deref());
+        }
+        depth
+    }
+
+    pub fn is_inside_closed_folder(&self, all_tracks: &[Track]) -> bool {
+        let mut current = self.parent_track.as_deref();
+        while let Some(parent_name) = current {
+            if let Some(parent) = all_tracks.iter().find(|t| t.name == parent_name) {
+                if !parent.folder_open {
+                    return true;
+                }
+                current = parent.parent_track.as_deref();
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    pub fn has_folder_children(&self, all_tracks: &[Track]) -> bool {
+        all_tracks.iter().any(|t| t.parent_track.as_deref() == Some(self.name.as_str()))
+    }
+
+    pub fn effective_muted(&self, all_tracks: &[Track]) -> bool {
+        if self.muted {
+            return true;
+        }
+        let mut current = self.parent_track.as_deref();
+        while let Some(parent_name) = current {
+            if let Some(parent) = all_tracks.iter().find(|t| t.name == parent_name) {
+                if parent.muted {
+                    return true;
+                }
+                current = parent.parent_track.as_deref();
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    pub fn effective_soloed(&self, all_tracks: &[Track]) -> bool {
+        if self.soloed {
+            return true;
+        }
+        let mut current = self.parent_track.as_deref();
+        while let Some(parent_name) = current {
+            if let Some(parent) = all_tracks.iter().find(|t| t.name == parent_name) {
+                if parent.soloed {
+                    return true;
+                }
+                current = parent.parent_track.as_deref();
+            } else {
+                break;
+            }
+        }
+        false
     }
 }
 

@@ -1709,6 +1709,51 @@ impl Maolan {
         )
     }
 
+    fn folder_children_for(&self, folder_name: &str) -> Vec<String> {
+        let state = self.state.blocking_read();
+        let mut children = Vec::new();
+        let mut to_process = vec![folder_name.to_string()];
+        while let Some(parent) = to_process.pop() {
+            for track in &state.tracks {
+                if track.parent_track.as_deref() == Some(&parent) {
+                    children.push(track.name.clone());
+                    if track.is_folder {
+                        to_process.push(track.name.clone());
+                    }
+                }
+            }
+        }
+        children
+    }
+
+    fn expand_request_to_folder_children(&self, action: &Action) -> Option<Vec<Action>> {
+        let (source_track, builder): (&str, fn(String, &Action) -> Action) = match action {
+            Action::TrackToggleMute(track_name) => {
+                (track_name.as_str(), |name, _| Action::TrackToggleMute(name))
+            }
+            Action::TrackToggleSolo(track_name) => {
+                (track_name.as_str(), |name, _| Action::TrackToggleSolo(name))
+            }
+            _ => return None,
+        };
+        let state = self.state.blocking_read();
+        let is_folder = state
+            .tracks
+            .iter()
+            .any(|t| t.name == source_track && t.is_folder);
+        drop(state);
+        if !is_folder {
+            return None;
+        }
+        let children = self.folder_children_for(source_track);
+        if children.is_empty() {
+            return None;
+        }
+        let mut expanded = vec![builder(source_track.to_string(), action)];
+        expanded.extend(children.into_iter().map(|name| builder(name, action)));
+        Some(expanded)
+    }
+
     fn automation_lane_value_at(points: &[TrackAutomationPoint], sample: usize) -> Option<f32> {
         if points.is_empty() {
             return None;

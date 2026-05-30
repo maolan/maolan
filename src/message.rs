@@ -593,6 +593,17 @@ pub enum Message {
     TrackFreezeFlatten {
         track_name: String,
     },
+    TrackToggleFolder {
+        track_name: String,
+    },
+    TrackSetFolder {
+        track_name: String,
+        is_folder: bool,
+    },
+    TrackSetParent {
+        track_name: String,
+        parent_name: Option<String>,
+    },
     TrackSetVcaMaster {
         track_name: String,
         master_track: Option<String>,

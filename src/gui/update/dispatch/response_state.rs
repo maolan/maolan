@@ -250,6 +250,27 @@ impl Maolan {
                 state.message = "Cleared all MIDI mappings".to_string();
                 true
             }
+            Action::TrackSetFolder { track_name, is_folder } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    track.is_folder = *is_folder;
+                }
+                true
+            }
+            Action::TrackSetParent { track_name, parent_name } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    track.parent_track = parent_name.clone();
+                }
+                true
+            }
+            Action::TrackToggleFolder { track_name } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    track.folder_open = !track.folder_open;
+                }
+                true
+            }
             _ => false,
         }
     }
