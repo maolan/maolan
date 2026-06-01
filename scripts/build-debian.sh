@@ -70,7 +70,7 @@ fi
 
 DEB_ARCH="$(dpkg --print-architecture)"
 PKG_NAME="maolan"
-DEB_NAME="${PKG_NAME}_${PKG_VERSION}-debian_${DEB_ARCH}.deb"
+DEB_NAME="${PKG_NAME}-${PKG_VERSION}-debian_${DEB_ARCH}.deb"
 
 echo "========================================"
 echo "Building Maolan .deb package"
