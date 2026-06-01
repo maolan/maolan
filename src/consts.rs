@@ -63,7 +63,8 @@ pub mod platform_caps {
         target_os = "openbsd"
     ));
     pub const REQUIRE_VST3_STATE_FOR_SAVE: bool = cfg!(target_os = "macos");
-    pub const SUPPORTS_LV2: bool = cfg!(all(unix, not(target_os = "macos")));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub const SUPPORTS_LV2: bool = true;
     pub const SUPPORTS_PLUGIN_GRAPH: bool = true;
 }
 

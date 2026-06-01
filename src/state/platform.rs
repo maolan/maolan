@@ -23,8 +23,8 @@ fn discover_windows_devices(direction: WindowsDeviceDirection) -> Vec<String> {
         return out;
     };
     for dev in devices {
-        if let Ok(name) = dev.name() {
-            out.push(format!("wasapi:{name}"));
+        if let Ok(desc) = dev.description() {
+            out.push(format!("wasapi:{}", desc.name()));
         }
     }
     out.sort();
@@ -62,7 +62,10 @@ pub(crate) fn discover_windows_output_sample_rates(device_id: &str) -> Vec<i32> 
         let Ok(mut devices) = host.output_devices() else {
             return fallback_sample_rates;
         };
-        devices.find(|dev| dev.name().is_ok_and(|name| name == requested_name))
+        devices.find(|dev| {
+            dev.description()
+                .is_ok_and(|desc| desc.name() == requested_name)
+        })
     };
     let Some(device) = device else {
         return fallback_sample_rates;
@@ -72,8 +75,14 @@ pub(crate) fn discover_windows_output_sample_rates(device_id: &str) -> Vec<i32> 
     };
     let mut rates = Vec::new();
     for cfg in configs {
+        #[cfg(unix)]
         let min_hz = cfg.min_sample_rate().0 as i32;
+        #[cfg(not(unix))]
+        let min_hz = cfg.min_sample_rate() as i32;
+        #[cfg(unix)]
         let max_hz = cfg.max_sample_rate().0 as i32;
+        #[cfg(not(unix))]
+        let max_hz = cfg.max_sample_rate() as i32;
         rates.extend(
             fallback_sample_rates
                 .iter()
@@ -137,7 +146,10 @@ pub(crate) fn discover_windows_output_bit_depths(device_id: &str) -> Vec<usize> 
         let Ok(mut devices) = host.output_devices() else {
             return fallback_bits;
         };
-        devices.find(|dev| dev.name().is_ok_and(|name| name == requested_name))
+        devices.find(|dev| {
+            dev.description()
+                .is_ok_and(|desc| desc.name() == requested_name)
+        })
     };
     let Some(device) = device else {
         return fallback_bits;

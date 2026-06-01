@@ -766,11 +766,6 @@ pub fn scan_lv2_plugins() -> Vec<crate::lv2::Lv2PluginInfo> {
     crate::lv2::Lv2Host::new(48_000.0).list_plugins()
 }
 
-#[cfg(not(unix))]
-pub fn scan_lv2_plugins() -> Vec<crate::lv2::Lv2PluginInfo> {
-    Vec::new()
-}
-
 // ─── Unified scan runner ───
 
 /// Run a scan and print JSON to stdout or write to `output_path`.
@@ -812,6 +807,7 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
                 }
             }
         }
+        #[cfg(unix)]
         "lv2" => {
             if plugin_path != "--system" {
                 eprintln!("LV2 single-file scan not yet supported; use --system");

@@ -4,7 +4,6 @@ mod subscriptions;
 mod update;
 mod view;
 
-#[cfg(all(unix, not(target_os = "macos")))]
 use crate::{
     add_track, clip_rename, config, connections,
     consts::audio_defaults,
@@ -1827,6 +1826,7 @@ impl Maolan {
         Ok(samples.len() / channels.max(1))
     }
 
+    #[allow(dead_code)]
     fn audio_clip_channel_count(path: &Path) -> std::io::Result<usize> {
         let (_, channels, _) = Self::decode_audio_to_f32_interleaved_sync(path)?;
         Ok(channels.max(1))
@@ -4785,6 +4785,7 @@ impl Maolan {
         match node {
             PluginGraphNode::TrackInput => Some(json!({"type":"track_input"})),
             PluginGraphNode::TrackOutput => Some(json!({"type":"track_output"})),
+            #[cfg(all(unix, not(target_os = "macos")))]
             PluginGraphNode::Lv2PluginInstance(id) => id_to_index
                 .get(id)
                 .copied()
@@ -4818,11 +4819,14 @@ impl Maolan {
         match t {
             "track_input" => Some(PluginGraphNode::TrackInput),
             "track_output" => Some(PluginGraphNode::TrackOutput),
+            #[cfg(all(unix, not(target_os = "macos")))]
             "plugin" => runtime_nodes
                 .get(v["plugin_index"].as_u64()? as usize)
                 .and_then(|node| {
                     matches!(node, PluginGraphNode::Lv2PluginInstance(_)).then(|| node.clone())
                 }),
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            "plugin" => None,
             "vst3_plugin" => runtime_nodes
                 .get(v["plugin_index"].as_u64()? as usize)
                 .and_then(|node| {

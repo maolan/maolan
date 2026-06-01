@@ -289,6 +289,16 @@ impl HW {
     ) -> Action {
         let device = Self::selected_device_id(selected_is_jack, selected_hw);
         let bits = Self::selected_bits(selected_is_jack, selection.chosen_bits);
+        // When hybrid buffers are disabled, the hardware should use the full
+        // period size. Some engine versions unconditionally use realtime_frames
+        // as the hardware period, so send period_frames as realtime_frames
+        // when hybrid is off to avoid opening the device with a too-small buffer.
+        // Also send period_frames as low_watermark so it is never used.
+        let (realtime_frames, low_watermark_frames) = if selection.hybrid_buffer_enabled {
+            (selection.realtime_frames, selection.low_watermark_frames)
+        } else {
+            (selection.period_frames, selection.period_frames)
+        };
         Action::OpenAudioDevice {
             device,
             input_device: selection.input_device,
@@ -296,8 +306,8 @@ impl HW {
             bits,
             exclusive: selection.exclusive,
             period_frames: selection.period_frames,
-            realtime_frames: selection.realtime_frames,
-            low_watermark_frames: selection.low_watermark_frames,
+            realtime_frames,
+            low_watermark_frames,
             nperiods: selection.nperiods,
             sync_mode: selection.sync_mode,
             hybrid_enabled: selection.hybrid_buffer_enabled,
