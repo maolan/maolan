@@ -965,7 +965,7 @@ unsafe extern "C" fn host_log_log(_host: *const ClapHost, severity: u32, msg: *c
         0 => tracing::debug!(target: "clap_plugin", "{msg}"),
         1 => tracing::info!(target: "clap_plugin", "{msg}"),
         2 => tracing::warn!(target: "clap_plugin", "{msg}"),
-        3 | 4 | 5 => tracing::error!(target: "clap_plugin", "{msg}"),
+        3..=5 => tracing::error!(target: "clap_plugin", "{msg}"),
         _ => tracing::info!(target: "clap_plugin", "{msg}"),
     }
 }

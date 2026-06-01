@@ -1451,6 +1451,7 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
         low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES.min(options.period_frames),
         nperiods: options.nperiods,
         sync_mode: options.sync_mode,
+        hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
     })
 }
 
@@ -1653,6 +1654,7 @@ mod tests {
                 low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES,
                 nperiods: audio_defaults::NPERIODS,
                 sync_mode: audio_defaults::SYNC_MODE,
+                hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
             }),
             false,
         ));
@@ -1670,6 +1672,7 @@ mod tests {
                 low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES,
                 nperiods: audio_defaults::NPERIODS,
                 sync_mode: audio_defaults::SYNC_MODE,
+                hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
             }),
             true,
         ));
@@ -1744,6 +1747,7 @@ mod tests {
                 low_watermark_frames,
                 nperiods,
                 sync_mode,
+                hybrid_enabled,
             } => {
                 assert_eq!(device, "cli-device");
                 assert_eq!(input_device.as_deref(), Some("cli-input"));
@@ -1755,6 +1759,7 @@ mod tests {
                 assert_eq!(low_watermark_frames, audio_defaults::LOW_WATERMARK_FRAMES);
                 assert_eq!(nperiods, audio_defaults::NPERIODS);
                 assert_eq!(sync_mode, audio_defaults::SYNC_MODE);
+                assert_eq!(hybrid_enabled, audio_defaults::HYBRID_BUFFER_ENABLED);
             }
             _ => panic!("expected OpenAudioDevice action"),
         }
@@ -1785,6 +1790,7 @@ mod tests {
                 low_watermark_frames,
                 nperiods,
                 sync_mode,
+                hybrid_enabled,
             } => {
                 assert_eq!(device, "config-device");
                 assert_eq!(input_device.as_deref(), Some("config-input"));
@@ -1796,6 +1802,7 @@ mod tests {
                 assert_eq!(low_watermark_frames, audio_defaults::LOW_WATERMARK_FRAMES);
                 assert_eq!(nperiods, audio_defaults::NPERIODS);
                 assert_eq!(sync_mode, audio_defaults::SYNC_MODE);
+                assert_eq!(hybrid_enabled, audio_defaults::HYBRID_BUFFER_ENABLED);
             }
             _ => panic!("expected OpenAudioDevice action"),
         }

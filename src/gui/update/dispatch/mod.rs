@@ -373,10 +373,7 @@ impl Maolan {
                         self.stop_recording_preview();
                         self.state.blocking_write().message =
                             format!("Switching to branch '{}'...", name);
-                        return Task::perform(
-                            async move { session_dir },
-                            Message::LoadSessionPath,
-                        );
+                        return Task::perform(async move { session_dir }, Message::LoadSessionPath);
                     } else {
                         self.state.blocking_write().message =
                             format!("Branch file '{}' not found", branch_file.display());
@@ -477,10 +474,8 @@ impl Maolan {
                         Ok(task) => {
                             self.modal = None;
                             self.stop_recording_preview();
-                            self.state.blocking_write().message = format!(
-                                "Copied track '{}' from branch '{}'",
-                                track_name, branch
-                            );
+                            self.state.blocking_write().message =
+                                format!("Copied track '{}' from branch '{}'", track_name, branch);
                             return task;
                         }
                         Err(e) => {
@@ -4074,9 +4069,7 @@ impl Maolan {
                     master_track: master_track.clone(),
                 });
             }
-            Message::TrackToggleFolder {
-                ref track_name,
-            } => {
+            Message::TrackToggleFolder { ref track_name } => {
                 {
                     let mut state = self.state.blocking_write();
                     if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
@@ -4108,7 +4101,9 @@ impl Maolan {
                                 .map(|t| t.name.clone())
                                 .collect();
                             for child_name in children {
-                                if let Some(child) = state.tracks.iter_mut().find(|t| t.name == child_name) {
+                                if let Some(child) =
+                                    state.tracks.iter_mut().find(|t| t.name == child_name)
+                                {
                                     child.parent_track = None;
                                 }
                                 child_tasks.push(self.send(Action::TrackSetParent {
@@ -4143,7 +4138,12 @@ impl Maolan {
                             state.message = "Cannot create circular folder hierarchy".to_string();
                             return Task::none();
                         }
-                        if let Some(next) = state.tracks.iter().find(|t| t.name == current).and_then(|t| t.parent_track.as_deref()) {
+                        if let Some(next) = state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == current)
+                            .and_then(|t| t.parent_track.as_deref())
+                        {
                             current = next;
                         } else {
                             break;

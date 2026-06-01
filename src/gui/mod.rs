@@ -2222,7 +2222,9 @@ impl Maolan {
         let reader = std::io::BufReader::new(file);
         let session: SessionFileTracks = serde_json::from_reader(reader)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        Ok(Self::referenced_session_media_paths_from_tracks(&session.tracks))
+        Ok(Self::referenced_session_media_paths_from_tracks(
+            &session.tracks,
+        ))
     }
 
     fn collect_cleanup_candidate_files(
@@ -2284,10 +2286,10 @@ impl Maolan {
                 if ext != "json" {
                     continue;
                 }
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if stem.starts_with('.') {
-                        continue;
-                    }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && stem.starts_with('.')
+                {
+                    continue;
                 }
                 match Self::referenced_session_media_paths_from_file(&path) {
                     Ok(refs) => referenced.extend(refs),
@@ -6460,14 +6462,13 @@ impl Maolan {
             if let Ok(entries) = std::fs::read_dir(session_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.is_file() {
-                        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                                if ext == "json" && name != ".maolan" {
-                                    branches.push(name.to_string());
-                                }
-                            }
-                        }
+                    if path.is_file()
+                        && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+                        && let Some(ext) = path.extension().and_then(|s| s.to_str())
+                        && ext == "json"
+                        && name != ".maolan"
+                    {
+                        branches.push(name.to_string());
                     }
                 }
             }
@@ -6479,12 +6480,10 @@ impl Maolan {
         for branch in branches {
             if branch == current {
                 branch_rows.push(
-                    row![
-                        text(format!("{} (current)", branch)).width(Length::Fill),
-                    ]
-                    .spacing(4)
-                    .align_y(iced::Alignment::Center)
-                    .into(),
+                    row![text(format!("{} (current)", branch)).width(Length::Fill),]
+                        .spacing(4)
+                        .align_y(iced::Alignment::Center)
+                        .into(),
                 );
             } else {
                 branch_rows.push(
@@ -6519,8 +6518,7 @@ impl Maolan {
                 text_input("new branch name", &self.pending_branch_input)
                     .on_input(Message::BranchInput)
                     .width(Length::Fixed(200.0)),
-                button("Create")
-                    .on_press(Message::BranchCreate(self.pending_branch_input.clone()))
+                button("Create").on_press(Message::BranchCreate(self.pending_branch_input.clone()))
             ]
             .spacing(10)
             .align_y(iced::Alignment::Center),
@@ -6546,29 +6544,31 @@ impl Maolan {
 
         if let Some(session_dir) = self.session_dir.as_ref() {
             let branch_file = session_dir.join(format!("{}.json", branch));
-            if branch_file.exists() {
-                if let Ok(file) = std::fs::File::open(&branch_file) {
-                    let reader = std::io::BufReader::new(file);
-                    if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(reader) {
-                        if let Some(tracks) = json.get("tracks").and_then(|v| v.as_array()) {
-                            for track in tracks {
-                                if let Some(name) = track.get("name").and_then(|v| v.as_str()).map(String::from) {
-                                    track_rows.push(
-                                        row![
-                                            text(name.clone()).width(Length::Fill),
-                                            button("Copy")
-                                                .on_press(Message::BranchCopyTrack {
-                                                    branch: branch.to_string(),
-                                                    track_name: name,
-                                                })
-                                                .style(button::secondary),
-                                        ]
-                                        .spacing(10)
-                                        .align_y(iced::Alignment::Center)
-                                        .into(),
-                                    );
-                                }
-                            }
+            if branch_file.exists()
+                && let Ok(file) = std::fs::File::open(&branch_file)
+            {
+                let reader = std::io::BufReader::new(file);
+                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(reader)
+                    && let Some(tracks) = json.get("tracks").and_then(|v| v.as_array())
+                {
+                    for track in tracks {
+                        if let Some(name) =
+                            track.get("name").and_then(|v| v.as_str()).map(String::from)
+                        {
+                            track_rows.push(
+                                row![
+                                    text(name.clone()).width(Length::Fill),
+                                    button("Copy")
+                                        .on_press(Message::BranchCopyTrack {
+                                            branch: branch.to_string(),
+                                            track_name: name,
+                                        })
+                                        .style(button::secondary),
+                                ]
+                                .spacing(10)
+                                .align_y(iced::Alignment::Center)
+                                .into(),
+                            );
                         }
                     }
                 }

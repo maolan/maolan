@@ -8,7 +8,7 @@ fn print_usage() {
     eprintln!(
         "  maolan-plugin-host --scan --format <format> --path <plugin-path> [--output <json-path>]"
     );
-    eprintln!("");
+    eprintln!();
     eprintln!("  For 'clap' / 'null': 6 arguments after format.");
     eprintln!(
         "  For 'vst3' / 'lv2': 10 arguments after format (includes sample-rate, buffer-size, num-inputs, num-outputs)."
@@ -76,6 +76,7 @@ fn parse_log_level(args: &mut Vec<String>) -> Option<tracing::Level> {
 }
 
 fn main() {
+    eprintln!("[plugin-host] started");
     setup_parent_death_signal();
 
     let mut args: Vec<String> = std::env::args().collect();
@@ -299,6 +300,7 @@ fn main() {
             std::process::exit(3);
         });
 
+    eprintln!("[plugin-host] attaching to shm={}", shm_name);
     let runtime = match maolan_plugin_host::host::HostRuntime::attach(
         &shm_name,
         events,
@@ -308,10 +310,15 @@ fn main() {
     ) {
         Ok(rt) => rt,
         Err(e) => {
+            eprintln!(
+                "[plugin-host] Failed to attach to shared memory '{}': {}",
+                shm_name, e
+            );
             tracing::error!("Failed to attach to shared memory '{}': {}", shm_name, e);
             std::process::exit(2);
         }
     };
+    eprintln!("[plugin-host] attached successfully");
 
     match plugin_path.as_str() {
         "__test__" => runtime.write_test_magic(),

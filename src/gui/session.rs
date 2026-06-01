@@ -263,6 +263,7 @@ impl Maolan {
                 "period_frames": state.oss_period_frames,
                 "realtime_frames": state.oss_realtime_frames,
                 "low_watermark_frames": state.oss_low_watermark_frames,
+                "hybrid_buffer_enabled": state.oss_hybrid_buffer_enabled,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -601,7 +602,10 @@ impl Maolan {
 
         let mut target_track = source_track;
         if let Some(obj) = target_track.as_object_mut() {
-            obj.insert("name".to_string(), serde_json::Value::String(target_name.clone()));
+            obj.insert(
+                "name".to_string(),
+                serde_json::Value::String(target_name.clone()),
+            );
         }
 
         let mut new_current = current_json;
@@ -612,12 +616,13 @@ impl Maolan {
         }
 
         // Copy graph entry
-        if let Some(graphs) = source_json.get("graphs").and_then(|v| v.as_object()) {
-            if let Some(track_graph) = graphs.get(source_track_name) {
-                if let Some(new_graphs) = new_current.get_mut("graphs").and_then(|v| v.as_object_mut()) {
-                    new_graphs.insert(target_name.clone(), track_graph.clone());
-                }
-            }
+        if let Some(graphs) = source_json.get("graphs").and_then(|v| v.as_object())
+            && let Some(track_graph) = graphs.get(source_track_name)
+            && let Some(new_graphs) = new_current
+                .get_mut("graphs")
+                .and_then(|v| v.as_object_mut())
+        {
+            new_graphs.insert(target_name.clone(), track_graph.clone());
         }
 
         // Copy connections that involve this track
@@ -626,10 +631,8 @@ impl Maolan {
             .and_then(|v| v.as_array_mut())
             .ok_or_else(|| "No connections in current branch".to_string())?;
 
-        let existing_conns: HashSet<String> = current_connections
-            .iter()
-            .map(|c| c.to_string())
-            .collect();
+        let existing_conns: HashSet<String> =
+            current_connections.iter().map(|c| c.to_string()).collect();
 
         if let Some(connections) = source_json.get("connections").and_then(|v| v.as_array()) {
             for conn in connections {
@@ -639,8 +642,8 @@ impl Maolan {
                 let from_track = conn_obj.get("from_track").and_then(|v| v.as_str());
                 let to_track = conn_obj.get("to_track").and_then(|v| v.as_str());
 
-                let involves_source = from_track == Some(source_track_name)
-                    || to_track == Some(source_track_name);
+                let involves_source =
+                    from_track == Some(source_track_name) || to_track == Some(source_track_name);
                 if !involves_source {
                     continue;
                 }
@@ -1388,6 +1391,7 @@ impl Maolan {
                 "period_frames": state.oss_period_frames,
                 "realtime_frames": state.oss_realtime_frames,
                 "low_watermark_frames": state.oss_low_watermark_frames,
+                "hybrid_buffer_enabled": state.oss_hybrid_buffer_enabled,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -1761,6 +1765,9 @@ impl Maolan {
             .get("low_watermark_frames")
             .and_then(Value::as_u64)
             .map(|v| v.max(1) as usize);
+        let loaded_hybrid_buffer_enabled = transport
+            .get("hybrid_buffer_enabled")
+            .and_then(Value::as_bool);
 
         self.loop_range_samples = loaded_loop_range;
         self.loop_enabled = loaded_loop_enabled;
@@ -1774,6 +1781,9 @@ impl Maolan {
         }
         if let Some(v) = loaded_low_watermark_frames {
             self.state.blocking_write().oss_low_watermark_frames = v;
+        }
+        if let Some(v) = loaded_hybrid_buffer_enabled {
+            self.state.blocking_write().oss_hybrid_buffer_enabled = v;
         }
         {
             let mut st = self.state.blocking_write();
@@ -2101,13 +2111,22 @@ impl Maolan {
                     ));
                 }
                 {
-                    let is_folder = track.get("is_folder").and_then(Value::as_bool).unwrap_or(false);
-                    let folder_open = track.get("folder_open").and_then(Value::as_bool).unwrap_or(true);
-                    let parent_track = track.get("parent_track").and_then(Value::as_str).map(String::from);
-                    self.state.blocking_write().pending_track_folder_state.insert(
-                        name.clone(),
-                        (is_folder, folder_open, parent_track.clone()),
-                    );
+                    let is_folder = track
+                        .get("is_folder")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let folder_open = track
+                        .get("folder_open")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true);
+                    let parent_track = track
+                        .get("parent_track")
+                        .and_then(Value::as_str)
+                        .map(String::from);
+                    self.state
+                        .blocking_write()
+                        .pending_track_folder_state
+                        .insert(name.clone(), (is_folder, folder_open, parent_track.clone()));
                     if is_folder {
                         restore_actions.push(Action::TrackSetFolder {
                             track_name: name.clone(),
