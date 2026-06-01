@@ -1,13 +1,20 @@
+#[cfg(unix)]
 use crate::clap::{
-    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_PARAMS, CLAP_EXT_POSIX_FD_SUPPORT, CLAP_EXT_TIMER_SUPPORT,
-    ClapAudioBuffer, ClapEventHeader, ClapEventParamGesture, ClapEventParamMod,
-    ClapEventParamValue, ClapPluginParams, ClapProcess, EventBuffer, EventCapture, PluginInstance,
-    ThreadType, host_fds, host_timers, set_thread_type,
+    CLAP_EXT_AUDIO_PORTS, ClapAudioBuffer, ClapEventHeader, ClapEventParamGesture,
+    ClapEventParamMod, ClapEventParamValue, ClapPluginParams, EventBuffer, PluginInstance,
+    host_timers,
+};
+#[cfg(unix)]
+use crate::clap::{
+    CLAP_EXT_PARAMS, CLAP_EXT_POSIX_FD_SUPPORT, CLAP_EXT_TIMER_SUPPORT, ClapProcess, EventCapture,
+    ThreadType, host_fds, set_thread_type,
 };
 use crate::events::EventPair;
 use crate::protocol::*;
+#[cfg(unix)]
 use crate::ringbuf::RingBuffer;
 use crate::shm::ShmMapping;
+#[cfg(unix)]
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -27,6 +34,7 @@ pub fn request_audio_ports_rescan() {
 }
 
 /// Audio port buffer configuration built from `clap.audio-ports`.
+#[cfg(unix)]
 struct PortBuffers {
     inputs: Vec<ClapAudioBuffer>,
     outputs: Vec<ClapAudioBuffer>,
@@ -34,6 +42,7 @@ struct PortBuffers {
     _output_ptrs: Vec<Vec<*mut f32>>,
 }
 
+#[cfg(unix)]
 impl PortBuffers {
     /// Query the plugin's `clap.audio-ports` extension and build per-port buffers
     /// that point into the SHM audio planes. Returns `None` if the extension is missing.
@@ -176,6 +185,7 @@ impl HostRuntime {
 
     /// Extract the plugin ID for CLAP factories.
     /// `plugin_path` may be encoded as "path::plugin_id" or "path#plugin_id" by the caller.
+    #[cfg(unix)]
     fn plugin_id(&self) -> &str {
         if let Some(pos) = self.plugin_path.rfind("::") {
             &self.plugin_path[pos + 2..]
@@ -187,6 +197,7 @@ impl HostRuntime {
     }
 
     /// Extract the real file path (without the optional #plugin_id suffix).
+    #[cfg(unix)]
     fn real_plugin_path(&self) -> &str {
         if let Some(pos) = self.plugin_path.rfind("::") {
             &self.plugin_path[..pos]
@@ -290,6 +301,7 @@ impl HostRuntime {
     }
 
     /// Run a CLAP plugin inside the host process, marshalling audio via shared memory.
+    #[cfg(unix)]
     pub fn run_clap_plugin(&self) {
         let mut plugin = match PluginInstance::new(self.real_plugin_path(), self.plugin_id()) {
             Ok(p) => p,
@@ -710,6 +722,7 @@ impl HostRuntime {
     // ------------------------------------------------------------------
 
     /// Convert a raw MIDI event to CLAP note events if applicable, pushing into `event_buf`.
+    #[cfg(unix)]
     fn push_midi_as_clap_events(
         &self,
         event_buf: &mut EventBuffer,
@@ -761,6 +774,7 @@ impl HostRuntime {
     }
 
     /// Convert a captured CLAP event into a `ParameterEvent` and push it to the echo ring.
+    #[cfg(unix)]
     fn echo_event_to_daw(
         &self,
         header: &ClapEventHeader,
@@ -832,6 +846,7 @@ impl HostRuntime {
 
     /// Poll the DAW pipe and registered FDs.
     /// Returns `(daw_ready, ready_fds)` where `ready_fds` contains only FDs that signaled.
+    #[cfg(unix)]
     fn poll_daw_and_fds(&self, daw_fd: i32, timeout: Duration) -> (bool, Vec<(i32, u32)>) {
         let fds = host_fds().lock().unwrap();
         if fds.is_empty() {
@@ -887,6 +902,7 @@ impl HostRuntime {
     }
 
     /// Return the number of milliseconds until the next timer expires (0 if already expired).
+    #[cfg(unix)]
     fn next_timer_ms(&self) -> u64 {
         let timers = host_timers().lock().unwrap();
         let now = Instant::now();
@@ -904,6 +920,7 @@ impl HostRuntime {
     }
 
     /// Handle timers, FD callbacks, and on_main_thread.
+    #[cfg(unix)]
     fn handle_idle_work(
         &self,
         plugin: &PluginInstance,

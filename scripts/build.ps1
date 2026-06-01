@@ -389,7 +389,7 @@ Write-Host "Building installer..."
 $nsiTemp = "$env:TEMP\maolan-installer"
 New-Item -ItemType Directory -Force $nsiTemp | Out-Null
 Copy-Item "$PSScriptRoot\installer.nsi" "$nsiTemp\installer.nsi" -Force
-Copy-Item "$PSScriptRoot\LICENSE" "$nsiTemp\LICENSE" -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) "LICENSE") "$nsiTemp\LICENSE" -Force -ErrorAction SilentlyContinue
 Push-Location $nsiTemp
 & $nsisPath "$nsiTemp\installer.nsi"
 Pop-Location
