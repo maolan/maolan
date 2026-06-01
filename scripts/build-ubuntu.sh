@@ -70,7 +70,7 @@ fi
 
 DEB_ARCH="$(dpkg --print-architecture)"
 PKG_NAME="maolan"
-DEB_NAME="${PKG_NAME}-${PKG_VERSION}-ubuntu_${DEB_ARCH}.deb"
+DEB_NAME="${PKG_NAME}-${PKG_VERSION}-ubuntu.${DEB_ARCH}.deb"
 
 echo "========================================"
 echo "Building Maolan .deb package"
@@ -148,6 +148,7 @@ echo "[3/6] Building release binaries..."
 cd "$SOURCE_DIR"
 
 CARGO_ARGS=("--release")
+CARGO_ARGS+=("--workspace")
 if [[ -n "$TARGET_DIR" ]]; then
     mkdir -p "$TARGET_DIR"
     CARGO_ARGS+=("--target-dir" "$TARGET_DIR")
@@ -166,7 +167,7 @@ else
 fi
 
 # Verify binaries exist
-for bin in maolan maolan-cli maolan-osc; do
+for bin in maolan maolan-cli maolan-osc maolan-plugin-host; do
     if [[ ! -f "$BIN_DIR/$bin" ]]; then
         echo "Error: Binary '$BIN_DIR/$bin' not found after build" >&2
         exit 1
@@ -194,9 +195,11 @@ mkdir -p "$STAGING_DIR/usr/share/doc/$PKG_NAME"
 cp "$BIN_DIR/maolan"     "$STAGING_DIR/usr/bin/"
 cp "$BIN_DIR/maolan-cli" "$STAGING_DIR/usr/bin/"
 cp "$BIN_DIR/maolan-osc" "$STAGING_DIR/usr/bin/"
+cp "$BIN_DIR/maolan-plugin-host" "$STAGING_DIR/usr/bin/"
 strip "$STAGING_DIR/usr/bin/maolan"
 strip "$STAGING_DIR/usr/bin/maolan-cli"
 strip "$STAGING_DIR/usr/bin/maolan-osc"
+strip "$STAGING_DIR/usr/bin/maolan-plugin-host"
 chmod 755 "$STAGING_DIR/usr/bin/"*
 
 # Desktop entry

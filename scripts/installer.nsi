@@ -99,6 +99,7 @@ SectionEnd
 Section "Uninstall"
     Delete "$INSTDIR\maolan.exe"
     Delete "$INSTDIR\maolan-cli.exe"
+    Delete "$INSTDIR\maolan-plugin-host.exe"
     Delete "$INSTDIR\avcodec-62.dll"
     Delete "$INSTDIR\avdevice-62.dll"
     Delete "$INSTDIR\avfilter-11.dll"

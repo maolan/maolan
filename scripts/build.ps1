@@ -365,9 +365,12 @@ if (-not (Test-Path $vcRedist)) {
 # ---------------------------------------------------------------------------
 Patch-FFmpegNext
 
-Write-Host "Building maolan (release)..."
+Write-Host "Cleaning old build artifacts..."
 Push-Location $PSScriptRoot
-cargo build --release --target $target --target-dir $targetDir
+cargo clean --target-dir $targetDir
+
+Write-Host "Building maolan (release)..."
+cargo build --release --workspace --target $target --target-dir $targetDir
 Pop-Location
 
 # ---------------------------------------------------------------------------
@@ -377,6 +380,7 @@ Write-Host "Staging files to $staging..."
 New-Item -ItemType Directory -Force $staging | Out-Null
 Copy-Item "$targetDir\$target\release\maolan.exe"     $staging -Force
 Copy-Item "$targetDir\$target\release\maolan-cli.exe" $staging -Force
+Copy-Item "$targetDir\$target\release\maolan-plugin-host.exe" $staging -Force
 Copy-Item "$ffmpegDir\bin\av*.dll" $staging -Force
 Copy-Item "$ffmpegDir\bin\sw*.dll" $staging -Force
 Copy-Item $vcRedist $staging -Force
@@ -395,7 +399,7 @@ Push-Location $nsiTemp
 Pop-Location
 $distDir = Join-Path (Split-Path $PSScriptRoot -Parent) "dist"
 New-Item -ItemType Directory -Force $distDir | Out-Null
-$outFile = "maolan-$pkgVersion.exe"
+$outFile = "maolan-$pkgVersion.windows.amd64.exe"
 Copy-Item "$nsiTemp\maolan-setup.exe" "$distDir\$outFile" -Force -ErrorAction SilentlyContinue
 if (Test-Path "$distDir\$outFile") {
     Write-Host "Done: $(Resolve-Path "$distDir\$outFile")"
