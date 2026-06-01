@@ -155,22 +155,26 @@ fn main() {
     #[cfg(unix)]
     let h2d_fd: i32 = args[6].parse().unwrap_or(-1);
 
-    // Parse VST3/LV2-specific args.
+    // Parse VST3/LV2-specific args (only needed on Unix where VST3/LV2 hosting runs).
+    #[cfg(unix)]
     let sample_rate: f64 = if args.len() > 7 {
         args[7].parse().unwrap_or(48000.0)
     } else {
         48000.0
     };
+    #[cfg(unix)]
     let buffer_size: usize = if args.len() > 8 {
         args[8].parse().unwrap_or(256)
     } else {
         256
     };
+    #[cfg(unix)]
     let num_inputs: usize = if args.len() > 9 {
         args[9].parse().unwrap_or(2)
     } else {
         2
     };
+    #[cfg(unix)]
     let num_outputs: usize = if args.len() > 10 {
         args[10].parse().unwrap_or(2)
     } else {
@@ -212,37 +216,41 @@ fn main() {
                     eprintln!("Invalid event pipe file descriptors");
                     std::process::exit(3);
                 }
-            }
-            let events =
-                unsafe { maolan_plugin_protocol::events::EventPair::from_fds(d2h_fd, h2d_fd) };
-            let mapping = match maolan_plugin_protocol::shm::ShmMapping::open_existing(
-                &shm_name,
-                maolan_plugin_protocol::protocol::SHM_SIZE,
-            ) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("Failed to attach to shared memory '{}': {}", shm_name, e);
-                    std::process::exit(2);
+                let events =
+                    unsafe { maolan_plugin_protocol::events::EventPair::from_fds(d2h_fd, h2d_fd) };
+                let mapping = match maolan_plugin_protocol::shm::ShmMapping::open_existing(
+                    &shm_name,
+                    maolan_plugin_protocol::protocol::SHM_SIZE,
+                ) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("Failed to attach to shared memory '{}': {}", shm_name, e);
+                        std::process::exit(2);
+                    }
+                };
+                {
+                    let header =
+                        unsafe { maolan_plugin_protocol::protocol::header_mut(mapping.as_ptr()) };
+                    header.ready.store(1, std::sync::atomic::Ordering::Release);
                 }
-            };
-            {
-                let header =
-                    unsafe { maolan_plugin_protocol::protocol::header_mut(mapping.as_ptr()) };
-                header.ready.store(1, std::sync::atomic::Ordering::Release);
+                maolan_plugin_host::vst3_lv2_host::run_vst3(
+                    maolan_plugin_host::vst3_lv2_host::Vst3RunArgs {
+                        plugin_path: &plugin_spec,
+                        mapping,
+                        events,
+                        instance_id: &instance_id,
+                        sample_rate,
+                        buffer_size,
+                        num_inputs,
+                        num_outputs,
+                    },
+                );
             }
-            maolan_plugin_host::vst3_lv2_host::run_vst3(
-                maolan_plugin_host::vst3_lv2_host::Vst3RunArgs {
-                    plugin_path: &plugin_spec,
-                    mapping,
-                    events,
-                    instance_id: &instance_id,
-                    sample_rate,
-                    buffer_size,
-                    num_inputs,
-                    num_outputs,
-                },
-            );
-            return;
+            #[cfg(not(unix))]
+            {
+                eprintln!("VST3 plugin hosting is not supported on this platform");
+                std::process::exit(4);
+            }
         }
         #[cfg(unix)]
         "lv2" => {
@@ -324,7 +332,7 @@ fn main() {
         "__test__" => runtime.write_test_magic(),
         "__crash__" => {
             runtime.signal_ready();
-            unsafe { libc::raise(libc::SIGKILL) };
+            std::process::abort();
         }
         "__hang__" => {
             runtime.signal_ready();

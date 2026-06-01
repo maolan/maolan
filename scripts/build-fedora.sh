@@ -16,6 +16,8 @@ set -euo pipefail
 # The script installs build dependencies via dnf, installs Rust via rustup if missing,
 # builds the release binaries, and produces a .rpm package using rpmbuild.
 
+. /etc/os-release
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$(dirname "$SCRIPT_DIR")"
 OUTPUT_DIR="$SOURCE_DIR/dist"
@@ -70,16 +72,14 @@ fi
 
 RPM_ARCH="$(uname -m)"
 PKG_NAME="maolan"
-RPM_NAME="${PKG_NAME}-${PKG_VERSION}-1.fedora.${RPM_ARCH}.rpm"
-# rpmbuild will expand %{?dist}; for display we show the literal
-RPM_NAME_DISPLAY="${PKG_NAME}-${PKG_VERSION}-1.fedora.${RPM_ARCH}.rpm"
+RPM_NAME="${PKG_NAME}-${PKG_VERSION}-1.fc${VERSION_ID}.${RPM_ARCH}.rpm"
 
 echo "========================================"
 echo "Building Maolan .rpm package"
 echo "Version: $PKG_VERSION"
 echo "Architecture: $RPM_ARCH"
 echo "Source: $SOURCE_DIR"
-echo "Output: $OUTPUT_DIR/$RPM_NAME_DISPLAY"
+echo "Output: $OUTPUT_DIR/$RPM_NAME"
 echo "========================================"
 
 # ---------------------------------------------------------------------------
@@ -138,6 +138,7 @@ echo "[4/6] Building release binaries..."
 cd "$SOURCE_DIR"
 
 CARGO_ARGS=("--release")
+CARGO_ARGS+=("--workspace")
 if [[ -n "$TARGET_DIR" ]]; then
     mkdir -p "$TARGET_DIR"
     CARGO_ARGS+=("--target-dir" "$TARGET_DIR")
@@ -154,7 +155,7 @@ else
 fi
 
 # Verify binaries exist
-for bin in maolan maolan-cli maolan-osc; do
+for bin in maolan maolan-cli maolan-osc maolan-plugin-host; do
     if [[ ! -f "$BIN_DIR/$bin" ]]; then
         echo "Error: Binary '$BIN_DIR/$bin' not found after build" >&2
         exit 1
@@ -184,6 +185,7 @@ mkdir -p "$STAGING_DIR/usr/share/doc/$PKG_NAME"
 cp "$BIN_DIR/maolan"     "$STAGING_DIR/usr/bin/"
 cp "$BIN_DIR/maolan-cli" "$STAGING_DIR/usr/bin/"
 cp "$BIN_DIR/maolan-osc" "$STAGING_DIR/usr/bin/"
+cp "$BIN_DIR/maolan-plugin-host" "$STAGING_DIR/usr/bin/"
 strip "$STAGING_DIR/usr/bin/"*
 chmod 755 "$STAGING_DIR/usr/bin/"*
 
@@ -237,6 +239,7 @@ tar xzf %{SOURCE0}
 /usr/bin/maolan
 /usr/bin/maolan-cli
 /usr/bin/maolan-osc
+/usr/bin/maolan-plugin-host
 /usr/share/applications/maolan.desktop
 /usr/share/icons/hicolor/scalable/apps/maolan-icon.svg
 %doc /usr/share/doc/maolan/README.md
@@ -262,12 +265,12 @@ mkdir -p "$OUTPUT_DIR"
 
 # rpmbuild expands Release, so find the actual file name
 BUILT_RPM="$(ls "$SPEC_DIR/RPMS/$RPM_ARCH/"*.rpm | head -n1)"
-cp "$BUILT_RPM" "$OUTPUT_DIR/"
+cp "$BUILT_RPM" "$OUTPUT_DIR/$RPM_NAME"
 
 BUILT_RPM_BASENAME="$(basename "$BUILT_RPM")"
 
 echo ""
 echo "========================================"
 echo "Package built successfully:"
-echo "  $OUTPUT_DIR/$BUILT_RPM_BASENAME"
+echo "  $OUTPUT_DIR/$RPM_NAME"
 echo "========================================"
