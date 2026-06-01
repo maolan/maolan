@@ -443,7 +443,9 @@ impl Track {
     }
 
     pub fn has_folder_children(&self, all_tracks: &[Track]) -> bool {
-        all_tracks.iter().any(|t| t.parent_track.as_deref() == Some(self.name.as_str()))
+        all_tracks
+            .iter()
+            .any(|t| t.parent_track.as_deref() == Some(self.name.as_str()))
     }
 
     pub fn effective_muted(&self, all_tracks: &[Track]) -> bool {

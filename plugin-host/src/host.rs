@@ -332,6 +332,7 @@ impl HostRuntime {
 
         // Build per-port audio buffers from the plugin's audio-ports extension.
         let mut port_buffers = PortBuffers::from_plugin(plugin.plugin_ptr(), ptr, 0, 0);
+
         let has_note_ports = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
@@ -344,25 +345,27 @@ impl HostRuntime {
                 .filter(|p| !p.is_null())
                 .is_some()
         };
-
         // Set up ring buffers.
+
         let param_ring = unsafe {
             let buf = param_ring_ptr(ptr);
             let (w, r) = param_indices(ptr);
             RingBuffer::new(buf, w, r, RING_CAPACITY)
         };
+
         let echo_ring = unsafe {
             let buf = echo_ring_ptr(ptr);
             let (w, r) = echo_indices(ptr);
             RingBuffer::new(buf, w, r, RING_CAPACITY)
         };
+
         let midi_ring = unsafe {
             let buf = midi_ring_ptr(ptr);
             let (w, r) = midi_indices(ptr);
             RingBuffer::new(buf, w, r, RING_CAPACITY)
         };
-
         // Cache plugin extension pointers for idle callbacks.
+
         let params_ext = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
@@ -370,6 +373,7 @@ impl HostRuntime {
                 .filter(|p| !p.is_null())
                 .map(|p| p as *const ClapPluginParams)
         };
+
         let timer_ext = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
@@ -377,6 +381,7 @@ impl HostRuntime {
                 .filter(|p| !p.is_null())
                 .map(|p| p as *const crate::clap::ClapPluginTimerSupport)
         };
+
         let fd_ext = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
@@ -384,7 +389,6 @@ impl HostRuntime {
                 .filter(|p| !p.is_null())
                 .map(|p| p as *const crate::clap::ClapPluginPosixFdSupport)
         };
-
         let mut steady_time: i64 = 0;
         let daw_read_fd = self.events.host_read_fd();
         let mut started_processing = false;
@@ -446,7 +450,7 @@ impl HostRuntime {
             let timeout_ms = self.next_timer_ms().min(100);
             let (daw_ready, ready_fds) = match timeout_ms {
                 0 => (true, Vec::new()), // timers expired immediately
-                ms => self.poll_daw_and_fds(daw_read_fd, Duration::from_millis(ms as u64)),
+                ms => self.poll_daw_and_fds(daw_read_fd, Duration::from_millis(ms)),
             };
 
             // Fire FD callbacks only for FDs that actually signaled readiness.
@@ -566,21 +570,21 @@ impl HostRuntime {
             let out_events = event_capture.as_output_events();
 
             // Flush parameters on main thread if requested.
-            if PARAMS_FLUSH_REQUESTED.swap(false, Ordering::Acquire) {
-                if let Some(params_ptr) = params_ext {
-                    unsafe {
-                        let flush = (*params_ptr).flush;
-                        if let Some(f) = flush {
-                            let empty_in = crate::clap::empty_input_events();
-                            let mut flush_capture = EventCapture::new();
-                            let flush_out = flush_capture.as_output_events();
-                            f(plugin.plugin_ptr(), &empty_in, &flush_out);
-                            // Echo flushed events immediately.
-                            for bytes in flush_capture.drain() {
-                                if bytes.len() >= std::mem::size_of::<ClapEventHeader>() {
-                                    let h = &*(bytes.as_ptr() as *const ClapEventHeader);
-                                    self.echo_event_to_daw(h, &bytes, &echo_ring);
-                                }
+            if PARAMS_FLUSH_REQUESTED.swap(false, Ordering::Acquire)
+                && let Some(params_ptr) = params_ext
+            {
+                unsafe {
+                    let flush = (*params_ptr).flush;
+                    if let Some(f) = flush {
+                        let empty_in = crate::clap::empty_input_events();
+                        let mut flush_capture = EventCapture::new();
+                        let flush_out = flush_capture.as_output_events();
+                        f(plugin.plugin_ptr(), &empty_in, &flush_out);
+                        // Echo flushed events immediately.
+                        for bytes in flush_capture.drain() {
+                            if bytes.len() >= std::mem::size_of::<ClapEventHeader>() {
+                                let h = &*(bytes.as_ptr() as *const ClapEventHeader);
+                                self.echo_event_to_daw(h, &bytes, &echo_ring);
                             }
                         }
                     }
@@ -610,8 +614,8 @@ impl HostRuntime {
 
             set_thread_type(ThreadType::AudioThread);
 
-            let process = if let Some(ref mut pb) = port_buffers {
-                ClapProcess {
+            let process_result = if let Some(ref mut pb) = port_buffers {
+                let process = ClapProcess {
                     steady_time,
                     frames_count: block_size as u32,
                     transport,
@@ -621,53 +625,46 @@ impl HostRuntime {
                     audio_outputs_count: pb.outputs.len() as u32,
                     in_events: &in_events,
                     out_events: &out_events,
-                }
+                };
+                plugin.process(&process)
             } else {
-                // Fallback single-bus (must reconstruct temporaries here).
-                let mut in_ptrs: [*mut f32; MAX_CHANNELS] = [ptr::null_mut(); MAX_CHANNELS];
-                let mut out_ptrs: [*mut f32; MAX_CHANNELS] = [ptr::null_mut(); MAX_CHANNELS];
-                for (ch, in_ptr) in in_ptrs
-                    .iter_mut()
-                    .enumerate()
-                    .take(num_in.min(MAX_CHANNELS))
-                {
+                let mut fallback_in_ptrs: Vec<*mut f32> = Vec::new();
+                let mut fallback_out_ptrs: Vec<*mut f32> = Vec::new();
+                fallback_in_ptrs.resize(num_in.min(MAX_CHANNELS), ptr::null_mut());
+                fallback_out_ptrs.resize(num_out.min(MAX_CHANNELS), ptr::null_mut());
+                for (ch, in_ptr) in fallback_in_ptrs.iter_mut().enumerate() {
                     *in_ptr = unsafe { audio_channel_ptr(ptr, ch, 0) };
                 }
-                for (ch, out_ptr) in out_ptrs
-                    .iter_mut()
-                    .enumerate()
-                    .take(num_out.min(MAX_CHANNELS))
-                {
+                for (ch, out_ptr) in fallback_out_ptrs.iter_mut().enumerate() {
                     *out_ptr = unsafe { audio_channel_ptr(ptr, ch, 1) };
                 }
-                let audio_in = ClapAudioBuffer {
-                    data32: in_ptrs.as_mut_ptr(),
+                let fallback_audio_in = ClapAudioBuffer {
+                    data32: fallback_in_ptrs.as_mut_ptr(),
                     data64: ptr::null_mut(),
                     channel_count: num_in as u32,
                     latency: 0,
                     constant_mask: 0,
                 };
-                let mut audio_out = ClapAudioBuffer {
-                    data32: out_ptrs.as_mut_ptr(),
+                let mut fallback_audio_out = ClapAudioBuffer {
+                    data32: fallback_out_ptrs.as_mut_ptr(),
                     data64: ptr::null_mut(),
                     channel_count: num_out as u32,
                     latency: 0,
                     constant_mask: 0,
                 };
-                ClapProcess {
+                let process = ClapProcess {
                     steady_time,
                     frames_count: block_size as u32,
                     transport,
-                    audio_inputs: &audio_in,
-                    audio_outputs: &mut audio_out,
+                    audio_inputs: &fallback_audio_in,
+                    audio_outputs: &mut fallback_audio_out,
                     audio_inputs_count: 1,
                     audio_outputs_count: 1,
                     in_events: &in_events,
                     out_events: &out_events,
-                }
+                };
+                plugin.process(&process)
             };
-
-            let process_result = plugin.process(&process);
 
             set_thread_type(ThreadType::MainThread);
 
@@ -771,60 +768,60 @@ impl HostRuntime {
         echo_ring: &RingBuffer<ParameterEvent>,
     ) {
         match header.type_ {
-            crate::clap::CLAP_EVENT_PARAM_VALUE => {
-                if bytes.len() >= std::mem::size_of::<ClapEventParamValue>() {
-                    let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamValue) };
-                    let echo = ParameterEvent {
-                        param_index: ev.param_id,
-                        value: ev.value as f32,
-                        sample_offset: ev.header.time,
-                        event_kind: PARAM_EVENT_VALUE,
-                    };
-                    if !echo_ring.push(echo) {
-                        tracing::warn!("Echo ring full, dropping parameter value event");
-                    }
+            crate::clap::CLAP_EVENT_PARAM_VALUE
+                if bytes.len() >= std::mem::size_of::<ClapEventParamValue>() =>
+            {
+                let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamValue) };
+                let echo = ParameterEvent {
+                    param_index: ev.param_id,
+                    value: ev.value as f32,
+                    sample_offset: ev.header.time,
+                    event_kind: PARAM_EVENT_VALUE,
+                };
+                if !echo_ring.push(echo) {
+                    tracing::warn!("Echo ring full, dropping parameter value event");
                 }
             }
-            crate::clap::CLAP_EVENT_PARAM_MOD => {
-                if bytes.len() >= std::mem::size_of::<ClapEventParamMod>() {
-                    let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamMod) };
-                    let echo = ParameterEvent {
-                        param_index: ev.param_id,
-                        value: ev.amount as f32,
-                        sample_offset: ev.header.time,
-                        event_kind: PARAM_EVENT_MOD,
-                    };
-                    if !echo_ring.push(echo) {
-                        tracing::warn!("Echo ring full, dropping parameter mod event");
-                    }
+            crate::clap::CLAP_EVENT_PARAM_MOD
+                if bytes.len() >= std::mem::size_of::<ClapEventParamMod>() =>
+            {
+                let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamMod) };
+                let echo = ParameterEvent {
+                    param_index: ev.param_id,
+                    value: ev.amount as f32,
+                    sample_offset: ev.header.time,
+                    event_kind: PARAM_EVENT_MOD,
+                };
+                if !echo_ring.push(echo) {
+                    tracing::warn!("Echo ring full, dropping parameter mod event");
                 }
             }
-            crate::clap::CLAP_EVENT_PARAM_GESTURE_BEGIN => {
-                if bytes.len() >= std::mem::size_of::<ClapEventParamGesture>() {
-                    let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamGesture) };
-                    let echo = ParameterEvent {
-                        param_index: ev.param_id,
-                        value: 0.0,
-                        sample_offset: ev.header.time,
-                        event_kind: PARAM_EVENT_GESTURE_BEGIN,
-                    };
-                    if !echo_ring.push(echo) {
-                        tracing::warn!("Echo ring full, dropping gesture begin event");
-                    }
+            crate::clap::CLAP_EVENT_PARAM_GESTURE_BEGIN
+                if bytes.len() >= std::mem::size_of::<ClapEventParamGesture>() =>
+            {
+                let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamGesture) };
+                let echo = ParameterEvent {
+                    param_index: ev.param_id,
+                    value: 0.0,
+                    sample_offset: ev.header.time,
+                    event_kind: PARAM_EVENT_GESTURE_BEGIN,
+                };
+                if !echo_ring.push(echo) {
+                    tracing::warn!("Echo ring full, dropping gesture begin event");
                 }
             }
-            crate::clap::CLAP_EVENT_PARAM_GESTURE_END => {
-                if bytes.len() >= std::mem::size_of::<ClapEventParamGesture>() {
-                    let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamGesture) };
-                    let echo = ParameterEvent {
-                        param_index: ev.param_id,
-                        value: 0.0,
-                        sample_offset: ev.header.time,
-                        event_kind: PARAM_EVENT_GESTURE_END,
-                    };
-                    if !echo_ring.push(echo) {
-                        tracing::warn!("Echo ring full, dropping gesture end event");
-                    }
+            crate::clap::CLAP_EVENT_PARAM_GESTURE_END
+                if bytes.len() >= std::mem::size_of::<ClapEventParamGesture>() =>
+            {
+                let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventParamGesture) };
+                let echo = ParameterEvent {
+                    param_index: ev.param_id,
+                    value: 0.0,
+                    sample_offset: ev.header.time,
+                    event_kind: PARAM_EVENT_GESTURE_END,
+                };
+                if !echo_ring.push(echo) {
+                    tracing::warn!("Echo ring full, dropping gesture end event");
                 }
             }
             _ => {

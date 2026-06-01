@@ -5,3 +5,4 @@ pub const REALTIME_FRAMES: usize = 64;
 pub const LOW_WATERMARK_FRAMES: usize = 256;
 pub const NPERIODS: usize = 1;
 pub const SYNC_MODE: bool = false;
+pub const HYBRID_BUFFER_ENABLED: bool = false;

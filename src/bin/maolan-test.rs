@@ -281,6 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES.min(options.period_frames),
             nperiods: options.nperiods,
             sync_mode: audio_defaults::SYNC_MODE,
+            hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
         }))
         .await?;
 

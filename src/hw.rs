@@ -23,6 +23,7 @@ struct OpenAudioSelection {
     low_watermark_frames: usize,
     nperiods: usize,
     sync_mode: bool,
+    hybrid_buffer_enabled: bool,
 }
 
 trait DeviceId {
@@ -299,6 +300,7 @@ impl HW {
             low_watermark_frames: selection.low_watermark_frames,
             nperiods: selection.nperiods,
             sync_mode: selection.sync_mode,
+            hybrid_enabled: selection.hybrid_buffer_enabled,
         }
     }
 
@@ -345,6 +347,7 @@ impl HW {
             mut low_watermark_frames,
             nperiods,
             sync_mode,
+            hybrid_buffer_enabled,
         ) = {
             let state = self.state.blocking_read();
             (
@@ -359,6 +362,7 @@ impl HW {
                 state.oss_low_watermark_frames,
                 state.oss_nperiods,
                 state.oss_sync_mode,
+                state.oss_hybrid_buffer_enabled,
             )
         };
         period_frames = period_frames.max(1);
@@ -580,6 +584,7 @@ impl HW {
                 low_watermark_frames,
                 nperiods,
                 sync_mode,
+                hybrid_buffer_enabled,
             };
             submit = submit.on_press(Message::Request(Self::open_audio_action(
                 selected_is_jack,
@@ -687,29 +692,38 @@ impl HW {
                     .spacing(10),
                 )
                 .push(
-                    row![
-                        text("Realtime frames:"),
-                        pick_list(
-                            realtime_options,
-                            Some(realtime_frames),
-                            Message::HWRealtimeFramesChanged
-                        )
-                        .placeholder("Realtime")
-                    ]
-                    .spacing(10),
-                )
-                .push(
-                    row![
-                        text("Low watermark:"),
-                        pick_list(
-                            low_watermark_options,
-                            Some(low_watermark_frames),
-                            Message::HWLowWatermarkFramesChanged
-                        )
-                        .placeholder("Low watermark")
-                    ]
-                    .spacing(10),
-                )
+                    checkbox(hybrid_buffer_enabled)
+                        .label("Hybrid buffer")
+                        .on_toggle(Message::HWHybridBufferToggled),
+                );
+            if hybrid_buffer_enabled {
+                content = content
+                    .push(
+                        row![
+                            text("Realtime frames:"),
+                            pick_list(
+                                realtime_options,
+                                Some(realtime_frames),
+                                Message::HWRealtimeFramesChanged
+                            )
+                            .placeholder("Realtime")
+                        ]
+                        .spacing(10),
+                    )
+                    .push(
+                        row![
+                            text("Low watermark:"),
+                            pick_list(
+                                low_watermark_options,
+                                Some(low_watermark_frames),
+                                Message::HWLowWatermarkFramesChanged
+                            )
+                            .placeholder("Low watermark")
+                        ]
+                        .spacing(10),
+                    );
+            }
+            content = content
                 .push(
                     row![
                         text("N periods:"),
@@ -871,6 +885,7 @@ mod tests {
             low_watermark_frames: 256,
             nperiods: 2,
             sync_mode: true,
+            hybrid_buffer_enabled: true,
         };
         assert_eq!(selection.chosen_bits, 24);
         assert_eq!(selection.chosen_sample_rate_hz, 48000);

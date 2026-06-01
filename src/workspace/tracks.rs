@@ -243,7 +243,11 @@ pub(super) fn track_context_menu_overlay(
 
     // Folder track options
     items.push(menu::menu_item(
-        if track.is_folder { "Make Regular Track" } else { "Make Folder Track" },
+        if track.is_folder {
+            "Make Regular Track"
+        } else {
+            "Make Folder Track"
+        },
         Message::TrackSetFolder {
             track_name: track_name.clone(),
             is_folder: !track.is_folder,
@@ -675,11 +679,13 @@ impl Tracks {
 
         let folder_toggle: Element<'static, Message> = if track.is_folder {
             let icon = if track.folder_open { "▼" } else { "▶" };
-            button(container(text(icon).size(11))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill))
+            button(
+                container(text(icon).size(11))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
             .width(Length::Fixed(18.0))
             .height(Length::Fixed(18.0))
             .padding(0)
@@ -1077,15 +1083,15 @@ impl Tracks {
         .width(Length::Fill)
         .height(Length::Fixed(height))
         .padding([4, 6])
-            .style(move |_theme| container::Style {
-                background: Some(Background::Color(outer_body_bg)),
-                border: Border {
-                    color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
-                ..container::Style::default()
-            });
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(outer_body_bg)),
+            border: Border {
+                color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        });
         let track_body = container(row![vca_strip, track_body])
             .width(Length::Fill)
             .height(Length::Fixed(height));
@@ -1284,7 +1290,7 @@ impl Tracks {
         let filtered: Vec<_> = tracks
             .into_iter()
             .enumerate()
-            .zip(vca_view_data.into_iter())
+            .zip(vca_view_data)
             .filter(|((_, (_, track)), _)| !track.hidden)
             .collect();
         let children: Vec<Element<'_, Message>> = filtered

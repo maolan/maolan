@@ -1144,6 +1144,7 @@ pub enum Message {
     HWLowWatermarkFramesChanged(usize),
     HWNPeriodsChanged(usize),
     HWSyncModeToggled(bool),
+    HWHybridBufferToggled(bool),
 
     ClipRenameShow {
         track_idx: String,

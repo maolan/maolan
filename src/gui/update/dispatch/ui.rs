@@ -216,6 +216,10 @@ impl Maolan {
                 self.state.blocking_write().oss_sync_mode = *sync_mode;
                 true
             }
+            Message::HWHybridBufferToggled(enabled) => {
+                self.state.blocking_write().oss_hybrid_buffer_enabled = *enabled;
+                true
+            }
             _ => false,
         }
     }

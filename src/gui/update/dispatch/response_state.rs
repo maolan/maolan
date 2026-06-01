@@ -53,10 +53,11 @@ impl Maolan {
                 low_watermark_frames,
                 nperiods,
                 sync_mode,
+                hybrid_enabled,
             } => {
                 let mut state = self.state.blocking_write();
                 state.message = format!(
-                    "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, realtime={}, low_watermark={}, nperiods={}, sync_mode={})",
+                    "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, realtime={}, low_watermark={}, nperiods={}, sync_mode={}, hybrid={})",
                     device,
                     state.hw_sample_rate_hz.max(1),
                     bits,
@@ -65,7 +66,8 @@ impl Maolan {
                     realtime_frames,
                     low_watermark_frames,
                     nperiods,
-                    sync_mode
+                    sync_mode,
+                    hybrid_enabled,
                 );
                 state.hw_loaded = true;
                 state.oss_period_frames = (*period_frames).max(1);
@@ -77,6 +79,7 @@ impl Maolan {
                         .saturating_mul(step)
                         .min(state.oss_period_frames);
                 state.oss_nperiods = (*nperiods).max(1);
+                state.oss_hybrid_buffer_enabled = *hybrid_enabled;
                 true
             }
             Action::OpenMidiInputDevice(s) => {
@@ -250,14 +253,20 @@ impl Maolan {
                 state.message = "Cleared all MIDI mappings".to_string();
                 true
             }
-            Action::TrackSetFolder { track_name, is_folder } => {
+            Action::TrackSetFolder {
+                track_name,
+                is_folder,
+            } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     track.is_folder = *is_folder;
                 }
                 true
             }
-            Action::TrackSetParent { track_name, parent_name } => {
+            Action::TrackSetParent {
+                track_name,
+                parent_name,
+            } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     track.parent_track = parent_name.clone();
