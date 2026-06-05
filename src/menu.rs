@@ -101,11 +101,6 @@ impl Menu {
                     (menu_item("Undo", Message::Undo)),
                     (menu_item("Redo", Message::Redo)),
                     (menu_item("Preferences", Message::Show(Show::Preferences))),
-                    (menu_item("Session Diagnostics", Message::SessionDiagnosticsRequest)),
-                    (menu_item(
-                        "Export Diagnostics Bundle",
-                        Message::ExportDiagnosticsBundleRequest
-                    )),
                     (menu_item(
                         "Toggle MIDI Mappings Panel",
                         Message::MidiLearnMappingsPanelToggle

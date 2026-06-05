@@ -4049,9 +4049,6 @@ impl Maolan {
                 self.freeze_in_progress = false;
                 self.freeze_track_name = None;
                 self.freeze_cancel_requested = false;
-                self.pending_diagnostics_bundle_export = false;
-                self.diagnostics_bundle_wait_session_report = false;
-                self.diagnostics_bundle_wait_midi_report = false;
                 self.state.blocking_write().message = e.clone();
                 error!("Engine error: {e}");
             }
@@ -8155,18 +8152,6 @@ impl Maolan {
                 self.export_format_mp3 =
                     self.export_format_mp3 && self.export_mp3_supported_for_current_settings();
                 self.modal = Some(crate::message::Show::ExportSettings);
-            }
-            Message::ExportDiagnosticsBundleRequest => {
-                self.pending_diagnostics_bundle_export = true;
-                self.diagnostics_bundle_wait_session_report = true;
-                self.diagnostics_bundle_wait_midi_report = true;
-                return Task::batch(vec![
-                    self.send(Action::RequestSessionDiagnostics),
-                    self.send(Action::RequestMidiLearnMappingsReport),
-                ]);
-            }
-            Message::SessionDiagnosticsRequest => {
-                return self.send(Action::RequestSessionDiagnostics);
             }
             Message::MidiLearnMappingsPanelToggle => {
                 self.midi_mappings_panel_open = !self.midi_mappings_panel_open;

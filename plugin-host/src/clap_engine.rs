@@ -844,9 +844,44 @@ fn scan_plugin_capabilities(
         if !audio_ports_ptr.is_null() {
             let audio_ports = unsafe { &*(audio_ports_ptr as *const ClapPluginAudioPorts) };
             if let Some(count_fn) = audio_ports.count {
-                capabilities.audio_inputs = unsafe { count_fn(plugin, true) } as usize;
-
-                capabilities.audio_outputs = unsafe { count_fn(plugin, false) } as usize;
+                let in_count = unsafe { count_fn(plugin, true) };
+                let out_count = unsafe { count_fn(plugin, false) };
+                for pi in 0..in_count {
+                    let mut info = ClapAudioPortInfoRaw {
+                        id: 0,
+                        name: [0; 256],
+                        flags: 0,
+                        channel_count: 0,
+                        port_type: ptr::null(),
+                        in_place_pair: 0,
+                    };
+                    if unsafe {
+                        audio_ports
+                            .get
+                            .map(|f| f(plugin, pi, true, &mut info))
+                            .unwrap_or(false)
+                    } {
+                        capabilities.audio_inputs += info.channel_count as usize;
+                    }
+                }
+                for pi in 0..out_count {
+                    let mut info = ClapAudioPortInfoRaw {
+                        id: 0,
+                        name: [0; 256],
+                        flags: 0,
+                        channel_count: 0,
+                        port_type: ptr::null(),
+                        in_place_pair: 0,
+                    };
+                    if unsafe {
+                        audio_ports
+                            .get
+                            .map(|f| f(plugin, pi, false, &mut info))
+                            .unwrap_or(false)
+                    } {
+                        capabilities.audio_outputs += info.channel_count as usize;
+                    }
+                }
             }
         }
 

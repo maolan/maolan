@@ -357,6 +357,55 @@ impl HostRuntime {
                 .filter(|p| !p.is_null())
                 .is_some()
         };
+
+        // Compute total audio channel counts and MIDI port counts for the engine.
+        let audio_in_channels = port_buffers
+            .as_ref()
+            .map(|pb| pb.inputs.iter().map(|p| p.channel_count).sum::<u32>())
+            .unwrap_or(0);
+        let audio_out_channels = port_buffers
+            .as_ref()
+            .map(|pb| pb.outputs.iter().map(|p| p.channel_count).sum::<u32>())
+            .unwrap_or(0);
+        let (midi_in_ports, midi_out_ports) = unsafe {
+            let ext = (*plugin.plugin_ptr()).get_extension.map(|f| {
+                f(
+                    plugin.plugin_ptr(),
+                    crate::clap::CLAP_EXT_NOTE_PORTS.as_ptr(),
+                )
+            });
+            if let Some(ptr) = ext
+                && !ptr.is_null()
+            {
+                let np = &*(ptr as *const crate::clap::ClapPluginNotePorts);
+                let in_count = np.count.map(|f| f(plugin.plugin_ptr(), true)).unwrap_or(0);
+                let out_count = np.count.map(|f| f(plugin.plugin_ptr(), false)).unwrap_or(0);
+                (in_count, out_count)
+            } else {
+                (0, 0)
+            }
+        };
+        unsafe {
+            maolan_plugin_protocol::protocol::write_port_counts_to_scratch(
+                ptr,
+                audio_in_channels,
+                audio_out_channels,
+                midi_in_ports,
+                midi_out_ports,
+            );
+        }
+        tracing::info!(
+            instance_id = %self.instance_id,
+            audio_in = audio_in_channels,
+            audio_out = audio_out_channels,
+            midi_in = midi_in_ports,
+            midi_out = midi_out_ports,
+            "Wrote port counts to scratch"
+        );
+
+        // Signal ready AFTER querying plugin ports so the engine can read counts immediately.
+        self.signal_ready();
+
         // Set up ring buffers.
 
         let param_ring = unsafe {

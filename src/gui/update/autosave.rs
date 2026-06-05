@@ -99,53 +99,6 @@ impl Maolan {
         }
     }
 
-    pub(super) fn export_diagnostics_bundle(&self) -> Result<std::path::PathBuf, String> {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let root = self
-            .session_dir
-            .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-            .join(format!("maolan_diagnostics_{stamp}"));
-        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-
-        let state = self.state.blocking_read();
-        let diagnostics = state
-            .diagnostics_report
-            .clone()
-            .unwrap_or_else(|| "No diagnostics report captured yet".to_string());
-        fs::write(root.join("session_diagnostics.txt"), diagnostics).map_err(|e| e.to_string())?;
-        fs::write(
-            root.join("midi_mappings.txt"),
-            if self.midi_mappings_report_lines.is_empty() {
-                "No MIDI mappings captured yet".to_string()
-            } else {
-                self.midi_mappings_report_lines.join("\n")
-            },
-        )
-        .map_err(|e| e.to_string())?;
-
-        let summary = serde_json::json!({
-            "transport": {
-                "playing": self.playing,
-                "paused": self.paused,
-                "sample": self.transport_samples.max(0.0) as usize,
-            },
-            "session_dir": self.session_dir.as_ref().map(|p| p.to_string_lossy().to_string()),
-            "track_count": state.tracks.len(),
-            "selected_tracks": state.selected.iter().cloned().collect::<Vec<String>>(),
-            "export_in_progress": self.export_in_progress,
-            "freeze_in_progress": self.freeze_in_progress,
-            "record_armed": self.record_armed,
-            "timestamp_unix": stamp,
-        });
-        let f = fs::File::create(root.join("ui_summary.json")).map_err(|e| e.to_string())?;
-        serde_json::to_writer_pretty(f, &summary).map_err(|e| e.to_string())?;
-        Ok(root)
-    }
-
     pub(super) fn prepare_pending_autosave_recovery(&mut self) -> Result<(), String> {
         if let Some(pending) = self.pending_autosave_recovery.as_mut() {
             pending.confirm_armed = false;

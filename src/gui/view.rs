@@ -221,7 +221,6 @@ impl Maolan {
                         self.playhead_bar_beat(&state, playhead_sample);
                     let show_track_marker_dialog = state.track_marker_dialog.is_some();
                     let shortcuts_hint = state.shortcuts_hint.clone();
-                    let diagnostics_report = state.diagnostics_report.clone();
                     let status_message = state.message.clone();
                     let plugin_graph_track = state.plugin_graph_track.clone();
                     let plugin_graph_clip = state.plugin_graph_clip.clone();
@@ -701,9 +700,6 @@ impl Maolan {
                             .width(Length::Fill)
                             .padding(8),
                         );
-                    }
-                    if let Some(diag) = diagnostics_report.as_ref() {
-                        content = content.push(text(format!("Diagnostics: {}", diag)));
                     }
                     let status_bar = container(text(format!("Last message: {}", status_message)))
                         .width(Length::Fill)

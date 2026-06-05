@@ -158,9 +158,6 @@ impl Maolan {
                 self.pending_recovery_session_dir = None;
                 self.pending_autosave_recovery = None;
                 self.pending_open_session_dir = None;
-                self.pending_diagnostics_bundle_export = false;
-                self.diagnostics_bundle_wait_session_report = false;
-                self.diagnostics_bundle_wait_midi_report = false;
                 Task::batch(tasks)
             }
             Message::Request(ref a) => {
