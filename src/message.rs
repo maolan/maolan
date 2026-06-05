@@ -700,8 +700,6 @@ pub enum Message {
     },
     GenerateAudioCancel,
     GenerateAudioFinished(Result<String, String>),
-    ExportDiagnosticsBundleRequest,
-    SessionDiagnosticsRequest,
     MidiLearnMappingsPanelToggle,
     MidiLearnMappingsReportRequest,
     MidiLearnMappingsExportRequest,

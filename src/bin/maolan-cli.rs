@@ -151,16 +151,6 @@ impl Drop for TerminalGuard {
 }
 
 #[derive(Debug)]
-struct SessionDiagnostics {
-    track_count: usize,
-    audio_clip_count: usize,
-    midi_clip_count: usize,
-    pending_requests: usize,
-    workers_ready: usize,
-    transport_playing: bool,
-}
-
-#[derive(Debug)]
 struct App {
     session_dir: Option<PathBuf>,
     session_branch: String,
@@ -174,7 +164,6 @@ struct App {
     status: String,
     open_audio_action: Option<Action>,
     sticky_status: bool,
-    diagnostics: Option<SessionDiagnostics>,
     hw_out_db: Vec<f32>,
     track_meters: Vec<(String, Vec<f32>)>,
     last_meter_request: Option<Instant>,
@@ -206,7 +195,6 @@ impl App {
             status,
             open_audio_action,
             sticky_status: false,
-            diagnostics: None,
             hw_out_db: Vec::new(),
             track_meters: Vec::new(),
             last_meter_request: None,
@@ -244,9 +232,6 @@ impl App {
                         break;
                     }
                 }
-                let _ = client
-                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
-                    .await;
             }
             Err(err) => {
                 self.status = err;
@@ -291,9 +276,6 @@ impl App {
                         self.sticky_status = true;
                     }
                 }
-                let _ = client
-                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
-                    .await;
                 true
             }
             AppCommand::Pause => {
@@ -311,9 +293,6 @@ impl App {
                     self.status = err;
                     self.sticky_status = true;
                 }
-                let _ = client
-                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
-                    .await;
                 true
             }
             AppCommand::JumpToStart => {
@@ -323,9 +302,6 @@ impl App {
                     self.status = err;
                     self.sticky_status = true;
                 }
-                let _ = client
-                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
-                    .await;
                 true
             }
             AppCommand::JumpToEnd => {
@@ -347,9 +323,6 @@ impl App {
                         self.sticky_status = true;
                     }
                 }
-                let _ = client
-                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
-                    .await;
                 true
             }
             AppCommand::Panic => {
@@ -358,9 +331,6 @@ impl App {
                     self.status = err;
                     self.sticky_status = true;
                 }
-                let _ = client
-                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
-                    .await;
                 true
             }
             AppCommand::ToggleExport => {
@@ -535,29 +505,6 @@ impl App {
             })) => {
                 self.hw_out_db = hw_out_db.as_ref().clone();
                 self.track_meters = track_meters.as_ref().clone();
-            }
-            EngineMessage::Response(Ok(Action::SessionDiagnosticsReport {
-                track_count,
-                audio_clip_count,
-                midi_clip_count,
-                pending_requests,
-                workers_ready,
-                playing,
-                transport_sample,
-                ..
-            })) => {
-                self.diagnostics = Some(SessionDiagnostics {
-                    track_count,
-                    audio_clip_count,
-                    midi_clip_count,
-                    pending_requests,
-                    workers_ready,
-                    transport_playing: playing,
-                });
-                self.status = format!(
-                    "Session loaded: {track_count} tracks, {audio_clip_count} audio clips, {midi_clip_count} MIDI clips, workers ready {workers_ready}, pending {pending_requests}, playing {playing}, transport {transport_sample}"
-                );
-                self.sticky_status = true;
             }
             EngineMessage::Response(Err(err)) => {
                 self.status = err;
@@ -743,45 +690,27 @@ impl App {
     }
 
     fn track_count(&self) -> usize {
-        self.diagnostics
-            .as_ref()
-            .map(|d| d.track_count)
-            .unwrap_or(0)
+        0
     }
 
     fn audio_clip_count(&self) -> usize {
-        self.diagnostics
-            .as_ref()
-            .map(|d| d.audio_clip_count)
-            .unwrap_or(0)
+        0
     }
 
     fn midi_clip_count(&self) -> usize {
-        self.diagnostics
-            .as_ref()
-            .map(|d| d.midi_clip_count)
-            .unwrap_or(0)
+        0
     }
 
     fn pending_requests(&self) -> usize {
-        self.diagnostics
-            .as_ref()
-            .map(|d| d.pending_requests)
-            .unwrap_or(0)
+        0
     }
 
     fn workers_ready(&self) -> usize {
-        self.diagnostics
-            .as_ref()
-            .map(|d| d.workers_ready)
-            .unwrap_or(0)
+        0
     }
 
     fn engine_playing_label(&self) -> &'static str {
-        self.diagnostics
-            .as_ref()
-            .map(|d| if d.transport_playing { "yes" } else { "no" })
-            .unwrap_or("unknown")
+        if self.playing { "yes" } else { "no" }
     }
 
     fn track_meter_columns(&self) -> Vec<f32> {

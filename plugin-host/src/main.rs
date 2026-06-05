@@ -343,10 +343,11 @@ fn main() {
         _ => {}
     }
 
-    runtime.signal_ready();
-
     match format.as_str() {
-        "null" => runtime.run_null_plugin(),
+        "null" => {
+            runtime.signal_ready();
+            runtime.run_null_plugin();
+        }
         #[cfg(unix)]
         "clap" => runtime.run_clap_plugin(),
         #[cfg(not(unix))]
@@ -354,7 +355,10 @@ fn main() {
             tracing::error!("CLAP plugin hosting is not supported on this platform");
             runtime.run_until_shutdown();
         }
-        _ => runtime.run_until_shutdown(),
+        _ => {
+            runtime.signal_ready();
+            runtime.run_until_shutdown();
+        }
     }
 
     runtime.shutdown();

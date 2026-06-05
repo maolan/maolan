@@ -90,22 +90,23 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
 
-    // With a workspace both crates share target/debug/.
-    // Test binaries live in target/debug/deps/; regular binaries in target/debug/.
+    // With a workspace both crates share target/{profile}/.
+    // Test binaries live in target/{profile}/deps/; regular binaries in target/{profile}/.
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if dir.file_name()? == "deps" {
-        let debug_dir = dir.parent()?;
-        candidates.push(debug_dir.join("maolan-plugin-host"));
+        let profile_dir = dir.parent()?;
+        candidates.push(profile_dir.join("maolan-plugin-host"));
 
         // Fallback: the binary may have been built independently inside the
         // plugin-host subdirectory before the workspace was introduced.
-        if let Some(daw_dir) = debug_dir.parent()?.parent() {
+        if let Some(daw_dir) = profile_dir.parent()?.parent() {
+            let profile = profile_dir.file_name()?.to_str()?;
             candidates.push(
                 daw_dir
                     .join("plugin-host")
                     .join("target")
-                    .join("debug")
+                    .join(profile)
                     .join("maolan-plugin-host"),
             );
         }
@@ -113,7 +114,13 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
         candidates.push(dir.join("maolan-plugin-host"));
     }
 
-    candidates.into_iter().find(|cand| cand.exists())
+    let found = candidates.into_iter().find(|cand| cand.exists());
+    if let Some(ref path) = found {
+        tracing::info!(path = %path.display(), "Using plugin-host binary");
+    } else {
+        tracing::error!("maolan-plugin-host binary not found");
+    }
+    found
 }
 
 mod tests {

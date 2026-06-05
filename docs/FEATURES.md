@@ -216,8 +216,6 @@ Last updated: 2026-04-30
 - Startup recovery hint from last opened session
 
 ## Diagnostics and Tooling
-- Session diagnostics report
-- Diagnostics bundle export
 - MIDI mappings report
 - MIDI mappings import/export/clear-all
 - Preferences saved to `~/.config/maolan/config.toml`

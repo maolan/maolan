@@ -632,8 +632,42 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
                     && !ptr.is_null()
                 {
                     let ap = &*(ptr as *const ClapPluginAudioPorts);
-                    caps.audio_inputs = ap.count.map(|f| f(plugin, true)).unwrap_or(0) as usize;
-                    caps.audio_outputs = ap.count.map(|f| f(plugin, false)).unwrap_or(0) as usize;
+                    let in_count = ap.count.map(|f| f(plugin, true)).unwrap_or(0);
+                    let out_count = ap.count.map(|f| f(plugin, false)).unwrap_or(0);
+                    for pi in 0..in_count {
+                        let mut info = ClapAudioPortInfo {
+                            id: 0,
+                            name: [0; 256],
+                            flags: 0,
+                            channel_count: 0,
+                            port_type: ptr::null(),
+                            in_place_pair: 0,
+                        };
+                        if ap
+                            .get
+                            .map(|f| f(plugin, pi, true, &mut info))
+                            .unwrap_or(false)
+                        {
+                            caps.audio_inputs += info.channel_count as usize;
+                        }
+                    }
+                    for pi in 0..out_count {
+                        let mut info = ClapAudioPortInfo {
+                            id: 0,
+                            name: [0; 256],
+                            flags: 0,
+                            channel_count: 0,
+                            port_type: ptr::null(),
+                            in_place_pair: 0,
+                        };
+                        if ap
+                            .get
+                            .map(|f| f(plugin, pi, false, &mut info))
+                            .unwrap_or(false)
+                        {
+                            caps.audio_outputs += info.channel_count as usize;
+                        }
+                    }
                 }
             }
 
