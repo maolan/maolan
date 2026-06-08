@@ -2,6 +2,7 @@ use super::AudioDeviceOption;
 use crate::consts::state_platform_freebsd::{
     AFMT_S8, AFMT_S16_BE, AFMT_S16_LE, AFMT_S24_BE, AFMT_S24_LE, AFMT_S32_BE, AFMT_S32_LE,
 };
+use nix::libc;
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
 use std::{ffi::c_void, fs::File, os::fd::AsRawFd};
 
@@ -100,16 +101,99 @@ fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
             if supported_sample_rates.is_empty() {
                 supported_sample_rates = probe_oss_supported_sample_rates(&devpath);
             }
-            Some(AudioDeviceOption::with_supported_caps(
+            let max_channels = decode_max_channels_from_dsp(dsp)
+                .or_else(|| probe_oss_info(&devpath).map(|info| info.max_channels()))
+                .unwrap_or(0);
+            let max_buffer_bytes = decode_max_buffer_bytes_from_dsp(dsp)
+                .or_else(|| probe_oss_buffer_bytes(&devpath))
+                .unwrap_or(0);
+            Some(AudioDeviceOption::with_oss_caps(
                 devpath,
                 label,
                 supported_bits,
                 supported_sample_rates,
+                max_channels,
+                max_buffer_bytes,
             ))
         })
         .collect::<Vec<_>>();
 
     (!out.is_empty()).then_some(out)
+}
+
+fn parse_usize_text(s: &str) -> Option<usize> {
+    let trimmed = s.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        return usize::from_str_radix(hex, 16).ok();
+    }
+    trimmed.parse::<usize>().ok()
+}
+
+fn usize_from_value(value: &Nvtvalue) -> Option<usize> {
+    match value {
+        Nvtvalue::Number(n) => usize::try_from(*n).ok(),
+        Nvtvalue::String(s) => parse_usize_text(s),
+        Nvtvalue::NumberArray(arr) => arr
+            .iter()
+            .copied()
+            .filter_map(|n| usize::try_from(n).ok())
+            .max(),
+        Nvtvalue::StringArray(arr) => arr.iter().filter_map(|s| parse_usize_text(s)).max(),
+        _ => None,
+    }
+}
+
+fn max_value_from_tree(tree: &Nvtree, keys: &[&str]) -> Option<usize> {
+    keys.iter()
+        .filter_map(|key| nvtree_find(tree, key).and_then(|pair| usize_from_value(&pair.value)))
+        .max()
+}
+
+fn max_value_from_dsp(dsp: &Nvtree, keys: &[&str]) -> Option<usize> {
+    let mut max_value = max_value_from_tree(dsp, keys);
+    for nested_name in ["play", "playback", "record", "capture"] {
+        if let Some(pair) = nvtree_find(dsp, nested_name)
+            && let Nvtvalue::Nested(nested) = &pair.value
+            && let Some(v) = max_value_from_tree(nested, keys)
+        {
+            max_value = Some(max_value.map_or(v, |current| current.max(v)));
+        }
+    }
+    max_value.filter(|v| *v > 0)
+}
+
+fn decode_max_channels_from_dsp(dsp: &Nvtree) -> Option<usize> {
+    max_value_from_dsp(
+        dsp,
+        &[
+            "max_channels",
+            "channels",
+            "nchannels",
+            "playchannels",
+            "recchannels",
+            "playback_channels",
+            "capture_channels",
+        ],
+    )
+}
+
+fn decode_max_buffer_bytes_from_dsp(dsp: &Nvtree) -> Option<usize> {
+    max_value_from_dsp(
+        dsp,
+        &[
+            "bytes",
+            "bufsz",
+            "buffer_size",
+            "buffersize",
+            "playbufsz",
+            "recbufsz",
+            "playback_buffer_size",
+            "capture_buffer_size",
+        ],
+    )
 }
 
 fn decode_supported_bits_from_dsp(dsp: &Nvtree) -> Vec<usize> {
@@ -270,6 +354,143 @@ fn probe_oss_supported_sample_rates(devpath: &str) -> Vec<i32> {
     supported.into_iter().collect()
 }
 
+fn probe_oss_info(devpath: &str) -> Option<AudioInfoProbe> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(devpath)
+        .or_else(|_| std::fs::OpenOptions::new().read(true).open(devpath))
+        .ok()?;
+    let fd = file.as_raw_fd();
+    let mut info = AudioInfoProbe::new();
+    unsafe { oss_get_info(fd, &mut info).ok()? };
+    Some(info)
+}
+
+fn probe_oss_buffer_bytes(devpath: &str) -> Option<usize> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(devpath)
+        .or_else(|_| std::fs::OpenOptions::new().read(true).open(devpath))
+        .ok()?;
+    let fd = file.as_raw_fd();
+    let mut output = BufferInfoProbe::new();
+    let mut input = BufferInfoProbe::new();
+    let output_bytes =
+        unsafe { oss_output_buffer_info(fd, &mut output).ok() }.and_then(|_| output.bytes_total());
+    let input_bytes =
+        unsafe { oss_input_buffer_info(fd, &mut input).ok() }.and_then(|_| input.bytes_total());
+    output_bytes.into_iter().chain(input_bytes).max()
+}
+
+#[repr(C)]
+struct AudioInfoProbe {
+    dev: libc::c_int,
+    name: [libc::c_char; 64],
+    busy: libc::c_int,
+    pid: libc::c_int,
+    caps: libc::c_int,
+    iformats: libc::c_int,
+    oformats: libc::c_int,
+    magic: libc::c_int,
+    cmd: [libc::c_char; 64],
+    card_number: libc::c_int,
+    port_number: libc::c_int,
+    mixer_dev: libc::c_int,
+    legacy_device: libc::c_int,
+    enabled: libc::c_int,
+    flags: libc::c_int,
+    min_rate: libc::c_int,
+    max_rate: libc::c_int,
+    min_channels: libc::c_int,
+    max_channels: libc::c_int,
+    binding: libc::c_int,
+    rate_source: libc::c_int,
+    handle: [libc::c_char; 32],
+    nrates: libc::c_uint,
+    rates: [libc::c_uint; 20],
+    song_name: [libc::c_char; 64],
+    label: [libc::c_char; 16],
+    latency: libc::c_int,
+    devnode: [libc::c_char; 32],
+    next_play_engine: libc::c_int,
+    next_rec_engine: libc::c_int,
+    filler: [libc::c_int; 184],
+}
+
+impl AudioInfoProbe {
+    fn new() -> Self {
+        Self {
+            dev: 0,
+            name: [0; 64],
+            busy: 0,
+            pid: 0,
+            caps: 0,
+            iformats: 0,
+            oformats: 0,
+            magic: 0,
+            cmd: [0; 64],
+            card_number: 0,
+            port_number: 0,
+            mixer_dev: 0,
+            legacy_device: 0,
+            enabled: 0,
+            flags: 0,
+            min_rate: 0,
+            max_rate: 0,
+            min_channels: 0,
+            max_channels: 0,
+            binding: 0,
+            rate_source: 0,
+            handle: [0; 32],
+            nrates: 0,
+            rates: [0; 20],
+            song_name: [0; 64],
+            label: [0; 16],
+            latency: 0,
+            devnode: [0; 32],
+            next_play_engine: 0,
+            next_rec_engine: 0,
+            filler: [0; 184],
+        }
+    }
+
+    fn max_channels(&self) -> usize {
+        usize::try_from(self.max_channels.max(0)).unwrap_or(0)
+    }
+}
+
+#[repr(C)]
+struct BufferInfoProbe {
+    fragments: libc::c_int,
+    fragstotal: libc::c_int,
+    fragsize: libc::c_int,
+    bytes: libc::c_int,
+}
+
+impl BufferInfoProbe {
+    fn new() -> Self {
+        Self {
+            fragments: 0,
+            fragstotal: 0,
+            fragsize: 0,
+            bytes: 0,
+        }
+    }
+
+    fn bytes_total(&self) -> Option<usize> {
+        if self.bytes > 0 {
+            return usize::try_from(self.bytes).ok();
+        }
+        if self.fragstotal > 0 && self.fragsize > 0 {
+            let total = i64::from(self.fragstotal) * i64::from(self.fragsize);
+            return usize::try_from(total).ok();
+        }
+        None
+    }
+}
+
 #[repr(C)]
 struct SndstIoctlNvArg {
     nbytes: usize,
@@ -279,4 +500,7 @@ struct SndstIoctlNvArg {
 nix::ioctl_none!(sndst_refresh_devs, b'D', 100);
 nix::ioctl_readwrite!(sndst_get_devs, b'D', 101, SndstIoctlNvArg);
 nix::ioctl_read!(oss_get_formats, b'P', 11, i32);
+nix::ioctl_read!(oss_output_buffer_info, b'P', 12, BufferInfoProbe);
+nix::ioctl_read!(oss_input_buffer_info, b'P', 13, BufferInfoProbe);
 nix::ioctl_readwrite!(oss_set_speed, b'P', 2, i32);
+nix::ioctl_readwrite!(oss_get_info, b'X', 12, AudioInfoProbe);

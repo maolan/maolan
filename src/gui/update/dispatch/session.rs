@@ -75,6 +75,7 @@ impl Maolan {
                 self.pending_save_path = None;
                 self.pending_save_tracks.clear();
                 self.pending_save_clap_tracks.clear();
+                self.pending_save_clap_clips.clear();
                 #[cfg(target_os = "macos")]
                 self.pending_save_vst3_states.clear();
                 self.pending_peak_file_loads.clear();

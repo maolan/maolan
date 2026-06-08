@@ -3594,6 +3594,44 @@ impl Maolan {
                             {
                                 clip.plugin_graph_json = Some(graph_json);
                             }
+                            if self.pending_save_path.is_some() {
+                                self.pending_save_clap_clips.remove(&(
+                                    track_name.clone(),
+                                    *clip_idx,
+                                    *instance_id,
+                                ));
+                                if self.pending_save_ready() {
+                                    let path = self.pending_save_path.take().unwrap_or_default();
+                                    let is_template = self.pending_save_is_template;
+                                    self.pending_save_is_template = false;
+                                    if !path.is_empty() {
+                                        if is_template {
+                                            if let Err(e) = self.save_template(path.clone()) {
+                                                error!("{}", e);
+                                                self.state.blocking_write().message =
+                                                    format!("Failed to save template: {}", e);
+                                            } else {
+                                                self.state.blocking_write().message =
+                                                    "Template saved".to_string();
+                                                let templates = crate::gui::scan_templates();
+                                                self.state.blocking_write().available_templates =
+                                                    templates.clone();
+                                                self.menu.update_templates(templates);
+                                            }
+                                        } else if let Err(e) = self.save(path.clone()) {
+                                            error!("{}", e);
+                                            self.pending_exit_after_save = false;
+                                            self.state.blocking_write().message =
+                                                format!("Failed to save session: {}", e);
+                                        } else {
+                                            return Task::batch(vec![
+                                                self.send(Action::MarkHistorySavePoint),
+                                                self.send(Action::SetSessionPath(path)),
+                                            ]);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         Action::TrackClapParameters {
                             track_name,

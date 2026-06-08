@@ -51,6 +51,7 @@ struct CliOptions {
     nperiods: usize,
     exclusive: bool,
     sync_mode: bool,
+    record_millis: Option<u64>,
 }
 
 impl Default for CliOptions {
@@ -66,6 +67,7 @@ impl Default for CliOptions {
             nperiods: audio_defaults::NPERIODS,
             exclusive: false,
             sync_mode: audio_defaults::SYNC_MODE,
+            record_millis: None,
         }
     }
 }
@@ -1322,6 +1324,18 @@ fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOption
             "--sync-mode" => {
                 options.sync_mode = true;
             }
+            "--record-seconds" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--record-seconds requires a value".to_string())?;
+                let seconds = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("Invalid --record-seconds value: {value}"))?;
+                if !seconds.is_finite() || seconds <= 0.0 {
+                    return Err(format!("Invalid --record-seconds value: {value}"));
+                }
+                options.record_millis = Some((seconds * 1000.0).ceil().max(1.0) as u64);
+            }
             "--help" | "-h" => {
                 return Err(help_text());
             }
@@ -1344,12 +1358,140 @@ fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOption
 
 fn help_text() -> String {
     format!(
-        "Usage: maolan-cli [session_dir] [options]\n\nOptions:\n  --device <id>           Output device id\n  --input-device <id>     Input device id\n  --sample-rate <hz>      Sample rate (default: {})\n  --bits <n>              Bit depth (default: {})\n  --period-frames <n>     Period size (default: {})\n  --nperiods <n>          Number of periods (default: {})\n  --exclusive             Open device in exclusive mode\n  --sync-mode             Enable sync mode",
+        "Usage: maolan-cli [session_dir] [options]\n\nOptions:\n  --device <id>           Output device id\n  --input-device <id>     Input device id\n  --sample-rate <hz>      Sample rate (default: {})\n  --bits <n>              Bit depth (default: {})\n  --period-frames <n>     Period size in frames (default: {})\n  --nperiods <n>          Number of periods (default: {})\n  --exclusive             Open device in exclusive mode\n  --sync-mode             Enable sync mode\n  --record-seconds <n>    Restore the session, record for n seconds, then exit",
         audio_defaults::SAMPLE_RATE_HZ,
         audio_defaults::BIT_DEPTH,
         audio_defaults::PERIOD_FRAMES,
         audio_defaults::NPERIODS
     )
+}
+
+async fn wait_for_hw_ready(
+    app: &mut App,
+    rx: &mut Receiver<EngineMessage>,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    while !app.hw_ready {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!("Timed out opening audio device: {}", app.status));
+        }
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(message)) => app.handle_engine_message(message),
+            Ok(None) => return Err("Engine channel closed while opening audio".to_string()),
+            Err(_) => return Err(format!("Timed out opening audio device: {}", app.status)),
+        }
+        if app.sticky_status {
+            return Err(app.status.clone());
+        }
+    }
+    Ok(())
+}
+
+async fn drain_engine_for(app: &mut App, rx: &mut Receiver<EngineMessage>, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining.min(Duration::from_millis(50)), rx.recv()).await {
+            Ok(Some(message)) => app.handle_engine_message(message),
+            Ok(None) => break,
+            Err(_) => {}
+        }
+    }
+}
+
+async fn run_record_once(
+    options: &CliOptions,
+    config: &CliConfig,
+    open_audio_action: Action,
+    record_duration: Duration,
+) -> Result<(), String> {
+    let seconds = record_duration.as_secs_f64();
+    let session_dir = options
+        .session_dir
+        .as_ref()
+        .ok_or_else(|| "--record-seconds requires a session directory".to_string())?;
+    let client = Client::default();
+    let _ = client
+        .send(EngineMessage::Request(Action::SetOscEnabled(
+            config.osc_enabled,
+        )))
+        .await;
+    let mut rx = client.subscribe().await;
+    let mut app = App::new(
+        Some(session_dir.clone()),
+        options.branch.clone(),
+        Some(open_audio_action.clone()),
+        "Opening audio device...".to_string(),
+        if config.default_export_sample_rate_hz == 0 {
+            audio_defaults::SAMPLE_RATE_HZ as u32
+        } else {
+            config.default_export_sample_rate_hz
+        },
+    );
+
+    client
+        .send(EngineMessage::Request(open_audio_action))
+        .await
+        .map_err(|err| format!("Failed to send open-audio request: {err}"))?;
+    wait_for_hw_ready(&mut app, &mut rx, Duration::from_secs(5)).await?;
+
+    for action in load_session_restore_actions(session_dir, &options.branch)? {
+        client
+            .send(EngineMessage::Request(action))
+            .await
+            .map_err(|err| format!("Failed to restore session: {err}"))?;
+    }
+    drain_engine_for(&mut app, &mut rx, Duration::from_millis(500)).await;
+    if app.sticky_status {
+        return Err(app.status);
+    }
+
+    println!(
+        "Recording '{}' on {} in / {} out @ {} Hz for {:.3}s",
+        session_dir.display(),
+        app.input_channels,
+        app.output_channels,
+        app.sample_rate_hz,
+        seconds
+    );
+    client
+        .send(EngineMessage::Request(Action::TransportPosition(0)))
+        .await
+        .map_err(|err| format!("Failed to seek transport: {err}"))?;
+    client
+        .send(EngineMessage::Request(Action::SetClipPlaybackEnabled(true)))
+        .await
+        .map_err(|err| format!("Failed to enable clip playback: {err}"))?;
+    client
+        .send(EngineMessage::Request(Action::SetRecordEnabled(true)))
+        .await
+        .map_err(|err| format!("Failed to enable recording: {err}"))?;
+    client
+        .send(EngineMessage::Request(Action::Play))
+        .await
+        .map_err(|err| format!("Failed to start transport: {err}"))?;
+
+    drain_engine_for(&mut app, &mut rx, record_duration).await;
+
+    client
+        .send(EngineMessage::Request(Action::Stop))
+        .await
+        .map_err(|err| format!("Failed to stop transport: {err}"))?;
+    client
+        .send(EngineMessage::Request(Action::SetRecordEnabled(false)))
+        .await
+        .map_err(|err| format!("Failed to disable recording: {err}"))?;
+    drain_engine_for(&mut app, &mut rx, Duration::from_secs(2)).await;
+    let _ = client.send(EngineMessage::Request(Action::Quit)).await;
+    if app.sticky_status {
+        return Err(app.status);
+    }
+    Ok(())
 }
 
 fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result<Action, String> {
@@ -1470,6 +1612,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let config = CliConfig::load().unwrap_or_default();
     let open_audio_action = resolve_open_audio_action(&options, &config).ok();
+    if let Some(record_millis) = options.record_millis {
+        let open_audio_action = open_audio_action.ok_or_else(|| {
+            "Recording requires an output device. Pass --device or set default_output_device_id in config."
+                .to_string()
+        })?;
+        return run_record_once(
+            &options,
+            &config,
+            open_audio_action,
+            Duration::from_millis(record_millis),
+        )
+        .await
+        .map_err(Into::into);
+    }
     let status = match open_audio_action.as_ref() {
         Some(Action::OpenAudioDevice { device, .. }) => {
             if let Some(session_dir) = options.session_dir.as_ref() {

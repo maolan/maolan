@@ -463,7 +463,41 @@ impl HostRuntime {
             // Handle non-audio requests (GUI, state).
             let req = header.request_type.load(Ordering::Acquire);
             if req != 0 {
+                let scratch = unsafe { scratch_ptr(ptr) };
                 let result = match req {
+                    1 => {
+                        tracing::info!(instance_id = %self.instance_id, "CLAP state save requested");
+                        match plugin.save_state() {
+                            Ok(bytes) if bytes.len() <= SCRATCH_SIZE => {
+                                unsafe {
+                                    std::ptr::copy_nonoverlapping(
+                                        bytes.as_ptr(),
+                                        scratch,
+                                        bytes.len(),
+                                    );
+                                }
+                                header
+                                    .scratch_size
+                                    .store(bytes.len() as u32, Ordering::Release);
+                                Ok(())
+                            }
+                            Ok(bytes) => Err(format!(
+                                "CLAP state is too large for scratch buffer: {} bytes",
+                                bytes.len()
+                            )),
+                            Err(e) => Err(e),
+                        }
+                    }
+                    2 => {
+                        tracing::info!(instance_id = %self.instance_id, "CLAP state restore requested");
+                        let size = header.scratch_size.load(Ordering::Acquire) as usize;
+                        if size > SCRATCH_SIZE {
+                            Err(format!("Invalid CLAP state size: {size} bytes"))
+                        } else {
+                            let bytes = unsafe { std::slice::from_raw_parts(scratch, size) };
+                            plugin.load_state(bytes)
+                        }
+                    }
                     3 => {
                         tracing::info!(instance_id = %self.instance_id, "GUI show requested");
                         if !plugin.gui_is_supported() {
@@ -612,7 +646,9 @@ impl HostRuntime {
                     }
                 }
             }
+            let mut midi_count = 0;
             while let Some(ev) = midi_ring.pop() {
+                midi_count += 1;
                 if has_note_ports {
                     self.push_midi_as_clap_events(
                         &mut event_buf,
@@ -623,6 +659,12 @@ impl HostRuntime {
                 } else {
                     event_buf.push_midi(ev.data, ev.channel as u16, ev.sample_offset);
                 }
+            }
+            if midi_count > 0 {
+                eprintln!(
+                    "[HOST] {} received {} MIDI events from engine",
+                    self.instance_id, midi_count
+                );
             }
             let in_events = event_buf.as_input_events();
 
@@ -655,13 +697,13 @@ impl HostRuntime {
             let transport =
                 unsafe { transport_ref(ptr) as *const TransportState as *const std::ffi::c_void };
 
-            tracing::debug!(
-                instance_id = %self.instance_id,
+            eprintln!(
+                "[HOST] {} processing block={} in={} out={} events={}",
+                self.instance_id,
                 block_size,
                 num_in,
                 num_out,
-                events_in = event_buf.len(),
-                "Processing block"
+                event_buf.len()
             );
 
             if !started_processing {
