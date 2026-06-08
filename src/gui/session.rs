@@ -17,6 +17,43 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn clip_clap_snapshot_targets(&self, track_names: &[String]) -> Vec<(String, usize, usize)> {
+        let state = self.state.blocking_read();
+        track_names
+            .iter()
+            .filter_map(|track_name| {
+                state
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == *track_name)
+                    .map(|track| (track_name, track))
+            })
+            .flat_map(|(track_name, track)| {
+                track
+                    .audio
+                    .clips
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(clip_idx, clip)| {
+                        clip.plugin_graph_json
+                            .as_ref()
+                            .and_then(|graph| graph.get("plugins"))
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flat_map(move |plugins| {
+                                plugins.iter().enumerate().filter_map(move |(idx, plugin)| {
+                                    let is_clap = plugin
+                                        .get("format")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|format| format.eq_ignore_ascii_case("CLAP"));
+                                    is_clap.then_some((track_name.clone(), clip_idx, idx))
+                                })
+                            })
+                    })
+            })
+            .collect()
+    }
+
     fn export_render_mode_to_json(mode: crate::message::ExportRenderMode) -> Value {
         Value::String(
             match mode {
@@ -335,6 +372,7 @@ impl Maolan {
             self.pending_save_path = Some(path.clone());
             self.pending_save_tracks = std::iter::once(track_name.clone()).collect();
             self.pending_save_clap_tracks = std::iter::once(track_name.clone()).collect();
+            self.pending_save_clap_clips.clear();
             self.pending_save_is_template = false;
 
             let tasks = vec![
@@ -2729,6 +2767,8 @@ impl Maolan {
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
+            let clip_targets = self.clip_clap_snapshot_targets(&track_names);
+            self.pending_save_clap_clips = clip_targets.iter().cloned().collect();
             self.pending_save_is_template = true;
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
@@ -2752,6 +2792,17 @@ impl Maolan {
                         self.send(Action::TrackSnapshotAllClapStates { track_name }),
                     ]
                 })
+                .chain(
+                    clip_targets
+                        .into_iter()
+                        .map(|(track_name, clip_idx, instance_id)| {
+                            self.send(Action::ClipClapSnapshotState {
+                                track_name,
+                                clip_idx,
+                                instance_id,
+                            })
+                        }),
+                )
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }
@@ -2766,6 +2817,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
+            self.pending_save_clap_clips.clear();
             self.pending_save_is_template = true;
             if track_names.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
@@ -2800,6 +2852,8 @@ impl Maolan {
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
+            let clip_targets = self.clip_clap_snapshot_targets(&track_names);
+            self.pending_save_clap_clips = clip_targets.iter().cloned().collect();
             self.pending_save_is_template = false;
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
@@ -2823,6 +2877,17 @@ impl Maolan {
                         self.send(Action::TrackSnapshotAllClapStates { track_name }),
                     ]
                 })
+                .chain(
+                    clip_targets
+                        .into_iter()
+                        .map(|(track_name, clip_idx, instance_id)| {
+                            self.send(Action::ClipClapSnapshotState {
+                                track_name,
+                                clip_idx,
+                                instance_id,
+                            })
+                        }),
+                )
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }
@@ -2837,6 +2902,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
+            self.pending_save_clap_clips.clear();
             self.pending_save_is_template = false;
             if track_names.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {

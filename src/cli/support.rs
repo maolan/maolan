@@ -132,11 +132,15 @@ pub fn load_session_restore_actions(
         .and_then(Value::as_array)
         .ok_or_else(|| "Session is missing 'tracks' array".to_string())?;
 
+    let mut valid_track_names = BTreeSet::new();
     for track in tracks {
+        if let Some(name) = track.get("name").and_then(Value::as_str) {
+            valid_track_names.insert(name.to_string());
+        }
         push_track_restore_actions(&mut actions, track)?;
     }
 
-    push_track_graph_restore_actions(&mut actions, session.get("graphs"))?;
+    push_track_graph_restore_actions(&mut actions, session.get("graphs"), &valid_track_names)?;
     push_connection_restore_actions(&mut actions, session.get("connections"))?;
 
     actions.push(Action::EndSessionRestore);
@@ -837,11 +841,15 @@ fn push_connection_restore_actions(
 fn push_track_graph_restore_actions(
     actions: &mut Vec<Action>,
     graphs: Option<&Value>,
+    valid_track_names: &BTreeSet<String>,
 ) -> Result<(), String> {
     let Some(graphs) = graphs.and_then(Value::as_object) else {
         return Ok(());
     };
     for (track_name, graph) in graphs {
+        if !valid_track_names.contains(track_name) {
+            continue;
+        }
         actions.push(Action::TrackClearDefaultPassthrough {
             track_name: track_name.clone(),
         });
@@ -890,6 +898,7 @@ fn push_track_graph_restore_actions(
 fn push_track_graph_restore_actions(
     _actions: &mut Vec<Action>,
     _graphs: Option<&Value>,
+    _valid_track_names: &BTreeSet<String>,
 ) -> Result<(), String> {
     Ok(())
 }
@@ -980,6 +989,16 @@ mod tests {
                             "to_port": 0,
                             "kind": "audio"
                         }]
+                    },
+                    "Deleted Track": {
+                        "plugins": [],
+                        "connections": [{
+                            "from_node": {"type": "track_input"},
+                            "from_port": 0,
+                            "to_node": {"type": "track_output"},
+                            "to_port": 0,
+                            "kind": "audio"
+                        }]
                     }
                 }
             })
@@ -1002,6 +1021,9 @@ mod tests {
         ));
         assert!(actions.iter().any(
             |action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Track 1")
+        ));
+        assert!(!actions.iter().any(
+            |action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Deleted Track")
         ));
         assert_eq!(
             actions

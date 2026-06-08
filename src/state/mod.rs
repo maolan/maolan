@@ -94,6 +94,8 @@ pub struct AudioDeviceOption {
     pub label: String,
     pub supported_bits: Vec<usize>,
     pub supported_sample_rates: Vec<i32>,
+    pub max_channels: usize,
+    pub max_buffer_bytes: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
@@ -127,7 +129,23 @@ impl AudioDeviceOption {
             label: label.into(),
             supported_bits,
             supported_sample_rates,
+            max_channels: 0,
+            max_buffer_bytes: 0,
         }
+    }
+
+    pub fn with_oss_caps(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        supported_bits: Vec<usize>,
+        supported_sample_rates: Vec<i32>,
+        max_channels: usize,
+        max_buffer_bytes: usize,
+    ) -> Self {
+        let mut out = Self::with_supported_caps(id, label, supported_bits, supported_sample_rates);
+        out.max_channels = max_channels;
+        out.max_buffer_bytes = max_buffer_bytes;
+        out
     }
 
     pub fn preferred_bits(&self) -> Option<usize> {

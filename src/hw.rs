@@ -36,6 +36,47 @@ impl DeviceId for String {
     }
 }
 
+#[cfg(target_os = "freebsd")]
+fn oss_period_frame_options(
+    device: &crate::state::AudioDeviceOption,
+    bits: usize,
+) -> Option<Vec<usize>> {
+    if device.max_channels == 0 || device.max_buffer_bytes == 0 {
+        return None;
+    }
+    let channels = device.max_channels.max(1);
+    let bytes_per_sample = match bits {
+        8 => 1,
+        16 => 2,
+        24 => 3,
+        32 => 4,
+        _ => return None,
+    };
+    let frame_bytes = channels.checked_mul(bytes_per_sample)?.max(1);
+    let min_bytes = frame_bytes.next_power_of_two();
+    let max_bytes = device.max_buffer_bytes.max(min_bytes);
+    if min_bytes > max_bytes {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut bytes = min_bytes;
+    while bytes <= max_bytes {
+        let requested_frames = bytes.div_ceil(frame_bytes).max(1);
+        let period_bytes = requested_frames.checked_mul(frame_bytes)?;
+        let normalized_bytes = period_bytes.checked_next_power_of_two()?;
+        if normalized_bytes <= max_bytes {
+            out.push(normalized_bytes.div_ceil(frame_bytes).max(1));
+        }
+        match bytes.checked_mul(2) {
+            Some(next) => bytes = next,
+            None => break,
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 impl DeviceId for crate::state::AudioDeviceOption {
     fn device_id(&self) -> String {
@@ -151,18 +192,18 @@ impl HW {
     ) -> Vec<iced::Element<'static, Message>> {
         vec![
             Self::device_pick_row(
-                "Output device:",
-                available_hw.clone(),
-                selected_hw,
-                Message::HWSelected,
-                "Choose output device",
-            ),
-            Self::device_pick_row(
                 "Input device:",
-                available_hw,
+                available_hw.clone(),
                 selected_input_hw,
                 Message::HWInputSelected,
                 "Choose input device",
+            ),
+            Self::device_pick_row(
+                "Output device:",
+                available_hw,
+                selected_hw,
+                Message::HWSelected,
+                "Choose output device",
             ),
         ]
     }
@@ -315,11 +356,11 @@ impl HW {
     }
 
     pub fn audio_view(&self) -> iced::Element<'_, Message> {
-        let period_options = vec![
+        let frame_options = vec![
             16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
         ];
         let constrained_period_options = |max_frames: usize| -> Vec<usize> {
-            period_options
+            frame_options
                 .iter()
                 .copied()
                 .filter(|v| *v <= max_frames.max(1))
@@ -327,7 +368,7 @@ impl HW {
         };
         let watermark_options_for = |max_frames: usize, realtime: usize| -> Vec<usize> {
             let step = realtime.max(1);
-            period_options
+            frame_options
                 .iter()
                 .copied()
                 .filter(|v| *v <= max_frames.max(1) && (*v % step == 0))
@@ -382,14 +423,6 @@ impl HW {
             .max(1)
             .saturating_mul(realtime_frames.max(1))
             .min(period_frames);
-        let realtime_options = constrained_period_options(period_frames);
-        let low_watermark_options = watermark_options_for(period_frames, realtime_frames);
-        if !low_watermark_options.contains(&low_watermark_frames) {
-            low_watermark_frames = low_watermark_options
-                .last()
-                .copied()
-                .unwrap_or(realtime_frames.min(period_frames).max(1));
-        }
         #[cfg(target_os = "linux")]
         let (available_input_hw, mut selected_input_hw) = {
             let state = self.state.blocking_read();
@@ -549,6 +582,45 @@ impl HW {
             target_os = "windows"
         )))]
         let chosen_bits = 32usize;
+        let period_options = {
+            #[cfg(target_os = "freebsd")]
+            {
+                if selected_is_jack {
+                    frame_options.clone()
+                } else {
+                    selected_hw
+                        .as_ref()
+                        .and_then(|hw| oss_period_frame_options(hw, chosen_bits))
+                        .unwrap_or_else(|| frame_options.clone())
+                }
+            }
+            #[cfg(not(target_os = "freebsd"))]
+            {
+                frame_options.clone()
+            }
+        };
+        if !period_options.contains(&period_frames) {
+            period_frames = period_options
+                .iter()
+                .copied()
+                .find(|v| *v >= period_frames)
+                .or_else(|| period_options.last().copied())
+                .unwrap_or(period_frames);
+            realtime_frames = realtime_frames.min(period_frames).max(1);
+            low_watermark_frames = low_watermark_frames.min(period_frames).max(1);
+            low_watermark_frames = (low_watermark_frames / realtime_frames.max(1))
+                .max(1)
+                .saturating_mul(realtime_frames.max(1))
+                .min(period_frames);
+        }
+        let realtime_options = constrained_period_options(period_frames);
+        let low_watermark_options = watermark_options_for(period_frames, realtime_frames);
+        if !low_watermark_options.contains(&low_watermark_frames) {
+            low_watermark_frames = low_watermark_options
+                .last()
+                .copied()
+                .unwrap_or(realtime_frames.min(period_frames).max(1));
+        }
         let plugins_loaded = self.plugins_loaded();
         let mut submit = button("Open Audio");
         #[cfg(any(

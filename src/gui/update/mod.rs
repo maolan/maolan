@@ -735,6 +735,7 @@ impl Maolan {
     fn pending_save_ready(&self) -> bool {
         self.pending_save_tracks.is_empty()
             && self.pending_save_clap_tracks.is_empty()
+            && self.pending_save_clap_clips.is_empty()
             && self.pending_vst3_save_ready()
     }
 

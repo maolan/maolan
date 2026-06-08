@@ -422,6 +422,7 @@ pub struct Maolan {
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_clap_tracks: std::collections::HashSet<String>,
+    pending_save_clap_clips: std::collections::HashSet<(String, usize, usize)>,
     #[cfg(target_os = "macos")]
     pending_save_vst3_states: HashSet<(String, usize)>,
     pending_save_is_template: bool,
@@ -714,6 +715,7 @@ impl Default for Maolan {
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_clap_tracks: std::collections::HashSet::new(),
+            pending_save_clap_clips: std::collections::HashSet::new(),
             #[cfg(target_os = "macos")]
             pending_save_vst3_states: HashSet::new(),
             pending_save_is_template: false,

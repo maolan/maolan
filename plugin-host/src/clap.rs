@@ -243,17 +243,19 @@ pub struct ClapEventNote {
 
 pub const CLAP_CORE_EVENT_SPACE_ID: u16 = 0;
 
-pub const CLAP_EVENT_PARAM_VALUE: u16 = 0;
-pub const CLAP_EVENT_PARAM_MOD: u16 = 1;
-pub const CLAP_EVENT_PARAM_GESTURE_BEGIN: u16 = 4;
-pub const CLAP_EVENT_PARAM_GESTURE_END: u16 = 5;
-pub const CLAP_EVENT_NOTE_ON: u16 = 2;
-pub const CLAP_EVENT_NOTE_OFF: u16 = 3;
-pub const CLAP_EVENT_NOTE_CHOKE: u16 = 6;
-pub const CLAP_EVENT_NOTE_END: u16 = 7;
-pub const CLAP_EVENT_MIDI: u16 = 8;
-pub const CLAP_EVENT_MIDI_SYSEX: u16 = 9;
-pub const CLAP_EVENT_MIDI2: u16 = 10;
+pub const CLAP_EVENT_NOTE_ON: u16 = 0;
+pub const CLAP_EVENT_NOTE_OFF: u16 = 1;
+pub const CLAP_EVENT_NOTE_CHOKE: u16 = 2;
+pub const CLAP_EVENT_NOTE_END: u16 = 3;
+pub const CLAP_EVENT_NOTE_EXPRESSION: u16 = 4;
+pub const CLAP_EVENT_PARAM_VALUE: u16 = 5;
+pub const CLAP_EVENT_PARAM_MOD: u16 = 6;
+pub const CLAP_EVENT_PARAM_GESTURE_BEGIN: u16 = 7;
+pub const CLAP_EVENT_PARAM_GESTURE_END: u16 = 8;
+pub const CLAP_EVENT_TRANSPORT: u16 = 9;
+pub const CLAP_EVENT_MIDI: u16 = 10;
+pub const CLAP_EVENT_MIDI_SYSEX: u16 = 11;
+pub const CLAP_EVENT_MIDI2: u16 = 12;
 
 // ─── Extension structs ───
 
@@ -311,6 +313,24 @@ pub struct ClapHostPosixFdSupport {
     pub register_fd: Option<unsafe extern "C" fn(*const ClapHost, i32, u32) -> bool>,
     pub modify_fd: Option<unsafe extern "C" fn(*const ClapHost, i32, u32) -> bool>,
     pub unregister_fd: Option<unsafe extern "C" fn(*const ClapHost, i32) -> bool>,
+}
+
+#[repr(C)]
+pub struct ClapOStream {
+    pub ctx: *mut c_void,
+    pub write: Option<unsafe extern "C" fn(*const ClapOStream, *const c_void, u64) -> i64>,
+}
+
+#[repr(C)]
+pub struct ClapIStream {
+    pub ctx: *mut c_void,
+    pub read: Option<unsafe extern "C" fn(*const ClapIStream, *mut c_void, u64) -> i64>,
+}
+
+#[repr(C)]
+pub struct ClapPluginState {
+    pub save: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapOStream) -> bool>,
+    pub load: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapIStream) -> bool>,
 }
 
 #[repr(C)]
@@ -686,6 +706,48 @@ impl PluginInstance {
         }
     }
 
+    fn state_extension(&self) -> Result<*const ClapPluginState, String> {
+        let ext = unsafe {
+            (*self.plugin)
+                .get_extension
+                .map(|f| f(self.plugin, CLAP_EXT_STATE.as_ptr()))
+        };
+        match ext {
+            Some(ptr) if !ptr.is_null() => Ok(ptr as *const ClapPluginState),
+            _ => Err("Plugin does not support clap.state".to_string()),
+        }
+    }
+
+    pub fn save_state(&self) -> Result<Vec<u8>, String> {
+        let state = self.state_extension()?;
+        let save = unsafe { (*state).save }.ok_or("clap.state.save is null")?;
+        let mut bytes = Vec::new();
+        let mut stream = ClapOStream {
+            ctx: (&mut bytes as *mut Vec<u8>).cast(),
+            write: Some(clap_ostream_write),
+        };
+        if unsafe { save(self.plugin, &mut stream) } {
+            Ok(bytes)
+        } else {
+            Err("plugin clap.state.save returned false".to_string())
+        }
+    }
+
+    pub fn load_state(&self, bytes: &[u8]) -> Result<(), String> {
+        let state = self.state_extension()?;
+        let load = unsafe { (*state).load }.ok_or("clap.state.load is null")?;
+        let mut reader = ClapIStreamReader { bytes, offset: 0 };
+        let mut stream = ClapIStream {
+            ctx: (&mut reader as *mut ClapIStreamReader).cast(),
+            read: Some(clap_istream_read),
+        };
+        if unsafe { load(self.plugin, &mut stream) } {
+            Ok(())
+        } else {
+            Err("plugin clap.state.load returned false".to_string())
+        }
+    }
+
     pub fn process(&self, process: &ClapProcess) -> Result<(), String> {
         let process_fn = unsafe { (*self.plugin).process }.ok_or("process is null")?;
         let status = unsafe { process_fn(self.plugin, process) };
@@ -780,6 +842,50 @@ impl PluginInstance {
             self.gui_created = false;
         }
     }
+}
+
+struct ClapIStreamReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+unsafe extern "C" fn clap_ostream_write(
+    stream: *const ClapOStream,
+    buffer: *const c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || buffer.is_null() {
+        return -1;
+    }
+    let Some(size) = usize::try_from(size).ok() else {
+        return -1;
+    };
+    let bytes = unsafe { &mut *((*stream).ctx as *mut Vec<u8>) };
+    let src = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), size) };
+    bytes.extend_from_slice(src);
+    size as i64
+}
+
+unsafe extern "C" fn clap_istream_read(
+    stream: *const ClapIStream,
+    buffer: *mut c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || buffer.is_null() {
+        return -1;
+    }
+    let Some(size) = usize::try_from(size).ok() else {
+        return -1;
+    };
+    let reader = unsafe { &mut *((*stream).ctx as *mut ClapIStreamReader<'_>) };
+    let available = reader.bytes.len().saturating_sub(reader.offset);
+    let count = available.min(size);
+    if count > 0 {
+        let src = unsafe { reader.bytes.as_ptr().add(reader.offset) };
+        unsafe { std::ptr::copy_nonoverlapping(src, buffer.cast::<u8>(), count) };
+        reader.offset += count;
+    }
+    count as i64
 }
 
 impl Drop for PluginInstance {
@@ -1348,4 +1454,61 @@ unsafe extern "C" fn event_capture_try_push(
         unsafe { std::slice::from_raw_parts(header as *const _ as *const u8, size).to_vec() };
     capture.events.push(bytes);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clap_state_streams_round_trip_bytes() {
+        let mut written = Vec::new();
+        let ostream = ClapOStream {
+            ctx: (&mut written as *mut Vec<u8>).cast(),
+            write: Some(clap_ostream_write),
+        };
+        let input = [1_u8, 2, 3, 4];
+
+        let count = unsafe {
+            clap_ostream_write(
+                &ostream,
+                input.as_ptr().cast::<c_void>(),
+                input.len() as u64,
+            )
+        };
+
+        assert_eq!(count, input.len() as i64);
+        assert_eq!(written, input);
+
+        let mut reader = ClapIStreamReader {
+            bytes: &written,
+            offset: 0,
+        };
+        let istream = ClapIStream {
+            ctx: (&mut reader as *mut ClapIStreamReader).cast(),
+            read: Some(clap_istream_read),
+        };
+        let mut first = [0_u8; 2];
+        let mut second = [0_u8; 4];
+
+        let first_count = unsafe {
+            clap_istream_read(
+                &istream,
+                first.as_mut_ptr().cast::<c_void>(),
+                first.len() as u64,
+            )
+        };
+        let second_count = unsafe {
+            clap_istream_read(
+                &istream,
+                second.as_mut_ptr().cast::<c_void>(),
+                second.len() as u64,
+            )
+        };
+
+        assert_eq!(first_count, 2);
+        assert_eq!(second_count, 2);
+        assert_eq!(first, [1, 2]);
+        assert_eq!(&second[..2], &[3, 4]);
+    }
 }

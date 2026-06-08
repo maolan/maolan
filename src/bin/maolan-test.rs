@@ -165,7 +165,7 @@ Options:
   --input-device <PATH>    Input OSS device (default: /dev/dsp6)
   --duration-secs <N>      How many seconds to run playback (default: 5)
   --sample-rate <HZ>       Sample rate (default: 48000)
-  --period-frames <N>      Period size (default: 1024)
+  --period-frames <N>      Period size in frames (default: 1024)
   --nperiods <N>           Number of periods (default: 1)
   --track-name <NAME>      Track name (default: test)
   --param-id <ID>          Parameter ID to set after load
