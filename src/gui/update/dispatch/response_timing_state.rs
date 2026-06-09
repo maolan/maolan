@@ -43,19 +43,36 @@ impl Maolan {
                 true
             }
             Action::TransportPosition(sample) => {
+                self.pending_transport_position = None;
                 self.transport_samples = *sample as f64;
                 if self.playing && !self.paused {
                     self.last_playback_tick = Some(Instant::now());
                 }
                 true
             }
+            Action::TransportPositionAt {
+                sample,
+                after_frames,
+            } => {
+                if self.playing && !self.paused {
+                    let delay_s = *after_frames as f64 / self.playback_rate_hz.max(1.0);
+                    self.pending_transport_position =
+                        Some((Instant::now() + Duration::from_secs_f64(delay_s), *sample));
+                } else {
+                    self.transport_samples = *sample as f64;
+                    self.pending_transport_position = None;
+                }
+                true
+            }
             Action::SetLoopEnabled(enabled) => {
                 self.loop_enabled = *enabled && self.loop_range_samples.is_some();
+                self.pending_transport_position = None;
                 true
             }
             Action::SetLoopRange(range) => {
                 self.loop_range_samples = *range;
                 self.loop_enabled = range.is_some();
+                self.pending_transport_position = None;
                 true
             }
             Action::SetPunchEnabled(enabled) => {

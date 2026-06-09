@@ -461,6 +461,7 @@ pub struct Maolan {
     metronome_enabled: bool,
     transport_samples: f64,
     last_playback_tick: Option<Instant>,
+    pending_transport_position: Option<(Instant, usize)>,
     playback_rate_hz: f64,
     loop_enabled: bool,
     loop_range_samples: Option<(usize, usize)>,
@@ -753,6 +754,7 @@ impl Default for Maolan {
             metronome_enabled: false,
             transport_samples: 0.0,
             last_playback_tick: None,
+            pending_transport_position: None,
             playback_rate_hz: 48_000.0,
             loop_enabled: false,
             loop_range_samples: None,
@@ -7776,7 +7778,7 @@ mod tests {
 
         let state = app.state.blocking_read();
         assert_eq!(state.hw_sample_rate_hz, 1);
-        assert_eq!(state.oss_period_frames, 16);
+        assert_eq!(state.oss_period_frames, 4);
         assert_eq!(state.oss_nperiods, 1);
         assert!(state.oss_sync_mode);
     }

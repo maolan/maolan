@@ -101,9 +101,12 @@ fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
             if supported_sample_rates.is_empty() {
                 supported_sample_rates = probe_oss_supported_sample_rates(&devpath);
             }
-            let max_channels = decode_max_channels_from_dsp(dsp)
-                .or_else(|| probe_oss_info(&devpath).map(|info| info.max_channels()))
+            let decoded_channels = decode_max_channels_from_dsp(dsp).unwrap_or(0);
+            let info_channels = probe_oss_info(&devpath)
+                .map(|info| info.max_channels())
                 .unwrap_or(0);
+            let probed_channels = probe_oss_max_channels(&devpath);
+            let max_channels = decoded_channels.max(info_channels).max(probed_channels);
             let max_buffer_bytes = decode_max_buffer_bytes_from_dsp(dsp)
                 .or_else(|| probe_oss_buffer_bytes(&devpath))
                 .unwrap_or(0);
@@ -367,6 +370,30 @@ fn probe_oss_info(devpath: &str) -> Option<AudioInfoProbe> {
     Some(info)
 }
 
+fn probe_oss_max_channels(devpath: &str) -> usize {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(devpath)
+    else {
+        return 0;
+    };
+    let fd = file.as_raw_fd();
+    let mut best = 0_usize;
+    for candidate in [64_i32, 32, 24, 16, 12, 10, 8, 6, 4, 2, 1] {
+        let mut channels = candidate;
+        if unsafe { oss_set_channels(fd, &mut channels) }.is_ok()
+            && let Ok(channels) = usize::try_from(channels.max(0))
+        {
+            best = best.max(channels);
+            if best >= candidate as usize {
+                break;
+            }
+        }
+    }
+    best
+}
+
 fn probe_oss_buffer_bytes(devpath: &str) -> Option<usize> {
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -375,6 +402,8 @@ fn probe_oss_buffer_bytes(devpath: &str) -> Option<usize> {
         .or_else(|_| std::fs::OpenOptions::new().read(true).open(devpath))
         .ok()?;
     let fd = file.as_raw_fd();
+    let mut request = ((0xffff_u32 << 16) | 16) as i32;
+    let _ = unsafe { oss_set_fragment(fd, &mut request) };
     let mut output = BufferInfoProbe::new();
     let mut input = BufferInfoProbe::new();
     let output_bytes =
@@ -502,5 +531,7 @@ nix::ioctl_readwrite!(sndst_get_devs, b'D', 101, SndstIoctlNvArg);
 nix::ioctl_read!(oss_get_formats, b'P', 11, i32);
 nix::ioctl_read!(oss_output_buffer_info, b'P', 12, BufferInfoProbe);
 nix::ioctl_read!(oss_input_buffer_info, b'P', 13, BufferInfoProbe);
+nix::ioctl_readwrite!(oss_set_fragment, b'P', 10, i32);
 nix::ioctl_readwrite!(oss_set_speed, b'P', 2, i32);
+nix::ioctl_readwrite!(oss_set_channels, b'P', 6, i32);
 nix::ioctl_readwrite!(oss_get_info, b'X', 12, AudioInfoProbe);

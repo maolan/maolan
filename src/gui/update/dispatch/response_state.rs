@@ -45,7 +45,7 @@ impl Maolan {
             Action::OpenAudioDevice {
                 device,
                 input_device: _,
-                sample_rate_hz: _,
+                sample_rate_hz,
                 bits,
                 exclusive,
                 period_frames,
@@ -54,23 +54,36 @@ impl Maolan {
                 nperiods,
                 sync_mode,
                 hybrid_enabled,
+                actual_period_frames,
+                input_channels,
+                output_channels,
+                bytes_per_frame,
             } => {
                 let mut state = self.state.blocking_write();
+                let configured_period_frames = if *actual_period_frames > 0 {
+                    *actual_period_frames
+                } else {
+                    *period_frames
+                };
                 state.message = format!(
-                    "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, realtime={}, low_watermark={}, nperiods={}, sync_mode={}, hybrid={})",
+                    "Opened device {} (rate={} Hz, bits={}, channels={}/{}, period_frames={}, realtime_frames={}, low_watermark_frames={}, periods={}, bytes_per_frame={}, exclusive={}, sync_mode={}, hybrid={})",
                     device,
-                    state.hw_sample_rate_hz.max(1),
+                    sample_rate_hz,
                     bits,
-                    exclusive,
-                    period_frames,
+                    input_channels,
+                    output_channels,
+                    configured_period_frames,
                     realtime_frames,
                     low_watermark_frames,
                     nperiods,
+                    bytes_per_frame,
+                    exclusive,
                     sync_mode,
                     hybrid_enabled,
                 );
                 state.hw_loaded = true;
-                state.oss_period_frames = (*period_frames).max(1);
+                state.hw_sample_rate_hz = *sample_rate_hz;
+                state.oss_period_frames = configured_period_frames.max(1);
                 state.oss_realtime_frames = (*realtime_frames).max(1).min(state.oss_period_frames);
                 let step = state.oss_realtime_frames.max(1);
                 state.oss_low_watermark_frames =

@@ -9,6 +9,7 @@ impl Maolan {
                 let was_playing = self.playing;
                 self.playing = true;
                 self.paused = false;
+                self.pending_transport_position = None;
                 self.last_playback_tick = Some(Instant::now());
                 if self.record_armed {
                     self.start_recording_preview();
@@ -24,6 +25,7 @@ impl Maolan {
                 let was_playing = self.playing;
                 self.playing = true;
                 self.paused = true;
+                self.pending_transport_position = None;
                 self.last_playback_tick = None;
                 self.stop_recording_preview();
                 let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(false))];
@@ -36,6 +38,7 @@ impl Maolan {
                 self.toolbar.update(&message);
                 self.playing = false;
                 self.paused = false;
+                self.pending_transport_position = None;
                 self.last_playback_tick = None;
                 self.track_automation_runtime.clear();
                 self.touch_automation_overrides.clear();
@@ -53,6 +56,7 @@ impl Maolan {
             }
             Message::JumpToStart => {
                 self.transport_samples = 0.0;
+                self.pending_transport_position = None;
                 self.track_automation_runtime.clear();
                 self.touch_automation_overrides.clear();
                 self.touch_active_keys.clear();
@@ -82,6 +86,7 @@ impl Maolan {
                         .unwrap_or(0)
                 };
                 self.transport_samples = end_sample as f64;
+                self.pending_transport_position = None;
                 self.send(Action::TransportPosition(end_sample))
             }
             Message::PlaybackTick => {
@@ -94,6 +99,14 @@ impl Maolan {
                     let delta_s = now.duration_since(last).as_secs_f64();
                     self.last_playback_tick = Some(now);
                     self.transport_samples += delta_s * self.playback_rate_hz;
+                    if self
+                        .pending_transport_position
+                        .is_some_and(|(deadline, _)| now >= deadline)
+                        && let Some((deadline, sample)) = self.pending_transport_position.take()
+                    {
+                        let overdue_s = now.duration_since(deadline).as_secs_f64();
+                        self.transport_samples = sample as f64 + overdue_s * self.playback_rate_hz;
+                    }
                     now_sample = self.transport_samples.max(0.0) as usize;
                 }
                 let mut tasks = Vec::new();
