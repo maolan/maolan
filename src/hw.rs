@@ -54,19 +54,18 @@ fn oss_period_frame_options(
     };
     let frame_bytes = channels.checked_mul(bytes_per_sample)?.max(1);
     let min_bytes = frame_bytes.next_power_of_two();
-    let max_bytes = device.max_buffer_bytes.max(min_bytes);
+    let max_fragment_bytes = 1_usize << 16;
+    let max_bytes = device
+        .max_buffer_bytes
+        .min(max_fragment_bytes)
+        .max(min_bytes);
     if min_bytes > max_bytes {
         return None;
     }
     let mut out = Vec::new();
     let mut bytes = min_bytes;
     while bytes <= max_bytes {
-        let requested_frames = bytes.div_ceil(frame_bytes).max(1);
-        let period_bytes = requested_frames.checked_mul(frame_bytes)?;
-        let normalized_bytes = period_bytes.checked_next_power_of_two()?;
-        if normalized_bytes <= max_bytes {
-            out.push(normalized_bytes.div_ceil(frame_bytes).max(1));
-        }
+        out.push(bytes.div_ceil(frame_bytes).max(1));
         match bytes.checked_mul(2) {
             Some(next) => bytes = next,
             None => break,
@@ -352,6 +351,10 @@ impl HW {
             nperiods: selection.nperiods,
             sync_mode: selection.sync_mode,
             hybrid_enabled: selection.hybrid_buffer_enabled,
+            actual_period_frames: 0,
+            input_channels: 0,
+            output_channels: 0,
+            bytes_per_frame: 0,
         }
     }
 

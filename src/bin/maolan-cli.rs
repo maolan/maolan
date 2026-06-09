@@ -1523,6 +1523,10 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
         nperiods: options.nperiods,
         sync_mode: options.sync_mode,
         hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
+        actual_period_frames: 0,
+        input_channels: 0,
+        output_channels: 0,
+        bytes_per_frame: 0,
     })
 }
 
@@ -1740,6 +1744,10 @@ mod tests {
                 nperiods: audio_defaults::NPERIODS,
                 sync_mode: audio_defaults::SYNC_MODE,
                 hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
+                actual_period_frames: 0,
+                input_channels: 0,
+                output_channels: 0,
+                bytes_per_frame: 0,
             }),
             false,
         ));
@@ -1758,6 +1766,10 @@ mod tests {
                 nperiods: audio_defaults::NPERIODS,
                 sync_mode: audio_defaults::SYNC_MODE,
                 hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
+                actual_period_frames: 0,
+                input_channels: 0,
+                output_channels: 0,
+                bytes_per_frame: 0,
             }),
             true,
         ));
@@ -1833,6 +1845,7 @@ mod tests {
                 nperiods,
                 sync_mode,
                 hybrid_enabled,
+                ..
             } => {
                 assert_eq!(device, "cli-device");
                 assert_eq!(input_device.as_deref(), Some("cli-input"));
@@ -1876,6 +1889,7 @@ mod tests {
                 nperiods,
                 sync_mode,
                 hybrid_enabled,
+                ..
             } => {
                 assert_eq!(device, "config-device");
                 assert_eq!(input_device.as_deref(), Some("config-input"));

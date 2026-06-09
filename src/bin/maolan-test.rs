@@ -267,6 +267,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             nperiods: options.nperiods,
             sync_mode: audio_defaults::SYNC_MODE,
             hybrid_enabled: audio_defaults::HYBRID_BUFFER_ENABLED,
+            actual_period_frames: 0,
+            input_channels: 0,
+            output_channels: 0,
+            bytes_per_frame: 0,
         }))
         .await?;
 

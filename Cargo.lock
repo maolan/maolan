@@ -5135,6 +5135,8 @@ dependencies = [
 [[package]]
 name = "maolan-engine"
 version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9658f20a9c64b650a025e61d7c39e6a765f3654cd8e3d22898f94f6ee4b6e3a3"
 dependencies = [
  "alsa",
  "byteorder",

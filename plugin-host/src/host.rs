@@ -697,15 +697,6 @@ impl HostRuntime {
             let transport =
                 unsafe { transport_ref(ptr) as *const TransportState as *const std::ffi::c_void };
 
-            eprintln!(
-                "[HOST] {} processing block={} in={} out={} events={}",
-                self.instance_id,
-                block_size,
-                num_in,
-                num_out,
-                event_buf.len()
-            );
-
             if !started_processing {
                 set_thread_type(ThreadType::AudioThread);
                 if let Err(e) = plugin.start_processing() {

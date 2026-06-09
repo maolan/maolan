@@ -2106,7 +2106,7 @@ impl Maolan {
     }
 
     fn normalize_period_frames(period_frames: usize) -> usize {
-        let v = period_frames.clamp(16, 65536);
+        let v = period_frames.clamp(1, 65536);
         if v.is_power_of_two() {
             v
         } else {
@@ -3496,7 +3496,8 @@ mod tests {
 
     #[test]
     fn normalize_period_frames_clamps_to_bounds() {
-        assert_eq!(Maolan::normalize_period_frames(5), 16);
+        assert_eq!(Maolan::normalize_period_frames(0), 1);
+        assert_eq!(Maolan::normalize_period_frames(5), 8);
         assert_eq!(Maolan::normalize_period_frames(100000), 65536);
     }
 
