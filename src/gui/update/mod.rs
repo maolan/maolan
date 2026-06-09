@@ -733,10 +733,18 @@ impl Maolan {
     }
 
     fn pending_save_ready(&self) -> bool {
-        self.pending_save_tracks.is_empty()
+        let ready = self.pending_save_tracks.is_empty()
             && self.pending_save_clap_tracks.is_empty()
             && self.pending_save_clap_clips.is_empty()
-            && self.pending_vst3_save_ready()
+            && self.pending_vst3_save_ready();
+        tracing::info!(
+            "pending_save_ready={}: tracks={}, clap_tracks={}, clap_clips={}",
+            ready,
+            self.pending_save_tracks.len(),
+            self.pending_save_clap_tracks.len(),
+            self.pending_save_clap_clips.len(),
+        );
+        ready
     }
 
     #[cfg(target_os = "macos")]

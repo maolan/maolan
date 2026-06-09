@@ -46,7 +46,21 @@ impl Maolan {
                                         .get("format")
                                         .and_then(Value::as_str)
                                         .is_some_and(|format| format.eq_ignore_ascii_case("CLAP"));
-                                    is_clap.then_some((track_name.clone(), clip_idx, idx))
+                                    let has_uri =
+                                        plugin.get("uri").and_then(Value::as_str).is_some();
+                                    if !is_clap || !has_uri {
+                                        return None;
+                                    }
+                                    // The engine assigns instance_ids sequentially to all
+                                    // plugins that have a URI, skipping URI-less ones. The
+                                    // runtime instance_id is the count of valid plugins
+                                    // before this one in the array.
+                                    let instance_id = plugins
+                                        .iter()
+                                        .take(idx)
+                                        .filter(|p| p.get("uri").and_then(Value::as_str).is_some())
+                                        .count();
+                                    Some((track_name.clone(), clip_idx, instance_id))
                                 })
                             })
                     })
@@ -2881,6 +2895,19 @@ impl Maolan {
             self.pending_save_tracks = track_names.iter().cloned().collect();
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             let clip_targets = self.clip_clap_snapshot_targets(&track_names);
+            tracing::info!(
+                "refresh_graphs_then_save: {} tracks, {} clip targets",
+                track_names.len(),
+                clip_targets.len()
+            );
+            for (tn, ci, id) in &clip_targets {
+                tracing::info!(
+                    "  clip target: track={}, clip_idx={}, instance_id={}",
+                    tn,
+                    ci,
+                    id
+                );
+            }
             self.pending_save_clap_clips = clip_targets.iter().cloned().collect();
             self.pending_save_is_template = false;
             if self.pending_save_tracks.is_empty() {
