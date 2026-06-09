@@ -103,6 +103,7 @@ impl Maolan {
                 true
             }
             Action::TrackToggleArm(name) => {
+                tracing::info!("TrackToggleArm response for {}: toggling armed", name);
                 if let Some(track) = self
                     .state
                     .blocking_write()
@@ -110,7 +111,20 @@ impl Maolan {
                     .iter_mut()
                     .find(|t| t.name == *name)
                 {
+                    let old = track.armed;
                     track.armed = !track.armed;
+                    tracing::info!("  {} armed: {} -> {}", name, old, track.armed);
+                    tracing::info!(
+                        "TrackToggleArm response for '{}': armed {} -> {}",
+                        name,
+                        old,
+                        track.armed
+                    );
+                } else {
+                    tracing::warn!(
+                        "TrackToggleArm response for '{}' but track not found in GUI",
+                        name
+                    );
                 }
                 true
             }

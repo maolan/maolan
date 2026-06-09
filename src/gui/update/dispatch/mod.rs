@@ -2521,6 +2521,7 @@ impl Maolan {
                 return self.send(Action::SetRecordEnabled(true));
             }
             Message::Response(Ok(ref a)) => {
+                tracing::info!("GUI received Response(Ok): {:?}", std::mem::discriminant(a));
                 match a {
                     Action::HistoryState { dirty } => {
                         self.engine_dirty = *dirty;
@@ -2856,6 +2857,10 @@ impl Maolan {
                             pitch_correction_formant_compensation,
                             plugin_graph_json,
                         } => {
+                            // Recording flush delivered the real clip — clear the preview.
+                            if self.recording_preview_start_sample.is_some() {
+                                self.stop_recording_preview();
+                            }
                             let key =
                                 Self::audio_clip_key(track_name, name, *start, *length, *offset);
                             let mut max_length_samples = offset.saturating_add(*length);
@@ -3608,6 +3613,12 @@ impl Maolan {
                                 clip.plugin_graph_json = Some(graph_json);
                             }
                             if self.pending_save_path.is_some() {
+                                tracing::info!(
+                                    "ClipClapSnapshotState response for {} clip={} id={}",
+                                    track_name,
+                                    clip_idx,
+                                    instance_id
+                                );
                                 self.pending_save_clap_clips.remove(&(
                                     track_name.clone(),
                                     *clip_idx,
@@ -3734,6 +3745,11 @@ impl Maolan {
                         Action::TrackSnapshotAllClapStatesDone { track_name }
                             if self.pending_save_path.is_some() =>
                         {
+                            tracing::info!(
+                                "TrackSnapshotAllClapStatesDone for {} (remaining {})",
+                                track_name,
+                                self.pending_save_clap_tracks.len().saturating_sub(1)
+                            );
                             self.pending_save_clap_tracks.remove(track_name);
                             if self.pending_save_ready() {
                                 let path = self.pending_save_path.take().unwrap_or_default();
@@ -3806,6 +3822,11 @@ impl Maolan {
                             }
                             #[cfg(target_os = "macos")]
                             if self.pending_save_path.is_some() {
+                                tracing::info!(
+                                    "Vst3GetState response for {} id={}",
+                                    track_name,
+                                    instance_id
+                                );
                                 self.pending_save_vst3_states
                                     .remove(&(track_name.clone(), *instance_id));
                                 if self.pending_save_ready() {
@@ -3972,6 +3993,11 @@ impl Maolan {
                             }
 
                             if self.pending_save_path.is_some() {
+                                tracing::info!(
+                                    "TrackGetPluginGraph response for {} (remaining {})",
+                                    track_name,
+                                    self.pending_save_tracks.len().saturating_sub(1)
+                                );
                                 self.pending_save_tracks.remove(track_name);
                                 if self.pending_save_ready() {
                                     let path = self.pending_save_path.take().unwrap_or_default();
@@ -4103,12 +4129,22 @@ impl Maolan {
                 }
             }
             Message::Response(Err(ref e)) => {
+                if self.pending_save_path.is_some() {
+                    tracing::info!("Engine error during save handshake: {e}; aborting save");
+                }
                 if !self.pending_track_freeze_bounce.is_empty() {
                     self.pending_track_freeze_bounce.clear();
                 }
                 self.freeze_in_progress = false;
                 self.freeze_track_name = None;
                 self.freeze_cancel_requested = false;
+                self.pending_save_path = None;
+                self.pending_save_tracks.clear();
+                self.pending_save_clap_tracks.clear();
+                self.pending_save_clap_clips.clear();
+                #[cfg(target_os = "macos")]
+                self.pending_save_vst3_states.clear();
+                self.pending_save_is_template = false;
                 self.state.blocking_write().message = e.clone();
                 error!("Engine error: {e}");
             }
@@ -6491,6 +6527,8 @@ impl Maolan {
                                         let max_length_samples =
                                             clip.max_length_samples.max(initial_length as usize)
                                                 as f32;
+                                        let max_length_samples =
+                                            max_length_samples.max(min_length_samples);
                                         if is_right_side {
                                             let raw_end =
                                                 clip.start as f32 + initial_value + delta_samples;
@@ -6549,6 +6587,8 @@ impl Maolan {
                                     let clip = &mut track.midi.clips[index];
                                     let max_length_samples =
                                         clip.max_length_samples.max(initial_length as usize) as f32;
+                                    let max_length_samples =
+                                        max_length_samples.max(min_length_samples);
                                     if is_right_side {
                                         let raw_end =
                                             clip.start as f32 + initial_value + delta_samples;

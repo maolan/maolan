@@ -13,7 +13,6 @@ impl Maolan {
                 self.playing = true;
                 self.paused = true;
                 self.last_playback_tick = None;
-                self.stop_recording_preview();
                 true
             }
             Action::Stop => {
@@ -24,7 +23,6 @@ impl Maolan {
                 self.touch_automation_overrides.clear();
                 self.touch_active_keys.clear();
                 self.latch_automation_overrides.clear();
-                self.stop_recording_preview();
                 true
             }
             Action::BeginSessionRestore => {
@@ -47,6 +45,11 @@ impl Maolan {
                 self.transport_samples = *sample as f64;
                 if self.playing && !self.paused {
                     self.last_playback_tick = Some(Instant::now());
+                }
+                // If transport is stopped and we still have a recording preview,
+                // the engine has finished flushing. Clear the preview now.
+                if !self.playing && self.recording_preview_start_sample.is_some() {
+                    self.stop_recording_preview();
                 }
                 true
             }
@@ -172,6 +175,22 @@ mod tests {
         assert!(app.touch_automation_overrides.is_empty());
         assert!(app.touch_active_keys.is_empty());
         assert!(app.latch_automation_overrides.is_empty());
+        // Preview is kept until TransportPosition or AddClip arrives.
+        assert!(app.recording_preview_start_sample.is_some());
+        assert!(app.recording_preview_sample.is_some());
+    }
+
+    #[test]
+    fn transport_position_when_stopped_clears_recording_preview() {
+        let mut app = Maolan {
+            playing: false,
+            recording_preview_start_sample: Some(32),
+            recording_preview_sample: Some(64),
+            ..Maolan::default()
+        };
+
+        assert!(app.handle_response_timing_state_action(&Action::TransportPosition(0)));
+
         assert!(app.recording_preview_start_sample.is_none());
         assert!(app.recording_preview_sample.is_none());
     }
