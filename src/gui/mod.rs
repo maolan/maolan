@@ -5006,17 +5006,27 @@ impl Maolan {
                 })
             }
             Some(format) if format.eq_ignore_ascii_case("CLAP") => {
-                let info = clap_plugins.iter().find(|info| info.path == uri);
+                let info = clap_plugins
+                    .iter()
+                    .find(|info| info.path == uri)
+                    .or_else(|| {
+                        clap_plugins.iter().find(|info| {
+                            info.path.split_once("::").is_some_and(|(_, id)| id == uri)
+                        })
+                    });
+                let resolved_uri = info
+                    .map(|info| info.path.clone())
+                    .unwrap_or_else(|| uri.clone());
                 let caps = info.and_then(|info| info.capabilities.as_ref());
                 Some(PluginGraphPlugin {
                     node: PluginGraphNode::ClapPluginInstance(instance_id),
                     instance_id,
                     format: "CLAP".to_string(),
-                    uri: uri.clone(),
-                    plugin_id: uri
+                    uri: resolved_uri.clone(),
+                    plugin_id: resolved_uri
                         .split_once("::")
                         .map(|(_, id)| id.to_string())
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| uri.clone()),
                     name: info
                         .map(|info| info.name.clone())
                         .unwrap_or_else(|| uri.clone()),
@@ -5079,17 +5089,27 @@ impl Maolan {
                 })
             }
             Some(format) if format.eq_ignore_ascii_case("CLAP") => {
-                let info = clap_plugins.iter().find(|info| info.path == uri);
+                let info = clap_plugins
+                    .iter()
+                    .find(|info| info.path == uri)
+                    .or_else(|| {
+                        clap_plugins.iter().find(|info| {
+                            info.path.split_once("::").is_some_and(|(_, id)| id == uri)
+                        })
+                    });
+                let resolved_uri = info
+                    .map(|info| info.path.clone())
+                    .unwrap_or_else(|| uri.clone());
                 let caps = info.and_then(|info| info.capabilities.as_ref());
                 Some(PluginGraphPlugin {
                     node: PluginGraphNode::ClapPluginInstance(instance_id),
                     instance_id,
                     format: "CLAP".to_string(),
-                    uri: uri.clone(),
-                    plugin_id: uri
+                    uri: resolved_uri.clone(),
+                    plugin_id: resolved_uri
                         .split_once("::")
                         .map(|(_, id)| id.to_string())
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| uri.clone()),
                     name: info
                         .map(|info| info.name.clone())
                         .unwrap_or_else(|| uri.clone()),
@@ -6831,6 +6851,47 @@ mod tests {
             Maolan::plugin_node_from_json_with_runtime_nodes(&json!("TrackOutput"), &runtime_nodes),
             Some(PluginGraphNode::TrackOutput)
         );
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn plugin_graph_snapshot_resolves_portable_clap_plugin_id() {
+        let graph = json!({
+            "plugins": [{
+                "format": "CLAP",
+                "uri": "rs.maolan.synth",
+                "state": null
+            }],
+            "connections": [{
+                "from_node": {"type": "clap_plugin", "plugin_index": 0},
+                "from_port": 0,
+                "to_node": {"type": "track_output"},
+                "to_port": 0,
+                "kind": "audio"
+            }]
+        });
+        let clap_plugins = vec![maolan_engine::clap::ClapPluginInfo {
+            name: "Maolan Synth".to_string(),
+            path: "/home/meka/.clap/Maolan.clap::rs.maolan.synth".to_string(),
+            capabilities: None,
+        }];
+
+        let (plugins, connections) =
+            Maolan::plugin_graph_snapshot_from_json(Some(&graph), &[], &[], &clap_plugins);
+
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(
+            plugins[0].uri,
+            "/home/meka/.clap/Maolan.clap::rs.maolan.synth"
+        );
+        assert_eq!(plugins[0].plugin_id, "rs.maolan.synth");
+        assert_eq!(plugins[0].name, "Maolan Synth");
+        assert_eq!(connections.len(), 1);
+        assert_eq!(
+            connections[0].from_node,
+            PluginGraphNode::ClapPluginInstance(0)
+        );
+        assert_eq!(connections[0].to_node, PluginGraphNode::TrackOutput);
     }
 
     #[test]
