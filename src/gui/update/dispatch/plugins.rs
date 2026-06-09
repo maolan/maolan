@@ -326,19 +326,33 @@ impl Maolan {
                 clip_idx: _,
                 instance_id,
                 plugin_path: _,
-            } => Some(self.send(Action::TrackShowClapGui {
-                track_name: track_name.clone(),
-                instance_id,
-            })),
+            } => {
+                if self.session_restore_in_progress {
+                    self.state.blocking_write().message =
+                        "Plugin UI will be available after session restore finishes".to_string();
+                    return Some(self.open_track_plugins_followup(track_name.clone()));
+                }
+                Some(self.send(Action::TrackShowClapGui {
+                    track_name: track_name.clone(),
+                    instance_id,
+                }))
+            }
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::OpenLv2PluginUi {
                 ref track_name,
                 clip_idx: _,
                 instance_id,
-            } => Some(self.send(Action::TrackShowLv2Gui {
-                track_name: track_name.clone(),
-                instance_id,
-            })),
+            } => {
+                if self.session_restore_in_progress {
+                    self.state.blocking_write().message =
+                        "Plugin UI will be available after session restore finishes".to_string();
+                    return Some(self.open_track_plugins_followup(track_name.clone()));
+                }
+                Some(self.send(Action::TrackShowLv2Gui {
+                    track_name: track_name.clone(),
+                    instance_id,
+                }))
+            }
             Message::ClipConnectPlugin {
                 ref from_node,
                 from_port,
@@ -400,10 +414,17 @@ impl Maolan {
                 clip_idx: _,
                 instance_id,
                 plugin_path: _,
-            } => Some(self.send(Action::TrackShowVst3Gui {
-                track_name: track_name.clone(),
-                instance_id,
-            })),
+            } => {
+                if self.session_restore_in_progress {
+                    self.state.blocking_write().message =
+                        "Plugin UI will be available after session restore finishes".to_string();
+                    return Some(self.open_track_plugins_followup(track_name.clone()));
+                }
+                Some(self.send(Action::TrackShowVst3Gui {
+                    track_name: track_name.clone(),
+                    instance_id,
+                }))
+            }
             Message::SendMessageFinished(Err(ref e)) => {
                 error!("Error: {}", e);
                 None

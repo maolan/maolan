@@ -1560,6 +1560,34 @@ impl Maolan {
         let file = File::open(&p)?;
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
+            let (lv2_plugins, vst3_plugins, clap_plugins) = {
+                let state = self.state.blocking_read();
+                (
+                    state.lv2_plugins.clone(),
+                    state.vst3_plugins.clone(),
+                    state.clap_plugins.clone(),
+                )
+            };
+            let snapshots = graphs
+                .iter()
+                .filter_map(|(track_name, graph)| {
+                    let snapshot = Self::plugin_graph_snapshot_from_json(
+                        Some(graph),
+                        &lv2_plugins,
+                        &vst3_plugins,
+                        &clap_plugins,
+                    );
+                    (!snapshot.0.is_empty() || !snapshot.1.is_empty())
+                        .then(|| (track_name.clone(), snapshot))
+                })
+                .collect::<std::collections::HashMap<_, _>>();
+            self.state
+                .blocking_write()
+                .plugin_graphs_by_track
+                .extend(snapshots);
+        }
         if let Some(global_ml) = session.get("midi_learn_global").and_then(Value::as_object) {
             if let Ok(binding) =
                 serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(

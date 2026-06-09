@@ -2540,6 +2540,19 @@ impl Maolan {
                 let handled_response_state = self.handle_response_engine_state_action(a);
                 let handled_response_track = self.handle_response_track_action(a);
                 let handled_response_timing = self.handle_response_timing_state_action(a);
+                if matches!(a, Action::EndSessionRestore) {
+                    let open_track = {
+                        let state = self.state.blocking_read();
+                        state
+                            .plugin_graph_clip
+                            .is_none()
+                            .then(|| state.plugin_graph_track.clone())
+                            .flatten()
+                    };
+                    if let Some(track_name) = open_track {
+                        return self.open_track_plugins_followup(track_name);
+                    }
+                }
                 if handled_response_track {
                     match a {
                         Action::TrackAddAudioInput(track_name) => {
@@ -3916,6 +3929,15 @@ impl Maolan {
                             connections,
                         } => {
                             let mut state = self.state.blocking_write();
+                            let keep_restore_cache = self.session_restore_in_progress
+                                && plugins.is_empty()
+                                && state
+                                    .plugin_graphs_by_track
+                                    .get(track_name)
+                                    .is_some_and(|(cached_plugins, _)| !cached_plugins.is_empty());
+                            if keep_restore_cache {
+                                return Task::none();
+                            }
                             state
                                 .plugin_graphs_by_track
                                 .insert(track_name.clone(), (plugins.clone(), connections.clone()));
@@ -8976,6 +8998,23 @@ impl Maolan {
                     state.plugin_graph_track = Some(track_name.clone());
                     state.plugin_graph_clip = None;
                     Self::reset_track_plugin_view_state(&mut state);
+                    if let Some((plugins, connections)) =
+                        state.plugin_graphs_by_track.get(track_name).cloned()
+                    {
+                        state.plugin_graph_plugins = plugins.clone();
+                        state.plugin_graph_connections = connections;
+                        let mut new_positions = std::collections::HashMap::new();
+                        for (idx, plugin) in plugins.iter().enumerate() {
+                            let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
+                            let pos = state
+                                .plugin_graph_plugin_positions
+                                .get(&plugin.instance_id)
+                                .copied()
+                                .unwrap_or(fallback);
+                            new_positions.insert(plugin.instance_id, pos);
+                        }
+                        state.plugin_graph_plugin_positions = new_positions;
+                    }
                 }
                 return self.open_track_plugins_followup(track_name.clone());
             }
