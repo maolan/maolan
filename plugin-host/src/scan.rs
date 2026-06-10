@@ -811,7 +811,9 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
     let json = match format {
         "clap" => {
             if plugin_path == "--system" {
-                match serde_json::to_string_pretty(&scan_clap_plugins(true)) {
+                // Disable capability scanning during system-wide CLAP scan;
+                // buggy plugins (e.g., lsp-plugins.clap) segfault in is_api_supported.
+                match serde_json::to_string_pretty(&scan_clap_plugins(false)) {
                     Ok(j) => j,
                     Err(e) => {
                         eprintln!("Failed to serialize scan result: {e}");
