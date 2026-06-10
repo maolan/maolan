@@ -245,6 +245,7 @@ fn main() {
                         num_outputs,
                     },
                 );
+                return;
             }
             #[cfg(not(unix))]
             {
