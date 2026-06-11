@@ -94,9 +94,15 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
     // Test binaries live in target/{profile}/deps/; regular binaries in target/{profile}/.
     let mut candidates: Vec<PathBuf> = Vec::new();
 
+    let host_name = if cfg!(windows) {
+        "maolan-plugin-host.exe"
+    } else {
+        "maolan-plugin-host"
+    };
+
     if dir.file_name()? == "deps" {
         let profile_dir = dir.parent()?;
-        candidates.push(profile_dir.join("maolan-plugin-host"));
+        candidates.push(profile_dir.join(host_name));
 
         // Fallback: the binary may have been built independently inside the
         // plugin-host subdirectory before the workspace was introduced.
@@ -107,11 +113,11 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
                     .join("plugin-host")
                     .join("target")
                     .join(profile)
-                    .join("maolan-plugin-host"),
+                    .join(host_name),
             );
         }
     } else {
-        candidates.push(dir.join("maolan-plugin-host"));
+        candidates.push(dir.join(host_name));
     }
 
     let found = candidates.into_iter().find(|cand| cand.exists());
