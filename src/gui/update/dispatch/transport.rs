@@ -27,8 +27,7 @@ impl Maolan {
                 self.paused = true;
                 self.pending_transport_position = None;
                 self.last_playback_tick = None;
-                // Keep recording preview visible; it will be cleared when the
-                // flushed clip arrives via Action::AddClip or TransportPosition.
+
                 let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(false))];
                 if !was_playing {
                     tasks.push(self.send(Action::Play));
@@ -45,7 +44,7 @@ impl Maolan {
                 self.touch_automation_overrides.clear();
                 self.touch_active_keys.clear();
                 self.latch_automation_overrides.clear();
-                // Keep recording preview visible until the flushed clip arrives.
+
                 Task::batch(vec![
                     self.send(Action::SetClipPlaybackEnabled(true)),
                     self.send(Action::Stop),

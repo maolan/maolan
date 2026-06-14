@@ -1,9 +1,5 @@
-//! Simple utility types extracted from maolan-engine for standalone plugin hosting.
-
 use std::cell::UnsafeCell;
 
-/// Single-threaded mutex (no actual locking, just a cell wrapper).
-/// The plugin host processes audio on one thread, so this is safe.
 pub struct SimpleMutex<T> {
     data: UnsafeCell<T>,
 }
@@ -24,7 +20,6 @@ impl<T> SimpleMutex<T> {
     }
 }
 
-/// Audio port buffer used by in-process plugin wrappers.
 pub struct AudioPort {
     pub buffer: std::sync::Arc<SimpleMutex<Vec<f32>>>,
     pub finished: std::sync::Arc<SimpleMutex<bool>>,
@@ -38,16 +33,11 @@ impl AudioPort {
         }
     }
 
-    pub fn setup(&self) {
-        // No-op for standalone AudioPort (connections are managed externally).
-    }
+    pub fn setup(&self) {}
 
-    pub fn process(&self) {
-        // No-op for standalone AudioPort (audio is copied directly from SHM).
-    }
+    pub fn process(&self) {}
 }
 
-/// MIDI event with sample frame offset.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MidiEvent {
     pub frame: u32,

@@ -1,5 +1,3 @@
-//! Plugin scanner: loads a plugin library, validates it, and dumps metadata to JSON.
-
 use crate::clap::{
     CLAP_EXT_AUDIO_PORTS, CLAP_EXT_PARAMS, CLAP_VERSION, ClapAudioPortInfo, ClapHost,
     ClapParamInfo, ClapPluginAudioPorts, ClapPluginEntry, ClapPluginFactory, ClapPluginParams,
@@ -9,7 +7,6 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
-/// Metadata for a single parameter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamMetadata {
     pub id: u32,
@@ -21,7 +18,6 @@ pub struct ParamMetadata {
     pub flags: u32,
 }
 
-/// Metadata for an audio port.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioPortMetadata {
     pub id: u32,
@@ -30,7 +26,6 @@ pub struct AudioPortMetadata {
     pub flags: u32,
 }
 
-/// Metadata for a single plugin inside a library.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginMetadata {
     pub id: String,
@@ -43,7 +38,6 @@ pub struct PluginMetadata {
     pub audio_outputs: Vec<AudioPortMetadata>,
 }
 
-/// Full scan result for a plugin library.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub format: String,
@@ -51,8 +45,6 @@ pub struct ScanResult {
     pub plugins: Vec<PluginMetadata>,
     pub error: Option<String>,
 }
-
-// ─── CLAP system-scan types (match engine message types) ───
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClapPluginInfo {
@@ -91,13 +83,11 @@ fn cstr_to_string(ptr: *const c_char) -> String {
         .into_owned()
 }
 
-/// Check if a plugin's CLAP version is compatible with the host.
 fn clap_version_is_compatible(plugin_version: &crate::clap::ClapVersion) -> bool {
     plugin_version.major == crate::clap::CLAP_VERSION.major
         && plugin_version.minor <= crate::clap::CLAP_VERSION.minor
 }
 
-/// Scan a CLAP plugin library and return metadata for every plugin it contains.
 pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
     let path = Path::new(plugin_path);
     if !path.exists() {
@@ -244,7 +234,6 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
         let mut audio_inputs = Vec::new();
         let mut audio_outputs = Vec::new();
 
-        // Query params extension.
         unsafe {
             let ext = (*plugin)
                 .get_extension
@@ -289,7 +278,6 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
             }
         }
 
-        // Query audio-ports extension.
         unsafe {
             let ext = (*plugin)
                 .get_extension
@@ -383,8 +371,6 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
     }
 }
 
-// ─── CLAP system scanning ───
-
 #[cfg(any(
     target_os = "macos",
     target_os = "linux",
@@ -419,7 +405,6 @@ fn is_supported_clap_binary(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("clap"))
 }
 
-/// Scan a single CLAP bundle and return plugin info entries.
 fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo> {
     use crate::clap::{
         ClapPluginAudioPorts, ClapPluginEntry, ClapPluginFactory, ClapPluginGui,
@@ -763,7 +748,6 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>, scan_capabil
     }
 }
 
-/// Scan all CLAP plugins on the system.
 pub fn scan_clap_plugins(scan_capabilities: bool) -> Vec<ClapPluginInfo> {
     let mut roots = default_clap_search_roots();
 
@@ -787,44 +771,29 @@ pub fn scan_clap_plugins(scan_capabilities: bool) -> Vec<ClapPluginInfo> {
     out
 }
 
-// ─── VST3 system scanning ───
-
 pub fn scan_vst3_plugins() -> Vec<crate::vst3::Vst3PluginInfo> {
     crate::vst3::host::Vst3Host::new().list_plugins()
 }
-
-// ─── LV2 system scanning ───
 
 #[cfg(unix)]
 pub fn scan_lv2_plugins() -> Vec<crate::lv2::Lv2PluginInfo> {
     crate::lv2::Lv2Host::new(48_000.0).list_plugins()
 }
 
-// ─── Unified scan runner ───
-
-/// Run a scan and print JSON to stdout or write to `output_path`.
-///
-/// * `format`: `"clap"`, `"vst3"`, or `"lv2"`
-/// * `plugin_path`: specific file/directory to scan, or `"--system"` for system-wide scan
-/// * `output_path`: optional file to write JSON to
 pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i32 {
     let json = match format {
         "clap" => {
             if plugin_path == "--system" {
-                // Disable capability scanning during system-wide CLAP scan;
-                // buggy plugins (e.g., lsp-plugins.clap) segfault in is_api_supported.
                 match serde_json::to_string_pretty(&scan_clap_plugins(false)) {
                     Ok(j) => j,
-                    Err(e) => {
-                        eprintln!("Failed to serialize scan result: {e}");
+                    Err(_e) => {
                         return 1;
                     }
                 }
             } else {
                 match serde_json::to_string_pretty(&scan_clap_plugin(plugin_path)) {
                     Ok(j) => j,
-                    Err(e) => {
-                        eprintln!("Failed to serialize scan result: {e}");
+                    Err(_e) => {
                         return 1;
                     }
                 }
@@ -832,13 +801,11 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
         }
         "vst3" => {
             if plugin_path != "--system" {
-                eprintln!("VST3 single-file scan not yet supported; use --system");
                 return 1;
             }
             match serde_json::to_string_pretty(&scan_vst3_plugins()) {
                 Ok(j) => j,
-                Err(e) => {
-                    eprintln!("Failed to serialize scan result: {e}");
+                Err(_e) => {
                     return 1;
                 }
             }
@@ -846,36 +813,26 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
         #[cfg(unix)]
         "lv2" => {
             if plugin_path != "--system" {
-                eprintln!("LV2 single-file scan not yet supported; use --system");
                 return 1;
             }
             match serde_json::to_string_pretty(&scan_lv2_plugins()) {
                 Ok(j) => j,
-                Err(e) => {
-                    eprintln!("Failed to serialize scan result: {e}");
+                Err(_e) => {
                     return 1;
                 }
             }
         }
         _ => {
-            eprintln!("Scan format '{}' not supported", format);
             return 1;
         }
     };
 
     if let Some(path) = output_path {
         match std::fs::write(path, &json) {
-            Ok(()) => {
-                println!("{path}");
-                0
-            }
-            Err(e) => {
-                eprintln!("Failed to write {path}: {e}");
-                1
-            }
+            Ok(()) => 0,
+            Err(_e) => 1,
         }
     } else {
-        println!("{json}");
         0
     }
 }

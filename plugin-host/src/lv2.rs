@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::util::AudioPort;
-// LV2 state types defined below in this file
+
 pub struct Lv2ControlPortInfo {
     pub index: u32,
     pub name: String,

@@ -19,21 +19,18 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// Flush flag set by `host_params_request_flush`.
 static PARAMS_FLUSH_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub fn request_params_flush() {
     PARAMS_FLUSH_REQUESTED.store(true, Ordering::Release);
 }
 
-/// Rescan flag set by `host_audio_ports_rescan`.
 static AUDIO_PORTS_RESCAN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub fn request_audio_ports_rescan() {
     AUDIO_PORTS_RESCAN_REQUESTED.store(true, Ordering::Release);
 }
 
-/// Audio port buffer configuration built from `clap.audio-ports`.
 #[cfg(unix)]
 struct PortBuffers {
     inputs: Vec<ClapAudioBuffer>,
@@ -44,8 +41,6 @@ struct PortBuffers {
 
 #[cfg(unix)]
 impl PortBuffers {
-    /// Query the plugin's `clap.audio-ports` extension and build per-port buffers
-    /// that point into the SHM audio planes. Returns `None` if the extension is missing.
     fn from_plugin(
         plugin: *const crate::clap::ClapPlugin,
         ptr: *mut u8,
@@ -155,7 +150,6 @@ impl PortBuffers {
     }
 }
 
-/// Runtime state for the plugin-host process.
 pub struct HostRuntime {
     pub mapping: ShmMapping,
     pub events: EventPair,
@@ -165,7 +159,6 @@ pub struct HostRuntime {
 }
 
 impl HostRuntime {
-    /// Attach to an existing shared-memory segment and event pipes.
     pub fn attach(
         shm_name: &str,
         events: EventPair,
@@ -183,8 +176,6 @@ impl HostRuntime {
         })
     }
 
-    /// Extract the plugin ID for CLAP factories.
-    /// `plugin_path` may be encoded as "path::plugin_id" or "path#plugin_id" by the caller.
     #[cfg(unix)]
     fn plugin_id(&self) -> &str {
         if let Some(pos) = self.plugin_path.rfind("::") {
@@ -196,7 +187,6 @@ impl HostRuntime {
         }
     }
 
-    /// Extract the real file path (without the optional #plugin_id suffix).
     #[cfg(unix)]
     fn real_plugin_path(&self) -> &str {
         if let Some(pos) = self.plugin_path.rfind("::") {
@@ -208,14 +198,12 @@ impl HostRuntime {
         }
     }
 
-    /// Signal readiness to the DAW.
     pub fn signal_ready(&self) {
         let header = unsafe { header_mut(self.mapping.as_ptr()) };
         header.ready.store(1, Ordering::Release);
         tracing::info!(instance_id = %self.instance_id, "Plugin host ready");
     }
 
-    /// Write a test magic number into the scratch area.
     pub fn write_test_magic(&self) {
         let scratch = unsafe { scratch_ptr(self.mapping.as_ptr()) };
         let magic: u32 = 0xDEADBEEF;
@@ -224,8 +212,6 @@ impl HostRuntime {
         }
     }
 
-    /// Blocking wait until the DAW requests shutdown or a fatal signal arrives.
-    /// Uses the event pipe to sleep instead of burning CPU.
     pub fn run_until_shutdown(&self) {
         let header = unsafe { header_ref(self.mapping.as_ptr()) };
         let start = Instant::now();
@@ -248,8 +234,6 @@ impl HostRuntime {
         }
     }
 
-    /// Run the dummy null plugin: copy input audio channels to output channels.
-    /// Blocks on the event pipe for each block, then signals completion.
     pub fn run_null_plugin(&self) {
         let header = unsafe { header_ref(self.mapping.as_ptr()) };
         let ptr = self.mapping.as_ptr();
@@ -261,7 +245,6 @@ impl HostRuntime {
                 break;
             }
 
-            // Wait for DAW to wake us with a new block.
             match self.events.wait_daw(Duration::from_millis(100)) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
@@ -281,8 +264,6 @@ impl HostRuntime {
                 continue;
             }
 
-            // Copy each input channel to the corresponding output channel.
-            // Input uses bus 0 (main), output uses bus 1 (sidechain) so we don't overwrite input.
             let max_ch = num_in.min(num_out).min(MAX_CHANNELS);
             for ch in 0..max_ch {
                 let in_ptr = unsafe { audio_channel_ptr(ptr, ch, 0) };
@@ -292,7 +273,6 @@ impl HostRuntime {
                 }
             }
 
-            // Signal completion.
             if let Err(e) = self.events.signal_daw() {
                 tracing::error!("Failed to signal DAW: {e}");
                 break;
@@ -300,7 +280,6 @@ impl HostRuntime {
         }
     }
 
-    /// Run a CLAP plugin inside the host process, marshalling audio via shared memory.
     #[cfg(unix)]
     pub fn run_clap_plugin(&self) {
         let mut plugin = match PluginInstance::new(self.real_plugin_path(), self.plugin_id()) {
@@ -327,7 +306,6 @@ impl HostRuntime {
             maolan_plugin_protocol::protocol::write_plugin_name_to_scratch(ptr, &plugin.name());
         }
 
-        // Read sample rate from transport, fallback to 48 kHz for backward compat.
         let sample_rate = unsafe {
             let ts = transport_ref(ptr);
             if ts.sample_rate_hz > 0.0 {
@@ -342,7 +320,6 @@ impl HostRuntime {
             return;
         }
 
-        // Build per-port audio buffers from the plugin's audio-ports extension.
         let mut port_buffers = PortBuffers::from_plugin(plugin.plugin_ptr(), ptr, 0, 0);
 
         let has_note_ports = unsafe {
@@ -358,7 +335,6 @@ impl HostRuntime {
                 .is_some()
         };
 
-        // Compute total audio channel counts and MIDI port counts for the engine.
         let audio_in_channels = port_buffers
             .as_ref()
             .map(|pb| pb.inputs.iter().map(|p| p.channel_count).sum::<u32>())
@@ -403,10 +379,7 @@ impl HostRuntime {
             "Wrote port counts to scratch"
         );
 
-        // Signal ready AFTER querying plugin ports so the engine can read counts immediately.
         self.signal_ready();
-
-        // Set up ring buffers.
 
         let param_ring = unsafe {
             let buf = param_ring_ptr(ptr);
@@ -425,7 +398,6 @@ impl HostRuntime {
             let (w, r) = midi_indices(ptr);
             RingBuffer::new(buf, w, r, RING_CAPACITY)
         };
-        // Cache plugin extension pointers for idle callbacks.
 
         let params_ext = unsafe {
             (*plugin.plugin_ptr())
@@ -460,7 +432,6 @@ impl HostRuntime {
                 break;
             }
 
-            // Handle non-audio requests (GUI, state).
             let req = header.request_type.load(Ordering::Acquire);
             if req != 0 {
                 let scratch = unsafe { scratch_ptr(ptr) };
@@ -505,7 +476,7 @@ impl HostRuntime {
                         } else {
                             let window_id = header.parent_window_usize() as u64;
                             let is_floating = window_id == 0;
-                            // Always recreate GUI if already created, to handle parent/floating changes.
+
                             if plugin.gui_created() {
                                 plugin.gui_destroy();
                             }
@@ -537,18 +508,15 @@ impl HostRuntime {
                 continue;
             }
 
-            // Idle work: timers, FDs, parameter flush, on_main_thread callback.
             set_thread_type(ThreadType::MainThread);
             self.handle_idle_work(&plugin, params_ext, timer_ext);
 
-            // Wait for DAW signal or timeout (max 100 ms to service timers/FDs).
             let timeout_ms = self.next_timer_ms().min(100);
             let (daw_ready, ready_fds) = match timeout_ms {
-                0 => (true, Vec::new()), // timers expired immediately
+                0 => (true, Vec::new()),
                 ms => self.poll_daw_and_fds(daw_read_fd, Duration::from_millis(ms)),
             };
 
-            // Fire FD callbacks only for FDs that actually signaled readiness.
             if let Some(ext) = fd_ext {
                 for (fd, flags) in ready_fds {
                     unsafe {
@@ -560,7 +528,6 @@ impl HostRuntime {
             }
 
             if !daw_ready {
-                // Timeout only — loop around to handle timers/FDs.
                 continue;
             }
 
@@ -574,13 +541,11 @@ impl HostRuntime {
                 continue;
             }
 
-            // Rebuild port buffers if the plugin requested an audio-ports rescan.
             if AUDIO_PORTS_RESCAN_REQUESTED.swap(false, Ordering::Acquire) {
                 tracing::info!(instance_id = %self.instance_id, "Rebuilding audio port buffers after rescan");
                 port_buffers = PortBuffers::from_plugin(plugin.plugin_ptr(), ptr, num_in, num_out);
             }
 
-            // Update SHM pointers each block in case the DAW remapped channels.
             if let Some(ref mut pb) = port_buffers {
                 let mut global_ch: usize = 0;
                 for port in &mut pb._input_ptrs {
@@ -605,7 +570,6 @@ impl HostRuntime {
                     }
                 }
             } else {
-                // Fallback: single bus with all channels (old behavior).
                 let mut in_ptrs: [*mut f32; MAX_CHANNELS] = [ptr::null_mut(); MAX_CHANNELS];
                 let mut out_ptrs: [*mut f32; MAX_CHANNELS] = [ptr::null_mut(); MAX_CHANNELS];
                 for (ch, in_ptr) in in_ptrs
@@ -624,7 +588,6 @@ impl HostRuntime {
                 }
             }
 
-            // Build input event list from parameter and MIDI ring buffers.
             let mut event_buf = EventBuffer::new();
             while let Some(ev) = param_ring.pop() {
                 match ev.event_kind {
@@ -646,9 +609,7 @@ impl HostRuntime {
                     }
                 }
             }
-            let mut midi_count = 0;
             while let Some(ev) = midi_ring.pop() {
-                midi_count += 1;
                 if has_note_ports {
                     self.push_midi_as_clap_events(
                         &mut event_buf,
@@ -660,19 +621,12 @@ impl HostRuntime {
                     event_buf.push_midi(ev.data, ev.channel as u16, ev.sample_offset);
                 }
             }
-            if midi_count > 0 {
-                eprintln!(
-                    "[HOST] {} received {} MIDI events from engine",
-                    self.instance_id, midi_count
-                );
-            }
+            
             let in_events = event_buf.as_input_events();
 
-            // Capture events the plugin emits back to the DAW.
             let mut event_capture = EventCapture::new();
             let out_events = event_capture.as_output_events();
 
-            // Flush parameters on main thread if requested.
             if PARAMS_FLUSH_REQUESTED.swap(false, Ordering::Acquire)
                 && let Some(params_ptr) = params_ext
             {
@@ -683,7 +637,7 @@ impl HostRuntime {
                         let mut flush_capture = EventCapture::new();
                         let flush_out = flush_capture.as_output_events();
                         f(plugin.plugin_ptr(), &empty_in, &flush_out);
-                        // Echo flushed events immediately.
+
                         for bytes in flush_capture.drain() {
                             if bytes.len() >= std::mem::size_of::<ClapEventHeader>() {
                                 let h = &*(bytes.as_ptr() as *const ClapEventHeader);
@@ -769,7 +723,6 @@ impl HostRuntime {
 
             steady_time += block_size as i64;
 
-            // Forward captured events to the DAW via echo ring.
             for bytes in event_capture.drain() {
                 if bytes.len() >= std::mem::size_of::<ClapEventHeader>() {
                     let h = unsafe { &*(bytes.as_ptr() as *const ClapEventHeader) };
@@ -794,16 +747,10 @@ impl HostRuntime {
         tracing::info!(instance_id = %self.instance_id, "CLAP plugin stopped");
     }
 
-    /// Clean up and exit.
     pub fn shutdown(self) {
         tracing::info!(instance_id = %self.instance_id, "Plugin host shutting down");
     }
 
-    // ------------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------------
-
-    /// Convert a raw MIDI event to CLAP note events if applicable, pushing into `event_buf`.
     #[cfg(unix)]
     fn push_midi_as_clap_events(
         &self,
@@ -851,11 +798,10 @@ impl HostRuntime {
             }
             _ => {}
         }
-        // Always emit the raw MIDI event as well.
+
         event_buf.push_midi(data, port_index, sample_offset);
     }
 
-    /// Convert a captured CLAP event into a `ParameterEvent` and push it to the echo ring.
     #[cfg(unix)]
     fn echo_event_to_daw(
         &self,
@@ -920,14 +866,10 @@ impl HostRuntime {
                     tracing::warn!("Echo ring full, dropping gesture end event");
                 }
             }
-            _ => {
-                // Other event types are not echoed via the parameter ring.
-            }
+            _ => {}
         }
     }
 
-    /// Poll the DAW pipe and registered FDs.
-    /// Returns `(daw_ready, ready_fds)` where `ready_fds` contains only FDs that signaled.
     #[cfg(unix)]
     fn poll_daw_and_fds(&self, daw_fd: i32, timeout: Duration) -> (bool, Vec<(i32, u32)>) {
         let fds = host_fds().lock().unwrap();
@@ -983,7 +925,6 @@ impl HostRuntime {
         (poll_fds[0].revents & libc::POLLIN != 0, ready_fds)
     }
 
-    /// Return the number of milliseconds until the next timer expires (0 if already expired).
     #[cfg(unix)]
     fn next_timer_ms(&self) -> u64 {
         let timers = host_timers().lock().unwrap();
@@ -1001,7 +942,6 @@ impl HostRuntime {
             .unwrap_or(100)
     }
 
-    /// Handle timers, FD callbacks, and on_main_thread.
     #[cfg(unix)]
     fn handle_idle_work(
         &self,

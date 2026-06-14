@@ -1,30 +1,12 @@
 use std::time::Duration;
 
-fn print_usage() {
-    eprintln!("Usage:");
-    eprintln!(
-        "  maolan-plugin-host <format> <plugin-path> <shm-name> <instance-id> <daw-to-host-fd> <host-to-daw-fd> [sample-rate buffer-size num-inputs num-outputs]"
-    );
-    eprintln!(
-        "  maolan-plugin-host --scan --format <format> --path <plugin-path> [--output <json-path>]"
-    );
-    eprintln!();
-    eprintln!("  For 'clap' / 'null': 6 arguments after format.");
-    eprintln!(
-        "  For 'vst3' / 'lv2': 10 arguments after format (includes sample-rate, buffer-size, num-inputs, num-outputs)."
-    );
-}
+fn print_usage() {}
 
 #[cfg(target_os = "linux")]
 fn setup_parent_death_signal() {
     unsafe {
         let r = libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0);
-        if r != 0 {
-            eprintln!(
-                "Warning: failed to set PR_SET_PDEATHSIG: {}",
-                std::io::Error::last_os_error()
-            );
-        }
+        if r != 0 {}
     }
 }
 
@@ -38,12 +20,7 @@ fn setup_parent_death_signal() {
             libc::PROC_PDEATHSIG_CTL,
             &sig as *const _ as *mut libc::c_void,
         );
-        if r != 0 {
-            eprintln!(
-                "Warning: failed to set PROC_PDEATHSIG: {}",
-                std::io::Error::last_os_error()
-            );
-        }
+        if r != 0 {}
     }
 }
 
@@ -61,13 +38,9 @@ fn parse_log_level(args: &mut Vec<String>) -> Option<tracing::Level> {
                 "warning" => Some(tracing::Level::WARN),
                 "error" => Some(tracing::Level::ERROR),
                 "debug" => Some(tracing::Level::DEBUG),
-                other => {
-                    eprintln!("Unknown log level '{}', using none", other);
-                    None
-                }
+                other => None,
             }
         } else {
-            eprintln!("--log-level requires a value");
             None
         }
     } else {
@@ -76,7 +49,6 @@ fn parse_log_level(args: &mut Vec<String>) -> Option<tracing::Level> {
 }
 
 fn main() {
-    eprintln!("[plugin-host] started");
     setup_parent_death_signal();
 
     let mut args: Vec<String> = std::env::args().collect();
@@ -86,7 +58,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Scan mode: maolan-plugin-host --scan --format <format> --path <plugin-path> [--output <json>]
     if args[1] == "--scan" {
         let mut format = None;
         let mut path = None;
@@ -117,7 +88,6 @@ fn main() {
             i += 1;
         }
         let format = format.unwrap_or_else(|| {
-            eprintln!("--scan requires --format");
             print_usage();
             std::process::exit(1);
         });
@@ -130,12 +100,10 @@ fn main() {
 
     let format = args[1].clone();
 
-    // Determine expected arg count based on format.
     let expected_args = match format.as_str() {
         "clap" | "null" | "__test__" => 7,
         "vst3" | "lv2" => 11,
         _ => {
-            eprintln!("Unknown format: {}", format);
             print_usage();
             std::process::exit(4);
         }
@@ -155,7 +123,6 @@ fn main() {
     #[cfg(unix)]
     let h2d_fd: i32 = args[6].parse().unwrap_or(-1);
 
-    // Parse VST3/LV2-specific args (only needed on Unix where VST3/LV2 hosting runs).
     #[cfg(unix)]
     let sample_rate: f64 = if args.len() > 7 {
         args[7].parse().unwrap_or(48000.0)
@@ -181,8 +148,6 @@ fn main() {
         2
     };
 
-    // For CLAP, plugin_spec may be "path#plugin_id" to select a specific plugin
-    // from a factory. If no # is present, the first plugin in the factory is used.
     let (plugin_path, _plugin_id) = if format == "clap" {
         if let Some(pos) = plugin_spec.rfind("::") {
             (
@@ -213,7 +178,6 @@ fn main() {
             #[cfg(unix)]
             {
                 if d2h_fd < 0 || h2d_fd < 0 {
-                    eprintln!("Invalid event pipe file descriptors");
                     std::process::exit(3);
                 }
                 let events =
@@ -224,7 +188,6 @@ fn main() {
                 ) {
                     Ok(m) => m,
                     Err(e) => {
-                        eprintln!("Failed to attach to shared memory '{}': {}", shm_name, e);
                         std::process::exit(2);
                     }
                 };
@@ -249,14 +212,12 @@ fn main() {
             }
             #[cfg(not(unix))]
             {
-                eprintln!("VST3 plugin hosting is not supported on this platform");
                 std::process::exit(4);
             }
         }
         #[cfg(unix)]
         "lv2" => {
             if d2h_fd < 0 || h2d_fd < 0 {
-                eprintln!("Invalid event pipe file descriptors");
                 std::process::exit(3);
             }
             let events =
@@ -267,7 +228,6 @@ fn main() {
             ) {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("Failed to attach to shared memory '{}': {}", shm_name, e);
                     std::process::exit(2);
                 }
             };
@@ -288,7 +248,6 @@ fn main() {
         }
         #[cfg(not(unix))]
         "lv2" => {
-            eprintln!("LV2 is not supported on this platform");
             std::process::exit(4);
         }
         _ => {}
@@ -309,7 +268,6 @@ fn main() {
             std::process::exit(3);
         });
 
-    eprintln!("[plugin-host] attaching to shm={}", shm_name);
     let runtime = match maolan_plugin_host::host::HostRuntime::attach(
         &shm_name,
         events,
@@ -319,15 +277,10 @@ fn main() {
     ) {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!(
-                "[plugin-host] Failed to attach to shared memory '{}': {}",
-                shm_name, e
-            );
             tracing::error!("Failed to attach to shared memory '{}': {}", shm_name, e);
             std::process::exit(2);
         }
     };
-    eprintln!("[plugin-host] attached successfully");
 
     match plugin_path.as_str() {
         "__test__" => runtime.write_test_magic(),

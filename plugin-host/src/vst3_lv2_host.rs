@@ -8,9 +8,6 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-// ---------------------------------------------------------------------------
-// X11 GUI support for VST3 (FreeBSD / Linux only)
-// ---------------------------------------------------------------------------
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11_ffi {
     use std::os::raw::{c_char, c_int, c_uint, c_ulong};
@@ -50,14 +47,12 @@ mod x11_ffi {
     }
 }
 
-/// Owns the X11 display connection and container window for a VST3 plugin GUI.
 #[cfg(all(unix, not(target_os = "macos")))]
 struct Vst3GuiWindow {
     display: *mut x11_ffi::Display,
     window: x11_ffi::Window,
 }
 
-// The display pointer is only used from the single plugin-host main thread.
 #[cfg(all(unix, not(target_os = "macos")))]
 unsafe impl Send for Vst3GuiWindow {}
 
@@ -72,8 +67,6 @@ impl Drop for Vst3GuiWindow {
     }
 }
 
-/// Create an X11 container window, attach the VST3 plugin view to it, and map
-/// (show) the window.  Called the first time GUI show is requested.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn create_vst3_gui(
     processor: &crate::vst3::Vst3Processor,
@@ -103,17 +96,7 @@ fn create_vst3_gui(
     };
 
     let window = unsafe {
-        x11_ffi::XCreateSimpleWindow(
-            display,
-            parent_window,
-            0,
-            0, // position relative to parent
-            800,
-            600, // initial size (resized after gui_get_size)
-            1,
-            black,
-            white,
-        )
+        x11_ffi::XCreateSimpleWindow(display, parent_window, 0, 0, 800, 600, 1, black, white)
     };
     if window == 0 {
         unsafe {
@@ -122,7 +105,6 @@ fn create_vst3_gui(
         return Err("VST3 GUI: failed to create X11 container window".to_string());
     }
 
-    // Use the plugin file name as the window title.
     let title = std::path::Path::new(plugin_path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -133,7 +115,6 @@ fn create_vst3_gui(
         }
     }
 
-    // Create the VST3 IPlugView and verify X11EmbedWindowID is supported.
     processor.gui_create("X11EmbedWindowID").map_err(|e| {
         unsafe {
             x11_ffi::XDestroyWindow(display, window);
@@ -142,7 +123,6 @@ fn create_vst3_gui(
         format!("VST3 GUI: gui_create failed: {e}")
     })?;
 
-    // Attach the view to our container window.
     processor
         .gui_set_parent(window as usize, "X11EmbedWindowID")
         .map_err(|e| {
@@ -153,7 +133,6 @@ fn create_vst3_gui(
             format!("VST3 GUI: gui_set_parent failed: {e}")
         })?;
 
-    // Resize container to the plugin's preferred size.
     if let Ok((w, h)) = processor.gui_get_size()
         && w > 0
         && h > 0
@@ -171,9 +150,6 @@ fn create_vst3_gui(
     Ok(Vst3GuiWindow { display, window })
 }
 
-// ---------------------------------------------------------------------------
-// Windows GUI support for VST3
-// ---------------------------------------------------------------------------
 #[cfg(windows)]
 mod win32_gui {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -210,7 +186,7 @@ mod win32_gui {
             } as *mut _,
             hIcon: std::ptr::null_mut(),
             hCursor: std::ptr::null_mut(),
-            hbrBackground: (5 + 1) as *mut _, // COLOR_WINDOW = 5
+            hbrBackground: (5 + 1) as *mut _,
             lpszMenuName: std::ptr::null(),
             lpszClassName: class_name.as_ptr(),
             hIconSm: std::ptr::null_mut(),
@@ -226,7 +202,6 @@ mod win32_gui {
     }
 }
 
-/// Owns the Win32 container window for a VST3 plugin GUI.
 #[cfg(windows)]
 struct Vst3GuiWindow {
     hwnd: windows_sys::Win32::Foundation::HWND,
@@ -241,8 +216,6 @@ impl Drop for Vst3GuiWindow {
     }
 }
 
-/// Create a Win32 container window, attach the VST3 plugin view to it, and show
-/// the window. Called the first time GUI show is requested.
 #[cfg(windows)]
 fn create_vst3_gui(
     processor: &crate::vst3::Vst3Processor,
@@ -336,7 +309,6 @@ fn create_vst3_gui(
     Ok(Vst3GuiWindow { hwnd })
 }
 
-/// Drain parameter events from the DAW-side param ring and apply them to a VST3 processor.
 fn apply_vst3_param_ring(processor: &crate::vst3::Vst3Processor, ptr: *mut u8) {
     let ring = unsafe {
         let buf = param_ring_ptr(ptr);
@@ -344,14 +316,12 @@ fn apply_vst3_param_ring(processor: &crate::vst3::Vst3Processor, ptr: *mut u8) {
         RingBuffer::new(buf, w, r, RING_CAPACITY)
     };
     while let Some(ev) = ring.pop() {
-        if let Err(e) = processor.set_parameter_value_at(ev.param_index, ev.value, ev.sample_offset)
+        if let Err(_e) = processor.set_parameter_value_at(ev.param_index, ev.value, ev.sample_offset)
         {
-            eprintln!("[plugin-host] VST3 set_parameter_value failed: {}", e);
         }
     }
 }
 
-/// Drain MIDI events from the DAW-side MIDI ring.
 fn drain_midi_ring(ptr: *mut u8) -> Vec<crate::util::MidiEvent> {
     let ring = unsafe {
         let buf = midi_ring_ptr(ptr);
@@ -368,7 +338,6 @@ fn drain_midi_ring(ptr: *mut u8) -> Vec<crate::util::MidiEvent> {
     events
 }
 
-/// Write MIDI output events to the MIDI out ring so the DAW can read them.
 fn write_midi_out_ring(ptr: *mut u8, events: &[crate::util::MidiEvent]) {
     let ring = unsafe {
         let buf = midi_out_ring_ptr(ptr);
@@ -390,18 +359,16 @@ fn write_midi_out_ring(ptr: *mut u8, events: &[crate::util::MidiEvent]) {
             _pad: 0,
         };
         if !ring.push(midi_ev) {
-            eprintln!("[plugin-host] MIDI out ring full, dropping event");
             break;
         }
     }
 }
 
-/// Read transport state from shared memory and apply it to a VST3 processor.
 fn apply_vst3_transport(processor: &crate::vst3::Vst3Processor, ptr: *mut u8) {
     let transport = unsafe { transport_ref(ptr) };
     let info = crate::vst3::processor::Vst3TransportInfo {
         playhead_sample: transport.playhead_sample as i64,
-        playing: transport.flags & 0x1 != 0, // bit 0 = playing
+        playing: transport.flags & 0x1 != 0,
         tempo: transport.tempo,
         tsig_num: transport.numerator as i32,
         tsig_denom: transport.denominator as i32,
@@ -409,11 +376,6 @@ fn apply_vst3_transport(processor: &crate::vst3::Vst3Processor, ptr: *mut u8) {
     processor.set_transport_info(info);
 }
 
-/// Write VST3 parameter changes to the echo ring.
-///
-/// Drains both:
-/// 1. `performEdit` callbacks captured by the in-process `ComponentHandler`.
-/// 2. Polled parameter values that changed since the last block.
 fn write_vst3_echo_ring(
     processor: &crate::vst3::Vst3Processor,
     ptr: *mut u8,
@@ -425,7 +387,6 @@ fn write_vst3_echo_ring(
         RingBuffer::new(buf, w, r, RING_CAPACITY)
     };
 
-    // 1. Forward performEdit callbacks directly (plugin-initiated parameter echo).
     for (param_id, value) in processor.ui_take_param_updates() {
         let ev = ParameterEvent {
             param_index: param_id,
@@ -434,14 +395,12 @@ fn write_vst3_echo_ring(
             event_kind: PARAM_EVENT_VALUE,
         };
         if !ring.push(ev) {
-            eprintln!("[plugin-host] Echo ring full, dropping performEdit event");
             break;
         }
-        // Update cache so the polling loop below doesn't duplicate the event.
+
         cache.insert(param_id, value as f32);
     }
 
-    // 2. Poll remaining parameter values (catches changes from automation, host, etc.).
     for param in processor.parameters() {
         let current = processor.get_parameter_value(param.id).unwrap_or(0.0);
         if cache.get(&param.id) != Some(&current) {
@@ -452,7 +411,6 @@ fn write_vst3_echo_ring(
                 event_kind: PARAM_EVENT_VALUE,
             };
             if !ring.push(ev) {
-                eprintln!("[plugin-host] Echo ring full, dropping parameter event");
                 break;
             }
             cache.insert(param.id, current);
@@ -460,7 +418,6 @@ fn write_vst3_echo_ring(
     }
 }
 
-/// Serialize VST3 state into scratch area. Returns bytes written or error.
 fn serialize_vst3_state(
     scratch: *mut u8,
     state: &crate::vst3::state::Vst3PluginState,
@@ -538,7 +495,6 @@ fn serialize_vst3_state(
     Ok(offset)
 }
 
-/// Deserialize VST3 state from scratch area.
 fn deserialize_vst3_state(
     scratch: *const u8,
     size: usize,
@@ -619,14 +575,13 @@ pub fn run_vst3(args: Vst3RunArgs) {
         plugin_path,
         mapping,
         events,
-        instance_id,
+        instance_id: _,
         sample_rate,
         buffer_size,
         num_inputs,
         num_outputs,
     } = args;
 
-    // Handle sentinel plugin paths for tests.
     match plugin_path {
         "__test__" => {
             let scratch = unsafe { scratch_ptr(mapping.as_ptr()) };
@@ -652,11 +607,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
         num_outputs,
     ) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!(
-                "[plugin-host {}] Failed to load VST3 plugin '{}': {}",
-                instance_id, plugin_path, e
-            );
+        Err(_e) => {
             return;
         }
     };
@@ -673,36 +624,30 @@ pub fn run_vst3(args: Vst3RunArgs) {
     let header = unsafe { header_ref(mapping.as_ptr()) };
     let ptr = mapping.as_ptr();
     let mut vst3_param_cache = HashMap::new();
-    // Container window for VST3 GUI (created lazily on first GUI show request).
+
     #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
     let mut vst3_gui_window: Option<Vst3GuiWindow> = None;
 
     loop {
         if header.shutdown_request.load(Ordering::Acquire) != 0 {
-            eprintln!("[plugin-host {}] Shutdown requested", instance_id);
             break;
         }
 
-        // Check for state/GUI request before waiting for audio signal.
         let req = header.request_type.load(Ordering::Acquire);
         if req != 0 {
             let scratch = unsafe { scratch_ptr(ptr) };
             let result = match req {
-                1 => {
-                    // Save state
-                    match processor.snapshot_state() {
-                        Ok(state) => match serialize_vst3_state(scratch, &state) {
-                            Ok(size) => {
-                                header.scratch_size.store(size as u32, Ordering::Release);
-                                Ok(())
-                            }
-                            Err(e) => Err(e),
-                        },
+                1 => match processor.snapshot_state() {
+                    Ok(state) => match serialize_vst3_state(scratch, &state) {
+                        Ok(size) => {
+                            header.scratch_size.store(size as u32, Ordering::Release);
+                            Ok(())
+                        }
                         Err(e) => Err(e),
-                    }
-                }
+                    },
+                    Err(e) => Err(e),
+                },
                 2 => {
-                    // Restore state
                     let size = header.scratch_size.load(Ordering::Acquire) as usize;
                     match deserialize_vst3_state(scratch, size) {
                         Ok(state) => processor.restore_state(&state),
@@ -710,7 +655,6 @@ pub fn run_vst3(args: Vst3RunArgs) {
                     }
                 }
                 3 => {
-                    // GUI show — create container window on first call, then attach and map it.
                     #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
                     {
                         if vst3_gui_window.is_none() {
@@ -745,7 +689,6 @@ pub fn run_vst3(args: Vst3RunArgs) {
                     Err("VST3 GUI not supported on this platform".to_string())
                 }
                 4 => {
-                    // GUI hide
                     #[cfg(all(unix, not(target_os = "macos")))]
                     if let Some(ref gw) = vst3_gui_window {
                         unsafe {
@@ -770,9 +713,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
             header
                 .request_status
                 .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
-            // Only wake the DAW for state operations (save=1, restore=2).
-            // GUI requests (show=3, hide=4) are fire-and-forget — signalling
-            // here would corrupt the audio-completion pipe handshake.
+
             if req == 1 || req == 2 {
                 let _ = events.signal_daw();
             }
@@ -783,8 +724,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
         match events.wait_daw(Duration::from_millis(100)) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-            Err(e) => {
-                eprintln!("[plugin-host {}] Event error: {}", instance_id, e);
+            Err(_e) => {
                 break;
             }
         }
@@ -794,21 +734,14 @@ pub fn run_vst3(args: Vst3RunArgs) {
         let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
         if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-            eprintln!(
-                "[plugin-host {}] Invalid block size {}, skipping",
-                instance_id, block_size
-            );
             let _ = events.signal_daw();
             continue;
         }
 
-        // Apply parameter changes from DAW before processing.
         apply_vst3_param_ring(&processor, ptr);
 
-        // Apply transport state before processing.
         apply_vst3_transport(&processor, ptr);
 
-        // Copy SHM input (bus 0) to processor input buffers.
         let inputs = processor.audio_inputs();
         for (ch, input) in inputs.iter().enumerate().take(num_in) {
             let src = unsafe { audio_channel_ptr(ptr, ch, 0) };
@@ -820,10 +753,8 @@ pub fn run_vst3(args: Vst3RunArgs) {
             *input.finished.lock() = true;
         }
 
-        // Read MIDI input events from DAW.
         let midi_input = drain_midi_ring(ptr);
 
-        // Process.
         let _midi_output = if processor.midi_input_count() > 0 || processor.midi_output_count() > 0
         {
             processor.process_with_midi(block_size, &midi_input)
@@ -832,13 +763,10 @@ pub fn run_vst3(args: Vst3RunArgs) {
             Vec::new()
         };
 
-        // Echo parameter changes back to DAW.
         write_vst3_echo_ring(&processor, ptr, &mut vst3_param_cache);
 
-        // Write MIDI output events back to DAW.
         write_midi_out_ring(ptr, &_midi_output);
 
-        // Copy processor output buffers to SHM output (bus 1).
         let outputs = processor.audio_outputs();
         for (ch, output) in outputs.iter().enumerate().take(num_out) {
             let src = output.buffer.lock();
@@ -849,16 +777,12 @@ pub fn run_vst3(args: Vst3RunArgs) {
             }
         }
 
-        if let Err(e) = events.signal_daw() {
-            eprintln!("[plugin-host {}] Failed to signal DAW: {}", instance_id, e);
+        if let Err(_e) = events.signal_daw() {
             break;
         }
     }
-
-    eprintln!("[plugin-host {}] VST3 host exiting", instance_id);
 }
 
-/// Drain parameter events from the DAW-side param ring and apply them to an LV2 processor.
 #[cfg(unix)]
 fn apply_lv2_param_ring(processor: &mut crate::lv2::Lv2Processor, ptr: *mut u8) {
     let ring = unsafe {
@@ -867,13 +791,10 @@ fn apply_lv2_param_ring(processor: &mut crate::lv2::Lv2Processor, ptr: *mut u8) 
         RingBuffer::new(buf, w, r, RING_CAPACITY)
     };
     while let Some(ev) = ring.pop() {
-        if let Err(e) = processor.set_control_value(ev.param_index, ev.value) {
-            eprintln!("[plugin-host] LV2 set_control_value failed: {}", e);
-        }
+        if let Err(_e) = processor.set_control_value(ev.param_index, ev.value) {}
     }
 }
 
-/// Read transport state from shared memory and build LV2 transport info.
 #[cfg(unix)]
 fn read_lv2_transport(ptr: *mut u8) -> crate::lv2::Lv2TransportInfo {
     let transport = unsafe { transport_ref(ptr) };
@@ -886,7 +807,6 @@ fn read_lv2_transport(ptr: *mut u8) -> crate::lv2::Lv2TransportInfo {
     }
 }
 
-/// Write LV2 control-port changes to the echo ring.
 #[cfg(unix)]
 fn write_lv2_echo_ring(
     processor: &crate::lv2::Lv2Processor,
@@ -908,7 +828,6 @@ fn write_lv2_echo_ring(
                 event_kind: PARAM_EVENT_VALUE,
             };
             if !ring.push(ev) {
-                eprintln!("[plugin-host] Echo ring full, dropping parameter event");
                 break;
             }
             cache.insert(port.index, current);
@@ -916,13 +835,11 @@ fn write_lv2_echo_ring(
     }
 }
 
-/// Serialize LV2 state into scratch area. Returns bytes written or error.
 #[cfg(unix)]
 fn serialize_lv2_state(scratch: *mut u8, state: &Lv2PluginState) -> Result<usize, String> {
     let max_len = SCRATCH_SIZE;
     let mut offset = 0usize;
 
-    // Port values
     if offset + 4 > max_len {
         return Err("scratch overflow".to_string());
     }
@@ -947,7 +864,6 @@ fn serialize_lv2_state(scratch: *mut u8, state: &Lv2PluginState) -> Result<usize
         offset += 4;
     }
 
-    // Properties
     if offset + 4 > max_len {
         return Err("scratch overflow".to_string());
     }
@@ -1025,7 +941,6 @@ fn serialize_lv2_state(scratch: *mut u8, state: &Lv2PluginState) -> Result<usize
     Ok(offset)
 }
 
-/// Deserialize LV2 state from scratch area.
 #[cfg(unix)]
 fn deserialize_lv2_state(scratch: *const u8, size: usize) -> Result<Lv2PluginState, String> {
     if size < 8 {
@@ -1115,11 +1030,10 @@ pub fn run_lv2(
     plugin_uri: &str,
     mapping: ShmMapping,
     events: EventPair,
-    instance_id: &str,
+    _instance_id: &str,
     sample_rate: f64,
     buffer_size: usize,
 ) {
-    // Handle sentinel plugin paths for tests.
     match plugin_uri {
         "__test__" => {
             let scratch = unsafe { scratch_ptr(mapping.as_ptr()) };
@@ -1139,11 +1053,7 @@ pub fn run_lv2(
 
     let mut processor = match crate::lv2::Lv2Processor::new(sample_rate, buffer_size, plugin_uri) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!(
-                "[plugin-host {}] Failed to load LV2 plugin '{}': {}",
-                instance_id, plugin_uri, e
-            );
+        Err(_e) => {
             return;
         }
     };
@@ -1161,17 +1071,14 @@ pub fn run_lv2(
 
     loop {
         if header.shutdown_request.load(Ordering::Acquire) != 0 {
-            eprintln!("[plugin-host {}] Shutdown requested", instance_id);
             break;
         }
 
-        // Check for state/GUI request before waiting for audio signal.
         let req = header.request_type.load(Ordering::Acquire);
         if req != 0 {
             let scratch = unsafe { scratch_ptr(ptr) };
             let result = match req {
                 1 => {
-                    // Save state
                     let state = processor.snapshot_state();
                     match serialize_lv2_state(scratch, &state) {
                         Ok(size) => {
@@ -1182,14 +1089,13 @@ pub fn run_lv2(
                     }
                 }
                 2 => {
-                    // Restore state
                     let size = header.scratch_size.load(Ordering::Acquire) as usize;
                     match deserialize_lv2_state(scratch, size) {
                         Ok(state) => processor.restore_state(&state),
                         Err(e) => Err(e),
                     }
                 }
-                // GUI show/hide: LV2 has no GUI support in the plugin host yet.
+
                 3 => Err("LV2 GUI not yet supported".to_string()),
                 4 => Ok(()),
                 _ => Err(format!("Unknown request type: {}", req)),
@@ -1197,9 +1103,7 @@ pub fn run_lv2(
             header
                 .request_status
                 .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
-            // Only wake the DAW for state operations (save=1, restore=2).
-            // GUI requests (show=3, hide=4) are fire-and-forget — signalling
-            // here would corrupt the audio-completion pipe handshake.
+
             if req == 1 || req == 2 {
                 let _ = events.signal_daw();
             }
@@ -1210,8 +1114,7 @@ pub fn run_lv2(
         match events.wait_daw(Duration::from_millis(100)) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-            Err(e) => {
-                eprintln!("[plugin-host {}] Event error: {}", instance_id, e);
+            Err(_e) => {
                 break;
             }
         }
@@ -1221,21 +1124,14 @@ pub fn run_lv2(
         let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
         if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-            eprintln!(
-                "[plugin-host {}] Invalid block size {}, skipping",
-                instance_id, block_size
-            );
             let _ = events.signal_daw();
             continue;
         }
 
-        // Apply parameter changes from DAW before processing.
         apply_lv2_param_ring(&mut processor, ptr);
 
-        // Read transport state before processing.
         let transport = read_lv2_transport(ptr);
 
-        // Copy SHM input (bus 0) to processor input buffers.
         let inputs = processor.audio_inputs();
         for (ch, input) in inputs.iter().enumerate().take(num_in) {
             let src = unsafe { audio_channel_ptr(ptr, ch, 0) };
@@ -1247,7 +1143,6 @@ pub fn run_lv2(
             *input.finished.lock() = true;
         }
 
-        // Read MIDI input events from DAW.
         let midi_input = drain_midi_ring(ptr);
         let midi_per_port: Vec<Vec<crate::util::MidiEvent>> = if processor.midi_input_count() > 0 {
             vec![midi_input]
@@ -1255,20 +1150,16 @@ pub fn run_lv2(
             vec![]
         };
 
-        // Process.
         let midi_out = processor.process_with_audio_io(block_size, &midi_per_port, transport);
 
-        // Echo parameter changes back to DAW.
         write_lv2_echo_ring(&processor, ptr, &mut lv2_param_cache);
 
-        // Write MIDI output events back to DAW.
         let mut all_midi_out = Vec::new();
         for port_events in midi_out {
             all_midi_out.extend(port_events);
         }
         write_midi_out_ring(ptr, &all_midi_out);
 
-        // Copy processor output buffers to SHM output (bus 1).
         let outputs = processor.audio_outputs();
         for (ch, output) in outputs.iter().enumerate().take(num_out) {
             let src = output.buffer.lock();
@@ -1279,13 +1170,10 @@ pub fn run_lv2(
             }
         }
 
-        if let Err(e) = events.signal_daw() {
-            eprintln!("[plugin-host {}] Failed to signal DAW: {}", instance_id, e);
+        if let Err(_e) = events.signal_daw() {
             break;
         }
     }
-
-    eprintln!("[plugin-host {}] LV2 host exiting", instance_id);
 }
 
 #[cfg(test)]

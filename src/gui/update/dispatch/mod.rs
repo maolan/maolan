@@ -398,7 +398,6 @@ impl Maolan {
                             self.state.blocking_write().message =
                                 format!("Failed to merge branch '{}': {}", name, e);
                         } else {
-                            // Create a commit on the current branch recording the merge
                             let commit_dir = session_dir
                                 .join(".maolan_commits")
                                 .join(&self.session_branch);
@@ -666,9 +665,6 @@ impl Maolan {
             Message::EditorScrollYChanged(value) => {
                 let y = value.clamp(0.0, 1.0);
                 if (self.editor_scroll_y - y).abs() > 0.0005 {
-                    // Ignore scroll changes during track resize to prevent
-                    // the editor from snapping to the top when scrollable
-                    // content temporarily shrinks below the viewport.
                     if matches!(
                         self.state.blocking_read().resizing,
                         Some(crate::state::Resizing::Track(..))
@@ -2857,7 +2853,6 @@ impl Maolan {
                             pitch_correction_formant_compensation,
                             plugin_graph_json,
                         } => {
-                            // Recording flush delivered the real clip — clear the preview.
                             if self.recording_preview_start_sample.is_some() {
                                 self.stop_recording_preview();
                             }
@@ -4186,7 +4181,6 @@ impl Maolan {
                         if is_folder {
                             track.folder_open = true;
                         } else if was_folder {
-                            // Removing folder status: remove all children
                             let children: Vec<String> = state
                                 .tracks
                                 .iter()
@@ -4218,13 +4212,13 @@ impl Maolan {
                 ref parent_name,
             } => {
                 let mut state = self.state.blocking_write();
-                // Prevent circular parent relationships
+
                 if let Some(parent) = parent_name {
                     if parent == track_name {
                         state.message = "Track cannot be its own parent".to_string();
                         return Task::none();
                     }
-                    // Check if assigning this parent would create a cycle
+
                     let mut current = parent.as_str();
                     loop {
                         if current == track_name.as_str() {
@@ -6406,7 +6400,7 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     let prev = state.cursor;
                     state.cursor = position;
-                    // Handle track resize inside the same write lock to avoid contention.
+
                     if let Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) =
                         resizing
                     {
@@ -6415,7 +6409,7 @@ impl Maolan {
                         {
                             let min_h = track.min_height_for_layout();
                             let new_height = (initial_height + delta).clamp(min_h, 600.0);
-                            // Only update when height actually changes to reduce re-renders.
+
                             if (track.height - new_height).abs() >= 0.5 {
                                 track.height = new_height;
                             }
@@ -6424,9 +6418,7 @@ impl Maolan {
                     prev
                 };
                 match resizing {
-                    Some(Resizing::Track(..)) => {
-                        // Already handled inside the cursor-update block above.
-                    }
+                    Some(Resizing::Track(..)) => {}
                     Some(Resizing::TrackMarker {
                         ref track_name,
                         marker_index,

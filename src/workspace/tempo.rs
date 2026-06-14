@@ -1080,7 +1080,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     });
                 }
 
-                // Lane divider lines
                 frame.stroke(
                     &Path::line(
                         Point::new(0.0, TEMPO_HIT_HEIGHT),
@@ -1109,18 +1108,17 @@ impl canvas::Program<Message> for TempoCanvas {
                         .with_color(Color::from_rgba(0.25, 0.25, 0.25, 0.8)),
                 );
 
-                // Marker lane
                 let _marker_lane_top = 0.0;
                 let marker_color = Color::from_rgba(0.96, 0.72, 0.18, 0.95);
                 let marker_border = Color::from_rgba(0.2, 0.16, 0.04, 0.95);
                 for (sample, name) in &self.markers {
                     let x = sample_to_x(*sample);
-                    // Vertical line
+
                     frame.stroke(
                         &Path::line(Point::new(x, 3.0), Point::new(x, TEMPO_HIT_HEIGHT - 2.0)),
                         Stroke::default().with_width(2.0).with_color(marker_color),
                     );
-                    // Square handle
+
                     let handle_size = 6.0;
                     frame.fill(
                         &Path::rectangle(
@@ -1136,7 +1134,7 @@ impl canvas::Program<Message> for TempoCanvas {
                         ),
                         Stroke::default().with_width(1.0).with_color(marker_border),
                     );
-                    // Name label
+
                     let trimmed = name.trim();
                     if !trimmed.is_empty() {
                         let label_bg = Color::from_rgba(0.28, 0.20, 0.06, 0.92);
@@ -1169,7 +1167,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                 }
 
-                // Time lane labels
                 if self.sample_rate > 0.0 {
                     let pixels_per_second = self.pixels_per_sample as f64 * self.sample_rate;
                     let visible_start_time = self.clip_start_samples as f64 / self.sample_rate;

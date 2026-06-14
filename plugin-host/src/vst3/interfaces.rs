@@ -11,8 +11,6 @@ use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::*;
 use vst3::{Class, ComPtr, ComWrapper, Interface};
 
-/// Wrap a potentially-panicking plugin call in `catch_unwind`.
-/// Returns the closure's result on success, or an error string if it panics.
 pub fn protected_call<T, F>(op: F) -> Result<T, String>
 where
     F: FnOnce() -> T + std::panic::UnwindSafe,
@@ -89,7 +87,6 @@ pub fn pump_host_run_loop() {
     }
 }
 
-/// Safe wrapper around VST3 plugin factory
 pub struct PluginFactory {
     factory: ComPtr<IPluginFactory>,
     module: libloading::Library,
@@ -106,7 +103,6 @@ impl std::fmt::Debug for PluginFactory {
 }
 
 impl PluginFactory {
-    /// Load a VST3 plugin bundle and create a factory
     pub fn from_module(bundle_path: &Path) -> Result<Self, String> {
         let module_path = get_module_path(bundle_path)?;
 
@@ -143,7 +139,6 @@ impl PluginFactory {
         })
     }
 
-    /// Get information about a plugin class using the trait
     pub fn get_class_info(&self, index: i32) -> Option<ClassInfo> {
         use vst3::Steinberg::IPluginFactoryTrait;
 
@@ -167,13 +162,11 @@ impl PluginFactory {
         }
     }
 
-    /// Count the number of classes using the trait
     pub fn count_classes(&self) -> i32 {
         use vst3::Steinberg::IPluginFactoryTrait;
         unsafe { self.factory.countClasses() }
     }
 
-    /// Create an instance of a plugin using the trait
     pub fn create_instance(&self, class_id: &[i8; 16]) -> Result<PluginInstance, String> {
         use vst3::Steinberg::IPluginFactoryTrait;
 
@@ -200,7 +193,6 @@ impl PluginFactory {
         Ok(PluginInstance::new(component))
     }
 
-    /// Get factory information
     pub fn get_factory_info(&self) -> Option<FactoryInfo> {
         use vst3::Steinberg::IPluginFactoryTrait;
 
@@ -270,14 +262,12 @@ impl Drop for PluginFactory {
     }
 }
 
-/// Information about a plugin class
 pub struct ClassInfo {
     pub name: String,
     pub category: String,
     pub cid: [i8; 16],
 }
 
-/// Information about the plugin factory
 #[derive(Debug, Clone)]
 pub struct FactoryInfo {
     pub vendor: String,
@@ -286,14 +276,12 @@ pub struct FactoryInfo {
     pub flags: i32,
 }
 
-/// GUI capability information for a VST3 plugin
 #[derive(Debug, Clone)]
 pub struct Vst3GuiInfo {
     pub has_gui: bool,
     pub size: Option<(i32, i32)>,
 }
 
-/// Host-side IPlugFrame implementation that tracks resize requests from the plugin
 pub struct HostPlugFrame {
     pub resize_requested: AtomicBool,
     pub requested_size: Mutex<Option<(i32, i32)>>,
@@ -333,7 +321,6 @@ impl IPlugFrameTrait for HostPlugFrame {
     }
 }
 
-/// Component handler that tracks parameter changes from the plugin GUI
 pub struct ComponentHandler {
     pub parameter_changes: Arc<Mutex<Vec<(u32, f64)>>>,
 }
@@ -369,7 +356,6 @@ impl IComponentHandlerTrait for ComponentHandler {
     }
 }
 
-/// Safe wrapper around a VST3 plugin instance
 pub struct PluginInstance {
     pub component: ComPtr<IComponent>,
     pub audio_processor: Option<ComPtr<IAudioProcessor>>,
@@ -478,7 +464,6 @@ impl PluginInstance {
         )
     }
 
-    /// Initialize the component
     #[allow(clippy::unnecessary_cast)]
     pub fn initialize(&mut self, factory: &PluginFactory) -> Result<(), String> {
         use vst3::Steinberg::IPluginBaseTrait;
@@ -554,8 +539,6 @@ impl PluginInstance {
         Ok(())
     }
 
-    /// Query parameter metadata from the edit controller.
-    /// Wrapped in catch_unwind so that buggy plugins don't crash the host.
     pub fn query_parameters(&self) -> Vec<super::port::ParameterInfo> {
         let Some(controller) = self.edit_controller.as_ref() else {
             return Vec::new();
@@ -590,7 +573,6 @@ impl PluginInstance {
         result.unwrap_or_default()
     }
 
-    /// Set the component active/inactive
     pub fn set_active(&mut self, active: bool) -> Result<(), String> {
         let result = unsafe { self.component.setActive(if active { 1 } else { 0 }) };
 
@@ -601,7 +583,6 @@ impl PluginInstance {
         Ok(())
     }
 
-    /// Setup processing parameters
     pub fn setup_processing(
         &mut self,
         sample_rate: f64,
@@ -814,7 +795,6 @@ impl PluginInstance {
         }
     }
 
-    /// Terminate the component
     pub fn terminate(&mut self) -> Result<(), String> {
         use vst3::Steinberg::IPluginBaseTrait;
 
@@ -1487,7 +1467,6 @@ static HOST_ATTRIBUTE_LIST_VTBL: IAttributeListVtbl = IAttributeListVtbl {
     getBinary: host_attr_get_binary,
 };
 
-/// Get the actual module path from a VST3 bundle path
 fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
     #[cfg(target_os = "macos")]
     {

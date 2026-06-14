@@ -18,7 +18,6 @@ use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
 use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::{FIDString, IPlugFrame, IPlugView, IPlugViewTrait, ViewRect, kResultOk};
 
-/// Transport info for VST3 processing.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Vst3TransportInfo {
     pub playhead_sample: i64,
@@ -49,7 +48,7 @@ pub struct Vst3Processor {
     parameters: Vec<ParameterInfo>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     previous_values: Arc<Mutex<Vec<f32>>>,
-    /// Pending parameter changes with sample offsets, to be applied during the next `process()` call.
+
     pending_param_changes: Arc<Mutex<Vec<(u32, f64, u32)>>>,
     max_samples_per_block: usize,
     processing_started: bool,
@@ -89,7 +88,6 @@ impl fmt::Debug for Vst3Processor {
 }
 
 impl Vst3Processor {
-    /// Create a new VST3 processor with explicit sample rate
     pub fn new_with_sample_rate(
         sample_rate: f64,
         buffer_size: usize,
@@ -329,7 +327,6 @@ impl Vst3Processor {
         }
     }
 
-    /// Process audio with MIDI events
     #[allow(clippy::unnecessary_cast)]
     pub fn process_with_midi(&self, frames: usize, input_events: &[MidiEvent]) -> Vec<MidiEvent> {
         for input in &self.audio_inputs {
@@ -597,7 +594,6 @@ impl Vst3Processor {
         Ok(())
     }
 
-    /// Snapshot the current plugin state for saving
     pub fn snapshot_state(&self) -> Result<Vst3PluginState, String> {
         use vst3::Steinberg::Vst::{IComponentTrait, IEditControllerTrait};
 
@@ -627,7 +623,6 @@ impl Vst3Processor {
         })
     }
 
-    /// Restore plugin state from a snapshot
     pub fn restore_state(&self, state: &Vst3PluginState) -> Result<(), String> {
         use vst3::Steinberg::Vst::{IComponentTrait, IEditControllerTrait};
 

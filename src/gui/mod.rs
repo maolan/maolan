@@ -2270,8 +2270,6 @@ impl Maolan {
             Self::referenced_session_media_paths(&state)
         };
 
-        // Collect references from all branch JSON files so we don't delete
-        // media that is only used by other branches.
         if let Ok(entries) = std::fs::read_dir(session_root) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -2467,8 +2465,6 @@ impl Maolan {
         let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
         let path_owned = path.to_owned();
 
-        // FFmpeg types are !Send, so run the blocking decode on the current thread
-        // and send progress updates through a channel.
         let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<f32>();
 
         let decode_result = tokio::task::block_in_place(move || {
@@ -2630,7 +2626,6 @@ impl Maolan {
             Ok::<_, io::Error>((samples, channels, sample_rate))
         });
 
-        // Drain any progress updates produced during blocking decode
         while let Ok(p) = progress_rx.try_recv() {
             progress_callback(p);
         }
