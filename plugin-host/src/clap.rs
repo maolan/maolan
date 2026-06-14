@@ -5,8 +5,6 @@ use std::ptr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-// ─── Thread identity for clap_host_thread_check ───
-
 #[derive(Clone, Copy, PartialEq)]
 pub enum ThreadType {
     MainThread,
@@ -25,8 +23,6 @@ pub fn set_thread_type(ty: ThreadType) {
 pub fn current_thread_type() -> ThreadType {
     CURRENT_THREAD.with(|t| t.get())
 }
-
-// ─── Global timer/FD state for host extensions ───
 
 pub struct HostTimer {
     pub id: u32,
@@ -55,8 +51,6 @@ pub fn next_timer_id() -> u32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-// ─── Version ───
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ClapVersion {
@@ -70,8 +64,6 @@ pub const CLAP_VERSION: ClapVersion = ClapVersion {
     minor: 2,
     revision: 5,
 };
-
-// ─── Core structs ───
 
 #[repr(C)]
 pub struct ClapHost {
@@ -140,8 +132,6 @@ pub struct ClapPlugin {
         Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char) -> *const c_void>,
     pub on_main_thread: Option<unsafe extern "C" fn(*const ClapPlugin)>,
 }
-
-// ─── Process / audio ───
 
 #[repr(C)]
 pub struct ClapProcess {
@@ -256,8 +246,6 @@ pub const CLAP_EVENT_TRANSPORT: u16 = 9;
 pub const CLAP_EVENT_MIDI: u16 = 10;
 pub const CLAP_EVENT_MIDI_SYSEX: u16 = 11;
 pub const CLAP_EVENT_MIDI2: u16 = 12;
-
-// ─── Extension structs ───
 
 #[repr(C)]
 pub struct ClapHostParams {
@@ -420,8 +408,6 @@ pub union ClapWindowUnion {
     pub win32: *mut c_void,
 }
 
-// ─── Extension IDs ───
-
 pub const CLAP_EXT_PARAMS: &CStr = c"clap.params";
 pub const CLAP_EXT_AUDIO_PORTS: &CStr = c"clap.audio-ports";
 pub const CLAP_EXT_NOTE_PORTS: &CStr = c"clap.note-ports";
@@ -436,8 +422,6 @@ pub const CLAP_EXT_LOG: &CStr = c"clap.log";
 pub const CLAP_EXT_POSIX_FD_SUPPORT: &CStr = c"clap.posix-fd-support";
 pub const CLAP_PORT_MONO: &str = "clap.mono";
 pub const CLAP_PORT_STEREO: &str = "clap.stereo";
-
-// ─── Thread-pool extension struct ───
 
 #[repr(C)]
 pub struct ClapPluginThreadPool {
@@ -481,8 +465,6 @@ pub struct HostData {
     pub plugin: *const ClapPlugin,
 }
 
-// ─── Plugin instance wrapper ───
-
 use libloading::Library;
 
 pub struct PluginInstance {
@@ -498,8 +480,6 @@ pub struct PluginInstance {
 unsafe impl Send for PluginInstance {}
 
 impl PluginInstance {
-    /// Load a CLAP plugin from `plugin_path` and instantiate the plugin with `plugin_id`.
-    /// If `plugin_id` is empty, uses the first plugin in the factory.
     pub fn new(plugin_path: &str, plugin_id: &str) -> Result<Self, String> {
         let path = Path::new(plugin_path);
         if !path.exists() {
@@ -601,7 +581,6 @@ impl PluginInstance {
             return Err("create_plugin returned null".to_string());
         }
 
-        // Set host_data BEFORE calling plugin.init() so callbacks work during init.
         let host_data = Box::into_raw(Box::new(HostData {
             host: &mut *host,
             plugin,
@@ -722,11 +701,11 @@ impl PluginInstance {
         let state = self.state_extension()?;
         let save = unsafe { (*state).save }.ok_or("clap.state.save is null")?;
         let mut bytes = Vec::new();
-        let mut stream = ClapOStream {
+        let stream = ClapOStream {
             ctx: (&mut bytes as *mut Vec<u8>).cast(),
             write: Some(clap_ostream_write),
         };
-        if unsafe { save(self.plugin, &mut stream) } {
+        if unsafe { save(self.plugin, &stream) } {
             Ok(bytes)
         } else {
             Err("plugin clap.state.save returned false".to_string())
@@ -737,11 +716,11 @@ impl PluginInstance {
         let state = self.state_extension()?;
         let load = unsafe { (*state).load }.ok_or("clap.state.load is null")?;
         let mut reader = ClapIStreamReader { bytes, offset: 0 };
-        let mut stream = ClapIStream {
+        let stream = ClapIStream {
             ctx: (&mut reader as *mut ClapIStreamReader).cast(),
             read: Some(clap_istream_read),
         };
-        if unsafe { load(self.plugin, &mut stream) } {
+        if unsafe { load(self.plugin, &stream) } {
             Ok(())
         } else {
             Err("plugin clap.state.load returned false".to_string())
@@ -751,8 +730,7 @@ impl PluginInstance {
     pub fn process(&self, process: &ClapProcess) -> Result<(), String> {
         let process_fn = unsafe { (*self.plugin).process }.ok_or("process is null")?;
         let status = unsafe { process_fn(self.plugin, process) };
-        // CLAP 1.1 process status values:
-        // 0 = CONTINUE, 1 = TAIL, 2 = SLEEP, 3 = CONTINUE_IF_NOT_QUIET, 4 = ERROR
+
         if status == 4 {
             Err("plugin.process() returned CLAP_PROCESS_ERROR".to_string())
         } else {
@@ -894,20 +872,18 @@ impl Drop for PluginInstance {
         if let Some(destroy) = unsafe { (*self.plugin).destroy } {
             unsafe { destroy(self.plugin) };
         }
-        // Free the HostData allocation.
+
         if !self.host.host_data.is_null() {
             unsafe {
                 let _ = Box::from_raw(self.host.host_data as *mut HostData);
             }
         }
-        // Balance the clap_entry.init() call.
+
         if let Some(deinit) = unsafe { (*self.entry).deinit } {
             unsafe { deinit() };
         }
     }
 }
-
-// ─── Host callbacks ───
 
 unsafe extern "C" fn host_get_extension(
     _host: *const ClapHost,
@@ -1010,7 +986,7 @@ unsafe extern "C" fn host_thread_pool_request_exec(host: *const ClapHost, num_ta
     if plugin.is_null() {
         return false;
     }
-    // Query the plugin's thread-pool extension.
+
     let ext = unsafe {
         (*plugin)
             .get_extension
@@ -1024,7 +1000,7 @@ unsafe extern "C" fn host_thread_pool_request_exec(host: *const ClapHost, num_ta
     let Some(exec) = tp.exec else {
         return false;
     };
-    // Execute tasks sequentially on the calling thread (audio thread).
+
     for task_index in 0..num_tasks {
         unsafe { exec(plugin, task_index) };
     }
@@ -1145,8 +1121,6 @@ unsafe extern "C" fn host_posix_fd_support_unregister_fd(_host: *const ClapHost,
     }
 }
 
-// ─── Empty event lists for hosts that don't send/receive events ───
-
 unsafe extern "C" fn empty_input_events_size(_: *const ClapInputEvents) -> u32 {
     0
 }
@@ -1180,9 +1154,6 @@ pub fn empty_output_events() -> ClapOutputEvents {
     }
 }
 
-// ─── Generic event buffer (DAW → plugin) ───
-
-/// Stores heterogeneous CLAP events in a flat byte-per-event list.
 pub struct EventBuffer {
     events: Vec<Vec<u8>>,
 }
@@ -1407,8 +1378,6 @@ unsafe extern "C" fn event_buffer_get(
         .map(|bytes| bytes.as_ptr() as *const ClapEventHeader)
         .unwrap_or(ptr::null())
 }
-
-// ─── Event capture (plugin → DAW echo) ───
 
 pub struct EventCapture {
     events: Vec<Vec<u8>>,

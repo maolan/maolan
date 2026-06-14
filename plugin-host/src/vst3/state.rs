@@ -5,7 +5,6 @@ use vst3::{Class, ComWrapper};
 
 type TResult = i32;
 
-/// VST3 plugin state snapshot
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vst3PluginState {
     pub plugin_id: String,
@@ -13,8 +12,6 @@ pub struct Vst3PluginState {
     pub controller_state: Vec<u8>,
 }
 
-/// Memory-based stream for VST3 state I/O
-/// Uses UnsafeCell for interior mutability as required by IBStreamTrait
 pub struct MemoryStream {
     data: UnsafeCell<Vec<u8>>,
     position: UnsafeCell<usize>,

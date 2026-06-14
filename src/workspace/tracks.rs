@@ -241,7 +241,6 @@ pub(super) fn track_context_menu_overlay(
         }
     }
 
-    // Folder track options
     items.push(menu::menu_item(
         if track.is_folder {
             "Make Regular Track"
@@ -255,7 +254,6 @@ pub(super) fn track_context_menu_overlay(
     ));
 
     if !track.is_folder && !track.is_master {
-        // Find available folder tracks (can't be this track, can't be a child of this track)
         let mut available_folders: Vec<String> = state
             .tracks
             .iter()
@@ -1130,7 +1128,7 @@ impl Tracks {
                     if !processed.insert(target_name.clone()) {
                         continue;
                     }
-                    // Follow explicit audio connections
+
                     for conn in &state.connections {
                         if conn.kind == maolan_engine::kind::Kind::Audio
                             && conn.to_track == target_name
@@ -1140,7 +1138,7 @@ impl Tracks {
                             to_process.push(conn.from_track.clone());
                         }
                     }
-                    // Follow folder parent relationships (children feed into parent)
+
                     for track in &state.tracks {
                         if track.parent_track.as_deref() == Some(target_name.as_str())
                             && !soloed_track_names.contains(&track.name)

@@ -63,13 +63,9 @@ fn parse_log_level_from_env() -> Option<tracing::Level> {
                 "warning" => Some(tracing::Level::WARN),
                 "error" => Some(tracing::Level::ERROR),
                 "debug" => Some(tracing::Level::DEBUG),
-                other => {
-                    eprintln!("Unknown log level '{}', using none", other);
-                    None
-                }
+                _other => None,
             }
         } else {
-            eprintln!("--log-level requires a value");
             None
         }
     } else {

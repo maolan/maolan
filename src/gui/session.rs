@@ -51,10 +51,7 @@ impl Maolan {
                                     if !is_clap || !has_uri {
                                         return None;
                                     }
-                                    // The engine assigns instance_ids sequentially to all
-                                    // plugins that have a URI, skipping URI-less ones. The
-                                    // runtime instance_id is the count of valid plugins
-                                    // before this one in the array.
+
                                     let instance_id = plugins
                                         .iter()
                                         .take(idx)
@@ -159,11 +156,6 @@ impl Maolan {
         )
     }
 
-    /// Returns the portable identifier to store for a plugin.
-    /// For CLAP and VST3, stores only the plugin ID so sessions remain
-    /// portable across machines. LV2 URIs are already portable.
-    /// Falls back to the full URI as a defensive measure if plugin_id
-    /// happens to be empty.
     #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_save_uri(p: &maolan_engine::message::PluginGraphPlugin) -> String {
         match p.format.as_str() {
@@ -178,13 +170,6 @@ impl Maolan {
         }
     }
 
-    /// Resolves a stored CLAP plugin identifier to a full `path::id` string.
-    /// If `stored` already contains `::`, it is an old session with a full path
-    /// and is returned as-is. If it looks like a direct path (contains `/`),
-    /// it is also returned as-is (e.g. legacy sessions saved before plugin IDs
-    /// were captured from the CLAP descriptor).
-    /// Otherwise it is treated as a plugin ID and looked up in the current CLAP
-    /// plugin registry.
     #[cfg(all(unix, not(target_os = "macos")))]
     fn resolve_clap_plugin_path(
         stored: &str,
@@ -662,12 +647,10 @@ impl Maolan {
 
         let mut new_current = current_json;
 
-        // Append track
         if let Some(tracks) = new_current.get_mut("tracks").and_then(|v| v.as_array_mut()) {
             tracks.push(target_track);
         }
 
-        // Copy graph entry
         if let Some(graphs) = source_json.get("graphs").and_then(|v| v.as_object())
             && let Some(track_graph) = graphs.get(source_track_name)
             && let Some(new_graphs) = new_current
@@ -677,7 +660,6 @@ impl Maolan {
             new_graphs.insert(target_name.clone(), track_graph.clone());
         }
 
-        // Copy connections that involve this track
         let current_connections = new_current
             .get_mut("connections")
             .and_then(|v| v.as_array_mut())

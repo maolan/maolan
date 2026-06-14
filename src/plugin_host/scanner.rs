@@ -1,12 +1,9 @@
-//! Plugin scanner wrapper and blocklist persistence.
-
 use maolan_plugin_host::scan::ScanResult;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// A single blocklist entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlocklistEntry {
     pub path: String,
@@ -14,7 +11,6 @@ pub struct BlocklistEntry {
     pub timestamp: String,
 }
 
-/// Persistent plugin blocklist.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Blocklist {
     pub entries: Vec<BlocklistEntry>,
@@ -28,7 +24,6 @@ impl Blocklist {
             .join("plugin-blocklist.json")
     }
 
-    /// Save the blocklist to disk.
     pub fn save(&self) -> Result<(), String> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
@@ -41,12 +36,10 @@ impl Blocklist {
         Ok(())
     }
 
-    /// Check if a plugin path is blocklisted.
     pub fn contains(&self, path: &str) -> bool {
         self.entries.iter().any(|e| e.path == path)
     }
 
-    /// Add an entry if it's not already present.
     pub fn add(&mut self, path: String, error: String) {
         if self.contains(&path) {
             return;
@@ -60,10 +53,6 @@ impl Blocklist {
     }
 }
 
-/// Scan a single plugin file using the `maolan-plugin-host` scanner subprocess.
-///
-/// Returns `Ok(ScanResult)` on success, or `Err(String)` if the scanner
-/// crashes, times out, or returns invalid JSON.
 pub fn scan_plugin_file(
     host_bin: &Path,
     format: &str,
@@ -88,7 +77,6 @@ pub fn scan_plugin_file(
         .spawn()
         .map_err(|e| format!("failed to spawn scanner: {e}"))?;
 
-    // Drain stdout in a background thread so the pipe never fills and deadlocks the child.
     let stdout_handle = child.stdout.take().map(|mut stdout| {
         std::thread::spawn(move || {
             use std::io::Read;
@@ -128,7 +116,6 @@ pub fn scan_plugin_file(
     serde_json::from_str(&json).map_err(|e| format!("scanner output is not valid JSON: {e}"))
 }
 
-/// Scan a plugin file, falling back to the blocklist on failure.
 pub fn scan_or_blocklist(
     host_bin: &Path,
     format: &str,

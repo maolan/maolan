@@ -44,10 +44,8 @@ impl Default for TestOptions {
     }
 }
 
-fn print_verbose(verbose: bool, msg: &str) {
-    if verbose {
-        println!("[maolan-test] {msg}");
-    }
+fn print_verbose(verbose: bool, _msg: &str) {
+    if verbose {}
 }
 
 fn parse_options(args: impl IntoIterator<Item = String>) -> Result<TestOptions, String> {
@@ -234,11 +232,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = match parse_options(std::env::args()) {
         Ok(options) => options,
         Err(message) if message.starts_with("Usage: ") => {
-            println!("{message}");
             return Ok(());
         }
-        Err(message) => {
-            eprintln!("{message}");
+        Err(_message) => {
             std::process::exit(1);
         }
     };
@@ -249,7 +245,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = TestState::default();
 
-    // 1. Open audio device
     print_verbose(
         options.verbose,
         &format!("Opening audio device '{}'...", options.device),
@@ -281,7 +276,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     if !hw_ok {
-        eprintln!("ERROR: Audio device did not become ready within 10 seconds");
         let _ = client.send(EngineMessage::Request(Action::Quit)).await;
         std::process::exit(1);
     }
@@ -294,7 +288,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     );
 
-    // 2. Create track
     print_verbose(
         options.verbose,
         &format!("Creating track '{}'...", options.track_name),
@@ -311,7 +304,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // 3. Load CLAP plugin
     let plugin_path = options.plugin_path.to_string_lossy().to_string();
     print_verbose(
         options.verbose,
@@ -325,7 +317,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .await?;
 
-    // Wait for plugin to load by polling diagnostics
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let plugin_loaded = wait_for_condition(&mut rx, Duration::from_secs(30), |msg| {
@@ -335,11 +326,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     if !plugin_loaded {
-        if let Some(ref err) = state.plugin_load_error {
-            eprintln!("ERROR: Plugin load failed: {err}");
-        } else {
-            eprintln!("ERROR: Plugin did not load within 30 seconds (clap_instance_count = 0)");
-        }
+        if let Some(_err) = state.plugin_load_error {
+        } 
         let _ = client.send(EngineMessage::Request(Action::Quit)).await;
         std::process::exit(1);
     }
@@ -352,7 +340,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     );
 
-    // 4. Optionally set parameter
     if let (Some(param_id), Some(param_value)) = (options.param_id, options.param_value) {
         print_verbose(
             options.verbose,
@@ -369,7 +356,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // 5. Start playback
     print_verbose(options.verbose, "Starting playback...");
     client
         .send(EngineMessage::Request(Action::SetClipPlaybackEnabled(true)))
@@ -383,69 +369,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     if !play_ok {
-        eprintln!("ERROR: Playback did not start within 5 seconds");
         let _ = client.send(EngineMessage::Request(Action::Quit)).await;
         std::process::exit(1);
     }
 
-    // 6. Run for specified duration
     print_verbose(
         options.verbose,
         &format!("Running for {} seconds...", options.duration_secs),
     );
     tokio::time::sleep(Duration::from_secs(options.duration_secs)).await;
 
-    // 7. Stop playback
     print_verbose(options.verbose, "Stopping playback...");
     client.send(EngineMessage::Request(Action::Stop)).await?;
 
-    let stop_ok = wait_for_condition(&mut rx, Duration::from_secs(5), |msg| {
+    let _stop_ok = wait_for_condition(&mut rx, Duration::from_secs(5), |msg| {
         update_state_from_message(&mut state, msg);
         !state.playing
     })
     .await?;
 
-    if !stop_ok {
-        eprintln!("WARNING: Playback did not stop within 5 seconds");
-    }
+    
 
-    // 8. Final status check
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // 9. Evaluate results
     let success = state.clap_instance_count > 0
         && state.workers_ready == state.workers_total
         && state.workers_total > 0;
 
-    println!("Test Results:");
-    println!("  CLAP instances:    {}", state.clap_instance_count);
-    println!(
-        "  Workers ready:     {}/{}",
-        state.workers_ready, state.workers_total
-    );
-    println!(
-        "  Audio channels:    {} @ {} Hz",
-        state.hw_channels, state.hw_rate
-    );
-    println!("  Duration:          {}s", options.duration_secs);
-    println!("  Plugin path:       {}", plugin_path);
-
     if success {
-        println!("  Result:            PASS");
     } else {
-        println!("  Result:            FAIL");
-        if state.clap_instance_count == 0 {
-            println!("  Reason:            No CLAP instances found (plugin may have crashed)");
-        }
-        if state.workers_ready != state.workers_total {
-            println!(
-                "  Reason:            Only {}/{} workers ready",
-                state.workers_ready, state.workers_total
-            );
-        }
+        
+        if state.workers_ready != state.workers_total {}
     }
 
-    // 10. Cleanup
     print_verbose(options.verbose, "Unloading plugin and shutting down...");
     let _ = client
         .send(EngineMessage::Request(

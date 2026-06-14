@@ -46,8 +46,7 @@ impl Maolan {
                 if self.playing && !self.paused {
                     self.last_playback_tick = Some(Instant::now());
                 }
-                // If transport is stopped and we still have a recording preview,
-                // the engine has finished flushing. Clear the preview now.
+
                 if !self.playing && self.recording_preview_start_sample.is_some() {
                     self.stop_recording_preview();
                 }
@@ -175,7 +174,7 @@ mod tests {
         assert!(app.touch_automation_overrides.is_empty());
         assert!(app.touch_active_keys.is_empty());
         assert!(app.latch_automation_overrides.is_empty());
-        // Preview is kept until TransportPosition or AddClip arrives.
+
         assert!(app.recording_preview_start_sample.is_some());
         assert!(app.recording_preview_sample.is_some());
     }

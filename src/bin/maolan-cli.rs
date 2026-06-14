@@ -1410,7 +1410,7 @@ async fn run_record_once(
     open_audio_action: Action,
     record_duration: Duration,
 ) -> Result<(), String> {
-    let seconds = record_duration.as_secs_f64();
+    let _seconds = record_duration.as_secs_f64();
     let session_dir = options
         .session_dir
         .as_ref()
@@ -1451,14 +1451,6 @@ async fn run_record_once(
         return Err(app.status);
     }
 
-    println!(
-        "Recording '{}' on {} in / {} out @ {} Hz for {:.3}s",
-        session_dir.display(),
-        app.input_channels,
-        app.output_channels,
-        app.sample_rate_hz,
-        seconds
-    );
     client
         .send(EngineMessage::Request(Action::TransportPosition(0)))
         .await
