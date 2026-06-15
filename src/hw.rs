@@ -216,18 +216,18 @@ impl HW {
     ) -> Vec<iced::Element<'static, Message>> {
         vec![
             Self::device_pick_row(
-                "Output device:",
-                available_hw,
-                selected_hw,
-                Message::HWSelected,
-                "Choose output device",
-            ),
-            Self::device_pick_row(
                 "Input device:",
                 available_input_hw,
                 selected_input_hw,
                 Message::HWInputSelected,
                 "Choose input device",
+            ),
+            Self::device_pick_row(
+                "Output device:",
+                available_hw,
+                selected_hw,
+                Message::HWSelected,
+                "Choose output device",
             ),
         ]
     }
@@ -241,18 +241,18 @@ impl HW {
     ) -> Vec<iced::Element<'static, Message>> {
         vec![
             Self::device_pick_row(
-                "Output device:",
-                available_hw,
-                selected_hw,
-                Message::HWSelected,
-                "Choose output device",
-            ),
-            Self::device_pick_row(
                 "Input device:",
                 available_input_hw,
                 selected_input_hw,
                 Message::HWInputSelected,
                 "Choose input device",
+            ),
+            Self::device_pick_row(
+                "Output device:",
+                available_hw,
+                selected_hw,
+                Message::HWSelected,
+                "Choose output device",
             ),
         ]
     }

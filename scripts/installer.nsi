@@ -5,6 +5,14 @@
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
+!ifndef MAOLAN_VERSION
+!define MAOLAN_VERSION "0.2.1"
+!endif
+
+!ifndef MAOLAN_PRODUCT_VERSION
+!define MAOLAN_PRODUCT_VERSION "${MAOLAN_VERSION}.0"
+!endif
+
 ;--------------------------------
 ; General
 ;--------------------------------
@@ -17,10 +25,10 @@ RequestExecutionLevel user
 ;--------------------------------
 ; Version Info
 ;--------------------------------
-VIProductVersion "0.0.8.0"
+VIProductVersion "${MAOLAN_PRODUCT_VERSION}"
 VIAddVersionKey "ProductName" "Maolan"
-VIAddVersionKey "ProductVersion" "0.0.8"
-VIAddVersionKey "FileVersion" "0.0.8"
+VIAddVersionKey "ProductVersion" "${MAOLAN_VERSION}"
+VIAddVersionKey "FileVersion" "${MAOLAN_VERSION}"
 VIAddVersionKey "FileDescription" "Maolan Digital Audio Workstation"
 VIAddVersionKey "LegalCopyright" "BSD-2-Clause"
 
@@ -75,7 +83,7 @@ Section "Install"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Maolan" \
         "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Maolan" \
-        "DisplayVersion" "0.0.8"
+        "DisplayVersion" "${MAOLAN_VERSION}"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Maolan" \
         "Publisher" "Maolan Team"
     WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Maolan" \

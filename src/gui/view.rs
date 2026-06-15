@@ -293,7 +293,6 @@ impl Maolan {
                         View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
                         View::HwInputPorts => self.hw.jack_ports_view(true),
                         View::HwOutputPorts => self.hw.jack_ports_view(false),
-                        #[cfg(all(unix, not(target_os = "macos")))]
                         View::TrackPlugins => self.track_plugins.view(),
                         View::Piano => self.workspace.piano_view(WorkspaceViewArgs {
                             session_root: None,
@@ -389,8 +388,6 @@ impl Maolan {
                                 sample_rate: self.playback_rate_hz,
                             })
                         }
-                        #[cfg(not(all(unix, not(target_os = "macos"))))]
-                        View::TrackPlugins => self.connections.view(),
                     };
 
                     let mut content = column![self.menu.view(

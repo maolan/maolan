@@ -396,7 +396,6 @@ pub struct Maolan {
     track: Option<String>,
     workspace: workspace::Workspace,
     connections: connections::canvas_host::CanvasHost<connections::tracks::Graph>,
-    #[cfg(all(unix, not(target_os = "macos")))]
     track_plugins: connections::canvas_host::CanvasHost<connections::plugins::Graph>,
     hw: hw::HW,
     modal: Option<Show>,
@@ -686,7 +685,6 @@ impl Default for Maolan {
             connections: connections::canvas_host::CanvasHost::new(
                 connections::tracks::Graph::new(state.clone()),
             ),
-            #[cfg(all(unix, not(target_os = "macos")))]
             track_plugins: connections::canvas_host::CanvasHost::new(
                 connections::plugins::Graph::new(state.clone()),
             ),
@@ -1157,7 +1155,6 @@ impl Maolan {
         Err("Generated audio via generate is only available on Unix platforms".to_string())
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_graph_title(state: &StateData) -> String {
         if let Some(target) = state.plugin_graph_clip.as_ref() {
             if let Some(track) = state
