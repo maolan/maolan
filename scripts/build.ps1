@@ -394,8 +394,15 @@ $nsiTemp = "$env:TEMP\maolan-installer"
 New-Item -ItemType Directory -Force $nsiTemp | Out-Null
 Copy-Item "$PSScriptRoot\installer.nsi" "$nsiTemp\installer.nsi" -Force
 Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) "LICENSE") "$nsiTemp\LICENSE" -Force -ErrorAction SilentlyContinue
+$versionMatch = [regex]::Match($pkgVersion, '^(\d+)\.(\d+)\.(\d+)')
+if ($versionMatch.Success) {
+    $productVersion = "$($versionMatch.Groups[1].Value).$($versionMatch.Groups[2].Value).$($versionMatch.Groups[3].Value).0"
+} else {
+    Write-Warning "Package version '$pkgVersion' is not a numeric semver; using 0.0.0.0 for installer file metadata."
+    $productVersion = "0.0.0.0"
+}
 Push-Location $nsiTemp
-& $nsisPath "$nsiTemp\installer.nsi"
+& $nsisPath "/DMAOLAN_VERSION=$pkgVersion" "/DMAOLAN_PRODUCT_VERSION=$productVersion" "$nsiTemp\installer.nsi"
 Pop-Location
 $distDir = Join-Path (Split-Path $PSScriptRoot -Parent) "dist"
 New-Item -ItemType Directory -Force $distDir | Out-Null

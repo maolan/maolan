@@ -97,7 +97,6 @@ pub mod state_track {
     pub const TRACK_MIN_HEIGHT: f32 = 82.0;
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
 pub mod connections_plugins {
     pub const PLUGIN_W: f32 = 170.0;
     pub const MIN_PLUGIN_H: f32 = 96.0;
