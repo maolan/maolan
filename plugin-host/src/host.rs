@@ -425,6 +425,8 @@ impl HostRuntime {
         let mut started_processing = false;
         #[cfg(windows)]
         let mut clap_gui_window: Option<ContainerWindow> = None;
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let mut clap_gui_window_x11: Option<crate::gui_x11::x11::ContainerWindow> = None;
 
         loop {
             if header.shutdown_request.load(Ordering::Acquire) != 0 {
@@ -471,7 +473,10 @@ impl HostRuntime {
                     }
                     3 => {
                         tracing::info!(instance_id = %self.instance_id, "GUI show requested");
-                        if !plugin.gui_is_supported() {
+                        let gui_supported = plugin.gui_is_supported();
+                        tracing::info!(instance_id = %self.instance_id, gui_supported, "checked GUI support");
+                        if !gui_supported {
+                            tracing::error!(instance_id = %self.instance_id, "Plugin does not support GUI");
                             Err("Plugin does not support GUI".to_string())
                         } else {
                             #[cfg(windows)]
@@ -496,6 +501,10 @@ impl HostRuntime {
                                             .gui_create("win32", false)
                                             .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_create(win32, false) succeeded"))
                                             .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_create(win32, false) failed"))
+                                            .and_then(|_| plugin.gui_set_scale(1.0)
+                                                .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_scale(1.0) succeeded"))
+                                                .inspect_err(|e| tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_set_scale failed"))
+                                            )
                                             .and_then(|_| plugin.gui_set_parent(hwnd as u64)
                                                 .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_parent succeeded"))
                                                 .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_set_parent failed"))
@@ -542,7 +551,71 @@ impl HostRuntime {
                                     }
                                 }
                             }
-                            #[cfg(not(windows))]
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            {
+                                if plugin.gui_created() {
+                                    tracing::info!(instance_id = %self.instance_id, "destroying existing GUI before recreate");
+                                    plugin.gui_destroy();
+                                }
+                                clap_gui_window_x11 = None;
+
+                                let title = std::path::Path::new(self.real_plugin_path())
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("Plugin");
+                                tracing::info!(instance_id = %self.instance_id, title = %title, "creating X11 container window");
+                                match crate::gui_x11::x11::create_container_window(
+                                    None,
+                                    None,
+                                    title,
+                                    800,
+                                    600,
+                                ) {
+                                    Ok(window) => {
+                                        let window_id = window.window();
+                                        tracing::info!(instance_id = %self.instance_id, window_id = ?window_id, "X11 container window created");
+                                        tracing::info!(instance_id = %self.instance_id, "mapping X11 container window before gui_set_parent");
+                                        window.map();
+                                        let result = plugin
+                                            .gui_create("x11", false)
+                                            .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_create(x11, false) succeeded"))
+                                            .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_create(x11, false) failed"))
+                                            .and_then(|_| plugin.gui_set_scale(1.0)
+                                                .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_scale(1.0) succeeded"))
+                                                .inspect_err(|e| tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_set_scale failed"))
+                                            )
+                                            .and_then(|_| plugin.gui_get_size()
+                                                .inspect(|(w, h)| tracing::info!(instance_id = %self.instance_id, width = w, height = h, "gui_get_size succeeded"))
+                                                .inspect_err(|e| tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_get_size failed"))
+                                            )
+                                            .and_then(|(w, h)| {
+                                                if w > 0 && h > 0 {
+                                                    tracing::info!(instance_id = %self.instance_id, width = w, height = h, "resizing container to plugin size");
+                                                    window.resize(w, h);
+                                                } else {
+                                                    tracing::warn!(instance_id = %self.instance_id, width = w, height = h, "plugin reported zero/invalid size");
+                                                }
+                                                plugin.gui_set_parent(window_id as u64)
+                                                    .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_parent succeeded"))
+                                                    .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_set_parent failed"))
+                                            })
+                                            .and_then(|_| {
+                                                plugin.gui_show()
+                                                    .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_show succeeded"))
+                                                    .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_show failed"))
+                                            });
+                                        if result.is_ok() {
+                                            clap_gui_window_x11 = Some(window);
+                                        }
+                                        result
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(instance_id = %self.instance_id, error = %e, "failed to create X11 container window");
+                                        Err(e)
+                                    }
+                                }
+                            }
+                            #[cfg(target_os = "macos")]
                             {
                                 let window_id = header.parent_window_usize() as u64;
                                 let is_floating = window_id == 0;
@@ -550,7 +623,7 @@ impl HostRuntime {
                                 if plugin.gui_created() {
                                     plugin.gui_destroy();
                                 }
-                                let create_result = plugin.gui_create("x11", is_floating);
+                                let create_result = plugin.gui_create("cocoa", is_floating);
                                 create_result
                                     .and_then(|_| {
                                         if window_id != 0 {
@@ -570,6 +643,10 @@ impl HostRuntime {
                             unsafe {
                                 ShowWindow(window.hwnd, SW_HIDE);
                             }
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        if let Some(ref window) = clap_gui_window_x11 {
+                            window.unmap();
                         }
                         plugin.gui_hide()
                     }
