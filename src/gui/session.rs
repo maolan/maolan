@@ -17,6 +17,7 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn clip_clap_snapshot_targets(&self, track_names: &[String]) -> Vec<(String, usize, usize)> {
         let state = self.state.blocking_read();
         track_names
@@ -2642,6 +2643,7 @@ impl Maolan {
                         continue;
                     };
                     let mut runtime_nodes = Vec::new();
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     let mut next_lv2_instance_id = 0usize;
                     let mut next_clap_instance_id = 0usize;
                     for p in plugins_arr {
@@ -2650,24 +2652,27 @@ impl Maolan {
                         };
                         match p.get("format").and_then(Value::as_str) {
                             Some("LV2") => {
-                                let instance_id = next_lv2_instance_id;
-                                next_lv2_instance_id += 1;
-                                runtime_nodes.push(
-                                    maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
-                                        instance_id,
-                                    ),
-                                );
-                                restore_actions.push(Action::TrackLoadLv2Plugin {
-                                    track_name: track_name.clone(),
-                                    plugin_uri: uri.to_string(),
-                                    instance_id: Some(instance_id),
-                                });
-                                if let Some(state) = Self::lv2_state_from_json(&p["state"]) {
-                                    restore_actions.push(Action::TrackSetLv2PluginState {
+                                #[cfg(all(unix, not(target_os = "macos")))]
+                                {
+                                    let instance_id = next_lv2_instance_id;
+                                    next_lv2_instance_id += 1;
+                                    runtime_nodes.push(
+                                        maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
+                                            instance_id,
+                                        ),
+                                    );
+                                    restore_actions.push(Action::TrackLoadLv2Plugin {
                                         track_name: track_name.clone(),
-                                        instance_id,
-                                        state,
+                                        plugin_uri: uri.to_string(),
+                                        instance_id: Some(instance_id),
                                     });
+                                    if let Some(state) = Self::lv2_state_from_json(&p["state"]) {
+                                        restore_actions.push(Action::TrackSetLv2PluginState {
+                                            track_name: track_name.clone(),
+                                            instance_id,
+                                            state,
+                                        });
+                                    }
                                 }
                             }
                             Some("CLAP") => {

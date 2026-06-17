@@ -33,6 +33,18 @@ pub fn push_windows_vst3_roots(roots: &mut Vec<PathBuf>) {
     roots.push(PathBuf::from(r"C:\Program Files (x86)\Common Files\VST3"));
 }
 
+pub fn push_windows_clap_roots(roots: &mut Vec<PathBuf>) {
+    if let Ok(common) = std::env::var("COMMONPROGRAMFILES") {
+        roots.push(PathBuf::from(common).join("CLAP"));
+    }
+    if let Ok(common_x86) = std::env::var("COMMONPROGRAMFILES(X86)") {
+        roots.push(PathBuf::from(common_x86).join("CLAP"));
+    }
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local_app_data).join(r"Programs\Common\CLAP"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +120,51 @@ mod tests {
             vec![
                 PathBuf::from(r"C:\Program Files\Common Files\VST3"),
                 PathBuf::from(r"C:\Program Files (x86)\Common Files\VST3"),
+            ]
+        );
+    }
+
+    #[test]
+    fn push_windows_clap_roots_adds_standard_locations() {
+        let _guard = ENV_GUARD.lock().expect("lock env guard");
+        let old_common = std::env::var("COMMONPROGRAMFILES").ok();
+        let old_common_x86 = std::env::var("COMMONPROGRAMFILES(X86)").ok();
+        let old_local_app_data = std::env::var("LOCALAPPDATA").ok();
+
+        unsafe {
+            std::env::set_var("COMMONPROGRAMFILES", r"C:\Program Files\Common Files");
+            std::env::set_var(
+                "COMMONPROGRAMFILES(X86)",
+                r"C:\Program Files (x86)\Common Files",
+            );
+            std::env::set_var("LOCALAPPDATA", r"C:\Users\tester\AppData\Local");
+        }
+
+        let mut roots = Vec::new();
+        push_windows_clap_roots(&mut roots);
+
+        if let Some(value) = old_common {
+            unsafe { std::env::set_var("COMMONPROGRAMFILES", value) };
+        } else {
+            unsafe { std::env::remove_var("COMMONPROGRAMFILES") };
+        }
+        if let Some(value) = old_common_x86 {
+            unsafe { std::env::set_var("COMMONPROGRAMFILES(X86)", value) };
+        } else {
+            unsafe { std::env::remove_var("COMMONPROGRAMFILES(X86)") };
+        }
+        if let Some(value) = old_local_app_data {
+            unsafe { std::env::set_var("LOCALAPPDATA", value) };
+        } else {
+            unsafe { std::env::remove_var("LOCALAPPDATA") };
+        }
+
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from(r"C:\Program Files\Common Files").join("CLAP"),
+                PathBuf::from(r"C:\Program Files (x86)\Common Files").join("CLAP"),
+                PathBuf::from(r"C:\Users\tester\AppData\Local").join(r"Programs\Common\CLAP"),
             ]
         );
     }

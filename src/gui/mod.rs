@@ -1240,10 +1240,10 @@ impl Maolan {
         PluginFormat::Clap
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn supported_plugin_formats() -> Vec<PluginFormat> {
         let mut formats = Vec::new();
         formats.push(PluginFormat::Clap);
+        #[cfg(all(unix, not(target_os = "macos")))]
         if platform_caps::SUPPORTS_LV2 {
             formats.push(PluginFormat::Lv2);
         }
@@ -5497,7 +5497,7 @@ impl Maolan {
         .into()
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = Self::plugin_graph_title(&state);

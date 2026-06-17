@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::time::Duration;
 
 fn print_usage() {}
@@ -38,7 +40,7 @@ fn parse_log_level(args: &mut Vec<String>) -> Option<tracing::Level> {
                 "warning" => Some(tracing::Level::WARN),
                 "error" => Some(tracing::Level::ERROR),
                 "debug" => Some(tracing::Level::DEBUG),
-                other => None,
+                _ => None,
             }
         } else {
             None
@@ -166,12 +168,11 @@ fn main() {
         (plugin_spec.clone(), String::new())
     };
 
-    if let Some(level) = log_level {
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_max_level(level)
-            .init();
-    }
+    let level = log_level.unwrap_or(tracing::Level::INFO);
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_max_level(level)
+        .init();
 
     match format.as_str() {
         "vst3" => {
@@ -187,7 +188,7 @@ fn main() {
                     maolan_plugin_protocol::protocol::SHM_SIZE,
                 ) {
                     Ok(m) => m,
-                    Err(e) => {
+                    Err(_e) => {
                         std::process::exit(2);
                     }
                 };
@@ -227,7 +228,7 @@ fn main() {
                 maolan_plugin_protocol::protocol::SHM_SIZE,
             ) {
                 Ok(m) => m,
-                Err(e) => {
+                Err(_e) => {
                     std::process::exit(2);
                 }
             };
@@ -302,13 +303,7 @@ fn main() {
             runtime.signal_ready();
             runtime.run_null_plugin();
         }
-        #[cfg(unix)]
         "clap" => runtime.run_clap_plugin(),
-        #[cfg(not(unix))]
-        "clap" => {
-            tracing::error!("CLAP plugin hosting is not supported on this platform");
-            runtime.run_until_shutdown();
-        }
         _ => {
             runtime.signal_ready();
             runtime.run_until_shutdown();

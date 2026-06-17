@@ -390,11 +390,19 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
     roots
 }
 
+#[cfg(windows)]
+fn default_clap_search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    crate::paths::push_windows_clap_roots(&mut roots);
+    roots
+}
+
 #[cfg(not(any(
     target_os = "macos",
     target_os = "linux",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "windows"
 )))]
 fn default_clap_search_roots() -> Vec<PathBuf> {
     Vec::new()
@@ -833,6 +841,7 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
             Err(_e) => 1,
         }
     } else {
+        println!("{json}");
         0
     }
 }

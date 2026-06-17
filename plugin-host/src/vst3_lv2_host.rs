@@ -316,9 +316,9 @@ fn apply_vst3_param_ring(processor: &crate::vst3::Vst3Processor, ptr: *mut u8) {
         RingBuffer::new(buf, w, r, RING_CAPACITY)
     };
     while let Some(ev) = ring.pop() {
-        if let Err(_e) = processor.set_parameter_value_at(ev.param_index, ev.value, ev.sample_offset)
-        {
-        }
+        if let Err(_e) =
+            processor.set_parameter_value_at(ev.param_index, ev.value, ev.sample_offset)
+        {}
     }
 }
 
@@ -721,7 +721,11 @@ pub fn run_vst3(args: Vst3RunArgs) {
             continue;
         }
 
-        match events.wait_daw(Duration::from_millis(100)) {
+        #[cfg(windows)]
+        let wait_result = events.wait_daw_with_message_pump(Duration::from_millis(100));
+        #[cfg(not(windows))]
+        let wait_result = events.wait_daw(Duration::from_millis(100));
+        match wait_result {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
             Err(_e) => {
@@ -1111,7 +1115,11 @@ pub fn run_lv2(
             continue;
         }
 
-        match events.wait_daw(Duration::from_millis(100)) {
+        #[cfg(windows)]
+        let wait_result = events.wait_daw_with_message_pump(Duration::from_millis(100));
+        #[cfg(not(windows))]
+        let wait_result = events.wait_daw(Duration::from_millis(100));
+        match wait_result {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
             Err(_e) => {

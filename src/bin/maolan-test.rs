@@ -326,8 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     if !plugin_loaded {
-        if let Some(_err) = state.plugin_load_error {
-        } 
+        if let Some(_err) = state.plugin_load_error {}
         let _ = client.send(EngineMessage::Request(Action::Quit)).await;
         std::process::exit(1);
     }
@@ -388,8 +387,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
 
-    
-
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let success = state.clap_instance_count > 0
@@ -398,7 +395,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if success {
     } else {
-        
         if state.workers_ready != state.workers_total {}
     }
 

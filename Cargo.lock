@@ -5129,14 +5129,13 @@ dependencies = [
  "tracing-subscriber",
  "wide",
  "windows-sys 0.61.2",
+ "winresource",
  "x11-dl",
 ]
 
 [[package]]
 name = "maolan-engine"
 version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdd3e11ae849dfd0bd70555155c2c482a9b6e16afb80255c440e840d14bcca28"
 dependencies = [
  "alsa",
  "byteorder",
@@ -5201,8 +5200,6 @@ dependencies = [
 [[package]]
 name = "maolan-plugin-protocol"
 version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "767cef902e1bb9177d550a28e8475b6ada30cc9e287b540fa467ce37acded4a9"
 dependencies = [
  "libc",
  "tracing",
@@ -10641,6 +10638,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winresource"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0986a8b1d586b7d3e4fe3d9ea39fb451ae22869dcea4aa109d287a374d866087"
+dependencies = [
+ "toml",
+ "version_check",
 ]
 
 [[package]]

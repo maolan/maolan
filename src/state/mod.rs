@@ -970,6 +970,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     fn audio_device_option_preferred_bits_returns_first() {
         let device = AudioDeviceOption::with_supported_caps(
             "hw:0".to_string(),
@@ -981,6 +982,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     fn audio_device_option_preferred_bits_empty() {
         let device = AudioDeviceOption::with_supported_caps(
             "hw:0".to_string(),
@@ -992,6 +994,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     fn normalize_sample_rates_removes_duplicates() {
         let rates = vec![48000, 44100, 48000, 48000];
         let normalized = AudioDeviceOption::normalize_sample_rates(rates);

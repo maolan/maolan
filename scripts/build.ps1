@@ -367,7 +367,7 @@ Patch-FFmpegNext
 
 Write-Host "Cleaning old build artifacts..."
 Push-Location $PSScriptRoot
-cargo clean --target-dir $targetDir
+# cargo clean --target-dir $targetDir
 
 Write-Host "Building maolan (release)..."
 cargo build --release --workspace --target $target --target-dir $targetDir
@@ -401,8 +401,10 @@ if ($versionMatch.Success) {
     Write-Warning "Package version '$pkgVersion' is not a numeric semver; using 0.0.0.0 for installer file metadata."
     $productVersion = "0.0.0.0"
 }
+$iconPath = "$nsiTemp\maolan-icon.ico"
+Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) "images\maolan-icon.ico") $iconPath -Force
 Push-Location $nsiTemp
-& $nsisPath "/DMAOLAN_VERSION=$pkgVersion" "/DMAOLAN_PRODUCT_VERSION=$productVersion" "$nsiTemp\installer.nsi"
+& $nsisPath "/INPUTCHARSET" "UTF8" "/DMAOLAN_VERSION=$pkgVersion" "/DMAOLAN_PRODUCT_VERSION=$productVersion" "/DMAOLAN_ICON=$iconPath" "$nsiTemp\installer.nsi"
 Pop-Location
 $distDir = Join-Path (Split-Path $PSScriptRoot -Parent) "dist"
 New-Item -ItemType Directory -Force $distDir | Out-Null
