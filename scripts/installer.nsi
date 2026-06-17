@@ -2,6 +2,8 @@
 ; Run with: makensis.exe installer.nsi
 ; Requires all binaries and DLLs to be staged in C:\maolan-staging\daw
 
+Unicode true
+
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
@@ -36,8 +38,11 @@ VIAddVersionKey "LegalCopyright" "BSD-2-Clause"
 ; Interface Settings
 ;--------------------------------
 !define MUI_ABORTWARNING
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+!ifndef MAOLAN_ICON
+!define MAOLAN_ICON "..\images\maolan-icon.ico"
+!endif
+!define MUI_ICON "${MAOLAN_ICON}"
+!define MUI_UNICON "${MAOLAN_ICON}"
 
 ;--------------------------------
 ; Pages
@@ -93,12 +98,12 @@ Section "Install"
 
     ; Create Start Menu shortcuts
     CreateDirectory "$SMPROGRAMS\Maolan"
-    CreateShortcut "$SMPROGRAMS\Maolan\Maolan.lnk" "$INSTDIR\maolan.exe"
-    CreateShortcut "$SMPROGRAMS\Maolan\Maolan CLI.lnk" "$INSTDIR\maolan-cli.exe"
-    CreateShortcut "$SMPROGRAMS\Maolan\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+    CreateShortcut "$SMPROGRAMS\Maolan\Maolan.lnk" "$INSTDIR\maolan.exe" "" "$INSTDIR\maolan.exe" 0
+    CreateShortcut "$SMPROGRAMS\Maolan\Maolan CLI.lnk" "$INSTDIR\maolan-cli.exe" "" "$INSTDIR\maolan-cli.exe" 0
+    CreateShortcut "$SMPROGRAMS\Maolan\Uninstall.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\Uninstall.exe" 0
 
     ; Create desktop shortcut
-    CreateShortcut "$DESKTOP\Maolan.lnk" "$INSTDIR\maolan.exe"
+    CreateShortcut "$DESKTOP\Maolan.lnk" "$INSTDIR\maolan.exe" "" "$INSTDIR\maolan.exe" 0
 SectionEnd
 
 ;--------------------------------

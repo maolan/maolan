@@ -201,7 +201,10 @@ impl Maolan {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")
+))]
 mod tests {
     use super::*;
 
@@ -254,6 +257,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     fn update_bits_from_selected_device_sets_oss_bits() {
         let mut state = crate::state::StateData::default();
         let device = AudioDeviceOption::with_supported_caps(

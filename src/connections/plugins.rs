@@ -74,6 +74,17 @@ impl Graph {
             ))
     }
 
+    fn plugin_node_instance_id(node: &PluginGraphNode) -> Option<usize> {
+        match node {
+            #[cfg(all(unix, not(target_os = "macos")))]
+            PluginGraphNode::Lv2PluginInstance(id) => Some(*id),
+            PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
+                Some(*id)
+            }
+            PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => None,
+        }
+    }
+
     fn plugin_pos(
         data: &crate::state::StateData,
         plugin: &PluginGraphPlugin,
@@ -420,14 +431,16 @@ impl canvas::Program<Message> for Graph {
                                     };
                                     Point::new(in_rect.x + in_rect.width, py)
                                 }
-                                PluginGraphNode::Lv2PluginInstance(id)
-                                | PluginGraphNode::Vst3PluginInstance(id)
-                                | PluginGraphNode::ClapPluginInstance(id) => {
+                                PluginGraphNode::TrackOutput => continue,
+                                node => {
+                                    let Some(id) = Self::plugin_node_instance_id(node) else {
+                                        continue;
+                                    };
                                     let Some((pidx, plugin)) = data
                                         .plugin_graph_plugins
                                         .iter()
                                         .enumerate()
-                                        .find(|(_, p)| p.instance_id == *id)
+                                        .find(|(_, p)| p.instance_id == id)
                                     else {
                                         continue;
                                     };
@@ -444,7 +457,6 @@ impl canvas::Program<Message> for Graph {
                                     };
                                     Point::new(pos.x + PLUGIN_W, py)
                                 }
-                                PluginGraphNode::TrackOutput => continue,
                             };
                         let end =
                             match &conn.to_node {
@@ -464,14 +476,16 @@ impl canvas::Program<Message> for Graph {
                                     };
                                     Point::new(out_rect.x, py)
                                 }
-                                PluginGraphNode::Lv2PluginInstance(id)
-                                | PluginGraphNode::Vst3PluginInstance(id)
-                                | PluginGraphNode::ClapPluginInstance(id) => {
+                                PluginGraphNode::TrackInput => continue,
+                                node => {
+                                    let Some(id) = Self::plugin_node_instance_id(node) else {
+                                        continue;
+                                    };
                                     let Some((pidx, plugin)) = data
                                         .plugin_graph_plugins
                                         .iter()
                                         .enumerate()
-                                        .find(|(_, p)| p.instance_id == *id)
+                                        .find(|(_, p)| p.instance_id == id)
                                     else {
                                         continue;
                                     };
@@ -488,7 +502,6 @@ impl canvas::Program<Message> for Graph {
                                     };
                                     Point::new(pos.x, py)
                                 }
-                                PluginGraphNode::TrackInput => continue,
                             };
 
                         if is_bezier_hit(start, end, cursor_position, 100, 12.0) {
@@ -710,12 +723,13 @@ impl canvas::Program<Message> for Graph {
                                                 }
                                             })
                                             .unwrap_or(0),
-                                        PluginGraphNode::Lv2PluginInstance(id)
-                                        | PluginGraphNode::Vst3PluginInstance(id)
-                                        | PluginGraphNode::ClapPluginInstance(id) => data
-                                            .plugin_graph_plugins
-                                            .iter()
-                                            .find(|p| p.instance_id == *id)
+                                        PluginGraphNode::TrackOutput => 0,
+                                        node => Self::plugin_node_instance_id(node)
+                                            .and_then(|id| {
+                                                data.plugin_graph_plugins
+                                                    .iter()
+                                                    .find(|p| p.instance_id == id)
+                                            })
                                             .map(|p| {
                                                 if connecting.kind == Kind::Audio {
                                                     p.audio_outputs
@@ -724,7 +738,6 @@ impl canvas::Program<Message> for Graph {
                                                 }
                                             })
                                             .unwrap_or(0),
-                                        PluginGraphNode::TrackOutput => 0,
                                     };
                                     let to_count = match &to_node {
                                         PluginGraphNode::TrackOutput => track
@@ -736,12 +749,13 @@ impl canvas::Program<Message> for Graph {
                                                 }
                                             })
                                             .unwrap_or(0),
-                                        PluginGraphNode::Lv2PluginInstance(id)
-                                        | PluginGraphNode::Vst3PluginInstance(id)
-                                        | PluginGraphNode::ClapPluginInstance(id) => data
-                                            .plugin_graph_plugins
-                                            .iter()
-                                            .find(|p| p.instance_id == *id)
+                                        PluginGraphNode::TrackInput => 0,
+                                        node => Self::plugin_node_instance_id(node)
+                                            .and_then(|id| {
+                                                data.plugin_graph_plugins
+                                                    .iter()
+                                                    .find(|p| p.instance_id == id)
+                                            })
                                             .map(|p| {
                                                 if connecting.kind == Kind::Audio {
                                                     p.audio_inputs
@@ -750,7 +764,6 @@ impl canvas::Program<Message> for Graph {
                                                 }
                                             })
                                             .unwrap_or(0),
-                                        PluginGraphNode::TrackInput => 0,
                                     };
                                     from_count
                                         .saturating_sub(from_port)
@@ -1218,14 +1231,16 @@ impl canvas::Program<Message> for Graph {
                         };
                         Point::new(in_rect.x + in_rect.width, py)
                     }
-                    PluginGraphNode::Lv2PluginInstance(id)
-                    | PluginGraphNode::Vst3PluginInstance(id)
-                    | PluginGraphNode::ClapPluginInstance(id) => {
+                    PluginGraphNode::TrackOutput => continue,
+                    node => {
+                        let Some(id) = Self::plugin_node_instance_id(node) else {
+                            continue;
+                        };
                         let Some((idx, plugin)) = data
                             .plugin_graph_plugins
                             .iter()
                             .enumerate()
-                            .find(|(_, p)| p.instance_id == *id)
+                            .find(|(_, p)| p.instance_id == id)
                         else {
                             continue;
                         };
@@ -1242,7 +1257,6 @@ impl canvas::Program<Message> for Graph {
                         };
                         Point::new(pos.x + PLUGIN_W, py)
                     }
-                    PluginGraphNode::TrackOutput => continue,
                 };
                 let end = match &conn.to_node {
                     PluginGraphNode::TrackOutput => {
@@ -1253,14 +1267,16 @@ impl canvas::Program<Message> for Graph {
                         };
                         Point::new(out_rect.x, py)
                     }
-                    PluginGraphNode::Lv2PluginInstance(id)
-                    | PluginGraphNode::Vst3PluginInstance(id)
-                    | PluginGraphNode::ClapPluginInstance(id) => {
+                    PluginGraphNode::TrackInput => continue,
+                    node => {
+                        let Some(id) = Self::plugin_node_instance_id(node) else {
+                            continue;
+                        };
                         let Some((idx, plugin)) = data
                             .plugin_graph_plugins
                             .iter()
                             .enumerate()
-                            .find(|(_, p)| p.instance_id == *id)
+                            .find(|(_, p)| p.instance_id == id)
                         else {
                             continue;
                         };
@@ -1277,7 +1293,6 @@ impl canvas::Program<Message> for Graph {
                         };
                         Point::new(pos.x, py)
                     }
-                    PluginGraphNode::TrackInput => continue,
                 };
                 let dist = (end.x - start.x).abs() / 2.0;
                 let is_hovered = cursor_position
@@ -1320,12 +1335,13 @@ impl canvas::Program<Message> for Graph {
                                 track.midi.ins
                             }
                         }
-                        PluginGraphNode::Lv2PluginInstance(id)
-                        | PluginGraphNode::Vst3PluginInstance(id)
-                        | PluginGraphNode::ClapPluginInstance(id) => data
-                            .plugin_graph_plugins
-                            .iter()
-                            .find(|p| p.instance_id == *id)
+                        PluginGraphNode::TrackOutput => 0,
+                        node => Self::plugin_node_instance_id(node)
+                            .and_then(|id| {
+                                data.plugin_graph_plugins
+                                    .iter()
+                                    .find(|p| p.instance_id == id)
+                            })
                             .map(|p| {
                                 if connecting.kind == Kind::Audio {
                                     p.audio_outputs
@@ -1334,7 +1350,6 @@ impl canvas::Program<Message> for Graph {
                                 }
                             })
                             .unwrap_or(0),
-                        PluginGraphNode::TrackOutput => 0,
                     };
                     source_count.saturating_sub(connecting.from_port).max(1)
                 } else {
@@ -1366,14 +1381,15 @@ impl canvas::Program<Message> for Graph {
                             };
                             Point::new(out_rect.x, py)
                         }
-                        PluginGraphNode::Lv2PluginInstance(id)
-                        | PluginGraphNode::Vst3PluginInstance(id)
-                        | PluginGraphNode::ClapPluginInstance(id) => {
+                        node => {
+                            let Some(id) = Self::plugin_node_instance_id(node) else {
+                                continue;
+                            };
                             let Some((idx, plugin)) = data
                                 .plugin_graph_plugins
                                 .iter()
                                 .enumerate()
-                                .find(|(_, p)| p.instance_id == *id)
+                                .find(|(_, p)| p.instance_id == id)
                             else {
                                 continue;
                             };

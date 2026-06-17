@@ -34,11 +34,14 @@ fn spawn_plugin_host(
     cmd.arg(format)
         .arg(plugin_path)
         .arg(&shm_name)
-        .arg(instance_id)
-        .arg(events.host_read_fd().to_string())
-        .arg(events.host_write_fd().to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null());
+        .arg(instance_id);
+    #[cfg(unix)]
+    cmd.arg(events.host_read_fd().to_string())
+        .arg(events.host_write_fd().to_string());
+    #[cfg(windows)]
+    cmd.arg(events.daw_to_host_name())
+        .arg(events.host_to_daw_name());
+    cmd.stdin(Stdio::null()).stdout(Stdio::null());
 
     if cfg!(test) {
         cmd.stderr(Stdio::inherit());
@@ -150,16 +153,18 @@ mod tests {
             "plugin host did not signal ready"
         );
 
-        let status = child.wait().expect("wait should return after crash");
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt;
+            let status = child.wait().expect("wait should return after crash");
             assert!(
                 status.signal() == Some(9),
                 "expected SIGKILL, got {:?}",
                 status.signal()
             );
         }
+        #[cfg(windows)]
+        let _ = child.wait().expect("wait should return after crash");
 
         let _ = ShmMapping::unlink(mapping.name());
 

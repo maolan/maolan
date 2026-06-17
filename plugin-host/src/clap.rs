@@ -769,16 +769,65 @@ impl PluginInstance {
         }
     }
 
+    pub fn gui_get_size(&self) -> Result<(u32, u32), String> {
+        let gui = self.gui.ok_or("GUI extension not available")?;
+        let get_size = unsafe { (*gui).get_size }.ok_or("gui.get_size is null")?;
+        let mut width = 0u32;
+        let mut height = 0u32;
+        if unsafe { get_size(self.plugin, &mut width, &mut height) } {
+            Ok((width, height))
+        } else {
+            Err("plugin.gui.get_size() returned false".to_string())
+        }
+    }
+
+    pub fn gui_set_size(&self, width: u32, height: u32) -> Result<(), String> {
+        let gui = self.gui.ok_or("GUI extension not available")?;
+        let set_size = unsafe { (*gui).set_size }.ok_or("gui.set_size is null")?;
+        if unsafe { set_size(self.plugin, width, height) } {
+            Ok(())
+        } else {
+            Err("plugin.gui.set_size() returned false".to_string())
+        }
+    }
+
     pub fn gui_set_parent(&self, window_id: u64) -> Result<(), String> {
         let gui = self.gui.ok_or("GUI extension not available")?;
         let set_parent = unsafe { (*gui).set_parent }.ok_or("gui.set_parent is null")?;
-        let api = c"x11".as_ptr();
-        let window = ClapWindow {
-            api,
-            clap_window__: ClapWindowUnion {
-                x11: window_id as c_ulong,
-            },
+
+        #[cfg(windows)]
+        let window = {
+            let api = c"win32".as_ptr();
+            ClapWindow {
+                api,
+                clap_window__: ClapWindowUnion {
+                    win32: window_id as *mut c_void,
+                },
+            }
         };
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let window = {
+            let api = c"x11".as_ptr();
+            ClapWindow {
+                api,
+                clap_window__: ClapWindowUnion {
+                    x11: window_id as c_ulong,
+                },
+            }
+        };
+
+        #[cfg(target_os = "macos")]
+        let window = {
+            let api = c"cocoa".as_ptr();
+            ClapWindow {
+                api,
+                clap_window__: ClapWindowUnion {
+                    cocoa: window_id as *mut c_void,
+                },
+            }
+        };
+
         if unsafe { set_parent(self.plugin, &window) } {
             Ok(())
         } else {

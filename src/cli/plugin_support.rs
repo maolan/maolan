@@ -40,6 +40,7 @@ fn push_track_plugin_graph_restore_actions(
         });
 
         let mut runtime_nodes: Vec<PluginGraphNode> = Vec::new();
+        #[cfg(all(unix, not(target_os = "macos")))]
         let mut next_lv2_instance_id = 0usize;
         let mut next_clap_instance_id = 0usize;
         let mut next_vst3_instance_id = 0usize;
@@ -51,14 +52,17 @@ fn push_track_plugin_graph_restore_actions(
                 };
                 match plugin.get("format").and_then(Value::as_str) {
                     Some("LV2") => {
-                        let instance_id = next_lv2_instance_id;
-                        next_lv2_instance_id += 1;
-                        runtime_nodes.push(PluginGraphNode::Lv2PluginInstance(instance_id));
-                        actions.push(Action::TrackLoadLv2Plugin {
-                            track_name: track_name.clone(),
-                            plugin_uri: uri.to_string(),
-                            instance_id: Some(instance_id),
-                        });
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        {
+                            let instance_id = next_lv2_instance_id;
+                            next_lv2_instance_id += 1;
+                            runtime_nodes.push(PluginGraphNode::Lv2PluginInstance(instance_id));
+                            actions.push(Action::TrackLoadLv2Plugin {
+                                track_name: track_name.clone(),
+                                plugin_uri: uri.to_string(),
+                                instance_id: Some(instance_id),
+                            });
+                        }
                     }
                     Some("CLAP") => {
                         let instance_id = next_clap_instance_id;
@@ -152,10 +156,13 @@ fn parse_plugin_node_with_runtime_nodes(
     match t {
         "track_input" => Some(PluginGraphNode::TrackInput),
         "track_output" => Some(PluginGraphNode::TrackOutput),
+        #[cfg(all(unix, not(target_os = "macos")))]
         "plugin" => runtime_nodes
             .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
             .filter(|node| matches!(node, PluginGraphNode::Lv2PluginInstance(_)))
             .cloned(),
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        "plugin" => None,
         "clap_plugin" => runtime_nodes
             .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
             .filter(|node| matches!(node, PluginGraphNode::ClapPluginInstance(_)))

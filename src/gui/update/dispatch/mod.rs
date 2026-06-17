@@ -2522,6 +2522,9 @@ impl Maolan {
                     Action::HistoryState { dirty } => {
                         self.engine_dirty = *dirty;
                     }
+                    Action::Log { source, message } => {
+                        self.info(format!("[{source}] {message}"));
+                    }
                     _ if !self.session_restore_in_progress && history::should_record(a) => {
                         self.engine_dirty = true;
                     }

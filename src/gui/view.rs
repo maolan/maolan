@@ -203,6 +203,10 @@ impl Maolan {
                 Some(Show::TrackPluginList) => {
                     self.wrap_with_log_window(self.track_plugin_list_view())
                 }
+                #[cfg(windows)]
+                Some(Show::TrackPluginList) => {
+                    self.wrap_with_log_window(self.track_plugin_list_view())
+                }
                 _ => {
                     let view_kind = state.view.clone();
                     let shift_pressed = state.shift;

@@ -1,23 +1,24 @@
-#[cfg(unix)]
 use crate::clap::{
-    CLAP_EXT_AUDIO_PORTS, ClapAudioBuffer, ClapEventHeader, ClapEventParamGesture,
-    ClapEventParamMod, ClapEventParamValue, ClapPluginParams, EventBuffer, PluginInstance,
-    host_timers,
+    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_PARAMS, CLAP_EXT_TIMER_SUPPORT, ClapAudioBuffer,
+    ClapEventHeader, ClapEventParamGesture, ClapEventParamMod, ClapEventParamValue,
+    ClapPluginParams, ClapProcess, EventBuffer, EventCapture, PluginInstance, ThreadType,
+    host_timers, set_thread_type,
 };
 #[cfg(unix)]
-use crate::clap::{
-    CLAP_EXT_PARAMS, CLAP_EXT_POSIX_FD_SUPPORT, CLAP_EXT_TIMER_SUPPORT, ClapProcess, EventCapture,
-    ThreadType, host_fds, set_thread_type,
-};
+use crate::clap::{CLAP_EXT_POSIX_FD_SUPPORT, host_fds};
 use crate::events::EventPair;
+#[cfg(windows)]
+use crate::gui_win32::win32::{ContainerWindow, create_container_window};
 use crate::protocol::*;
-#[cfg(unix)]
 use crate::ringbuf::RingBuffer;
 use crate::shm::ShmMapping;
-#[cfg(unix)]
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+#[cfg(windows)]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos, ShowWindow,
+};
 
 static PARAMS_FLUSH_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -31,7 +32,6 @@ pub fn request_audio_ports_rescan() {
     AUDIO_PORTS_RESCAN_REQUESTED.store(true, Ordering::Release);
 }
 
-#[cfg(unix)]
 struct PortBuffers {
     inputs: Vec<ClapAudioBuffer>,
     outputs: Vec<ClapAudioBuffer>,
@@ -39,7 +39,6 @@ struct PortBuffers {
     _output_ptrs: Vec<Vec<*mut f32>>,
 }
 
-#[cfg(unix)]
 impl PortBuffers {
     fn from_plugin(
         plugin: *const crate::clap::ClapPlugin,
@@ -176,7 +175,6 @@ impl HostRuntime {
         })
     }
 
-    #[cfg(unix)]
     fn plugin_id(&self) -> &str {
         if let Some(pos) = self.plugin_path.rfind("::") {
             &self.plugin_path[pos + 2..]
@@ -187,7 +185,6 @@ impl HostRuntime {
         }
     }
 
-    #[cfg(unix)]
     fn real_plugin_path(&self) -> &str {
         if let Some(pos) = self.plugin_path.rfind("::") {
             &self.plugin_path[..pos]
@@ -280,7 +277,6 @@ impl HostRuntime {
         }
     }
 
-    #[cfg(unix)]
     pub fn run_clap_plugin(&self) {
         let mut plugin = match PluginInstance::new(self.real_plugin_path(), self.plugin_id()) {
             Ok(p) => p,
@@ -415,6 +411,7 @@ impl HostRuntime {
                 .map(|p| p as *const crate::clap::ClapPluginTimerSupport)
         };
 
+        #[cfg(unix)]
         let fd_ext = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
@@ -423,8 +420,11 @@ impl HostRuntime {
                 .map(|p| p as *const crate::clap::ClapPluginPosixFdSupport)
         };
         let mut steady_time: i64 = 0;
+        #[cfg(unix)]
         let daw_read_fd = self.events.host_read_fd();
         let mut started_processing = false;
+        #[cfg(windows)]
+        let mut clap_gui_window: Option<ContainerWindow> = None;
 
         loop {
             if header.shutdown_request.load(Ordering::Acquire) != 0 {
@@ -474,26 +474,103 @@ impl HostRuntime {
                         if !plugin.gui_is_supported() {
                             Err("Plugin does not support GUI".to_string())
                         } else {
-                            let window_id = header.parent_window_usize() as u64;
-                            let is_floating = window_id == 0;
+                            #[cfg(windows)]
+                            {
+                                if plugin.gui_created() {
+                                    tracing::info!(instance_id = %self.instance_id, "destroying existing GUI before recreate");
+                                    plugin.gui_destroy();
+                                }
+                                clap_gui_window = None;
 
-                            if plugin.gui_created() {
-                                plugin.gui_destroy();
-                            }
-                            let create_result = plugin.gui_create("x11", is_floating);
-                            create_result
-                                .and_then(|_| {
-                                    if window_id != 0 {
-                                        plugin.gui_set_parent(window_id)
-                                    } else {
-                                        Ok(())
+                                let title = std::path::Path::new(self.real_plugin_path())
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("Plugin");
+                                tracing::info!(instance_id = %self.instance_id, title = %title, "creating Win32 container window");
+                                match create_container_window(std::ptr::null_mut(), title, 800, 600)
+                                {
+                                    Ok(window) => {
+                                        let hwnd = window.hwnd;
+                                        tracing::info!(instance_id = %self.instance_id, hwnd = ?hwnd, "container window created");
+                                        let result = plugin
+                                            .gui_create("win32", false)
+                                            .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_create(win32, false) succeeded"))
+                                            .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_create(win32, false) failed"))
+                                            .and_then(|_| plugin.gui_set_parent(hwnd as u64)
+                                                .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_parent succeeded"))
+                                                .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_set_parent failed"))
+                                            )
+                                            .and_then(|_| {
+                                                match plugin.gui_get_size() {
+                                                    Ok((w, h)) if w > 0 && h > 0 => {
+                                                        tracing::info!(instance_id = %self.instance_id, width = w, height = h, "resizing container to plugin size");
+                                                        unsafe {
+                                                            SetWindowPos(
+                                                                hwnd,
+                                                                std::ptr::null_mut(),
+                                                                0,
+                                                                0,
+                                                                w as i32,
+                                                                h as i32,
+                                                                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                                                            );
+                                                        }
+                                                    }
+                                                    Ok((w, h)) => {
+                                                        tracing::warn!(instance_id = %self.instance_id, width = w, height = h, "plugin reported zero/invalid size");
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_get_size failed");
+                                                    }
+                                                }
+                                                tracing::info!(instance_id = %self.instance_id, "showing container window");
+                                                unsafe {
+                                                    ShowWindow(hwnd, SW_SHOW);
+                                                }
+                                                plugin.gui_show()
+                                                    .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_show succeeded"))
+                                                    .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_show failed"))
+                                            });
+                                        if result.is_ok() {
+                                            clap_gui_window = Some(window);
+                                        }
+                                        result
                                     }
-                                })
-                                .and_then(|_| plugin.gui_show())
+                                    Err(e) => {
+                                        tracing::error!(instance_id = %self.instance_id, error = %e, "failed to create container window");
+                                        Err(e)
+                                    }
+                                }
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                let window_id = header.parent_window_usize() as u64;
+                                let is_floating = window_id == 0;
+
+                                if plugin.gui_created() {
+                                    plugin.gui_destroy();
+                                }
+                                let create_result = plugin.gui_create("x11", is_floating);
+                                create_result
+                                    .and_then(|_| {
+                                        if window_id != 0 {
+                                            plugin.gui_set_parent(window_id)
+                                        } else {
+                                            Ok(())
+                                        }
+                                    })
+                                    .and_then(|_| plugin.gui_show())
+                            }
                         }
                     }
                     4 => {
                         tracing::info!(instance_id = %self.instance_id, "GUI hide requested");
+                        #[cfg(windows)]
+                        if let Some(ref window) = clap_gui_window {
+                            unsafe {
+                                ShowWindow(window.hwnd, SW_HIDE);
+                            }
+                        }
                         plugin.gui_hide()
                     }
                     _ => Err(format!("Unknown request type: {req}")),
@@ -509,26 +586,46 @@ impl HostRuntime {
             }
 
             set_thread_type(ThreadType::MainThread);
+
             self.handle_idle_work(&plugin, params_ext, timer_ext);
 
             let timeout_ms = self.next_timer_ms().min(100);
-            let (daw_ready, ready_fds) = match timeout_ms {
-                0 => (true, Vec::new()),
-                ms => self.poll_daw_and_fds(daw_read_fd, Duration::from_millis(ms)),
-            };
 
-            if let Some(ext) = fd_ext {
-                for (fd, flags) in ready_fds {
-                    unsafe {
-                        if let Some(cb) = (*ext).on_fd {
-                            cb(plugin.plugin_ptr(), fd, flags);
+            #[cfg(unix)]
+            {
+                let (daw_ready, ready_fds) = match timeout_ms {
+                    0 => (true, Vec::new()),
+                    ms => self.poll_daw_and_fds(daw_read_fd, Duration::from_millis(ms)),
+                };
+
+                if let Some(ext) = fd_ext {
+                    for (fd, flags) in ready_fds {
+                        unsafe {
+                            if let Some(cb) = (*ext).on_fd {
+                                cb(plugin.plugin_ptr(), fd, flags);
+                            }
                         }
                     }
                 }
+
+                if !daw_ready {
+                    continue;
+                }
             }
 
-            if !daw_ready {
-                continue;
+            #[cfg(windows)]
+            {
+                match self
+                    .events
+                    .wait_daw_with_message_pump(Duration::from_millis(timeout_ms.max(1)))
+                {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+                    Err(e) => {
+                        tracing::error!("Event wait error: {e}");
+                        break;
+                    }
+                }
             }
 
             let block_size = header.block_size.load(Ordering::Acquire) as usize;
@@ -621,7 +718,7 @@ impl HostRuntime {
                     event_buf.push_midi(ev.data, ev.channel as u16, ev.sample_offset);
                 }
             }
-            
+
             let in_events = event_buf.as_input_events();
 
             let mut event_capture = EventCapture::new();
@@ -751,7 +848,6 @@ impl HostRuntime {
         tracing::info!(instance_id = %self.instance_id, "Plugin host shutting down");
     }
 
-    #[cfg(unix)]
     fn push_midi_as_clap_events(
         &self,
         event_buf: &mut EventBuffer,
@@ -802,7 +898,6 @@ impl HostRuntime {
         event_buf.push_midi(data, port_index, sample_offset);
     }
 
-    #[cfg(unix)]
     fn echo_event_to_daw(
         &self,
         header: &ClapEventHeader,
@@ -925,7 +1020,6 @@ impl HostRuntime {
         (poll_fds[0].revents & libc::POLLIN != 0, ready_fds)
     }
 
-    #[cfg(unix)]
     fn next_timer_ms(&self) -> u64 {
         let timers = host_timers().lock().unwrap();
         let now = Instant::now();
@@ -942,7 +1036,6 @@ impl HostRuntime {
             .unwrap_or(100)
     }
 
-    #[cfg(unix)]
     fn handle_idle_work(
         &self,
         plugin: &PluginInstance,
