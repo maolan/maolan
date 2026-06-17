@@ -619,13 +619,24 @@ impl PluginInstance {
             }
         };
 
+        let gui = unsafe {
+            let gui_ext = (*plugin)
+                .get_extension
+                .map(|f| f(plugin, CLAP_EXT_GUI.as_ptr()));
+            if let Some(ext) = gui_ext.filter(|p| !p.is_null()) {
+                Some(ext as *const ClapPluginGui)
+            } else {
+                None
+            }
+        };
+
         Ok(Self {
             _library: library,
             entry: entry as *const ClapPluginEntry,
             plugin,
             host,
             param_count,
-            gui: None,
+            gui,
             gui_created: false,
         })
     }
@@ -742,19 +753,8 @@ impl PluginInstance {
         self.param_count
     }
 
-    pub fn gui_is_supported(&mut self) -> bool {
-        let ext = unsafe {
-            (*self.plugin)
-                .get_extension
-                .map(|f| f(self.plugin, CLAP_EXT_GUI.as_ptr()))
-        };
-        if let Some(ptr) = ext
-            && !ptr.is_null()
-        {
-            self.gui = Some(ptr as *const ClapPluginGui);
-            return true;
-        }
-        false
+    pub fn gui_is_supported(&self) -> bool {
+        self.gui.is_some()
     }
 
     pub fn gui_create(&mut self, api: &str, is_floating: bool) -> Result<(), String> {
@@ -766,6 +766,16 @@ impl PluginInstance {
             Ok(())
         } else {
             Err("plugin.gui.create() returned false".to_string())
+        }
+    }
+
+    pub fn gui_set_scale(&self, scale: f64) -> Result<(), String> {
+        let gui = self.gui.ok_or("GUI extension not available")?;
+        let set_scale = unsafe { (*gui).set_scale }.ok_or("gui.set_scale is null")?;
+        if unsafe { set_scale(self.plugin, scale) } {
+            Ok(())
+        } else {
+            Err("plugin.gui.set_scale() returned false".to_string())
         }
     }
 

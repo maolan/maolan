@@ -332,6 +332,10 @@ impl Maolan {
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
+                self.info(format!(
+                    "Requesting CLAP UI for track '{}' instance {}",
+                    track_name, instance_id
+                ));
                 Some(self.send(Action::TrackShowClapGui {
                     track_name: track_name.clone(),
                     instance_id,
@@ -420,6 +424,10 @@ impl Maolan {
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
+                self.info(format!(
+                    "Requesting VST3 UI for track '{}' instance {}",
+                    track_name, instance_id
+                ));
                 Some(self.send(Action::TrackShowVst3Gui {
                     track_name: track_name.clone(),
                     instance_id,

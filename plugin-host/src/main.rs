@@ -173,6 +173,12 @@ fn main() {
         .with_writer(std::io::stderr)
         .with_max_level(level)
         .init();
+    tracing::info!(
+        format = %format,
+        plugin_spec = %plugin_spec,
+        instance_id = %instance_id,
+        "maolan-plugin-host started"
+    );
 
     match format.as_str() {
         "vst3" => {
