@@ -58,7 +58,6 @@ use std::{
     process::exit,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tracing::error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedPitchCorrectionPoint {
@@ -733,18 +732,10 @@ impl Maolan {
     }
 
     fn pending_save_ready(&self) -> bool {
-        let ready = self.pending_save_tracks.is_empty()
+        self.pending_save_tracks.is_empty()
             && self.pending_save_clap_tracks.is_empty()
             && self.pending_save_clap_clips.is_empty()
-            && self.pending_vst3_save_ready();
-        tracing::info!(
-            "pending_save_ready={}: tracks={}, clap_tracks={}, clap_clips={}",
-            ready,
-            self.pending_save_tracks.len(),
-            self.pending_save_clap_tracks.len(),
-            self.pending_save_clap_clips.len(),
-        );
-        ready
+            && self.pending_vst3_save_ready()
     }
 
     #[cfg(target_os = "macos")]
@@ -3104,18 +3095,13 @@ impl Maolan {
                     .await
                     .map_err(|e| e.to_string());
                     if let Ok(ref pitch_correction) = result
-                        && let Err(err) = Self::save_cached_pitch_correction(
+                        && let Err(_err) = Self::save_cached_pitch_correction(
                             &session_root_for_cache,
                             &source_path,
                             &request,
                             pitch_correction,
                         )
-                    {
-                        error!(
-                            "Failed to cache pitch correction for '{}': {}",
-                            request.clip_name, err
-                        );
-                    }
+                    {}
                     if tx
                         .send(Message::ClipOpenPitchCorrectionFinished { request, result })
                         .is_err()

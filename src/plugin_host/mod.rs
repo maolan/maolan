@@ -109,13 +109,7 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
         candidates.push(dir.join(host_name));
     }
 
-    let found = candidates.into_iter().find(|cand| cand.exists());
-    if let Some(ref path) = found {
-        tracing::info!(path = %path.display(), "Using plugin-host binary");
-    } else {
-        tracing::error!("maolan-plugin-host binary not found");
-    }
-    found
+    candidates.into_iter().find(|cand| cand.exists())
 }
 
 mod tests {
@@ -329,8 +323,6 @@ mod tests {
             }
         }
 
-        tracing::info!("CLAP plugin '{plugin_id}' processed two blocks cleanly");
-
         shutdown_host(&mut child, &mapping, &events, Duration::from_secs(2));
 
         match child.try_wait() {
@@ -447,12 +439,6 @@ mod tests {
         }
         let elapsed = start.elapsed();
         let avg_us = elapsed.as_micros() as f64 / iterations as f64;
-
-        tracing::info!(
-            "IPC latency benchmark: {iterations} round-trips in {:.2} ms, avg = {:.2} µs/block",
-            elapsed.as_secs_f64() * 1000.0,
-            avg_us
-        );
 
         assert!(
             avg_us < 1000.0,

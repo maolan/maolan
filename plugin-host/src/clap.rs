@@ -623,11 +623,9 @@ impl PluginInstance {
             let gui_ext = (*plugin)
                 .get_extension
                 .map(|f| f(plugin, CLAP_EXT_GUI.as_ptr()));
-            if let Some(ext) = gui_ext.filter(|p| !p.is_null()) {
-                Some(ext as *const ClapPluginGui)
-            } else {
-                None
-            }
+            gui_ext
+                .filter(|p| !p.is_null())
+                .map(|ext| ext as *const ClapPluginGui)
         };
 
         Ok(Self {

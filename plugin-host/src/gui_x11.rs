@@ -90,8 +90,7 @@ pub mod x11 {
         width: u32,
         height: u32,
     ) -> Result<ContainerWindow, String> {
-        let display_name_c = display_name
-            .and_then(|s| std::ffi::CString::new(s).ok());
+        let display_name_c = display_name.and_then(|s| std::ffi::CString::new(s).ok());
         let display_name_ptr = display_name_c
             .as_ref()
             .map(|s| s.as_ptr())
@@ -109,9 +108,8 @@ pub mod x11 {
 
         let parent = parent.unwrap_or(root);
 
-        let window = unsafe {
-            XCreateSimpleWindow(display, parent, 0, 0, width, height, 1, black, white)
-        };
+        let window =
+            unsafe { XCreateSimpleWindow(display, parent, 0, 0, width, height, 1, black, white) };
         if window == 0 {
             unsafe { XCloseDisplay(display) };
             return Err("failed to create X11 container window".to_string());

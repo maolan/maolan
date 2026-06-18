@@ -5135,7 +5135,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.16"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02eb322b2ae09b6b85e5d8b3a89b8e5be050d49cbda8fb7f5b289f6fa9afacc8"
 dependencies = [
  "alsa",
  "byteorder",
@@ -5144,7 +5146,7 @@ dependencies = [
  "cpal",
  "ffmpeg-next",
  "jack",
- "maolan-plugin-protocol",
+ "maolan-plugin-protocol 0.0.5",
  "midir",
  "midly",
  "nix 0.31.3",
@@ -5188,7 +5190,7 @@ dependencies = [
  "libloading 0.9.0",
  "lilv",
  "lv2_raw",
- "maolan-plugin-protocol",
+ "maolan-plugin-protocol 0.0.4",
  "serde",
  "serde_json",
  "tracing",
@@ -5200,6 +5202,19 @@ dependencies = [
 [[package]]
 name = "maolan-plugin-protocol"
 version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "767cef902e1bb9177d550a28e8475b6ada30cc9e287b540fa467ce37acded4a9"
+dependencies = [
+ "libc",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "maolan-plugin-protocol"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65d4e7cca740e4794df2334c9cabc343a4c7e2ff1dff54d4666cc0cf04172ef5"
 dependencies = [
  "libc",
  "tracing",

@@ -367,7 +367,7 @@ Patch-FFmpegNext
 
 Write-Host "Cleaning old build artifacts..."
 Push-Location $PSScriptRoot
-cargo clean --target-dir $targetDir
+# cargo clean --target-dir $targetDir
 
 Write-Host "Building maolan (release)..."
 cargo build --release --workspace --target $target --target-dir $targetDir

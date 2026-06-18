@@ -78,7 +78,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::RwLock;
-use tracing::error;
 
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
@@ -911,7 +910,6 @@ impl Maolan {
 
     fn info(&mut self, message: impl Into<String>) {
         let message = message.into();
-        tracing::info!("{message}");
         let mut state = self.state.blocking_write();
         Self::push_log_entry(&mut state, LogLevel::Info, message);
         drop(state);
@@ -920,7 +918,6 @@ impl Maolan {
 
     fn warning(&mut self, message: impl Into<String>) {
         let message = message.into();
-        tracing::warn!("{message}");
         let mut state = self.state.blocking_write();
         Self::push_log_entry(&mut state, LogLevel::Warning, message);
         drop(state);
@@ -929,7 +926,6 @@ impl Maolan {
 
     fn error(&mut self, message: impl Into<String>) {
         let message = message.into();
-        tracing::error!("{message}");
         let mut state = self.state.blocking_write();
         Self::push_log_entry(&mut state, LogLevel::Error, message);
         drop(state);
@@ -1039,7 +1035,6 @@ impl Maolan {
                 for line in reader.lines() {
                     match line {
                         Ok(line) => {
-                            error!("maolan-generate: {line}");
                             if let Ok(mut log) = stderr_log_bg.lock() {
                                 log.push(line);
                                 if log.len() > 64 {
@@ -1048,8 +1043,7 @@ impl Maolan {
                                 }
                             }
                         }
-                        Err(err) => {
-                            error!("Failed to read maolan-generate stderr: {err}");
+                        Err(_err) => {
                             break;
                         }
                     }
@@ -1211,9 +1205,7 @@ impl Maolan {
         );
         let recent = Self::normalize_recent_session_paths(recent);
         cfg.recent_session_paths = recent.clone();
-        if let Err(err) = cfg.save() {
-            error!("Failed to save recent session paths: {err}");
-        }
+        if let Err(_err) = cfg.save() {}
         self.menu.update_recent_sessions(recent);
     }
 
@@ -1230,9 +1222,7 @@ impl Maolan {
             .collect();
         let recent = Self::normalize_recent_session_paths(recent);
         cfg.recent_session_paths = recent.clone();
-        if let Err(err) = cfg.save() {
-            error!("Failed to save recent session paths: {err}");
-        }
+        if let Err(_err) = cfg.save() {}
         self.menu.update_recent_sessions(recent);
     }
 
@@ -2286,13 +2276,7 @@ impl Maolan {
                 }
                 match Self::referenced_session_media_paths_from_file(&path) {
                     Ok(refs) => referenced.extend(refs),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to parse branch file '{}' for cleanup references: {}",
-                            path.display(),
-                            e
-                        );
-                    }
+                    Err(_e) => {}
                 }
             }
         }
@@ -5272,7 +5256,6 @@ impl Maolan {
             .filter(|bytes| !bytes.is_empty())
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn clap_state_from_json(v: &Value) -> Option<maolan_engine::clap::ClapPluginState> {
         serde_json::from_value(v.clone()).ok()
     }
