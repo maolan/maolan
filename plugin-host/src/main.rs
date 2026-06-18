@@ -263,7 +263,7 @@ fn main() {
     };
     #[cfg(windows)]
     let events = maolan_plugin_host::events::EventPair::from_names(&args[5], &args[6])
-        .unwrap_or_else(|e| {
+        .unwrap_or_else(|_e| {
             std::process::exit(3);
         });
 
