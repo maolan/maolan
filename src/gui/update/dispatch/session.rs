@@ -210,11 +210,10 @@ impl Maolan {
                 Task::batch(tasks)
             }
             Message::MeterPollTick => {
-                if let Err(err) = CLIENT
+                if let Err(_err) = CLIENT
                     .sender
                     .try_send(EngineMessage::Request(Action::RequestMeterSnapshot))
                 {
-                    tracing::debug!("Meter snapshot request skipped: {err}");
                 }
                 Task::none()
             }

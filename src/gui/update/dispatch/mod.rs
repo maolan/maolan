@@ -569,19 +569,9 @@ impl Maolan {
                 return self.handle_timing_message(message);
             }
             Message::SetSnapMode(mode) => {
-                tracing::info!(
-                    "[SetSnapMode] changing from {:?} to {:?}",
-                    self.snap_mode,
-                    mode
-                );
                 self.snap_mode = mode;
             }
             Message::SetMidiSnapMode(mode) => {
-                tracing::info!(
-                    "[SetMidiSnapMode] changing from {:?} to {:?}",
-                    self.midi_snap_mode,
-                    mode
-                );
                 self.midi_snap_mode = mode;
             }
             Message::SetClipSnapTargets(ref targets) => {
@@ -2517,7 +2507,6 @@ impl Maolan {
                 return self.send(Action::SetRecordEnabled(true));
             }
             Message::Response(Ok(ref a)) => {
-                tracing::info!("GUI received Response(Ok): {:?}", std::mem::discriminant(a));
                 match a {
                     Action::HistoryState { dirty } => {
                         self.engine_dirty = *dirty;
@@ -3611,12 +3600,6 @@ impl Maolan {
                                 clip.plugin_graph_json = Some(graph_json);
                             }
                             if self.pending_save_path.is_some() {
-                                tracing::info!(
-                                    "ClipClapSnapshotState response for {} clip={} id={}",
-                                    track_name,
-                                    clip_idx,
-                                    instance_id
-                                );
                                 self.pending_save_clap_clips.remove(&(
                                     track_name.clone(),
                                     *clip_idx,
@@ -3629,7 +3612,6 @@ impl Maolan {
                                     if !path.is_empty() {
                                         if is_template {
                                             if let Err(e) = self.save_template(path.clone()) {
-                                                error!("{}", e);
                                                 self.state.blocking_write().message =
                                                     format!("Failed to save template: {}", e);
                                             } else {
@@ -3641,7 +3623,6 @@ impl Maolan {
                                                 self.menu.update_templates(templates);
                                             }
                                         } else if let Err(e) = self.save(path.clone()) {
-                                            error!("{}", e);
                                             self.pending_exit_after_save = false;
                                             self.state.blocking_write().message =
                                                 format!("Failed to save session: {}", e);
@@ -3743,11 +3724,6 @@ impl Maolan {
                         Action::TrackSnapshotAllClapStatesDone { track_name }
                             if self.pending_save_path.is_some() =>
                         {
-                            tracing::info!(
-                                "TrackSnapshotAllClapStatesDone for {} (remaining {})",
-                                track_name,
-                                self.pending_save_clap_tracks.len().saturating_sub(1)
-                            );
                             self.pending_save_clap_tracks.remove(track_name);
                             if self.pending_save_ready() {
                                 let path = self.pending_save_path.take().unwrap_or_default();
@@ -3756,7 +3732,6 @@ impl Maolan {
                                 if !path.is_empty() {
                                     if is_template {
                                         if let Err(e) = self.save_template(path.clone()) {
-                                            error!("{}", e);
                                             self.state.blocking_write().message =
                                                 format!("Failed to save template: {}", e);
                                         } else {
@@ -3768,7 +3743,6 @@ impl Maolan {
                                             self.menu.update_templates(templates);
                                         }
                                     } else if let Err(e) = self.save(path.clone()) {
-                                        error!("{}", e);
                                         self.pending_exit_after_save = false;
                                         self.state.blocking_write().message =
                                             format!("Failed to save session: {}", e);
@@ -3820,11 +3794,6 @@ impl Maolan {
                             }
                             #[cfg(target_os = "macos")]
                             if self.pending_save_path.is_some() {
-                                tracing::info!(
-                                    "Vst3GetState response for {} id={}",
-                                    track_name,
-                                    instance_id
-                                );
                                 self.pending_save_vst3_states
                                     .remove(&(track_name.clone(), *instance_id));
                                 if self.pending_save_ready() {
@@ -3834,7 +3803,6 @@ impl Maolan {
                                     if !path.is_empty() {
                                         if is_template {
                                             if let Err(e) = self.save_template(path.clone()) {
-                                                error!("{}", e);
                                                 self.state.blocking_write().message =
                                                     format!("Failed to save template: {}", e);
                                             } else {
@@ -3846,7 +3814,6 @@ impl Maolan {
                                                 self.menu.update_templates(templates);
                                             }
                                         } else if let Err(e) = self.save(path.clone()) {
-                                            error!("{}", e);
                                             self.pending_exit_after_save = false;
                                             self.state.blocking_write().message =
                                                 format!("Failed to save session: {}", e);
@@ -3991,11 +3958,6 @@ impl Maolan {
                             }
 
                             if self.pending_save_path.is_some() {
-                                tracing::info!(
-                                    "TrackGetPluginGraph response for {} (remaining {})",
-                                    track_name,
-                                    self.pending_save_tracks.len().saturating_sub(1)
-                                );
                                 self.pending_save_tracks.remove(track_name);
                                 if self.pending_save_ready() {
                                     let path = self.pending_save_path.take().unwrap_or_default();
@@ -4004,7 +3966,6 @@ impl Maolan {
                                     if !path.is_empty() {
                                         if is_template {
                                             if let Err(e) = self.save_template(path.clone()) {
-                                                error!("{}", e);
                                                 self.state.blocking_write().message =
                                                     format!("Failed to save template: {}", e);
                                             } else {
@@ -4021,7 +3982,6 @@ impl Maolan {
                                                 return self
                                                     .save_track_as_template(track_name, path);
                                             } else if let Err(e) = self.save(path.clone()) {
-                                                error!("{}", e);
                                                 self.pending_exit_after_save = false;
                                                 self.state.blocking_write().message =
                                                     format!("Failed to save session: {}", e);
@@ -4127,9 +4087,6 @@ impl Maolan {
                 }
             }
             Message::Response(Err(ref e)) => {
-                if self.pending_save_path.is_some() {
-                    tracing::info!("Engine error during save handshake: {e}; aborting save");
-                }
                 if !self.pending_track_freeze_bounce.is_empty() {
                     self.pending_track_freeze_bounce.clear();
                 }
@@ -4144,7 +4101,6 @@ impl Maolan {
                 self.pending_save_vst3_states.clear();
                 self.pending_save_is_template = false;
                 self.state.blocking_write().message = e.clone();
-                error!("Engine error: {e}");
             }
             Message::TrackSetVcaMaster {
                 ref track_name,
@@ -7829,9 +7785,7 @@ impl Maolan {
                                 }
                             }
 
-                            for err in &failures {
-                                error!("Import failed: {err}");
-                            }
+                            for _err in &failures {}
 
                             if tx
                                 .send(Message::ImportProgress {

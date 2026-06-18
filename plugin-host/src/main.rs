@@ -173,12 +173,6 @@ fn main() {
         .with_writer(std::io::stderr)
         .with_max_level(level)
         .init();
-    tracing::info!(
-        format = %format,
-        plugin_spec = %plugin_spec,
-        instance_id = %instance_id,
-        "maolan-plugin-host started"
-    );
 
     match format.as_str() {
         "vst3" => {
@@ -263,7 +257,6 @@ fn main() {
     #[cfg(unix)]
     let events = {
         if d2h_fd < 0 || h2d_fd < 0 {
-            tracing::error!("Invalid event pipe file descriptors");
             std::process::exit(3);
         }
         unsafe { maolan_plugin_host::events::EventPair::from_fds(d2h_fd, h2d_fd) }
@@ -271,7 +264,6 @@ fn main() {
     #[cfg(windows)]
     let events = maolan_plugin_host::events::EventPair::from_names(&args[5], &args[6])
         .unwrap_or_else(|e| {
-            tracing::error!("Failed to open event handles: {}", e);
             std::process::exit(3);
         });
 
@@ -283,8 +275,7 @@ fn main() {
         instance_id.clone(),
     ) {
         Ok(rt) => rt,
-        Err(e) => {
-            tracing::error!("Failed to attach to shared memory '{}': {}", shm_name, e);
+        Err(_e) => {
             std::process::exit(2);
         }
     };

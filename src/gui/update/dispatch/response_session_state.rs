@@ -1,5 +1,4 @@
 use super::*;
-use tracing::error;
 
 impl Maolan {
     pub(super) fn handle_response_session_state_action(
@@ -20,13 +19,8 @@ impl Maolan {
                 }
                 if let Some(autosave_root) = self.autosave_snapshot_root()
                     && autosave_root.exists()
-                    && let Err(err) = fs::remove_dir_all(&autosave_root)
-                {
-                    error!(
-                        "Failed to remove autosave root '{}': {err}",
-                        autosave_root.display()
-                    );
-                }
+                    && let Err(_err) = fs::remove_dir_all(&autosave_root)
+                {}
                 if self.pending_exit_after_save {
                     self.pending_exit_after_save = false;
                     return Some(self.request_quit());

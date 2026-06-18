@@ -198,7 +198,6 @@ impl HostRuntime {
     pub fn signal_ready(&self) {
         let header = unsafe { header_mut(self.mapping.as_ptr()) };
         header.ready.store(1, Ordering::Release);
-        tracing::info!(instance_id = %self.instance_id, "Plugin host ready");
     }
 
     pub fn write_test_magic(&self) {
@@ -214,7 +213,6 @@ impl HostRuntime {
         let start = Instant::now();
         loop {
             if header.shutdown_request.load(Ordering::Acquire) != 0 {
-                tracing::info!(instance_id = %self.instance_id, "Shutdown requested");
                 break;
             }
             if start.elapsed() >= Duration::from_millis(100) {
@@ -223,8 +221,7 @@ impl HostRuntime {
             match self.events.wait_daw(Duration::from_millis(100)) {
                 Ok(()) => continue,
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-                Err(e) => {
-                    tracing::error!("Event pipe error: {e}");
+                Err(_e) => {
                     break;
                 }
             }
@@ -234,19 +231,16 @@ impl HostRuntime {
     pub fn run_null_plugin(&self) {
         let header = unsafe { header_ref(self.mapping.as_ptr()) };
         let ptr = self.mapping.as_ptr();
-        tracing::info!(instance_id = %self.instance_id, "Null plugin running");
 
         loop {
             if header.shutdown_request.load(Ordering::Acquire) != 0 {
-                tracing::info!(instance_id = %self.instance_id, "Null plugin shutdown requested");
                 break;
             }
 
             match self.events.wait_daw(Duration::from_millis(100)) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-                Err(e) => {
-                    tracing::error!("Null plugin event error: {e}");
+                Err(_e) => {
                     break;
                 }
             }
@@ -256,7 +250,6 @@ impl HostRuntime {
             let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
             if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-                tracing::warn!("Invalid block size {block_size}, skipping");
                 let _ = self.events.signal_daw();
                 continue;
             }
@@ -270,8 +263,7 @@ impl HostRuntime {
                 }
             }
 
-            if let Err(e) = self.events.signal_daw() {
-                tracing::error!("Failed to signal DAW: {e}");
+            if let Err(_e) = self.events.signal_daw() {
                 break;
             }
         }
@@ -280,20 +272,10 @@ impl HostRuntime {
     pub fn run_clap_plugin(&self) {
         let mut plugin = match PluginInstance::new(self.real_plugin_path(), self.plugin_id()) {
             Ok(p) => p,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to load CLAP plugin '{}': {e}",
-                    self.real_plugin_path()
-                );
+            Err(_e) => {
                 return;
             }
         };
-
-        tracing::info!(
-            instance_id = %self.instance_id,
-            name = %plugin.name(),
-            "CLAP plugin loaded"
-        );
 
         let ptr = self.mapping.as_ptr();
         let header = unsafe { header_ref(self.mapping.as_ptr()) };
@@ -311,8 +293,7 @@ impl HostRuntime {
             }
         };
 
-        if let Err(e) = plugin.activate(sample_rate, 1, MAX_BLOCK_SIZE as u32) {
-            tracing::error!("Failed to activate plugin: {e}");
+        if let Err(_e) = plugin.activate(sample_rate, 1, MAX_BLOCK_SIZE as u32) {
             return;
         }
 
@@ -366,14 +347,6 @@ impl HostRuntime {
                 midi_out_ports,
             );
         }
-        tracing::info!(
-            instance_id = %self.instance_id,
-            audio_in = audio_in_channels,
-            audio_out = audio_out_channels,
-            midi_in = midi_in_ports,
-            midi_out = midi_out_ports,
-            "Wrote port counts to scratch"
-        );
 
         self.signal_ready();
 
@@ -430,7 +403,6 @@ impl HostRuntime {
 
         loop {
             if header.shutdown_request.load(Ordering::Acquire) != 0 {
-                tracing::info!(instance_id = %self.instance_id, "CLAP plugin shutdown requested");
                 break;
             }
 
@@ -438,31 +410,23 @@ impl HostRuntime {
             if req != 0 {
                 let scratch = unsafe { scratch_ptr(ptr) };
                 let result = match req {
-                    1 => {
-                        tracing::info!(instance_id = %self.instance_id, "CLAP state save requested");
-                        match plugin.save_state() {
-                            Ok(bytes) if bytes.len() <= SCRATCH_SIZE => {
-                                unsafe {
-                                    std::ptr::copy_nonoverlapping(
-                                        bytes.as_ptr(),
-                                        scratch,
-                                        bytes.len(),
-                                    );
-                                }
-                                header
-                                    .scratch_size
-                                    .store(bytes.len() as u32, Ordering::Release);
-                                Ok(())
+                    1 => match plugin.save_state() {
+                        Ok(bytes) if bytes.len() <= SCRATCH_SIZE => {
+                            unsafe {
+                                std::ptr::copy_nonoverlapping(bytes.as_ptr(), scratch, bytes.len());
                             }
-                            Ok(bytes) => Err(format!(
-                                "CLAP state is too large for scratch buffer: {} bytes",
-                                bytes.len()
-                            )),
-                            Err(e) => Err(e),
+                            header
+                                .scratch_size
+                                .store(bytes.len() as u32, Ordering::Release);
+                            Ok(())
                         }
-                    }
+                        Ok(bytes) => Err(format!(
+                            "CLAP state is too large for scratch buffer: {} bytes",
+                            bytes.len()
+                        )),
+                        Err(e) => Err(e),
+                    },
                     2 => {
-                        tracing::info!(instance_id = %self.instance_id, "CLAP state restore requested");
                         let size = header.scratch_size.load(Ordering::Acquire) as usize;
                         if size > SCRATCH_SIZE {
                             Err(format!("Invalid CLAP state size: {size} bytes"))
@@ -472,17 +436,13 @@ impl HostRuntime {
                         }
                     }
                     3 => {
-                        tracing::info!(instance_id = %self.instance_id, "GUI show requested");
                         let gui_supported = plugin.gui_is_supported();
-                        tracing::info!(instance_id = %self.instance_id, gui_supported, "checked GUI support");
                         if !gui_supported {
-                            tracing::error!(instance_id = %self.instance_id, "Plugin does not support GUI");
                             Err("Plugin does not support GUI".to_string())
                         } else {
                             #[cfg(windows)]
                             {
                                 if plugin.gui_created() {
-                                    tracing::info!(instance_id = %self.instance_id, "destroying existing GUI before recreate");
                                     plugin.gui_destroy();
                                 }
                                 clap_gui_window = None;
@@ -491,70 +451,62 @@ impl HostRuntime {
                                     .file_stem()
                                     .and_then(|s| s.to_str())
                                     .unwrap_or("Plugin");
-                                tracing::info!(instance_id = %self.instance_id, title = %title, "creating Win32 container window");
                                 match create_container_window(std::ptr::null_mut(), title, 800, 600)
                                 {
                                     Ok(window) => {
                                         let hwnd = window.hwnd;
-                                        tracing::info!(instance_id = %self.instance_id, hwnd = ?hwnd, "container window created");
                                         let result = plugin
                                             .gui_create("win32", false)
-                                            .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_create(win32, false) succeeded"))
-                                            .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_create(win32, false) failed"))
-                                            .and_then(|_| plugin.gui_set_scale(1.0)
-                                                .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_scale(1.0) succeeded"))
-                                                .inspect_err(|e| tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_set_scale failed"))
-                                            )
-                                            .and_then(|_| plugin.gui_set_parent(hwnd as u64)
-                                                .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_parent succeeded"))
-                                                .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_set_parent failed"))
-                                            )
+                                            .inspect(|_| ())
+                                            .inspect_err(|e| ())
                                             .and_then(|_| {
-                                                match plugin.gui_get_size() {
-                                                    Ok((w, h)) if w > 0 && h > 0 => {
-                                                        tracing::info!(instance_id = %self.instance_id, width = w, height = h, "resizing container to plugin size");
-                                                        unsafe {
-                                                            SetWindowPos(
-                                                                hwnd,
-                                                                std::ptr::null_mut(),
-                                                                0,
-                                                                0,
-                                                                w as i32,
-                                                                h as i32,
-                                                                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-                                                            );
-                                                        }
+                                                plugin
+                                                    .gui_get_size()
+                                                    .inspect(|(w, h)| ())
+                                                    .inspect_err(|e| ())
+                                            })
+                                            .and_then(|(w, h)| {
+                                                if w > 0 && h > 0 {
+                                                    unsafe {
+                                                        SetWindowPos(
+                                                            hwnd,
+                                                            std::ptr::null_mut(),
+                                                            0,
+                                                            0,
+                                                            w as i32,
+                                                            h as i32,
+                                                            SWP_NOMOVE
+                                                                | SWP_NOZORDER
+                                                                | SWP_NOACTIVATE,
+                                                        );
                                                     }
-                                                    Ok((w, h)) => {
-                                                        tracing::warn!(instance_id = %self.instance_id, width = w, height = h, "plugin reported zero/invalid size");
-                                                    }
-                                                    Err(e) => {
-                                                        tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_get_size failed");
-                                                    }
+                                                } else {
                                                 }
-                                                tracing::info!(instance_id = %self.instance_id, "showing container window");
+                                                plugin
+                                                    .gui_set_parent(hwnd as u64)
+                                                    .inspect(|_| ())
+                                                    .inspect_err(|e| ())
+                                            })
+                                            .and_then(|_| {
                                                 unsafe {
                                                     ShowWindow(hwnd, SW_SHOW);
                                                 }
-                                                plugin.gui_show()
-                                                    .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_show succeeded"))
-                                                    .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_show failed"))
+                                                plugin
+                                                    .gui_show()
+                                                    .inspect(|_| ())
+                                                    .inspect_err(|e| ())
                                             });
                                         if result.is_ok() {
                                             clap_gui_window = Some(window);
                                         }
                                         result
                                     }
-                                    Err(e) => {
-                                        tracing::error!(instance_id = %self.instance_id, error = %e, "failed to create container window");
-                                        Err(e)
-                                    }
+                                    Err(e) => Err(e),
                                 }
                             }
                             #[cfg(all(unix, not(target_os = "macos")))]
                             {
                                 if plugin.gui_created() {
-                                    tracing::info!(instance_id = %self.instance_id, "destroying existing GUI before recreate");
                                     plugin.gui_destroy();
                                 }
                                 clap_gui_window_x11 = None;
@@ -563,56 +515,43 @@ impl HostRuntime {
                                     .file_stem()
                                     .and_then(|s| s.to_str())
                                     .unwrap_or("Plugin");
-                                tracing::info!(instance_id = %self.instance_id, title = %title, "creating X11 container window");
                                 match crate::gui_x11::x11::create_container_window(
-                                    None,
-                                    None,
-                                    title,
-                                    800,
-                                    600,
+                                    None, None, title, 800, 600,
                                 ) {
                                     Ok(window) => {
                                         let window_id = window.window();
-                                        tracing::info!(instance_id = %self.instance_id, window_id = ?window_id, "X11 container window created");
-                                        tracing::info!(instance_id = %self.instance_id, "mapping X11 container window before gui_set_parent");
                                         window.map();
                                         let result = plugin
                                             .gui_create("x11", false)
-                                            .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_create(x11, false) succeeded"))
-                                            .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_create(x11, false) failed"))
-                                            .and_then(|_| plugin.gui_set_scale(1.0)
-                                                .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_scale(1.0) succeeded"))
-                                                .inspect_err(|e| tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_set_scale failed"))
-                                            )
-                                            .and_then(|_| plugin.gui_get_size()
-                                                .inspect(|(w, h)| tracing::info!(instance_id = %self.instance_id, width = w, height = h, "gui_get_size succeeded"))
-                                                .inspect_err(|e| tracing::warn!(instance_id = %self.instance_id, error = %e, "gui_get_size failed"))
-                                            )
+                                            .inspect(|_| ())
+                                            .inspect_err(|_e| ())
+                                            .and_then(|_| {
+                                                plugin
+                                                    .gui_get_size()
+                                                    .inspect(|(_w, _h)| ())
+                                                    .inspect_err(|_e| ())
+                                            })
                                             .and_then(|(w, h)| {
                                                 if w > 0 && h > 0 {
-                                                    tracing::info!(instance_id = %self.instance_id, width = w, height = h, "resizing container to plugin size");
                                                     window.resize(w, h);
-                                                } else {
-                                                    tracing::warn!(instance_id = %self.instance_id, width = w, height = h, "plugin reported zero/invalid size");
                                                 }
-                                                plugin.gui_set_parent(window_id as u64)
-                                                    .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_set_parent succeeded"))
-                                                    .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_set_parent failed"))
+                                                plugin
+                                                    .gui_set_parent(window_id)
+                                                    .inspect(|_| ())
+                                                    .inspect_err(|_e| ())
                                             })
                                             .and_then(|_| {
-                                                plugin.gui_show()
-                                                    .inspect(|_| tracing::info!(instance_id = %self.instance_id, "gui_show succeeded"))
-                                                    .inspect_err(|e| tracing::error!(instance_id = %self.instance_id, error = %e, "gui_show failed"))
+                                                plugin
+                                                    .gui_show()
+                                                    .inspect(|_| ())
+                                                    .inspect_err(|_e| ())
                                             });
                                         if result.is_ok() {
                                             clap_gui_window_x11 = Some(window);
                                         }
                                         result
                                     }
-                                    Err(e) => {
-                                        tracing::error!(instance_id = %self.instance_id, error = %e, "failed to create X11 container window");
-                                        Err(e)
-                                    }
+                                    Err(e) => Err(e),
                                 }
                             }
                             #[cfg(target_os = "macos")]
@@ -637,7 +576,6 @@ impl HostRuntime {
                         }
                     }
                     4 => {
-                        tracing::info!(instance_id = %self.instance_id, "GUI hide requested");
                         #[cfg(windows)]
                         if let Some(ref window) = clap_gui_window {
                             unsafe {
@@ -699,7 +637,6 @@ impl HostRuntime {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
                     Err(e) => {
-                        tracing::error!("Event wait error: {e}");
                         break;
                     }
                 }
@@ -710,13 +647,11 @@ impl HostRuntime {
             let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
             if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-                tracing::warn!("Invalid block size {block_size}, skipping");
                 let _ = self.events.signal_daw();
                 continue;
             }
 
             if AUDIO_PORTS_RESCAN_REQUESTED.swap(false, Ordering::Acquire) {
-                tracing::info!(instance_id = %self.instance_id, "Rebuilding audio port buffers after rescan");
                 port_buffers = PortBuffers::from_plugin(plugin.plugin_ptr(), ptr, num_in, num_out);
             }
 
@@ -827,8 +762,7 @@ impl HostRuntime {
 
             if !started_processing {
                 set_thread_type(ThreadType::AudioThread);
-                if let Err(e) = plugin.start_processing() {
-                    tracing::error!("Failed to start processing: {e}");
+                if let Err(_e) = plugin.start_processing() {
                     break;
                 }
                 started_processing = true;
@@ -890,8 +824,7 @@ impl HostRuntime {
 
             set_thread_type(ThreadType::MainThread);
 
-            if let Err(e) = process_result {
-                tracing::error!("Plugin process error: {e}");
+            if let Err(_e) = process_result {
                 break;
             }
 
@@ -904,10 +837,7 @@ impl HostRuntime {
                 }
             }
 
-            tracing::debug!(instance_id = %self.instance_id, "Block processed, signalling DAW");
-
-            if let Err(e) = self.events.signal_daw() {
-                tracing::error!("Failed to signal DAW: {e}");
+            if let Err(_e) = self.events.signal_daw() {
                 break;
             }
         }
@@ -918,12 +848,9 @@ impl HostRuntime {
             set_thread_type(ThreadType::MainThread);
         }
         plugin.deactivate();
-        tracing::info!(instance_id = %self.instance_id, "CLAP plugin stopped");
     }
 
-    pub fn shutdown(self) {
-        tracing::info!(instance_id = %self.instance_id, "Plugin host shutting down");
-    }
+    pub fn shutdown(self) {}
 
     fn push_midi_as_clap_events(
         &self,
@@ -992,9 +919,7 @@ impl HostRuntime {
                     sample_offset: ev.header.time,
                     event_kind: PARAM_EVENT_VALUE,
                 };
-                if !echo_ring.push(echo) {
-                    tracing::warn!("Echo ring full, dropping parameter value event");
-                }
+                if !echo_ring.push(echo) {}
             }
             crate::clap::CLAP_EVENT_PARAM_MOD
                 if bytes.len() >= std::mem::size_of::<ClapEventParamMod>() =>
@@ -1006,9 +931,7 @@ impl HostRuntime {
                     sample_offset: ev.header.time,
                     event_kind: PARAM_EVENT_MOD,
                 };
-                if !echo_ring.push(echo) {
-                    tracing::warn!("Echo ring full, dropping parameter mod event");
-                }
+                if !echo_ring.push(echo) {}
             }
             crate::clap::CLAP_EVENT_PARAM_GESTURE_BEGIN
                 if bytes.len() >= std::mem::size_of::<ClapEventParamGesture>() =>
@@ -1020,9 +943,7 @@ impl HostRuntime {
                     sample_offset: ev.header.time,
                     event_kind: PARAM_EVENT_GESTURE_BEGIN,
                 };
-                if !echo_ring.push(echo) {
-                    tracing::warn!("Echo ring full, dropping gesture begin event");
-                }
+                if !echo_ring.push(echo) {}
             }
             crate::clap::CLAP_EVENT_PARAM_GESTURE_END
                 if bytes.len() >= std::mem::size_of::<ClapEventParamGesture>() =>
@@ -1034,9 +955,7 @@ impl HostRuntime {
                     sample_offset: ev.header.time,
                     event_kind: PARAM_EVENT_GESTURE_END,
                 };
-                if !echo_ring.push(echo) {
-                    tracing::warn!("Echo ring full, dropping gesture end event");
-                }
+                if !echo_ring.push(echo) {}
             }
             _ => {}
         }
@@ -1090,7 +1009,6 @@ impl HostRuntime {
                 if pfd.revents & libc::POLLERR != 0 {
                     flags |= 4;
                 }
-                tracing::debug!(fd = f.fd, flags, "FD event");
                 ready_fds.push((f.fd, flags));
             }
         }

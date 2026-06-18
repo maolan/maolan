@@ -1,6 +1,5 @@
 use super::*;
 use crate::state::StateData;
-use tracing::error;
 
 const MIXER_STRIP_SPACING: f32 = 2.0;
 const MIXER_ROW_PADDING_X: f32 = 8.0;
@@ -110,12 +109,7 @@ impl Maolan {
                 if let Some(pending) = self.pending_track_freeze_bounce.remove(track_name) {
                     if self.freeze_cancel_requested {
                         self.freeze_cancel_requested = false;
-                        if let Err(err) = std::fs::remove_file(output_path) {
-                            error!(
-                                "Failed to remove canceled freeze output '{}': {err}",
-                                output_path
-                            );
-                        }
+                        if let Err(_err) = std::fs::remove_file(output_path) {}
                         self.state.blocking_write().message =
                             format!("Freeze canceled for '{}'", track_name);
                         return Some(Task::none());

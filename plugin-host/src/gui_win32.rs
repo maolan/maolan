@@ -3,7 +3,7 @@
 #[cfg(windows)]
 pub mod win32 {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -84,7 +84,10 @@ pub mod win32 {
         };
 
         if hwnd.is_null() {
-            return Err("failed to create container window".to_string());
+            return Err(format!(
+                "failed to create container window: error {}",
+                unsafe { GetLastError() }
+            ));
         }
 
         Ok(ContainerWindow { hwnd })

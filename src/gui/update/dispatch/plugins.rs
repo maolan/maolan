@@ -433,10 +433,7 @@ impl Maolan {
                     instance_id,
                 }))
             }
-            Message::SendMessageFinished(Err(ref e)) => {
-                error!("Error: {}", e);
-                None
-            }
+            Message::SendMessageFinished(Err(_e)) => None,
             Message::SendMessageFinished(Ok(())) => None,
             _ => None,
         }

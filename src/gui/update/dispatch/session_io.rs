@@ -81,7 +81,6 @@ impl Maolan {
                         self.queue_midi_clip_preview_loads(),
                     ])),
                     Err(e) => {
-                        error!("{}", e);
                         self.state.blocking_write().message =
                             format!("Failed to load session: {}", e);
                         Some(Task::none())
