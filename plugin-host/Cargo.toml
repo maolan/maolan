@@ -1,6 +1,6 @@
 [package]
 name = "maolan-plugin-host"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "Out-of-process plugin host for Maolan DAW"
 authors = ["Maolan Team"]
@@ -28,7 +28,7 @@ tracing-subscriber = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 vst3 = "0.3"
-maolan-plugin-protocol = "0.0.4"
+maolan-plugin-protocol = "0.0.6"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 lilv = "0.2.4"

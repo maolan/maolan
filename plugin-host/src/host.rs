@@ -458,12 +458,12 @@ impl HostRuntime {
                                         let result = plugin
                                             .gui_create("win32", false)
                                             .inspect(|_| ())
-                                            .inspect_err(|e| ())
+                                            .inspect_err(|_e| ())
                                             .and_then(|_| {
                                                 plugin
                                                     .gui_get_size()
-                                                    .inspect(|(w, h)| ())
-                                                    .inspect_err(|e| ())
+                                                    .inspect(|(_w, _h)| ())
+                                                    .inspect_err(|_e| ())
                                             })
                                             .and_then(|(w, h)| {
                                                 if w > 0 && h > 0 {
@@ -480,12 +480,11 @@ impl HostRuntime {
                                                                 | SWP_NOACTIVATE,
                                                         );
                                                     }
-                                                } else {
                                                 }
                                                 plugin
                                                     .gui_set_parent(hwnd as u64)
                                                     .inspect(|_| ())
-                                                    .inspect_err(|e| ())
+                                                    .inspect_err(|_e| ())
                                             })
                                             .and_then(|_| {
                                                 unsafe {
@@ -494,7 +493,7 @@ impl HostRuntime {
                                                 plugin
                                                     .gui_show()
                                                     .inspect(|_| ())
-                                                    .inspect_err(|e| ())
+                                                    .inspect_err(|_e| ())
                                             });
                                         if result.is_ok() {
                                             clap_gui_window = Some(window);
@@ -636,7 +635,7 @@ impl HostRuntime {
                 {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-                    Err(e) => {
+                    Err(_e) => {
                         break;
                     }
                 }

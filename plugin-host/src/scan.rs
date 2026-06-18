@@ -841,6 +841,7 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
             Err(_e) => 1,
         }
     } else {
+        println!("{json}");
         0
     }
 }
