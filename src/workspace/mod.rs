@@ -165,6 +165,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
+    pub step_recording_active: bool,
+    pub step_recording_cursor_samples: usize,
     pub shift_pressed: bool,
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,
@@ -290,6 +292,8 @@ impl Workspace {
             recording_preview_bounds,
             recording_preview_peaks,
             midi_clip_previews,
+            step_recording_active: _,
+            step_recording_cursor_samples: _,
             shift_pressed,
             selected_tempo_points,
             selected_time_signature_points,
@@ -845,10 +849,15 @@ impl Workspace {
         let playhead_x = playhead_samples.map(|sample| {
             ((sample as f32 - clip_start_samples as f32) * horizontal_pixels_per_sample).max(0.0)
         });
+        let step_cursor_x = if args.step_recording_active {
+            Some((args.step_recording_cursor_samples as f32 * horizontal_pixels_per_sample).max(0.0))
+        } else {
+            None
+        };
 
         let piano_content = self
             .midi_edit
-            .view(pixels_per_sample, samples_per_bar, playhead_x);
+            .view(pixels_per_sample, samples_per_bar, playhead_x, step_cursor_x);
 
         container(
             column![

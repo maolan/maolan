@@ -278,6 +278,8 @@ impl Maolan {
                             recording_preview_bounds: self.recording_preview_bounds(),
                             recording_preview_peaks: Some(&self.recording_preview_peaks),
                             midi_clip_previews: Some(&self.midi_clip_previews),
+                            step_recording_active: false,
+                            step_recording_cursor_samples: 0,
                             shift_pressed,
                             selected_tempo_points: self
                                 .selected_tempo_points
@@ -329,6 +331,8 @@ impl Maolan {
                             recording_preview_bounds: None,
                             recording_preview_peaks: None,
                             midi_clip_previews: None,
+                            step_recording_active: self.step_recording_active,
+                            step_recording_cursor_samples: self.step_recording_cursor_samples,
                             shift_pressed,
                             selected_tempo_points: self
                                 .selected_tempo_points
@@ -376,6 +380,8 @@ impl Maolan {
                                 recording_preview_bounds: None,
                                 recording_preview_peaks: None,
                                 midi_clip_previews: None,
+                                step_recording_active: false,
+                                step_recording_cursor_samples: 0,
                                 shift_pressed,
                                 selected_tempo_points: self
                                     .selected_tempo_points
@@ -419,6 +425,7 @@ impl Maolan {
                                 View::Piano | View::PitchCorrection
                             ),
                             midi_snap_mode: self.midi_snap_mode,
+                            step_recording_active: self.step_recording_active,
                             tempo_input: self.tempo_input.clone(),
                             tsig_num_input: self.time_signature_num_input.clone(),
                             tsig_denom_input: self.time_signature_denom_input.clone(),

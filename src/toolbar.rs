@@ -6,7 +6,7 @@ use crate::{
 };
 use iced::{
     Alignment, Background, Border, Color, Length, Theme,
-    widget::{button, container, mouse_area, pick_list, row, text, text_input},
+    widget::{button, container, mouse_area, pick_list, row, text, text_input, Space},
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind,
@@ -29,6 +29,7 @@ pub struct ToolbarViewState {
     pub snap_mode: SnapMode,
     pub midi_editor_active: bool,
     pub midi_snap_mode: SnapMode,
+    pub step_recording_active: bool,
     pub tempo_input: String,
     pub tsig_num_input: String,
     pub tsig_denom_input: String,
@@ -229,6 +230,21 @@ impl Toolbar {
                         Some(view_state.snap_mode),
                         Message::SetSnapMode,
                     )
+                },
+                {
+                    let step_button: iced::Element<'_, Message> = if view_state.midi_editor_active {
+                        button(text("Step").size(11))
+                            .style(Self::button_style(
+                                view_state.step_recording_active,
+                                false,
+                                Color::TRANSPARENT,
+                            ))
+                            .on_press(Message::ToggleStepRecording)
+                            .into()
+                    } else {
+                        Space::new().into()
+                    };
+                    step_button
                 },
                 text_input("BPM", &view_state.tempo_input)
                     .on_input(Message::TempoInputChanged)

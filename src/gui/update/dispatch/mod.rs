@@ -1,6 +1,7 @@
 use super::*;
 use crate::consts::state_track::TRACK_MIN_HEIGHT;
 use crate::consts::widget_piano::PITCH_MAX;
+use crate::message::SnapMode;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::message::PluginGraphNode;
 mod core;
@@ -573,6 +574,22 @@ impl Maolan {
             }
             Message::SetMidiSnapMode(mode) => {
                 self.midi_snap_mode = mode;
+            }
+            Message::ToggleStepRecording => {
+                self.step_recording_active = !self.step_recording_active;
+                let enabled = self.step_recording_active;
+                if enabled {
+                    self.step_recording_cursor_samples = 0;
+                }
+                return self.send(Action::SetStepRecording(enabled));
+            }
+            Message::StepRecordNote {
+                device: _,
+                channel,
+                pitch,
+                velocity,
+            } => {
+                return self.handle_step_record_note(channel, pitch, velocity);
             }
             Message::SetClipSnapTargets(ref targets) => {
                 self.clip_snap_targets = targets.clone();
@@ -2525,6 +2542,15 @@ impl Maolan {
                 }
                 if let Some(task) = self.handle_response_session_state_action(a) {
                     return task;
+                }
+                if let Action::StepRecordMidiNote {
+                    channel,
+                    pitch,
+                    velocity,
+                    ..
+                } = a
+                {
+                    return self.handle_step_record_note(*channel, *pitch, *velocity);
                 }
                 let handled_response_state = self.handle_response_engine_state_action(a);
                 let handled_response_track = self.handle_response_track_action(a);
@@ -9032,6 +9058,53 @@ impl Maolan {
         }
         self.update_children(&message);
         Task::none()
+    }
+
+    fn handle_step_record_note(
+        &mut self,
+        channel: u8,
+        pitch: u8,
+        velocity: u8,
+    ) -> Task<Message> {
+        let piano = match self.state.blocking_read().piano.as_ref() {
+            Some(p) => p.clone(),
+            None => return Task::none(),
+        };
+        let track_name = piano.track_idx.clone();
+        let clip_idx = piano.clip_index;
+        let clip_length = piano.clip_length_samples;
+        let insert_idx = piano.notes.len();
+
+        let samples_per_beat = self.samples_per_beat();
+        let samples_per_bar = self.samples_per_bar();
+        let interval = match self.midi_snap_mode {
+            SnapMode::NoSnap | SnapMode::Clips => {
+                (samples_per_beat / 4.0).max(1.0) as usize
+            }
+            mode => mode.interval_samples(samples_per_beat, samples_per_bar).max(1.0) as usize,
+        };
+
+        let start_sample = self.step_recording_cursor_samples.clamp(0, clip_length);
+        let end_sample = start_sample.saturating_add(interval).min(clip_length);
+        if end_sample <= start_sample {
+            return Task::none();
+        }
+
+        let note = maolan_engine::message::MidiNoteData {
+            start_sample,
+            length_samples: end_sample.saturating_sub(start_sample),
+            pitch,
+            velocity,
+            channel,
+        };
+
+        self.step_recording_cursor_samples = end_sample;
+
+        self.send(Action::InsertMidiNotes {
+            track_name,
+            clip_index: clip_idx,
+            notes: vec![(insert_idx, note)],
+        })
     }
 }
 
