@@ -661,27 +661,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     state.context_menu = None;
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
-                    if let Some((punch_start, punch_end)) = self.punch_range_samples
-                        && punch_end > punch_start
-                    {
-                        let start_x = punch_start as f32 * self.pixels_per_sample;
-                        let end_x = punch_end as f32 * self.pixels_per_sample;
-                        let start_hit = (x - start_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
-                        let end_hit = (x - end_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
-                        if !start_hit
-                            && !end_hit
-                            && x >= start_x.min(end_x)
-                            && x <= start_x.max(end_x)
-                        {
-                            state.drag_mode = DragMode::MovePunchRange {
-                                original_start: punch_start,
-                                original_end: punch_end,
-                                drag_start_x: x,
-                                last_x: x,
-                            };
-                            return Some(CanvasAction::capture());
-                        }
-                    }
                     state.drag_mode = DragMode::Punch {
                         drag_start_x: x,
                         last_x: x,
@@ -752,30 +731,9 @@ impl canvas::Program<Message> for TempoCanvas {
                             end_sample.max(0.0) as usize,
                         )))));
                     }
-                    DragMode::MovePunchRange {
-                        original_start,
-                        original_end,
-                        drag_start_x,
-                        last_x,
-                    } => {
-                        if self.pixels_per_sample <= 1.0e-9 {
-                            return None;
-                        }
-                        let delta_samples = (last_x - drag_start_x) / self.pixels_per_sample;
-                        let raw_start = (original_start as f32 + delta_samples).max(0.0);
-                        let snapped_start = snap_sample(raw_start as usize).0;
-                        let length = original_end - original_start;
-                        let new_end = snapped_start + length;
-                        return Some(
-                            CanvasAction::publish(Message::SetPunchRange(Some((
-                                snapped_start,
-                                new_end,
-                            ))))
-                            .and_capture(),
-                        );
-                    }
                     DragMode::Marker { .. } => return Some(CanvasAction::capture()),
                     DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
+                    DragMode::MovePunchRange { .. } => return Some(CanvasAction::capture()),
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
@@ -809,6 +767,12 @@ impl canvas::Program<Message> for TempoCanvas {
                             return Some(CanvasAction::capture());
                         }
                         if x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                            state.drag_mode = DragMode::MovePunchRange {
+                                original_start: punch_start,
+                                original_end: punch_end,
+                                drag_start_x: x,
+                                last_x: x,
+                            };
                             return Some(CanvasAction::capture());
                         }
                     }
@@ -855,6 +819,28 @@ impl canvas::Program<Message> for TempoCanvas {
                         return Some(
                             CanvasAction::publish(Message::SetPunchRange(Some((start, end))))
                                 .and_capture(),
+                        );
+                    }
+                    DragMode::MovePunchRange {
+                        original_start,
+                        original_end,
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        if self.pixels_per_sample <= 1.0e-9 {
+                            return None;
+                        }
+                        let delta_samples = (last_x - drag_start_x) / self.pixels_per_sample;
+                        let raw_start = (original_start as f32 + delta_samples).max(0.0);
+                        let snapped_start = snap_sample(raw_start as usize).0;
+                        let length = original_end - original_start;
+                        let new_end = snapped_start + length;
+                        return Some(
+                            CanvasAction::publish(Message::SetPunchRange(Some((
+                                snapped_start,
+                                new_end,
+                            ))))
+                            .and_capture(),
                         );
                     }
                     DragMode::None => {}
@@ -1691,5 +1677,293 @@ mod tests {
             other => panic!("unexpected message: {other:?}"),
         }
         assert_eq!(status, event::Status::Captured);
+    }
+
+    #[test]
+    fn middle_click_drag_inside_punch_moves_range() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: Some((140, 180)),
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(
+            160.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
+
+        let press = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)),
+                bounds,
+                cursor,
+            )
+            .expect("press action");
+        let (_, status) = action_message(press);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(state.drag_mode, DragMode::MovePunchRange { .. }));
+
+        let moved = mouse::Cursor::Available(Point::new(
+            180.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
+        let move_action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(180.0, TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0)),
+                }),
+                bounds,
+                moved,
+            )
+            .expect("move action");
+        let (_, status) = action_message(move_action);
+        assert_eq!(status, event::Status::Captured);
+
+        let release = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)),
+                bounds,
+                moved,
+            )
+            .expect("release action");
+        let (message, status) = action_message(release);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(state.drag_mode, DragMode::None));
+        match message {
+            Some(Message::SetPunchRange(Some((start, end)))) => {
+                assert_eq!(start, 160);
+                assert_eq!(end, 200);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn right_click_inside_punch_clears_range() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: Some((140, 180)),
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(
+            160.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
+
+        let press = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+                bounds,
+                cursor,
+            )
+            .expect("press action");
+        let (_, status) = action_message(press);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(state.drag_mode, DragMode::Punch { .. }));
+
+        let release = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+                bounds,
+                cursor,
+            )
+            .expect("release action");
+        let (message, status) = action_message(release);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(state.drag_mode, DragMode::None));
+        match message {
+            Some(Message::SetPunchRange(None)) => {}
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn middle_click_drag_punch_start_edge_adjusts_start() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: Some((140, 180)),
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(
+            140.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
+
+        let press = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)),
+                bounds,
+                cursor,
+            )
+            .expect("press action");
+        let (_, status) = action_message(press);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(state.drag_mode, DragMode::AdjustPunchEdge { .. }));
+
+        let moved = mouse::Cursor::Available(Point::new(
+            160.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
+        let move_action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(160.0, TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0)),
+                }),
+                bounds,
+                moved,
+            )
+            .expect("move action");
+        let (_, _status) = action_message(move_action);
+
+        let release = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)),
+                bounds,
+                moved,
+            )
+            .expect("release action");
+        let (message, _status) = action_message(release);
+        assert!(matches!(state.drag_mode, DragMode::None));
+        match message {
+            Some(Message::SetPunchRange(Some((start, end)))) => {
+                assert_eq!(start, 160);
+                assert_eq!(end, 180);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn right_click_drag_outside_punch_creates_range() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: Some((140, 180)),
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(
+            240.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
+
+        let press = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+                bounds,
+                cursor,
+            )
+            .expect("press action");
+        let (_, status) = action_message(press);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(state.drag_mode, DragMode::Punch { .. }));
+
+        let dragged = mouse::Cursor::Available(Point::new(
+            300.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
+        let move_action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(300.0, TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0)),
+                }),
+                bounds,
+                dragged,
+            )
+            .expect("move action");
+        let (_, _status) = action_message(move_action);
+
+        let release = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+                bounds,
+                dragged,
+            )
+            .expect("release action");
+        let (message, _status) = action_message(release);
+        assert!(matches!(state.drag_mode, DragMode::None));
+        match message {
+            Some(Message::SetPunchRange(Some((start, end)))) => {
+                assert_eq!(start, 240);
+                assert_eq!(end, 300);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
     }
 }

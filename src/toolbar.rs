@@ -4,6 +4,7 @@ use crate::{
     icon::metronome::metronome,
     message::{Message, SnapMode},
 };
+use maolan_engine::message::GlobalMidiLearnTarget;
 use iced::{
     Alignment, Background, Border, Color, Length, Theme,
     widget::{button, container, mouse_area, pick_list, row, text, text_input, Space},
@@ -84,11 +85,15 @@ impl Toolbar {
         fn with_hint<'a>(
             element: iced::Element<'a, Message>,
             hint: &'static str,
+            right_press: Option<Message>,
         ) -> iced::Element<'a, Message> {
-            mouse_area(element)
+            let mut area = mouse_area(element)
                 .on_enter(Message::ShortcutsHint(Some(hint.to_string())))
-                .on_exit(Message::ShortcutsHint(None))
-                .into()
+                .on_exit(Message::ShortcutsHint(None));
+            if let Some(msg) = right_press {
+                area = area.on_right_press(msg);
+            }
+            area.into()
         }
         let play_button = with_hint(
             button(play())
@@ -100,6 +105,9 @@ impl Toolbar {
                 .on_press(Message::TransportPlay)
                 .into(),
             "Space: Play/stop",
+            Some(Message::GlobalMidiLearnArm {
+                target: GlobalMidiLearnTarget::PlayPause,
+            }),
         );
         let pause_button = with_hint(
             button(pause())
@@ -111,6 +119,7 @@ impl Toolbar {
                 .on_press(Message::TransportPause)
                 .into(),
             "Shift+Space: Pause",
+            None,
         );
         let loop_button = if view_state.has_loop_range {
             button(repeat())
@@ -167,6 +176,7 @@ impl Toolbar {
                         .on_press(Message::JumpToStart)
                         .into(),
                     "Home: Rewind to start",
+                    None,
                 ),
                 play_button,
                 pause_button,
@@ -180,6 +190,9 @@ impl Toolbar {
                         .on_press(Message::TransportStop)
                         .into(),
                     "Space: Play/stop",
+                    Some(Message::GlobalMidiLearnArm {
+                        target: GlobalMidiLearnTarget::Stop,
+                    }),
                 ),
                 with_hint(
                     button(volume_x())
@@ -191,6 +204,7 @@ impl Toolbar {
                         .on_press(Message::TransportPanic)
                         .into(),
                     "Ctrl+L: MIDI panic",
+                    None,
                 ),
                 with_hint(
                     button(circle())
@@ -202,6 +216,9 @@ impl Toolbar {
                         .on_press(Message::TransportRecordToggle)
                         .into(),
                     "Ctrl+R: Record arm toggle",
+                    Some(Message::GlobalMidiLearnArm {
+                        target: GlobalMidiLearnTarget::RecordToggle,
+                    }),
                 ),
                 loop_button,
                 punch_button,
@@ -212,6 +229,7 @@ impl Toolbar {
                             .on_press(Message::JumpToEnd)
                             .into(),
                         "End: Rewind to end",
+                        None,
                     )
                 } else {
                     button(fast_forward())
