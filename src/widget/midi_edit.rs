@@ -31,7 +31,7 @@ use maolan_widgets::{
         NoteArea, PianoGridScrollCallbacks, PianoGridScrollLayout, PianoGridScrolls,
         piano_grid_scrollers,
     },
-    piano::{OctaveKeyboard, row_height},
+    piano::OctaveKeyboard,
     piano_roll::PianoRoll,
     vertical_scrollbar::VerticalScrollbar,
 };
@@ -134,6 +134,7 @@ impl MIDIEdit {
         pixels_per_sample: f32,
         samples_per_bar: f32,
         playhead_x: Option<f32>,
+        step_cursor_x: Option<f32>,
     ) -> Element<'_, Message> {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
@@ -388,6 +389,11 @@ impl MIDIEdit {
                 })
                 .into();
         } else {
+            notes_h = MIDI_NOTE_COUNT as f32
+                * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
+                    * zoom_y)
+                .max(1.0);
+
             notes_content = NoteArea {
                 zoom_x,
                 zoom_y,
@@ -397,32 +403,47 @@ impl MIDIEdit {
                 playhead_width: PLAYHEAD_WIDTH_PX,
                 clip_length_samples: roll.clip_length_samples,
             }
-            .view(vec![
-                PianoRoll::new(
-                    roll.notes.clone(),
-                    roll.clip_length_samples,
-                    zoom_y,
-                    pixels_per_sample,
-                    zoom_x,
-                    iced::widget::canvas(PianoRollInteraction::new(
-                        self.state.clone(),
+            .view({
+                let mut piano_layers: Vec<Element<'_, Message>> = vec![
+                    PianoRoll::new(
+                        roll.notes.clone(),
+                        roll.clip_length_samples,
+                        zoom_y,
                         pixels_per_sample,
-                    ))
-                    .width(Length::Fixed(
-                        (roll.clip_length_samples as f32
-                            * (pixels_per_sample * zoom_x).max(0.0001))
-                        .max(1.0),
-                    ))
-                    .height(Length::Fixed(MIDI_NOTE_COUNT as f32 * row_height(zoom_y)))
-                    .into(),
-                )
-                .into_element(),
-            ]);
+                        zoom_x,
+                        iced::widget::canvas(PianoRollInteraction::new(
+                            self.state.clone(),
+                            pixels_per_sample,
+                        ))
+                        .width(Length::Fixed(
+                            (roll.clip_length_samples as f32
+                                * (pixels_per_sample * zoom_x).max(0.0001))
+                            .max(1.0),
+                        ))
+                        .height(Length::Fixed(notes_h))
+                        .into(),
+                    )
+                    .into_element(),
+                ];
 
-            notes_h = MIDI_NOTE_COUNT as f32
-                * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
-                    * zoom_y)
-                    .max(1.0);
+                if let Some(x) = step_cursor_x {
+                    piano_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(PLAYHEAD_WIDTH_PX))
+                            .height(Length::Fixed(notes_h))
+                            .style(|_theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgba(
+                                    0.18, 0.95, 0.95, 0.95,
+                                ))),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x.max(0.0), 0.0))
+                        .into(),
+                    );
+                }
+
+                piano_layers
+            });
 
             let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
                 let octave = (OCTAVES - 1 - octave_idx) as u8;
