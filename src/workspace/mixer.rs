@@ -10,7 +10,7 @@ use iced::{
         Space, button, column, container, lazy, mouse_area, row, scrollable, text, text_input,
     },
 };
-use maolan_engine::message::Action;
+use maolan_engine::message::{Action, TrackMidiLearnTarget};
 use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider, ticks};
 
 const STRIP_SPACING: f32 = 2.0;
@@ -150,16 +150,23 @@ impl Mixer {
 
     fn pan_section(track_name: String, value: f32) -> Element<'static, Message> {
         let on_change_track = track_name.clone();
+        let learn_track = track_name.clone();
         row![
             container(text(Self::format_balance(value)).size(9))
                 .width(Length::Fixed(24.0))
                 .align_x(Alignment::Center),
-            horizontal_slider(-1.0..=1.0, value, move |value| {
-                Message::Request(Action::TrackBalance(on_change_track.clone(), value))
-            })
-            .width(Length::Fixed(PAN_SLIDER_WIDTH))
-            .height(Length::Fixed(PAN_ROW_HEIGHT))
-            .double_click_reset(0.0),
+            mouse_area(
+                horizontal_slider(-1.0..=1.0, value, move |value| {
+                    Message::Request(Action::TrackBalance(on_change_track.clone(), value))
+                })
+                .width(Length::Fixed(PAN_SLIDER_WIDTH))
+                .height(Length::Fixed(PAN_ROW_HEIGHT))
+                .double_click_reset(0.0),
+            )
+            .on_right_press(Message::TrackMidiLearnArm {
+                track_name: learn_track,
+                target: TrackMidiLearnTarget::Balance,
+            }),
         ]
         .spacing(4)
         .align_y(Alignment::Center)
@@ -225,15 +232,22 @@ impl Mixer {
                         let value = Self::qdb_to_level(*value_qdb);
                         let fader_height = *fader_height_tenths as f32 / 10.0;
                         let on_change_track = track_name.clone();
-                        let slider = container(
-                            slider(FADER_MIN_DB..=FADER_MAX_DB, value, move |value| {
-                                Message::Request(Action::TrackLevel(on_change_track.clone(), value))
-                            })
-                            .width(Length::Fixed(FADER_WIDTH))
-                            .height(Length::Fixed(fader_height))
-                            .double_click_reset(0.0)
+                        let learn_track = track_name.clone();
+                        let slider = mouse_area(
+                            container(
+                                slider(FADER_MIN_DB..=FADER_MAX_DB, value, move |value| {
+                                    Message::Request(Action::TrackLevel(on_change_track.clone(), value))
+                                })
+                                .width(Length::Fixed(FADER_WIDTH))
+                                .height(Length::Fixed(fader_height))
+                                .double_click_reset(0.0)
+                            )
+                            .padding([7.0, 8.0]),
                         )
-                        .padding([7.0, 8.0]);
+                        .on_right_press(Message::TrackMidiLearnArm {
+                            track_name: learn_track,
+                            target: TrackMidiLearnTarget::Volume,
+                        });
 
                         if *show_ticks {
                             row![slider, ticks::ticks(FADER_MIN_DB..=FADER_MAX_DB, fader_height)].into()
@@ -366,53 +380,74 @@ impl Mixer {
         let soloed = track.soloed;
         let armed = track.armed;
         let mut controls = row![].spacing(4).align_y(Alignment::Center);
+        let mute_track = track_name.clone();
         controls = controls.push(
-            button(
-                container(text("M").size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
+            mouse_area(
+                button(
+                    container(text("M").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::mute::style(theme, muted))
+                .on_press(Message::Request(Action::TrackToggleMute(
+                    track_name.clone(),
+                ))),
             )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::mute::style(theme, muted))
-            .on_press(Message::Request(Action::TrackToggleMute(
-                track_name.clone(),
-            ))),
+            .on_right_press(Message::TrackMidiLearnArm {
+                track_name: mute_track,
+                target: TrackMidiLearnTarget::Mute,
+            }),
         );
         let track_name = track.name.clone();
+        let solo_track = track_name.clone();
         controls = controls.push(
-            button(
-                container(text("S").size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
+            mouse_area(
+                button(
+                    container(text("S").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::solo::style(theme, soloed, solo_upstream))
+                .on_press(Message::Request(Action::TrackToggleSolo(
+                    track_name.clone(),
+                ))),
             )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::solo::style(theme, soloed, solo_upstream))
-            .on_press(Message::Request(Action::TrackToggleSolo(
-                track_name.clone(),
-            ))),
+            .on_right_press(Message::TrackMidiLearnArm {
+                track_name: solo_track,
+                target: TrackMidiLearnTarget::Solo,
+            }),
         );
         let track_name = track.name.clone();
+        let arm_track = track_name.clone();
         controls = controls.push(
-            button(
-                container(text("R").size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
+            mouse_area(
+                button(
+                    container(text("R").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::arm::style(theme, armed))
+                .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
             )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::arm::style(theme, armed))
-            .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
+            .on_right_press(Message::TrackMidiLearnArm {
+                track_name: arm_track,
+                target: TrackMidiLearnTarget::Arm,
+            }),
         );
         Some(controls.into())
     }

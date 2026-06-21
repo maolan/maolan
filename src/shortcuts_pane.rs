@@ -259,7 +259,7 @@ fn workspace_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
             &[
                 "Left click: Move playhead",
                 "Left drag: Set loop range",
-                "Right drag inside loop: Move loop range",
+                "Middle drag inside loop: Move loop range",
                 "Middle drag loop edge: Adjust loop start/end",
                 "Right click: Clear loop range",
             ],
