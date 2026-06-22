@@ -2557,6 +2557,33 @@ impl Maolan {
                 {
                     return self.handle_step_record_note(*channel, *pitch, *velocity);
                 }
+                match a {
+                    Action::TrackClapFileReferences {
+                        track_name,
+                        instance_id,
+                        refs,
+                    } => {
+                        let plugin_ref = crate::gui::PluginInstanceRef::Track {
+                            track_name: track_name.clone(),
+                            instance_id: *instance_id,
+                        };
+                        self.handle_clap_file_references_response(&plugin_ref, refs);
+                    }
+                    Action::ClipClapFileReferences {
+                        track_name,
+                        clip_idx,
+                        instance_id,
+                        refs,
+                    } => {
+                        let plugin_ref = crate::gui::PluginInstanceRef::Clip {
+                            track_name: track_name.clone(),
+                            clip_idx: *clip_idx,
+                            instance_id: *instance_id,
+                        };
+                        self.handle_clap_file_references_response(&plugin_ref, refs);
+                    }
+                    _ => {}
+                }
                 let handled_response_state = self.handle_response_engine_state_action(a);
                 let handled_response_track = self.handle_response_track_action(a);
                 let handled_response_timing = self.handle_response_timing_state_action(a);
@@ -7466,6 +7493,14 @@ impl Maolan {
                     }
                 }
             }
+            Message::CollectToSession => match self.collect_to_session() {
+                Ok(message) => {
+                    self.state.blocking_write().message = message;
+                }
+                Err(e) => {
+                    self.state.blocking_write().message = e;
+                }
+            },
             Message::ImportFilesSelected(Some(ref paths)) => {
                 if paths.is_empty() {
                     self.state.blocking_write().message = "No files selected".to_string();

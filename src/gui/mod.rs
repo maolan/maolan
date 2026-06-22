@@ -382,6 +382,72 @@ struct TrackAutomationRuntime {
     clap_params: HashMap<(usize, u32), f64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum PluginInstanceRef {
+    Track {
+        track_name: String,
+        instance_id: usize,
+    },
+    Clip {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+    },
+}
+
+struct CollectToSessionOperation {
+    session_root: PathBuf,
+    data_dir: PathBuf,
+    pending_clap_refs: HashSet<PluginInstanceRef>,
+    copied_files: HashMap<PathBuf, String>,
+}
+
+impl CollectToSessionOperation {
+    fn collect_file(&mut self, path_str: &str) -> Option<(PathBuf, String)> {
+        let p = PathBuf::from(path_str);
+        let abs = if p.is_absolute() {
+            p.clone()
+        } else {
+            self.session_root.join(&p)
+        };
+        if !abs.exists() || !abs.is_file() {
+            return None;
+        }
+        if abs.starts_with(&self.data_dir) {
+            return None;
+        }
+        if let Some(existing) = self.copied_files.get(&abs) {
+            return Some((abs, existing.clone()));
+        }
+        let file_name = abs.file_name()?.to_str()?.to_string();
+        let mut dst = self.data_dir.join(&file_name);
+        let mut counter = 1;
+        while dst.exists() {
+            let stem = Path::new(&file_name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file");
+            let ext = Path::new(&file_name)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let new_name = if ext.is_empty() {
+                format!("{stem}_{counter}")
+            } else {
+                format!("{stem}_{counter}.{ext}")
+            };
+            dst = self.data_dir.join(new_name);
+            counter += 1;
+        }
+        if std::fs::copy(&abs, &dst).is_err() {
+            return None;
+        }
+        let rel = format!("data/{}", dst.file_name()?.to_str()?);
+        self.copied_files.insert(abs.clone(), rel.clone());
+        Some((abs, rel))
+    }
+}
+
 pub struct Maolan {
     clip: Option<DraggedClip>,
     clip_preview_target_track: Option<String>,
@@ -418,6 +484,7 @@ pub struct Maolan {
     plugin_format: PluginFormat,
     session_dir: Option<PathBuf>,
     session_branch: String,
+    collect_to_session_operation: Option<CollectToSessionOperation>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_clap_tracks: std::collections::HashSet<String>,
@@ -714,6 +781,7 @@ impl Default for Maolan {
             plugin_format: Self::default_plugin_format(),
             session_dir: None,
             session_branch: "main".to_string(),
+            collect_to_session_operation: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_clap_tracks: std::collections::HashSet::new(),
@@ -2327,6 +2395,378 @@ impl Maolan {
         }
 
         Ok(report)
+    }
+
+    fn collect_to_session(&mut self) -> Result<String, String> {
+        let Some(session_root) = self.session_dir.clone() else {
+            return Err("Collect requires an opened/saved session folder".to_string());
+        };
+
+        let data_dir = session_root.join("data");
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| format!("Failed to create data directory: {e}"))?;
+
+        let mut clap_refs: Vec<PluginInstanceRef> = Vec::new();
+        let mut lv2_refs: Vec<PluginInstanceRef> = Vec::new();
+
+        {
+            let state = self.state.blocking_read();
+            for (track_name, (plugins, _connections)) in &state.plugin_graphs_by_track {
+                for (idx, plugin) in plugins.iter().enumerate() {
+                    let instance_id = plugins
+                        .iter()
+                        .take(idx)
+                        .filter(|p| !p.uri.is_empty())
+                        .count();
+                    let plugin_ref = PluginInstanceRef::Track {
+                        track_name: track_name.clone(),
+                        instance_id,
+                    };
+                    if plugin.format.eq_ignore_ascii_case("CLAP") {
+                        clap_refs.push(plugin_ref);
+                    } else if plugin.format.eq_ignore_ascii_case("LV2") {
+                        lv2_refs.push(plugin_ref);
+                    }
+                }
+            }
+            for track in &state.tracks {
+                for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
+                    if let Some(graph) = clip.plugin_graph_json.as_ref()
+                        && let Some(plugins) = graph.get("plugins").and_then(Value::as_array) {
+                            for (idx, plugin) in plugins.iter().enumerate() {
+                                let format = plugin
+                                    .get("format")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string();
+                                let instance_id = plugins
+                                    .iter()
+                                    .take(idx)
+                                    .filter(|p| p.get("uri").and_then(Value::as_str).is_some())
+                                    .count();
+                                let plugin_ref = PluginInstanceRef::Clip {
+                                    track_name: track.name.clone(),
+                                    clip_idx,
+                                    instance_id,
+                                };
+                                if format.eq_ignore_ascii_case("CLAP") {
+                                    clap_refs.push(plugin_ref);
+                                } else if format.eq_ignore_ascii_case("LV2") {
+                                    lv2_refs.push(plugin_ref);
+                                }
+                            }
+                        }
+                }
+            }
+        }
+
+        if clap_refs.is_empty() && lv2_refs.is_empty() {
+            return Ok("No CLAP or LV2 plugins to collect".to_string());
+        }
+
+        let mut pending_clap_refs = HashSet::new();
+        for plugin_ref in &clap_refs {
+            pending_clap_refs.insert(plugin_ref.clone());
+        }
+
+        self.collect_to_session_operation = Some(CollectToSessionOperation {
+            session_root,
+            data_dir: data_dir.clone(),
+            pending_clap_refs,
+            copied_files: HashMap::new(),
+        });
+
+        for plugin_ref in &lv2_refs {
+            Self::send_resource_dir_action(plugin_ref, "LV2", &data_dir);
+        }
+        for plugin_ref in &clap_refs {
+            Self::send_resource_dir_action(plugin_ref, "CLAP", &data_dir);
+            Self::send_clap_file_references_action(plugin_ref);
+        }
+
+        Ok("Collecting plugin files...".to_string())
+    }
+
+    fn send_resource_dir_action(plugin_ref: &PluginInstanceRef, format: &str, data_dir: &Path) {
+        let directory = data_dir.to_string_lossy().to_string();
+        let action = match plugin_ref {
+            PluginInstanceRef::Track {
+                track_name,
+                instance_id,
+            } => Action::TrackSetPluginResourceDir {
+                track_name: track_name.clone(),
+                instance_id: *instance_id,
+                format: format.to_string(),
+                directory,
+            },
+            PluginInstanceRef::Clip {
+                track_name,
+                clip_idx,
+                instance_id,
+            } => Action::ClipSetPluginResourceDir {
+                track_name: track_name.clone(),
+                clip_idx: *clip_idx,
+                instance_id: *instance_id,
+                format: format.to_string(),
+                directory,
+            },
+        };
+        tokio::spawn(async move {
+            let _ = CLIENT.send(EngineMessage::Request(action)).await;
+        });
+    }
+
+    fn send_clap_file_references_action(plugin_ref: &PluginInstanceRef) {
+        let action = match plugin_ref {
+            PluginInstanceRef::Track {
+                track_name,
+                instance_id,
+            } => Action::TrackClapFileReferences {
+                track_name: track_name.clone(),
+                instance_id: *instance_id,
+                refs: Vec::new(),
+            },
+            PluginInstanceRef::Clip {
+                track_name,
+                clip_idx,
+                instance_id,
+            } => Action::ClipClapFileReferences {
+                track_name: track_name.clone(),
+                clip_idx: *clip_idx,
+                instance_id: *instance_id,
+                refs: Vec::new(),
+            },
+        };
+        tokio::spawn(async move {
+            let _ = CLIENT.send(EngineMessage::Request(action)).await;
+        });
+    }
+
+    fn handle_clap_file_references_response(
+        &mut self,
+        plugin_ref: &PluginInstanceRef,
+        refs: &[(u32, String)],
+    ) {
+        let Some(op) = self.collect_to_session_operation.as_mut() else {
+            return;
+        };
+        if !op.pending_clap_refs.remove(plugin_ref) {
+            return;
+        }
+
+        for (index, path) in refs {
+            if path.is_empty() {
+                continue;
+            }
+            if let Some((src, dst_rel)) = op.collect_file(path) {
+                op.copied_files.insert(src, dst_rel.clone());
+                Self::send_clap_file_reference_update_action(plugin_ref, *index, &dst_rel);
+            }
+        }
+
+        if op.pending_clap_refs.is_empty() {
+            self.finish_collect_to_session();
+        }
+    }
+
+    fn send_clap_file_reference_update_action(
+        plugin_ref: &PluginInstanceRef,
+        index: u32,
+        new_path: &str,
+    ) {
+        let action = match plugin_ref {
+            PluginInstanceRef::Track {
+                track_name,
+                instance_id,
+            } => Action::TrackUpdateClapFileReference {
+                track_name: track_name.clone(),
+                instance_id: *instance_id,
+                index,
+                path: new_path.to_string(),
+            },
+            PluginInstanceRef::Clip {
+                track_name,
+                clip_idx,
+                instance_id,
+            } => Action::ClipUpdateClapFileReference {
+                track_name: track_name.clone(),
+                clip_idx: *clip_idx,
+                instance_id: *instance_id,
+                index,
+                path: new_path.to_string(),
+            },
+        };
+        tokio::spawn(async move {
+            let _ = CLIENT.send(EngineMessage::Request(action)).await;
+        });
+    }
+
+    fn finish_collect_to_session(&mut self) {
+        let Some(op) = self.collect_to_session_operation.take() else {
+            return;
+        };
+
+        let copied_count = op.copied_files.len();
+        let message = if copied_count == 0 {
+            "No external CLAP files needed collecting".to_string()
+        } else {
+            format!("Collected {copied_count} plugin file(s) into data/")
+        };
+
+        if !op.copied_files.is_empty() {
+            self.rewrite_collected_plugin_state_paths(&op.session_root, &op.copied_files);
+        }
+
+        if let Some(path) = self.session_dir.as_ref()
+            && let Err(e) = self.save(path.to_string_lossy().to_string()) {
+                self.state.blocking_write().message =
+                    format!("{message}; failed to save session: {e}");
+                return;
+            }
+
+        self.state.blocking_write().message = message;
+    }
+
+    fn read_utf8_string_from_bytes(bytes: &[u8], start: usize) -> Option<(usize, String)> {
+        let mut end = start;
+        while end < bytes.len() {
+            match std::str::from_utf8(&bytes[end..end + 1]) {
+                Ok(_)
+                    if bytes[end].is_ascii_graphic()
+                        || bytes[end] == b' '
+                        || bytes[end] == b'\\'
+                        || bytes[end] == b'/'
+                        || bytes[end] == b'.'
+                        || bytes[end] == b'_'
+                        || bytes[end] == b'-' => {}
+                _ => break,
+            }
+            end += 1;
+        }
+        if end - start < 4 {
+            return None;
+        }
+        let s = std::str::from_utf8(&bytes[start..end]).ok()?;
+        Some((end, s.to_string()))
+    }
+
+    fn rewrite_collected_plugin_state_paths(
+        &mut self,
+        session_root: &Path,
+        copied_files: &HashMap<PathBuf, String>,
+    ) {
+        let mut state = self.state.blocking_write();
+        for (_track_name, (plugins, _connections)) in state.plugin_graphs_by_track.iter_mut() {
+            for plugin in plugins.iter_mut() {
+                if let Some(ref mut plugin_state) = plugin.state {
+                    *plugin_state = Self::rewrite_plugin_state_paths(
+                        plugin_state,
+                        session_root,
+                        copied_files,
+                    );
+                }
+            }
+        }
+        for track in state.tracks.iter_mut() {
+            for clip in track.audio.clips.iter_mut() {
+                if let Some(ref mut graph) = clip.plugin_graph_json
+                    && let Some(plugins) = graph.get_mut("plugins").and_then(Value::as_array_mut) {
+                        for plugin in plugins.iter_mut() {
+                            if let Some(plugin_state) = plugin.get_mut("state") {
+                                *plugin_state = Self::rewrite_plugin_state_paths(
+                                    plugin_state,
+                                    session_root,
+                                    copied_files,
+                                );
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    fn rewrite_plugin_state_paths(
+        state: &Value,
+        session_root: &Path,
+        copied_files: &HashMap<PathBuf, String>,
+    ) -> Value {
+        match state {
+            Value::String(s) => {
+                let resolved = Self::resolve_session_external_path(session_root, s);
+                if let Some(dst_rel) = copied_files.get(&resolved) {
+                    Value::String(dst_rel.clone())
+                } else {
+                    state.clone()
+                }
+            }
+            Value::Array(arr) => {
+                let bytes: Vec<u8> = arr
+                    .iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                    .collect();
+                if !bytes.is_empty() {
+                    let rewritten = Self::rewrite_bytes_paths(&bytes, session_root, copied_files);
+                    if rewritten != bytes {
+                        return Value::Array(
+                            rewritten
+                                .into_iter()
+                                .map(|b| Value::Number(serde_json::Number::from(b)))
+                                .collect(),
+                        );
+                    }
+                }
+                Value::Array(
+                    arr.iter()
+                        .map(|v| Self::rewrite_plugin_state_paths(v, session_root, copied_files))
+                        .collect(),
+                )
+            }
+            Value::Object(obj) => {
+                let mut new_obj = serde_json::Map::new();
+                for (k, v) in obj {
+                    new_obj.insert(
+                        k.clone(),
+                        Self::rewrite_plugin_state_paths(v, session_root, copied_files),
+                    );
+                }
+                Value::Object(new_obj)
+            }
+            _ => state.clone(),
+        }
+    }
+
+    fn rewrite_bytes_paths(
+        bytes: &[u8],
+        session_root: &Path,
+        copied_files: &HashMap<PathBuf, String>,
+    ) -> Vec<u8> {
+        let mut result = bytes.to_vec();
+        let mut offset = 0;
+        while offset + 4 <= result.len() {
+            if let Some((end, s)) = Self::read_utf8_string_from_bytes(&result, offset) {
+                let resolved = Self::resolve_session_external_path(session_root, &s);
+                if let Some(dst_rel) = copied_files.get(&resolved) {
+                    let before = result.len();
+                    result.splice(offset..end, dst_rel.bytes());
+                    let after = result.len();
+                    offset = end + after - before;
+                    continue;
+                }
+                offset = end;
+            } else {
+                offset += 1;
+            }
+        }
+        result
+    }
+
+    fn resolve_session_external_path(session_root: &Path, path: &str) -> PathBuf {
+        let p = PathBuf::from(path);
+        if p.is_absolute() {
+            p
+        } else {
+            session_root.join(&p)
+        }
     }
 
     fn is_import_audio_path(path: &Path) -> bool {
@@ -8497,5 +8937,107 @@ mod tests {
 
         assert_eq!(templates, vec!["Valid".to_string()]);
         let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn collect_to_session_operation_collects_external_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_collect_test_{unique}"));
+        let data_dir = session_root.join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let external_file = session_root.join("external.wav");
+        fs::write(&external_file, b"dummy").unwrap();
+
+        let mut op = CollectToSessionOperation {
+            session_root: session_root.clone(),
+            data_dir,
+            pending_clap_refs: HashSet::new(),
+            copied_files: HashMap::new(),
+        };
+
+        let result = op.collect_file(external_file.to_string_lossy().as_ref());
+        assert!(result.is_some());
+        let (src, rel) = result.unwrap();
+        assert_eq!(src, external_file);
+        assert!(rel.starts_with("data/"));
+        assert!(session_root.join(&rel).exists());
+
+        let _ = fs::remove_dir_all(&session_root);
+    }
+
+    #[test]
+    fn collect_to_session_operation_skips_internal_files() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_collect_skip_test_{unique}"));
+        let data_dir = session_root.join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let internal = data_dir.join("already.wav");
+        fs::write(&internal, b"dummy").unwrap();
+
+        let mut op = CollectToSessionOperation {
+            session_root: session_root.clone(),
+            data_dir: data_dir.clone(),
+            pending_clap_refs: HashSet::new(),
+            copied_files: HashMap::new(),
+        };
+
+        assert!(op.collect_file("data/already.wav").is_none());
+        assert!(op.copied_files.is_empty());
+        let _ = fs::remove_dir_all(&session_root);
+    }
+
+    #[test]
+    fn collect_to_session_operation_deduplicates_same_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_collect_dedup_test_{unique}"));
+        let data_dir = session_root.join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let external_file = session_root.join("external.wav");
+        fs::write(&external_file, b"dummy").unwrap();
+
+        let mut op = CollectToSessionOperation {
+            session_root: session_root.clone(),
+            data_dir,
+            pending_clap_refs: HashSet::new(),
+            copied_files: HashMap::new(),
+        };
+
+        let (_, rel1) = op.collect_file(external_file.to_string_lossy().as_ref()).unwrap();
+        let (_, rel2) = op.collect_file(external_file.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(rel1, rel2);
+        assert_eq!(op.copied_files.len(), 1);
+
+        let _ = fs::remove_dir_all(&session_root);
+    }
+
+    #[test]
+    fn rewrite_plugin_state_paths_updates_absolute_path_to_relative() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_rewrite_test_{unique}"));
+        let data_dir = session_root.join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let external = session_root.join("external.wav");
+        fs::write(&external, b"dummy").unwrap();
+
+        let mut copied = HashMap::new();
+        copied.insert(external.clone(), "data/external.wav".to_string());
+
+        let state = json!(session_root.join("external.wav").to_string_lossy().to_string());
+        let rewritten = Maolan::rewrite_plugin_state_paths(&state, &session_root, &copied);
+        assert_eq!(rewritten, json!("data/external.wav"));
+
+        let _ = fs::remove_dir_all(&session_root);
     }
 }

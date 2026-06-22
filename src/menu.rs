@@ -92,6 +92,7 @@ impl Menu {
                         "Delete unused files",
                         Message::DeleteUnusedSessionMediaFiles
                     )),
+                    (menu_item("Collect to session", Message::CollectToSession)),
                     (menu_item("Export", Message::OpenExporter)),
                     (menu_item("Quit", Message::WindowCloseRequested)),
                 ))

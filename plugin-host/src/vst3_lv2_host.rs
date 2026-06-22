@@ -1099,16 +1099,26 @@ pub fn run_lv2(
                         Err(e) => Err(e),
                     }
                 }
-
                 3 => Err("LV2 GUI not yet supported".to_string()),
                 4 => Ok(()),
+                5 => {
+                    std::sync::atomic::fence(Ordering::SeqCst);
+                    let dir = unsafe { read_resource_directory_from_scratch(ptr) };
+                    match dir {
+                        Some(dir) => {
+                            processor.set_state_base_dir(std::path::PathBuf::from(dir));
+                            Ok(())
+                        }
+                        None => Err("Invalid resource directory in scratch".to_string()),
+                    }
+                }
                 _ => Err(format!("Unknown request type: {}", req)),
             };
             header
                 .request_status
                 .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
 
-            if req == 1 || req == 2 {
+            if matches!(req, 1 | 2 | 5) {
                 let _ = events.signal_daw();
             }
             header.request_type.store(0, Ordering::Release);
