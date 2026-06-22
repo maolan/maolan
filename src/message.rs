@@ -832,6 +832,7 @@ pub enum Message {
 
     OpenFileImporter,
     DeleteUnusedSessionMediaFiles,
+    CollectToSession,
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
     ImportProgress {
         file_index: usize,

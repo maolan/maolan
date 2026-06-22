@@ -413,6 +413,7 @@ pub const CLAP_EXT_AUDIO_PORTS: &CStr = c"clap.audio-ports";
 pub const CLAP_EXT_NOTE_PORTS: &CStr = c"clap.note-ports";
 pub const CLAP_EXT_GUI: &CStr = c"clap.gui";
 pub const CLAP_EXT_STATE: &CStr = c"clap.state";
+pub const CLAP_EXT_FILE_REFERENCE: &CStr = c"clap.file-reference";
 pub const CLAP_EXT_THREAD_POOL: &CStr = c"clap.thread-pool";
 pub const CLAP_EXT_LATENCY: &CStr = c"clap.latency";
 pub const CLAP_EXT_TAIL: &CStr = c"clap.tail";
@@ -457,6 +458,28 @@ pub struct ClapNotePortInfo {
 #[repr(C)]
 pub struct ClapHostState {
     pub mark_dirty: Option<unsafe extern "C" fn(*const ClapHost)>,
+}
+
+#[repr(C)]
+pub struct ClapPluginFileReference {
+    pub count: Option<unsafe extern "C" fn(*const ClapPlugin) -> u32>,
+    pub get: Option<
+        unsafe extern "C" fn(*const ClapPlugin, index: u32, path: *mut c_char, path_size: u32) -> bool,
+    >,
+    pub get_hash: Option<
+        unsafe extern "C" fn(*const ClapPlugin, index: u32, hash: *mut u8) -> bool,
+    >,
+    pub update_path:
+        Option<unsafe extern "C" fn(*const ClapPlugin, index: u32, path: *const c_char) -> bool>,
+}
+
+#[repr(C)]
+pub struct ClapHostFileReference {
+    pub changed: Option<unsafe extern "C" fn(*const ClapHost)>,
+    pub set_path:
+        Option<unsafe extern "C" fn(*const ClapHost, index: u32, path: *const c_char)>,
+    pub set_copy_path:
+        Option<unsafe extern "C" fn(*const ClapHost, index: u32, path: *const c_char)>,
 }
 
 #[repr(C)]
@@ -736,6 +759,61 @@ impl PluginInstance {
         }
     }
 
+    fn file_reference_extension(&self) -> Result<*const ClapPluginFileReference, String> {
+        let ext = unsafe {
+            (*self.plugin)
+                .get_extension
+                .map(|f| f(self.plugin, CLAP_EXT_FILE_REFERENCE.as_ptr()))
+        };
+        match ext {
+            Some(ptr) if !ptr.is_null() => Ok(ptr as *const ClapPluginFileReference),
+            _ => Err("Plugin does not support clap.file-reference".to_string()),
+        }
+    }
+
+    pub fn file_reference_count(&self) -> Result<u32, String> {
+        let ext = self.file_reference_extension()?;
+        let count = unsafe { (*ext).count }.ok_or("clap.file-reference.count is null")?;
+        Ok(unsafe { count(self.plugin) })
+    }
+
+    pub fn file_references(&self) -> Result<Vec<maolan_plugin_protocol::protocol::FileReference>, String> {
+        let ext = self.file_reference_extension()?;
+        let count_fn = unsafe { (*ext).count }.ok_or("clap.file-reference.count is null")?;
+        let get_fn = unsafe { (*ext).get }.ok_or("clap.file-reference.get is null")?;
+        let count = unsafe { count_fn(self.plugin) };
+        let mut refs = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let mut buffer = vec![0i8; 2048];
+            if unsafe {
+                get_fn(
+                    self.plugin,
+                    index,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                )
+            } {
+                let cstr = unsafe { CStr::from_ptr(buffer.as_ptr()) };
+                if let Ok(s) = cstr.to_str() {
+                    refs.push((index, s.to_string()));
+                }
+            }
+        }
+        Ok(refs)
+    }
+
+    pub fn update_file_reference_path(&self, index: u32, path: &str) -> Result<(), String> {
+        let ext = self.file_reference_extension()?;
+        let update = unsafe { (*ext).update_path }
+            .ok_or("clap.file-reference.update_path is null")?;
+        let path_c = CString::new(path).map_err(|e| e.to_string())?;
+        if unsafe { update(self.plugin, index, path_c.as_ptr()) } {
+            Ok(())
+        } else {
+            Err(format!("plugin rejected file-reference path update for index {index}"))
+        }
+    }
+
     pub fn process(&self, process: &ClapProcess) -> Result<(), String> {
         let process_fn = unsafe { (*self.plugin).process }.ok_or("process is null")?;
         let status = unsafe { process_fn(self.plugin, process) };
@@ -958,6 +1036,7 @@ unsafe extern "C" fn host_get_extension(
         b"clap.timer-support" => &CLAP_HOST_TIMER_SUPPORT as *const _ as *const c_void,
         b"clap.posix-fd-support" => &CLAP_HOST_POSIX_FD_SUPPORT as *const _ as *const c_void,
         b"clap.state" => &CLAP_HOST_STATE as *const _ as *const c_void,
+        b"clap.file-reference" => &CLAP_HOST_FILE_REFERENCE as *const _ as *const c_void,
         _ => ptr::null(),
     }
 }
@@ -1015,6 +1094,12 @@ static CLAP_HOST_POSIX_FD_SUPPORT: ClapHostPosixFdSupport = ClapHostPosixFdSuppo
 
 static CLAP_HOST_STATE: ClapHostState = ClapHostState {
     mark_dirty: Some(host_state_mark_dirty),
+};
+
+static CLAP_HOST_FILE_REFERENCE: ClapHostFileReference = ClapHostFileReference {
+    changed: Some(host_file_reference_changed),
+    set_path: Some(host_file_reference_set_path),
+    set_copy_path: Some(host_file_reference_set_copy_path),
 };
 
 unsafe extern "C" fn host_params_resize(_host: *const ClapHost, _capacity: u32) -> bool {
@@ -1082,6 +1167,34 @@ unsafe extern "C" fn host_gui_closed(_host: *const ClapHost, _was_destroyed: boo
 
 unsafe extern "C" fn host_state_mark_dirty(_host: *const ClapHost) {
     tracing::info!("Plugin called clap_host_state.mark_dirty()");
+}
+
+unsafe extern "C" fn host_file_reference_changed(_host: *const ClapHost) {
+    tracing::info!("Plugin called clap_host_file_reference.changed()");
+}
+
+unsafe extern "C" fn host_file_reference_set_path(
+    _host: *const ClapHost,
+    _index: u32,
+    _path: *const c_char,
+) {
+    if _path.is_null() {
+        return;
+    }
+    let path = unsafe { CStr::from_ptr(_path) }.to_string_lossy();
+    tracing::info!(index = _index, path = %path, "Plugin called clap_host_file_reference.set_path()");
+}
+
+unsafe extern "C" fn host_file_reference_set_copy_path(
+    _host: *const ClapHost,
+    _index: u32,
+    _path: *const c_char,
+) {
+    if _path.is_null() {
+        return;
+    }
+    let path = unsafe { CStr::from_ptr(_path) }.to_string_lossy();
+    tracing::info!(index = _index, path = %path, "Plugin called clap_host_file_reference.set_copy_path()");
 }
 
 unsafe extern "C" fn host_thread_check_is_main_thread(_host: *const ClapHost) -> bool {

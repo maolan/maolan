@@ -1400,6 +1400,7 @@ impl Maolan {
         p.push(&filename);
         fs::create_dir_all(&path)?;
         fs::create_dir_all(session_root.join("plugins"))?;
+        fs::create_dir_all(session_root.join("data"))?;
         fs::create_dir_all(session_root.join("audio"))?;
         fs::create_dir_all(session_root.join("midi"))?;
         fs::create_dir_all(session_root.join("peaks"))?;

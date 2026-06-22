@@ -400,6 +400,7 @@ impl HostRuntime {
         let mut clap_gui_window: Option<ContainerWindow> = None;
         #[cfg(all(unix, not(target_os = "macos")))]
         let mut clap_gui_window_x11: Option<crate::gui_x11::x11::ContainerWindow> = None;
+        let mut _resource_directory: Option<String> = None;
 
         loop {
             if header.shutdown_request.load(Ordering::Acquire) != 0 {
@@ -587,12 +588,39 @@ impl HostRuntime {
                         }
                         plugin.gui_hide()
                     }
+                    5 => {
+                        std::sync::atomic::fence(Ordering::SeqCst);
+                        let dir = unsafe { read_resource_directory_from_scratch(ptr) };
+                        tracing::info!(?dir, "CLAP host request 5 read resource directory");
+                        match dir {
+                            Some(dir) => {
+                                _resource_directory = Some(dir.clone());
+                                Ok(())
+                            }
+                            None => Err("Invalid resource directory in scratch".to_string()),
+                        }
+                    }
+                    6 => match plugin.file_references() {
+                        Ok(refs) => unsafe {
+                            write_file_references_to_scratch(ptr, &refs).map_err(|e| {
+                                format!("Failed to write file references to scratch: {e}")
+                            })
+                        },
+                        Err(e) => Err(e),
+                    },
+                    7 => {
+                        if let Some((index, path)) = unsafe { read_file_reference_update_from_scratch(ptr) } {
+                            plugin.update_file_reference_path(index, &path)
+                        } else {
+                            Err("Invalid file-reference update in scratch".to_string())
+                        }
+                    }
                     _ => Err(format!("Unknown request type: {req}")),
                 };
                 header
                     .request_status
                     .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
-                if req == 1 || req == 2 {
+                if matches!(req, 1 | 2 | 5 | 6 | 7) {
                     let _ = self.events.signal_daw();
                 }
                 header.request_type.store(0, Ordering::Release);
