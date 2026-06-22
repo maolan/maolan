@@ -490,14 +490,18 @@ impl Maolan {
             Message::AddTrack(crate::message::AddTrack::Submit)
             | Message::AddTrackFromTemplate { .. }
             | Message::AddGroupFromTemplate { .. }
+            | Message::ApplyTemplate(crate::message::ApplyTemplate::Submit)
+            | Message::ApplyTrackTemplate { .. }
+            | Message::ApplyGroupTemplate { .. }
             | Message::NewFromTemplate(_)
             | Message::NewSession
             | Message::Request(_)
             | Message::RequestBatch(_)
             | Message::MeterPollTick => return self.handle_session_message(message),
             Message::EscapePressed => {
-                if matches!(self.modal, Some(Show::AddTrack)) {
+                if matches!(self.modal, Some(Show::AddTrack | Show::ApplyTemplate { .. })) {
                     self.modal = None;
+                    self.state.blocking_write().apply_template_dialog = None;
                 } else if self.state.blocking_read().track_marker_dialog.is_some() {
                     self.state.blocking_write().track_marker_dialog = None;
                 }
@@ -510,6 +514,7 @@ impl Maolan {
                     return self.send(Action::TrackOfflineBounceCancelAll);
                 }
                 self.modal = None;
+                self.state.blocking_write().apply_template_dialog = None;
             }
             Message::OpenUrl(ref url) => {
                 #[cfg(target_os = "macos")]
@@ -3610,20 +3615,22 @@ impl Maolan {
                         } => {
                             let state_json =
                                 serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
-                            let mut state = self.state.blocking_write();
-                            if let Some(track) = state
-                                .tracks
-                                .iter_mut()
-                                .find(|track| track.name == *track_name)
-                                && let Some(clip) = track.audio.clips.get_mut(*clip_idx)
-                                && let Some(graph_json) =
-                                    Self::plugin_graph_json_with_saved_plugin_state(
-                                        clip.plugin_graph_json.as_ref(),
-                                        *instance_id,
-                                        state_json,
-                                    )
                             {
-                                clip.plugin_graph_json = Some(graph_json);
+                                let mut state = self.state.blocking_write();
+                                if let Some(track) = state
+                                    .tracks
+                                    .iter_mut()
+                                    .find(|track| track.name == *track_name)
+                                    && let Some(clip) = track.audio.clips.get_mut(*clip_idx)
+                                    && let Some(graph_json) =
+                                        Self::plugin_graph_json_with_saved_plugin_state(
+                                            clip.plugin_graph_json.as_ref(),
+                                            *instance_id,
+                                            state_json,
+                                        )
+                                {
+                                    clip.plugin_graph_json = Some(graph_json);
+                                }
                             }
                             if self.pending_save_path.is_some() {
                                 self.pending_save_clap_clips.remove(&(
@@ -3631,34 +3638,8 @@ impl Maolan {
                                     *clip_idx,
                                     *instance_id,
                                 ));
-                                if self.pending_save_ready() {
-                                    let path = self.pending_save_path.take().unwrap_or_default();
-                                    let is_template = self.pending_save_is_template;
-                                    self.pending_save_is_template = false;
-                                    if !path.is_empty() {
-                                        if is_template {
-                                            if let Err(e) = self.save_template(path.clone()) {
-                                                self.state.blocking_write().message =
-                                                    format!("Failed to save template: {}", e);
-                                            } else {
-                                                self.state.blocking_write().message =
-                                                    "Template saved".to_string();
-                                                let templates = crate::gui::scan_templates();
-                                                self.state.blocking_write().available_templates =
-                                                    templates.clone();
-                                                self.menu.update_templates(templates);
-                                            }
-                                        } else if let Err(e) = self.save(path.clone()) {
-                                            self.pending_exit_after_save = false;
-                                            self.state.blocking_write().message =
-                                                format!("Failed to save session: {}", e);
-                                        } else {
-                                            return Task::batch(vec![
-                                                self.send(Action::MarkHistorySavePoint),
-                                                self.send(Action::SetSessionPath(path)),
-                                            ]);
-                                        }
-                                    }
+                                if let Some(task) = self.complete_pending_save(track_name) {
+                                    return task;
                                 }
                             }
                         }
@@ -3751,34 +3732,8 @@ impl Maolan {
                             if self.pending_save_path.is_some() =>
                         {
                             self.pending_save_clap_tracks.remove(track_name);
-                            if self.pending_save_ready() {
-                                let path = self.pending_save_path.take().unwrap_or_default();
-                                let is_template = self.pending_save_is_template;
-                                self.pending_save_is_template = false;
-                                if !path.is_empty() {
-                                    if is_template {
-                                        if let Err(e) = self.save_template(path.clone()) {
-                                            self.state.blocking_write().message =
-                                                format!("Failed to save template: {}", e);
-                                        } else {
-                                            self.state.blocking_write().message =
-                                                "Template saved".to_string();
-                                            let templates = crate::gui::scan_templates();
-                                            self.state.blocking_write().available_templates =
-                                                templates.clone();
-                                            self.menu.update_templates(templates);
-                                        }
-                                    } else if let Err(e) = self.save(path.clone()) {
-                                        self.pending_exit_after_save = false;
-                                        self.state.blocking_write().message =
-                                            format!("Failed to save session: {}", e);
-                                    } else {
-                                        return Task::batch(vec![
-                                            self.send(Action::MarkHistorySavePoint),
-                                            self.send(Action::SetSessionPath(path)),
-                                        ]);
-                                    }
-                                }
+                            if let Some(task) = self.complete_pending_save(track_name) {
+                                return task;
                             }
                         }
                         Action::TrackClearDefaultPassthrough { track_name } => {
@@ -3822,34 +3777,8 @@ impl Maolan {
                             if self.pending_save_path.is_some() {
                                 self.pending_save_vst3_states
                                     .remove(&(track_name.clone(), *instance_id));
-                                if self.pending_save_ready() {
-                                    let path = self.pending_save_path.take().unwrap_or_default();
-                                    let is_template = self.pending_save_is_template;
-                                    self.pending_save_is_template = false;
-                                    if !path.is_empty() {
-                                        if is_template {
-                                            if let Err(e) = self.save_template(path.clone()) {
-                                                self.state.blocking_write().message =
-                                                    format!("Failed to save template: {}", e);
-                                            } else {
-                                                self.state.blocking_write().message =
-                                                    "Template saved".to_string();
-                                                let templates = crate::gui::scan_templates();
-                                                self.state.blocking_write().available_templates =
-                                                    templates.clone();
-                                                self.menu.update_templates(templates);
-                                            }
-                                        } else if let Err(e) = self.save(path.clone()) {
-                                            self.pending_exit_after_save = false;
-                                            self.state.blocking_write().message =
-                                                format!("Failed to save session: {}", e);
-                                        } else {
-                                            return Task::batch(vec![
-                                                self.send(Action::MarkHistorySavePoint),
-                                                self.send(Action::SetSessionPath(path)),
-                                            ]);
-                                        }
-                                    }
+                                if let Some(task) = self.complete_pending_save(track_name) {
+                                    return task;
                                 }
                             }
                         }
@@ -3985,40 +3914,8 @@ impl Maolan {
 
                             if self.pending_save_path.is_some() {
                                 self.pending_save_tracks.remove(track_name);
-                                if self.pending_save_ready() {
-                                    let path = self.pending_save_path.take().unwrap_or_default();
-                                    let is_template = self.pending_save_is_template;
-                                    self.pending_save_is_template = false;
-                                    if !path.is_empty() {
-                                        if is_template {
-                                            if let Err(e) = self.save_template(path.clone()) {
-                                                self.state.blocking_write().message =
-                                                    format!("Failed to save template: {}", e);
-                                            } else {
-                                                self.state.blocking_write().message =
-                                                    "Template saved".to_string();
-
-                                                let templates = crate::gui::scan_templates();
-                                                self.state.blocking_write().available_templates =
-                                                    templates.clone();
-                                                self.menu.update_templates(templates);
-                                            }
-                                        } else {
-                                            if path.contains("/track_templates/") {
-                                                return self
-                                                    .save_track_as_template(track_name, path);
-                                            } else if let Err(e) = self.save(path.clone()) {
-                                                self.pending_exit_after_save = false;
-                                                self.state.blocking_write().message =
-                                                    format!("Failed to save session: {}", e);
-                                            } else {
-                                                return Task::batch(vec![
-                                                    self.send(Action::MarkHistorySavePoint),
-                                                    self.send(Action::SetSessionPath(path)),
-                                                ]);
-                                            }
-                                        }
-                                    }
+                                if let Some(task) = self.complete_pending_save(track_name) {
+                                    return task;
                                 }
                             }
                         }
@@ -8738,10 +8635,20 @@ impl Maolan {
             }
             Message::TrackTemplatesLoaded(ref templates) => {
                 self.add_track.set_available_templates(templates.clone());
+                if let Some(dialog) = &mut self.state.blocking_write().apply_template_dialog
+                    && !dialog.is_group
+                {
+                    dialog.available_templates = templates.clone();
+                }
             }
             Message::GroupTemplatesLoaded(ref templates) => {
                 self.add_track
                     .set_available_group_templates(templates.clone());
+                if let Some(dialog) = &mut self.state.blocking_write().apply_template_dialog
+                    && dialog.is_group
+                {
+                    dialog.available_templates = templates.clone();
+                }
             }
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             Message::PreferencesDevicesLoaded {

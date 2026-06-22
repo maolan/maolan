@@ -27,6 +27,7 @@ pub enum Show {
     Open,
     About,
     TrackColor { track_name: String },
+    ApplyTemplate { track_name: String, is_group: bool },
     BranchManager,
     BranchTrackList(String),
 }
@@ -492,6 +493,12 @@ pub enum AddTrack {
 }
 
 #[derive(Debug, Clone)]
+pub enum ApplyTemplate {
+    TemplateSelected(String),
+    Submit,
+}
+
+#[derive(Debug, Clone)]
 pub struct DraggedClip {
     pub kind: Kind,
     pub index: usize,
@@ -577,6 +584,7 @@ pub enum Message {
     Cancel,
 
     AddTrack(AddTrack),
+    ApplyTemplate(ApplyTemplate),
     SelectTrack(String),
     SelectTrackFromMixer(String),
     TrackAutomationToggle {
@@ -1231,6 +1239,14 @@ pub enum Message {
     },
     AddGroupFromTemplate {
         base_name: String,
+        template: String,
+    },
+    ApplyTrackTemplate {
+        track_name: String,
+        template: String,
+    },
+    ApplyGroupTemplate {
+        group_name: String,
         template: String,
     },
 

@@ -148,6 +148,13 @@ pub(super) fn track_context_menu_overlay(
             "Save as template",
             Message::TrackTemplateSaveShow(track_name.clone()),
         ),
+        menu::menu_item(
+            "Apply template",
+            Message::Show(Show::ApplyTemplate {
+                track_name: track_name.clone(),
+                is_group: false,
+            }),
+        ),
         menu::menu_item("Add Return", Message::TrackAddReturn(track_name.clone())),
         menu::menu_item("Add Send", Message::TrackAddSend(track_name.clone())),
         menu::menu_item(
@@ -201,11 +208,11 @@ pub(super) fn track_context_menu_overlay(
         ),
     ];
 
-    let is_in_group = track.vca_master.is_some()
-        || state
-            .tracks
-            .iter()
-            .any(|t| t.vca_master.as_deref() == Some(&track_name));
+    let is_group_master = state
+        .tracks
+        .iter()
+        .any(|t| t.vca_master.as_deref() == Some(&track_name));
+    let is_in_group = track.vca_master.is_some() || is_group_master;
     if track.primary_audio_outs() == 2 && !is_in_group {
         items.push(menu::menu_item(
             if track.is_master {
@@ -320,6 +327,23 @@ pub(super) fn track_context_menu_overlay(
         items.push(menu::menu_item(
             "Save group as template",
             Message::TrackGroupTemplateSaveShow(track_name.clone()),
+        ));
+        items.push(menu::menu_item(
+            "Apply group template",
+            Message::Show(Show::ApplyTemplate {
+                track_name: master.clone(),
+                is_group: true,
+            }),
+        ));
+    }
+
+    if is_group_master {
+        items.push(menu::menu_item(
+            "Apply group template",
+            Message::Show(Show::ApplyTemplate {
+                track_name: track_name.clone(),
+                is_group: true,
+            }),
         ));
     }
 

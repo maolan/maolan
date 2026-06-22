@@ -41,6 +41,39 @@ impl Maolan {
                 ref base_name,
                 ref template,
             } => self.load_group_template(base_name.clone(), template.clone()),
+            Message::ApplyTemplate(crate::message::ApplyTemplate::Submit) => {
+                let (track_name, is_group, template) = {
+                    let state = self.state.blocking_read();
+                    let Some(dialog) = state.apply_template_dialog.as_ref() else {
+                        return Task::none();
+                    };
+                    (
+                        dialog.track_name.clone(),
+                        dialog.is_group,
+                        dialog.selected_template.clone(),
+                    )
+                };
+                let Some(template) = template else {
+                    return Task::done(Message::Response(Err(
+                        "No template selected".to_string(),
+                    )));
+                };
+                self.modal = None;
+                self.state.blocking_write().apply_template_dialog = None;
+                if is_group {
+                    self.apply_group_template(track_name, template)
+                } else {
+                    self.apply_track_template(track_name, template)
+                }
+            }
+            Message::ApplyTrackTemplate {
+                ref track_name,
+                ref template,
+            } => self.apply_track_template(track_name.clone(), template.clone()),
+            Message::ApplyGroupTemplate {
+                ref group_name,
+                ref template,
+            } => self.apply_group_template(group_name.clone(), template.clone()),
             Message::NewFromTemplate(ref template_name) => {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 let template_path = format!(

@@ -340,6 +340,14 @@ pub struct TemplateSaveDialog {
 }
 
 #[derive(Debug, Clone)]
+pub struct ApplyTemplateDialog {
+    pub track_name: String,
+    pub is_group: bool,
+    pub selected_template: Option<String>,
+    pub available_templates: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct TrackTemplateSaveDialog {
     pub track_name: String,
     pub name: String,
@@ -560,6 +568,7 @@ pub struct StateData {
     pub track_group_template_save_dialog: Option<TrackGroupTemplateSaveDialog>,
     pub track_marker_dialog: Option<TrackMarkerDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
+    pub apply_template_dialog: Option<ApplyTemplateDialog>,
     pub pending_track_template_loads: Vec<(String, String)>,
     pub piano: Option<PianoData>,
     pub pitch_correction: Option<PitchCorrectionData>,
@@ -743,6 +752,7 @@ impl Default for StateData {
             track_group_template_save_dialog: None,
             track_marker_dialog: None,
             template_save_dialog: None,
+            apply_template_dialog: None,
             pending_track_template_loads: Vec::new(),
             piano: None,
             pitch_correction: None,
