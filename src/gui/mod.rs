@@ -399,6 +399,7 @@ pub struct Maolan {
     hw: hw::HW,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
+    apply_template: crate::apply_template::ApplyTemplateView,
     clip_rename: clip_rename::ClipRenameView,
     track_rename: track_rename::TrackRenameView,
     track_group: track_group::TrackGroupView,
@@ -599,7 +600,7 @@ fn scan_templates() -> Vec<String> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
-            if path.is_dir() {
+            if path.is_dir() && path.join("main.json").is_file() {
                 path.file_name()?.to_str().map(|s| s.to_string())
             } else {
                 None
@@ -620,7 +621,7 @@ fn scan_track_templates() -> Vec<String> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
-            if path.is_dir() {
+            if path.is_dir() && path.join("track.json").is_file() {
                 path.file_name()?.to_str().map(|s| s.to_string())
             } else {
                 None
@@ -641,7 +642,7 @@ fn scan_group_templates() -> Vec<String> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
-            if path.is_dir() {
+            if path.is_dir() && path.join("group.json").is_file() {
                 path.file_name()?.to_str().map(|s| s.to_string())
             } else {
                 None
@@ -692,6 +693,7 @@ impl Default for Maolan {
             hw: hw::HW::new(state.clone()),
             modal: None,
             add_track: add_track::AddTrackView::default(),
+            apply_template: crate::apply_template::ApplyTemplateView::new(state.clone()),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             track_rename: track_rename::TrackRenameView::new(state.clone()),
             track_group: track_group::TrackGroupView::new(state.clone()),
@@ -6728,6 +6730,7 @@ impl Maolan {
         #[cfg(all(unix, not(target_os = "macos")))]
         self.track_plugins.update(message);
         self.add_track.update(message);
+        self.apply_template.update(message);
         self.clip_rename.update(message);
         self.track_rename.update(message);
         self.track_group.update(message);
@@ -8381,5 +8384,118 @@ mod tests {
         let app = Maolan::default();
         let bp = app.beat_pixels();
         assert!(bp > 0.0);
+    }
+
+    #[test]
+    fn scan_track_templates_ignores_directories_without_track_json() {
+        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home =
+            std::env::temp_dir().join(format!("maolan_scan_track_templates_{unique}"));
+        let track_templates = temp_home.join(".config/maolan/track_templates");
+        let valid = track_templates.join("Valid");
+        let invalid = track_templates.join("InvalidSession");
+        fs::create_dir_all(&valid).unwrap();
+        fs::create_dir_all(&invalid).unwrap();
+        File::create(valid.join("track.json")).unwrap();
+        File::create(invalid.join("main.json")).unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let templates = scan_track_templates();
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(templates, vec!["Valid".to_string()]);
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn scan_group_templates_ignores_directories_without_group_json() {
+        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home =
+            std::env::temp_dir().join(format!("maolan_scan_group_templates_{unique}"));
+        let group_templates = temp_home.join(".config/maolan/group_templates");
+        let valid = group_templates.join("Valid");
+        let invalid = group_templates.join("Invalid");
+        fs::create_dir_all(&valid).unwrap();
+        fs::create_dir_all(&invalid).unwrap();
+        File::create(valid.join("group.json")).unwrap();
+        File::create(invalid.join("track.json")).unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let templates = scan_group_templates();
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(templates, vec!["Valid".to_string()]);
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn scan_templates_ignores_directories_without_main_json() {
+        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home = std::env::temp_dir().join(format!("maolan_scan_templates_{unique}"));
+        let session_templates = temp_home.join(".config/maolan/session_templates");
+        let valid = session_templates.join("Valid");
+        let invalid = session_templates.join("Invalid");
+        fs::create_dir_all(&valid).unwrap();
+        fs::create_dir_all(&invalid).unwrap();
+        File::create(valid.join("main.json")).unwrap();
+        File::create(invalid.join("session.json")).unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let templates = scan_templates();
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(templates, vec!["Valid".to_string()]);
+        let _ = fs::remove_dir_all(&temp_home);
     }
 }

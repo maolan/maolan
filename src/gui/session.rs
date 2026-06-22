@@ -199,7 +199,7 @@ impl Maolan {
     }
 
     pub(super) fn save_template(&self, path: String) -> std::io::Result<()> {
-        let filename = "session.json";
+        let filename = "main.json";
         let template_root = PathBuf::from(path.clone());
         fs::create_dir_all(&path)?;
         fs::create_dir_all(template_root.join("plugins"))?;
@@ -434,146 +434,154 @@ impl Maolan {
             }
         }
 
-        let mut restore_actions = vec![];
-
-        {
-            let (vst3_plugins, clap_plugins) = {
-                let state = self.state.blocking_read();
-                (state.vst3_plugins.clone(), state.clap_plugins.clone())
-            };
-            if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
-                let mut runtime_nodes = Vec::new();
-                #[cfg(all(unix, not(target_os = "macos")))]
-                let mut next_lv2_instance_id = 0usize;
-                let mut next_vst3_instance_id = 0usize;
-                let mut next_clap_instance_id = 0usize;
-
-                if let Some(plugins) = graph.get("plugins").and_then(|p| p.as_array()) {
-                    for plugin in plugins {
-                        if let Some(uri) = plugin.get("uri").and_then(|u| u.as_str()) {
-                            match plugin.get("format").and_then(Value::as_str) {
-                                #[cfg(all(unix, not(target_os = "macos")))]
-                                Some("LV2") => {
-                                    let instance_id = next_lv2_instance_id;
-                                    next_lv2_instance_id += 1;
-                                    runtime_nodes.push(
-                                        maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
-                                            instance_id,
-                                        ),
-                                    );
-                                    restore_actions.push(Action::TrackLoadLv2Plugin {
-                                        track_name: track_name.clone(),
-                                        plugin_uri: uri.to_string(),
-                                        instance_id: Some(instance_id),
-                                    });
-                                    if let Some(state) =
-                                        plugin.get("state").and_then(Self::lv2_state_from_json)
-                                    {
-                                        restore_actions.push(Action::TrackSetLv2PluginState {
-                                            track_name: track_name.clone(),
-                                            instance_id,
-                                            state,
-                                        });
-                                    }
-                                }
-                                Some("VST3") => {
-                                    let instance_id = next_vst3_instance_id;
-                                    next_vst3_instance_id += 1;
-                                    runtime_nodes.push(
-                                        maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
-                                            instance_id,
-                                        ),
-                                    );
-                                    if let Some(plugin_path) =
-                                        Self::resolve_vst3_plugin_path(uri, &vst3_plugins)
-                                    {
-                                        restore_actions.push(Action::TrackLoadVst3Plugin {
-                                            track_name: track_name.clone(),
-                                            plugin_path,
-                                            instance_id: Some(instance_id),
-                                        });
-                                    }
-                                }
-                                Some("CLAP") => {
-                                    let instance_id = next_clap_instance_id;
-                                    next_clap_instance_id += 1;
-                                    runtime_nodes.push(
-                                        maolan_engine::message::PluginGraphNode::ClapPluginInstance(
-                                            instance_id,
-                                        ),
-                                    );
-                                    if let Some(plugin_path) =
-                                        Self::resolve_clap_plugin_path(uri, &clap_plugins)
-                                    {
-                                        restore_actions.push(Action::TrackLoadClapPlugin {
-                                            track_name: track_name.clone(),
-                                            plugin_path,
-                                            instance_id: Some(instance_id),
-                                        });
-                                        if let Some(state) =
-                                            plugin.get("state").and_then(Self::clap_state_from_json)
-                                        {
-                                            restore_actions.push(Action::TrackClapRestoreState {
-                                                track_name: track_name.clone(),
-                                                instance_id,
-                                                state,
-                                            });
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                if let Some(connections) = graph.get("connections").and_then(|c| c.as_array()) {
-                    for conn in connections {
-                        let Some(from_node) = Self::plugin_node_from_json_with_runtime_nodes(
-                            &conn["from_node"],
-                            &runtime_nodes,
-                        ) else {
-                            continue;
-                        };
-                        let Some(to_node) = Self::plugin_node_from_json_with_runtime_nodes(
-                            &conn["to_node"],
-                            &runtime_nodes,
-                        ) else {
-                            continue;
-                        };
-                        let Some(kind) = Self::kind_from_json(&conn["kind"]) else {
-                            continue;
-                        };
-
-                        let from_port = conn["from_port"].as_u64().unwrap_or(0) as usize;
-                        let to_port = conn["to_port"].as_u64().unwrap_or(0) as usize;
-
-                        restore_actions.push(match kind {
-                            Kind::Audio => Action::TrackConnectPluginAudio {
-                                track_name: track_name.clone(),
-                                from_node,
-                                from_port,
-                                to_node,
-                                to_port,
-                            },
-                            Kind::MIDI => Action::TrackConnectPluginMidi {
-                                track_name: track_name.clone(),
-                                from_node,
-                                from_port,
-                                to_node,
-                                to_port,
-                            },
-                        });
-                    }
-                }
-            }
-        }
+        let restore_actions = self.build_track_template_actions(&track_name, &json);
 
         if restore_actions.is_empty() {
             Task::done(Message::None)
         } else {
             Self::restore_actions_task(restore_actions)
         }
+    }
+
+    fn build_track_template_actions(
+        &self,
+        track_name: &str,
+        json: &Value,
+    ) -> Vec<Action> {
+        let mut restore_actions = vec![];
+
+        let (vst3_plugins, clap_plugins) = {
+            let state = self.state.blocking_read();
+            (state.vst3_plugins.clone(), state.clap_plugins.clone())
+        };
+        if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
+            let mut runtime_nodes = Vec::new();
+            #[cfg(all(unix, not(target_os = "macos")))]
+            let mut next_lv2_instance_id = 0usize;
+            let mut next_vst3_instance_id = 0usize;
+            let mut next_clap_instance_id = 0usize;
+
+            if let Some(plugins) = graph.get("plugins").and_then(|p| p.as_array()) {
+                for plugin in plugins {
+                    if let Some(uri) = plugin.get("uri").and_then(|u| u.as_str()) {
+                        match plugin.get("format").and_then(Value::as_str) {
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            Some("LV2") => {
+                                let instance_id = next_lv2_instance_id;
+                                next_lv2_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                restore_actions.push(Action::TrackLoadLv2Plugin {
+                                    track_name: track_name.to_string(),
+                                    plugin_uri: uri.to_string(),
+                                    instance_id: Some(instance_id),
+                                });
+                                if let Some(state) =
+                                    plugin.get("state").and_then(Self::lv2_state_from_json)
+                                {
+                                    restore_actions.push(Action::TrackSetLv2PluginState {
+                                        track_name: track_name.to_string(),
+                                        instance_id,
+                                        state,
+                                    });
+                                }
+                            }
+                            Some("VST3") => {
+                                let instance_id = next_vst3_instance_id;
+                                next_vst3_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                if let Some(plugin_path) =
+                                    Self::resolve_vst3_plugin_path(uri, &vst3_plugins)
+                                {
+                                    restore_actions.push(Action::TrackLoadVst3Plugin {
+                                        track_name: track_name.to_string(),
+                                        plugin_path,
+                                        instance_id: Some(instance_id),
+                                    });
+                                }
+                            }
+                            Some("CLAP") => {
+                                let instance_id = next_clap_instance_id;
+                                next_clap_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::ClapPluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                if let Some(plugin_path) =
+                                    Self::resolve_clap_plugin_path(uri, &clap_plugins)
+                                {
+                                    restore_actions.push(Action::TrackLoadClapPlugin {
+                                        track_name: track_name.to_string(),
+                                        plugin_path,
+                                        instance_id: Some(instance_id),
+                                    });
+                                    if let Some(state) =
+                                        plugin.get("state").and_then(Self::clap_state_from_json)
+                                    {
+                                        restore_actions.push(Action::TrackClapRestoreState {
+                                            track_name: track_name.to_string(),
+                                            instance_id,
+                                            state,
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            if let Some(connections) = graph.get("connections").and_then(|c| c.as_array()) {
+                for conn in connections {
+                    let Some(from_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                        &conn["from_node"],
+                        &runtime_nodes,
+                    ) else {
+                        continue;
+                    };
+                    let Some(to_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                        &conn["to_node"],
+                        &runtime_nodes,
+                    ) else {
+                        continue;
+                    };
+                    let Some(kind) = Self::kind_from_json(&conn["kind"]) else {
+                        continue;
+                    };
+
+                    let from_port = conn["from_port"].as_u64().unwrap_or(0) as usize;
+                    let to_port = conn["to_port"].as_u64().unwrap_or(0) as usize;
+
+                    restore_actions.push(match kind {
+                        Kind::Audio => Action::TrackConnectPluginAudio {
+                            track_name: track_name.to_string(),
+                            from_node,
+                            from_port,
+                            to_node,
+                            to_port,
+                        },
+                        Kind::MIDI => Action::TrackConnectPluginMidi {
+                            track_name: track_name.to_string(),
+                            from_node,
+                            from_port,
+                            to_node,
+                            to_port,
+                        },
+                    });
+                }
+            }
+        }
+
+        restore_actions
     }
 
     pub(super) fn copy_track_from_branch(
@@ -842,8 +850,11 @@ impl Maolan {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "Group is empty"));
             }
 
-            let group_track_names: std::collections::HashSet<&str> =
-                group_tracks.iter().map(|t| t.name.as_str()).collect();
+            let group_track_names: std::collections::HashSet<&str> = group_tracks
+                .iter()
+                .map(|t| t.name.as_str())
+                .chain(std::iter::once(group_name))
+                .collect();
 
             let mut tracks_json = Vec::new();
             for track in group_tracks {
@@ -908,6 +919,69 @@ impl Maolan {
                 }));
             }
 
+            let master_track_json = state.tracks.iter().find(|t| t.name == group_name).map(
+                |master| {
+                    let mut track_json = serde_json::to_value(master).map_err(io::Error::other)?;
+                    if let Some(audio) = track_json.get_mut("audio").and_then(Value::as_object_mut) {
+                        audio.insert("clips".to_string(), Value::Array(vec![]));
+                    }
+                    if let Some(midi) = track_json.get_mut("midi").and_then(Value::as_object_mut) {
+                        midi.insert("clips".to_string(), Value::Array(vec![]));
+                    }
+                    if let Some(obj) = track_json.as_object_mut() {
+                        obj.insert("frozen".to_string(), Value::Bool(false));
+                        obj.insert("frozen_audio_backup".to_string(), Value::Array(vec![]));
+                        obj.insert("frozen_midi_backup".to_string(), Value::Array(vec![]));
+                        obj.insert("frozen_render_clip".to_string(), Value::Null);
+                    }
+
+                    let graph = {
+                        if let Some((plugins, connections)) =
+                            state.plugin_graphs_by_track.get(&master.name)
+                        {
+                            let id_to_index: std::collections::HashMap<usize, usize> = plugins
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, p)| (p.instance_id, idx))
+                                .collect();
+                            let plugins_json: Vec<Value> = plugins
+                                .iter()
+                                .map(|p| {
+                                    let state_json = p.state.clone().unwrap_or(Value::Null);
+                                    json!({"format": p.format, "uri": Self::plugin_save_uri(p), "state": state_json})
+                                })
+                                .collect();
+                            let conns_json: Vec<Value> = connections
+                                .iter()
+                                .filter_map(|c| {
+                                    let from_node =
+                                        Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
+                                    let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
+                                    Some(json!({
+                                        "from_node": from_node,
+                                        "from_port": c.from_port,
+                                        "to_node": to_node,
+                                        "to_port": c.to_port,
+                                        "kind": Self::kind_to_json(c.kind),
+                                    }))
+                                })
+                                .collect();
+                            json!({
+                                "plugins": plugins_json,
+                                "connections": conns_json,
+                            })
+                        } else {
+                            Value::Null
+                        }
+                    };
+
+                    std::io::Result::Ok(json!({
+                        "track": track_json,
+                        "graph": graph,
+                    }))
+                },
+            ).transpose()?;
+
             let connections: Vec<&crate::state::Connection> = state
                 .connections
                 .iter()
@@ -920,6 +994,7 @@ impl Maolan {
             let result = json!({
                 "group_name": group_name,
                 "tracks": tracks_json,
+                "master_track": master_track_json,
                 "connections": connections,
             });
 
@@ -1119,9 +1194,64 @@ impl Maolan {
             )));
         };
 
+        let restore_actions = self.build_group_template_actions(&base_name, tracks, &json);
+
+        if restore_actions.len() <= 2 {
+            Task::done(Message::None)
+        } else {
+            Self::restore_actions_task(restore_actions)
+        }
+    }
+
+    fn build_group_template_actions(
+        &mut self,
+        base_name: &str,
+        tracks: &[Value],
+        json: &Value,
+    ) -> Vec<Action> {
         let mut name_map = std::collections::HashMap::new();
-        let mut restore_actions = vec![];
-        restore_actions.push(Action::BeginSessionRestore);
+        let mut restore_actions = vec![Action::BeginSessionRestore];
+
+        // Create the group master track first so child tracks can reference it.
+        if let Some(master_entry) = json.get("master_track")
+            && let Some(master_json) = master_entry.get("track")
+        {
+            let master_original_name = master_json
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(base_name)
+                .to_string();
+            name_map.insert(master_original_name, base_name.to_string());
+
+            let audio_ins = master_json
+                .get("audio")
+                .and_then(|a| a.get("ins"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as usize;
+            let audio_outs = master_json
+                .get("audio")
+                .and_then(|a| a.get("outs"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as usize;
+            let midi_ins = master_json
+                .get("midi")
+                .and_then(|m| m.get("ins"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let midi_outs = master_json
+                .get("midi")
+                .and_then(|m| m.get("outs"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+
+            restore_actions.push(Action::AddTrack {
+                name: base_name.to_string(),
+                audio_ins,
+                midi_ins,
+                audio_outs,
+                midi_outs,
+            });
+        }
 
         for track_entry in tracks {
             let Some(track_json) = track_entry.get("track") else {
@@ -1131,11 +1261,7 @@ impl Maolan {
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or("Track");
-            let new_name = if tracks.len() == 1 {
-                base_name.clone()
-            } else {
-                format!("{} {}", base_name, original_name)
-            };
+            let new_name = format!("{} {}", base_name, original_name);
             name_map.insert(original_name.to_string(), new_name.clone());
 
             let audio_ins = track_json
@@ -1193,7 +1319,7 @@ impl Maolan {
 
             restore_actions.push(Action::TrackSetVcaMaster {
                 track_name: new_name,
-                master_track: Some(base_name.clone()),
+                master_track: Some(base_name.to_string()),
             });
         }
 
@@ -1234,13 +1360,37 @@ impl Maolan {
             }
         }
 
-        restore_actions.push(Action::EndSessionRestore);
+        // Restore plugins on the group master track after all tracks exist.
+        if let Some(master_entry) = json.get("master_track")
+            && let Some(master_json) = master_entry.get("track")
+        {
+            if let Some(value) = master_json
+                .get("midi")
+                .and_then(|m| m.get("editor_view_mode"))
+                && let Ok(mode) =
+                    serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
+            {
+                self.pending_track_midi_editor_view_mode
+                    .insert(base_name.to_string(), mode);
+            }
 
-        if restore_actions.len() <= 2 {
-            Task::done(Message::None)
-        } else {
-            Self::restore_actions_task(restore_actions)
+            let graph = master_entry.get("graph");
+            let (vst3_plugins, clap_plugins) = {
+                let state = self.state.blocking_read();
+                (state.vst3_plugins.clone(), state.clap_plugins.clone())
+            };
+            let mut plugin_actions = Self::track_template_actions_from_json(
+                base_name,
+                master_json,
+                graph,
+                &vst3_plugins,
+                &clap_plugins,
+            );
+            restore_actions.append(&mut plugin_actions);
         }
+
+        restore_actions.push(Action::EndSessionRestore);
+        restore_actions
     }
 
     pub(super) fn save(&self, path: String) -> std::io::Result<()> {
@@ -2913,12 +3063,413 @@ impl Maolan {
             .collect::<Vec<_>>();
         Task::batch(tasks)
     }
+
+    pub(super) fn apply_track_template(
+        &mut self,
+        track_name: String,
+        template_name: String,
+    ) -> Task<Message> {
+        use std::fs::File;
+        use std::io::BufReader;
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let template_path = format!(
+            "{}/.config/maolan/track_templates/{}/track.json",
+            home, template_name
+        );
+
+        let file = match File::open(&template_path) {
+            Ok(f) => f,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to open template: {}",
+                    e
+                ))));
+            }
+        };
+        let reader = BufReader::new(file);
+        let json: serde_json::Value = match serde_json::from_reader(reader) {
+            Ok(j) => j,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to parse template: {}",
+                    e
+                ))));
+            }
+        };
+
+        let track = {
+            let state = self.state.blocking_read();
+            state
+                .tracks
+                .iter()
+                .find(|t| t.name == track_name)
+                .cloned()
+        };
+        let Some(track) = track else {
+            return Task::done(Message::Response(Err(format!(
+                "Track '{}' not found",
+                track_name
+            ))));
+        };
+
+        let audio = json.get("track").and_then(|t| t.get("audio"));
+        let midi = json.get("track").and_then(|t| t.get("midi"));
+        let t_audio_ins = audio.and_then(|a| a.get("ins")).and_then(Value::as_u64).unwrap_or(1) as usize;
+        let t_audio_outs = audio
+            .and_then(|a| a.get("outs"))
+            .and_then(Value::as_u64)
+            .unwrap_or(1) as usize;
+        let t_midi_ins = midi.and_then(|m| m.get("ins")).and_then(Value::as_u64).unwrap_or(0) as usize;
+        let t_midi_outs = midi
+            .and_then(|m| m.get("outs"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+
+        if track.primary_audio_ins() != t_audio_ins
+            || track.primary_audio_outs() != t_audio_outs
+            || track.midi.ins != t_midi_ins
+            || track.midi.outs != t_midi_outs
+        {
+            return Task::done(Message::Response(Err(format!(
+                "Track '{}' input/output counts do not match template",
+                track_name
+            ))));
+        }
+
+        let clear = self.send(Action::TrackClearPlugins {
+            track_name: track_name.clone(),
+        });
+        let load = self.load_track_template(track_name, template_name);
+        clear.chain(load)
+    }
+
+    pub(super) fn apply_group_template(
+        &mut self,
+        group_name: String,
+        template_name: String,
+    ) -> Task<Message> {
+        use std::fs::File;
+        use std::io::BufReader;
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let template_path = format!(
+            "{}/.config/maolan/group_templates/{}/group.json",
+            home, template_name
+        );
+
+        let file = match File::open(&template_path) {
+            Ok(f) => f,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to open group template: {}",
+                    e
+                ))));
+            }
+        };
+        let reader = BufReader::new(file);
+        let json: serde_json::Value = match serde_json::from_reader(reader) {
+            Ok(j) => j,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to parse group template: {}",
+                    e
+                ))));
+            }
+        };
+
+        let Some(tracks_json) = json.get("tracks").and_then(|t| t.as_array()) else {
+            return Task::done(Message::Response(Err(
+                "Invalid group template: missing tracks".to_string(),
+            )));
+        };
+
+        let state = self.state.blocking_read();
+        let existing_members: Vec<_> = state
+            .tracks
+            .iter()
+            .filter(|t| t.vca_master.as_deref() == Some(&group_name))
+            .cloned()
+            .collect();
+        let existing_names: std::collections::HashSet<String> = state
+            .tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        drop(state);
+
+        let mut unmatched_members: Vec<_> = existing_members.iter().collect();
+        let mut name_map = std::collections::HashMap::new();
+        name_map.insert(group_name.clone(), group_name.clone());
+        let mut restore_actions = vec![Action::BeginSessionRestore];
+        let mut errors = Vec::new();
+
+        for track_entry in tracks_json {
+            let Some(track_json) = track_entry.get("track") else {
+                continue;
+            };
+            let original_name = track_json
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Track");
+
+            let matched_track = unmatched_members
+                .iter()
+                .position(|t| t.name == original_name)
+                .map(|idx| unmatched_members.remove(idx).clone());
+
+            let (target_name, _audio_ins, _audio_outs, _midi_ins, _midi_outs) = if let Some(existing)
+                = matched_track
+            {
+                let audio_ins = track_json
+                    .get("audio")
+                    .and_then(|a| a.get("ins"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1) as usize;
+                let audio_outs = track_json
+                    .get("audio")
+                    .and_then(|a| a.get("outs"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1) as usize;
+                let midi_ins = track_json
+                    .get("midi")
+                    .and_then(|m| m.get("ins"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+                let midi_outs = track_json
+                    .get("midi")
+                    .and_then(|m| m.get("outs"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+
+                if existing.primary_audio_ins() != audio_ins
+                    || existing.primary_audio_outs() != audio_outs
+                    || existing.midi.ins != midi_ins
+                    || existing.midi.outs != midi_outs
+                {
+                    errors.push(format!(
+                        "Track '{}' input/output counts do not match template",
+                        existing.name
+                    ));
+                    continue;
+                }
+
+                name_map.insert(original_name.to_string(), existing.name.clone());
+                restore_actions.push(Action::TrackClearPlugins {
+                    track_name: existing.name.clone(),
+                });
+                (existing.name, audio_ins, audio_outs, midi_ins, midi_outs)
+            } else {
+                let new_name = if tracks_json.len() == 1 {
+                    group_name.clone()
+                } else {
+                    let base = format!("{} {}", group_name, original_name);
+                    if existing_names.contains(&base) {
+                        let mut n = 2;
+                        loop {
+                            let candidate = format!("{} {}", base, n);
+                            if !existing_names.contains(&candidate) {
+                                break candidate;
+                            }
+                            n += 1;
+                        }
+                    } else {
+                        base
+                    }
+                };
+
+                let audio_ins = track_json
+                    .get("audio")
+                    .and_then(|a| a.get("ins"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1) as usize;
+                let audio_outs = track_json
+                    .get("audio")
+                    .and_then(|a| a.get("outs"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1) as usize;
+                let midi_ins = track_json
+                    .get("midi")
+                    .and_then(|m| m.get("ins"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+                let midi_outs = track_json
+                    .get("midi")
+                    .and_then(|m| m.get("outs"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+
+                restore_actions.push(Action::AddTrack {
+                    name: new_name.clone(),
+                    audio_ins,
+                    midi_ins,
+                    audio_outs,
+                    midi_outs,
+                });
+                restore_actions.push(Action::TrackSetVcaMaster {
+                    track_name: new_name.clone(),
+                    master_track: Some(group_name.clone()),
+                });
+                name_map.insert(original_name.to_string(), new_name.clone());
+                (new_name, audio_ins, audio_outs, midi_ins, midi_outs)
+            };
+
+            if let Some(value) = track_json
+                .get("midi")
+                .and_then(|m| m.get("editor_view_mode"))
+                && let Ok(mode) =
+                    serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
+            {
+                self.pending_track_midi_editor_view_mode
+                    .insert(target_name.clone(), mode);
+            }
+
+            let graph = track_entry.get("graph");
+            let (vst3_plugins, clap_plugins) = {
+                let state = self.state.blocking_read();
+                (state.vst3_plugins.clone(), state.clap_plugins.clone())
+            };
+            let mut plugin_actions = Self::track_template_actions_from_json(
+                &target_name,
+                track_json,
+                graph,
+                &vst3_plugins,
+                &clap_plugins,
+            );
+            restore_actions.append(&mut plugin_actions);
+        }
+
+        if let Some(connections) = json.get("connections").and_then(|c| c.as_array()) {
+            for conn in connections {
+                let Some(from_track_orig) = conn.get("from_track").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(to_track_orig) = conn.get("to_track").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(from_track) = name_map.get(from_track_orig).cloned() else {
+                    continue;
+                };
+                let Some(to_track) = name_map.get(to_track_orig).cloned() else {
+                    continue;
+                };
+                let from_port = conn.get("from_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let to_port = conn.get("to_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let Some(kind_str) = conn.get("kind").and_then(Value::as_str) else {
+                    continue;
+                };
+                let kind = match kind_str {
+                    "audio" => Kind::Audio,
+                    "midi" => Kind::MIDI,
+                    _ => continue,
+                };
+                restore_actions.push(Action::Connect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                });
+            }
+        }
+
+        if let Some(master_entry) = json.get("master_track")
+            && let Some(master_track) = self
+                .state
+                .blocking_read()
+                .tracks
+                .iter()
+                .find(|t| t.name == group_name)
+                .cloned()
+            && let Some(master_json) = master_entry.get("track")
+        {
+            let audio_ins = master_json
+                .get("audio")
+                .and_then(|a| a.get("ins"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as usize;
+            let audio_outs = master_json
+                .get("audio")
+                .and_then(|a| a.get("outs"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as usize;
+            let midi_ins = master_json
+                .get("midi")
+                .and_then(|m| m.get("ins"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let midi_outs = master_json
+                .get("midi")
+                .and_then(|m| m.get("outs"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+
+            if master_track.primary_audio_ins() == audio_ins
+                && master_track.primary_audio_outs() == audio_outs
+                && master_track.midi.ins == midi_ins
+                && master_track.midi.outs == midi_outs
+            {
+                if let Some(value) = master_json
+                    .get("midi")
+                    .and_then(|m| m.get("editor_view_mode"))
+                    && let Ok(mode) = serde_json::from_value::<
+                        crate::message::MidiEditorViewMode,
+                    >(value.clone())
+                {
+                    self.pending_track_midi_editor_view_mode
+                        .insert(group_name.clone(), mode);
+                }
+
+                restore_actions.push(Action::TrackClearPlugins {
+                    track_name: group_name.clone(),
+                });
+                let graph = master_entry.get("graph");
+                let (vst3_plugins, clap_plugins) = {
+                    let state = self.state.blocking_read();
+                    (state.vst3_plugins.clone(), state.clap_plugins.clone())
+                };
+                let mut plugin_actions = Self::track_template_actions_from_json(
+                    &group_name,
+                    master_json,
+                    graph,
+                    &vst3_plugins,
+                    &clap_plugins,
+                );
+                restore_actions.append(&mut plugin_actions);
+            } else {
+                errors.push(format!(
+                    "Group master '{}' input/output counts do not match template",
+                    group_name
+                ));
+            }
+        }
+
+        restore_actions.push(Action::EndSessionRestore);
+
+        if !errors.is_empty() {
+            return Task::done(Message::Response(Err(errors.join("; "))));
+        }
+
+        if restore_actions.len() <= 2 {
+            Task::done(Message::None)
+        } else {
+            Self::restore_actions_task(restore_actions)
+        }
+    }
+
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::{
+        fs,
+        sync::{LazyLock, Mutex},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    static ENV_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn export_render_mode_to_json_mixdown() {
@@ -3117,6 +3668,292 @@ mod tests {
     fn kind_from_json_unknown() {
         let result = Maolan::kind_from_json(&json!("unknown"));
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn build_group_template_actions_restores_master_track_plugins() {
+        let mut app = Maolan::default();
+        let json = json!({
+            "group_name": "Drums",
+            "tracks": [
+                {
+                    "track": {"name": "Kick", "audio": {"ins": 1, "outs": 1}, "midi": {"ins": 0, "outs": 0}},
+                    "graph": null
+                },
+                {
+                    "track": {"name": "Snare", "audio": {"ins": 1, "outs": 1}, "midi": {"ins": 0, "outs": 0}},
+                    "graph": null
+                }
+            ],
+            "master_track": {
+                "track": {"name": "Drums", "audio": {"ins": 2, "outs": 2}, "midi": {"ins": 0, "outs": 0}},
+                "graph": {
+                    "plugins": [{"format": "VST3", "uri": "/fake/plugin.vst3", "state": null}],
+                    "connections": []
+                }
+            },
+            "connections": [
+                {"from_track": "Kick", "to_track": "Drums", "from_port": 0, "to_port": 0, "kind": "audio"},
+                {"from_track": "Snare", "to_track": "Drums", "from_port": 0, "to_port": 1, "kind": "audio"}
+            ]
+        });
+        let tracks = json["tracks"].as_array().unwrap();
+        let actions = app.build_group_template_actions("MyDrums", tracks, &json);
+
+        assert!(matches!(actions.first(), Some(Action::BeginSessionRestore)));
+
+        // Master track created with the new group name and template I/O.
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::AddTrack {
+                name,
+                audio_ins,
+                audio_outs,
+                ..
+            } if name == "MyDrums" && *audio_ins == 2 && *audio_outs == 2
+        )));
+
+        // Child tracks keep their original names prefixed with the new group name.
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::AddTrack { name, .. } if name == "MyDrums Kick"
+        )));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::AddTrack { name, .. } if name == "MyDrums Snare"
+        )));
+
+        // Child tracks are routed to the new master track.
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::TrackSetVcaMaster { track_name, master_track: Some(master) }
+            if track_name == "MyDrums Kick" && master == "MyDrums"
+        )));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::TrackSetVcaMaster { track_name, master_track: Some(master) }
+            if track_name == "MyDrums Snare" && master == "MyDrums"
+        )));
+
+        // Saved connections are remapped to the new track names.
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::Connect { from_track, to_track, .. }
+            if from_track == "MyDrums Kick" && to_track == "MyDrums"
+        )));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::Connect { from_track, to_track, .. }
+            if from_track == "MyDrums Snare" && to_track == "MyDrums"
+        )));
+
+        // Master track plugins are restored.
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::TrackLoadVst3Plugin { track_name, plugin_path, .. }
+            if track_name == "MyDrums" && plugin_path == "/fake/plugin.vst3"
+        )));
+
+        assert!(matches!(actions.last(), Some(Action::EndSessionRestore)));
+    }
+
+    #[test]
+    fn build_group_template_actions_avoids_single_child_master_name_conflict() {
+        let mut app = Maolan::default();
+        let json = json!({
+            "group_name": "Drums",
+            "tracks": [
+                {
+                    "track": {"name": "Kick", "audio": {"ins": 1, "outs": 1}, "midi": {"ins": 0, "outs": 0}},
+                    "graph": null
+                }
+            ],
+            "master_track": {
+                "track": {"name": "Drums", "audio": {"ins": 1, "outs": 1}, "midi": {"ins": 0, "outs": 0}},
+                "graph": null
+            },
+            "connections": []
+        });
+        let tracks = json["tracks"].as_array().unwrap();
+        let actions = app.build_group_template_actions("MyDrums", tracks, &json);
+
+        let names: Vec<_> = actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::AddTrack { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert!(names.contains(&"MyDrums".to_string()));
+        assert!(names.contains(&"MyDrums Kick".to_string()));
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn save_track_as_template_writes_plugin_graph() {
+        let _guard = ENV_GUARD.lock().expect("lock env guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home = std::env::temp_dir().join(format!("maolan_track_template_save_{unique}"));
+        let template_dir = temp_home.join(".config/maolan/track_templates/Drums");
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.tracks.push(crate::state::Track::new(
+                "Drums".to_string(),
+                0.0,
+                2,
+                2,
+                0,
+                0,
+            ));
+            let plugin = maolan_engine::message::PluginGraphPlugin {
+                node: maolan_engine::message::PluginGraphNode::ClapPluginInstance(0),
+                instance_id: 0,
+                format: "CLAP".to_string(),
+                uri: "/fake/DrumMachine.clap".to_string(),
+                plugin_id: "com.example.drummachine".to_string(),
+                name: "Fake Drum Machine".to_string(),
+                main_audio_inputs: 2,
+                main_audio_outputs: 2,
+                audio_inputs: 2,
+                audio_outputs: 2,
+                midi_inputs: 0,
+                midi_outputs: 0,
+                state: None,
+                bypassed: false,
+            };
+            state.plugin_graphs_by_track.insert(
+                "Drums".to_string(),
+                (
+                    vec![plugin],
+                    vec![maolan_engine::message::PluginGraphConnection {
+                        from_node: maolan_engine::message::PluginGraphNode::TrackInput,
+                        from_port: 0,
+                        to_node: maolan_engine::message::PluginGraphNode::ClapPluginInstance(0),
+                        to_port: 0,
+                        kind: Kind::Audio,
+                    }],
+                ),
+            );
+        }
+
+        let _ = app.save_track_as_template("Drums", template_dir.to_string_lossy().to_string());
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        let track_json_path = template_dir.join("track.json");
+        assert!(track_json_path.exists(), "track template file should exist");
+        let metadata = track_json_path.metadata().expect("file metadata");
+        assert!(metadata.len() > 0, "track template file should not be empty");
+        let saved: serde_json::Value = serde_json::from_reader(
+            File::open(&track_json_path).expect("open track template"),
+        )
+        .expect("parse track template");
+
+        let plugins = saved["graph"]["plugins"].as_array().expect("plugins array");
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0]["format"], "CLAP");
+        // CLAP plugins should be saved by their plugin ID, not the full file path.
+        assert_eq!(plugins[0]["uri"], "com.example.drummachine");
+
+        let connections = saved["graph"]["connections"]
+            .as_array()
+            .expect("connections array");
+        assert_eq!(connections.len(), 1);
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn build_track_template_actions_loads_plugins_and_connections() {
+        let app = Maolan::default();
+        let json = json!({
+            "track": {"name": "Drums", "audio": {"ins": 2, "outs": 2}, "midi": {"ins": 0, "outs": 0}},
+            "graph": {
+                "plugins": [
+                    {"format": "VST3", "uri": "/fake/plugin.vst3", "state": null}
+                ],
+                "connections": [
+                    {"from_node": {"type": "track_input"}, "from_port": 0, "to_node": {"type": "vst3_plugin", "plugin_index": 0}, "to_port": 0, "kind": "audio"}
+                ]
+            }
+        });
+
+        let actions = app.build_track_template_actions("MyDrums", &json);
+
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::TrackLoadVst3Plugin {
+                track_name,
+                plugin_path,
+                instance_id: Some(0),
+                ..
+            } if track_name == "MyDrums" && plugin_path == "/fake/plugin.vst3"
+        )));
+
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::TrackConnectPluginAudio {
+                track_name,
+                from_node,
+                to_node,
+                ..
+            } if track_name == "MyDrums"
+                && matches!(from_node, maolan_engine::message::PluginGraphNode::TrackInput)
+                && matches!(to_node, maolan_engine::message::PluginGraphNode::Vst3PluginInstance(0))
+        )));
+    }
+
+    #[test]
+    fn build_track_template_actions_resolves_clap_plugin_id_to_path() {
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.clap_plugins.push(maolan_engine::clap::ClapPluginInfo {
+                path: "/usr/lib/clap/DrumMachine.clap::com.example.drummachine".to_string(),
+                name: "Drum Machine".to_string(),
+                capabilities: None,
+            });
+        }
+        let json = json!({
+            "track": {"name": "Drums", "audio": {"ins": 2, "outs": 2}, "midi": {"ins": 0, "outs": 0}},
+            "graph": {
+                "plugins": [
+                    {"format": "CLAP", "uri": "com.example.drummachine", "state": null}
+                ],
+                "connections": []
+            }
+        });
+
+        let actions = app.build_track_template_actions("MyDrums", &json);
+
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::TrackLoadClapPlugin {
+                track_name,
+                plugin_path,
+                instance_id: Some(0),
+                ..
+            } if track_name == "MyDrums" && plugin_path == "/usr/lib/clap/DrumMachine.clap::com.example.drummachine"
+        )));
     }
 }
 

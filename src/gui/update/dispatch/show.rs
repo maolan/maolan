@@ -172,6 +172,34 @@ impl Maolan {
                 });
                 Task::none()
             }
+            Show::ApplyTemplate {
+                track_name,
+                is_group,
+            } => {
+                self.modal = Some(Show::ApplyTemplate {
+                    track_name: track_name.clone(),
+                    is_group: *is_group,
+                });
+                self.state.blocking_write().apply_template_dialog = Some(
+                    crate::state::ApplyTemplateDialog {
+                        track_name: track_name.clone(),
+                        is_group: *is_group,
+                        selected_template: None,
+                        available_templates: Vec::new(),
+                    },
+                );
+                if *is_group {
+                    Task::perform(
+                        async { crate::gui::scan_group_templates() },
+                        Message::GroupTemplatesLoaded,
+                    )
+                } else {
+                    Task::perform(
+                        async { crate::gui::scan_track_templates() },
+                        Message::TrackTemplatesLoaded,
+                    )
+                }
+            }
         }
     }
 }

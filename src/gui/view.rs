@@ -173,6 +173,9 @@ impl Maolan {
             if state.template_save_dialog.is_some() {
                 return self.wrap_with_log_window(self.template_save.view());
             }
+            if state.apply_template_dialog.is_some() {
+                return self.wrap_with_log_window(self.apply_template.view());
+            }
             match self.modal {
                 Some(Show::ExportSettings) => {
                     self.wrap_with_log_window(self.export_settings_view())
