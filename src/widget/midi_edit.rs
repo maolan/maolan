@@ -392,7 +392,7 @@ impl MIDIEdit {
             notes_h = MIDI_NOTE_COUNT as f32
                 * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
                     * zoom_y)
-                .max(1.0);
+                    .max(1.0);
 
             notes_content = NoteArea {
                 zoom_x,

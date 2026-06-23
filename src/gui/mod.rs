@@ -2412,15 +2412,10 @@ impl Maolan {
         {
             let state = self.state.blocking_read();
             for (track_name, (plugins, _connections)) in &state.plugin_graphs_by_track {
-                for (idx, plugin) in plugins.iter().enumerate() {
-                    let instance_id = plugins
-                        .iter()
-                        .take(idx)
-                        .filter(|p| !p.uri.is_empty())
-                        .count();
+                for plugin in plugins {
                     let plugin_ref = PluginInstanceRef::Track {
                         track_name: track_name.clone(),
-                        instance_id,
+                        instance_id: plugin.instance_id,
                     };
                     if plugin.format.eq_ignore_ascii_case("CLAP") {
                         clap_refs.push(plugin_ref);
@@ -2432,30 +2427,33 @@ impl Maolan {
             for track in &state.tracks {
                 for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
                     if let Some(graph) = clip.plugin_graph_json.as_ref()
-                        && let Some(plugins) = graph.get("plugins").and_then(Value::as_array) {
-                            for (idx, plugin) in plugins.iter().enumerate() {
-                                let format = plugin
-                                    .get("format")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("")
-                                    .to_string();
-                                let instance_id = plugins
-                                    .iter()
-                                    .take(idx)
-                                    .filter(|p| p.get("uri").and_then(Value::as_str).is_some())
-                                    .count();
-                                let plugin_ref = PluginInstanceRef::Clip {
-                                    track_name: track.name.clone(),
-                                    clip_idx,
-                                    instance_id,
-                                };
-                                if format.eq_ignore_ascii_case("CLAP") {
-                                    clap_refs.push(plugin_ref);
-                                } else if format.eq_ignore_ascii_case("LV2") {
-                                    lv2_refs.push(plugin_ref);
-                                }
+                        && let Some(plugins) = graph.get("plugins").and_then(Value::as_array)
+                    {
+                        for plugin in plugins {
+                            let format = plugin
+                                .get("format")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            let Some(instance_id) = plugin
+                                .get("instance_id")
+                                .and_then(Value::as_u64)
+                                .map(|n| n as usize)
+                            else {
+                                continue;
+                            };
+                            let plugin_ref = PluginInstanceRef::Clip {
+                                track_name: track.name.clone(),
+                                clip_idx,
+                                instance_id,
+                            };
+                            if format.eq_ignore_ascii_case("CLAP") {
+                                clap_refs.push(plugin_ref);
+                            } else if format.eq_ignore_ascii_case("LV2") {
+                                lv2_refs.push(plugin_ref);
                             }
                         }
+                    }
                 }
             }
         }
@@ -2547,6 +2545,7 @@ impl Maolan {
         plugin_ref: &PluginInstanceRef,
         refs: &[(u32, String)],
     ) {
+        tracing::info!(?plugin_ref, ?refs, "Received CLAP file references");
         let Some(op) = self.collect_to_session_operation.as_mut() else {
             return;
         };
@@ -2559,8 +2558,16 @@ impl Maolan {
                 continue;
             }
             if let Some((src, dst_rel)) = op.collect_file(path) {
-                op.copied_files.insert(src, dst_rel.clone());
-                Self::send_clap_file_reference_update_action(plugin_ref, *index, &dst_rel);
+                op.copied_files.insert(src.clone(), dst_rel.clone());
+                // Tell the plugin the absolute path so it can load the file
+                // immediately. The saved session JSON is later rewritten to use
+                // relative data/ paths for portability.
+                let absolute = op.data_dir.join(&dst_rel["data/".len()..]);
+                Self::send_clap_file_reference_update_action(
+                    plugin_ref,
+                    *index,
+                    &absolute.to_string_lossy(),
+                );
             }
         }
 
@@ -2618,11 +2625,11 @@ impl Maolan {
         }
 
         if let Some(path) = self.session_dir.as_ref()
-            && let Err(e) = self.save(path.to_string_lossy().to_string()) {
-                self.state.blocking_write().message =
-                    format!("{message}; failed to save session: {e}");
-                return;
-            }
+            && let Err(e) = self.save(path.to_string_lossy().to_string())
+        {
+            self.state.blocking_write().message = format!("{message}; failed to save session: {e}");
+            return;
+        }
 
         self.state.blocking_write().message = message;
     }
@@ -2659,28 +2666,26 @@ impl Maolan {
         for (_track_name, (plugins, _connections)) in state.plugin_graphs_by_track.iter_mut() {
             for plugin in plugins.iter_mut() {
                 if let Some(ref mut plugin_state) = plugin.state {
-                    *plugin_state = Self::rewrite_plugin_state_paths(
-                        plugin_state,
-                        session_root,
-                        copied_files,
-                    );
+                    *plugin_state =
+                        Self::rewrite_plugin_state_paths(plugin_state, session_root, copied_files);
                 }
             }
         }
         for track in state.tracks.iter_mut() {
             for clip in track.audio.clips.iter_mut() {
                 if let Some(ref mut graph) = clip.plugin_graph_json
-                    && let Some(plugins) = graph.get_mut("plugins").and_then(Value::as_array_mut) {
-                        for plugin in plugins.iter_mut() {
-                            if let Some(plugin_state) = plugin.get_mut("state") {
-                                *plugin_state = Self::rewrite_plugin_state_paths(
-                                    plugin_state,
-                                    session_root,
-                                    copied_files,
-                                );
-                            }
+                    && let Some(plugins) = graph.get_mut("plugins").and_then(Value::as_array_mut)
+                {
+                    for plugin in plugins.iter_mut() {
+                        if let Some(plugin_state) = plugin.get_mut("state") {
+                            *plugin_state = Self::rewrite_plugin_state_paths(
+                                plugin_state,
+                                session_root,
+                                copied_files,
+                            );
                         }
                     }
+                }
             }
         }
     }
@@ -2758,6 +2763,90 @@ impl Maolan {
             }
         }
         result
+    }
+
+    /// Resolves relative `data/<file>` paths inside plugin state to absolute
+    /// paths so the plugin can load them after the session is opened.
+    fn resolve_collected_plugin_state_paths(state: &Value, session_root: &Path) -> Value {
+        Self::resolve_plugin_state_paths_impl(state, session_root)
+    }
+
+    fn resolve_plugin_state_paths_impl(value: &Value, session_root: &Path) -> Value {
+        match value {
+            Value::String(s) => {
+                let resolved = Self::resolve_session_relative_path(session_root, s);
+                Value::String(resolved.to_string_lossy().to_string())
+            }
+            Value::Array(arr) => {
+                let bytes: Vec<u8> = arr
+                    .iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                    .collect();
+                if !bytes.is_empty() {
+                    let rewritten = Self::resolve_bytes_paths(&bytes, session_root);
+                    if rewritten != bytes {
+                        return Value::Array(
+                            rewritten
+                                .into_iter()
+                                .map(|b| Value::Number(serde_json::Number::from(b)))
+                                .collect(),
+                        );
+                    }
+                }
+                Value::Array(
+                    arr.iter()
+                        .map(|v| Self::resolve_plugin_state_paths_impl(v, session_root))
+                        .collect(),
+                )
+            }
+            Value::Object(obj) => {
+                let mut new_obj = serde_json::Map::new();
+                for (k, v) in obj {
+                    new_obj.insert(
+                        k.clone(),
+                        Self::resolve_plugin_state_paths_impl(v, session_root),
+                    );
+                }
+                Value::Object(new_obj)
+            }
+            _ => value.clone(),
+        }
+    }
+
+    fn resolve_bytes_paths(bytes: &[u8], session_root: &Path) -> Vec<u8> {
+        let mut result = bytes.to_vec();
+        let mut offset = 0;
+        while offset + 4 <= result.len() {
+            if let Some((end, s)) = Self::read_utf8_string_from_bytes(&result, offset) {
+                let resolved = Self::resolve_session_relative_path(session_root, &s);
+                let resolved_str = resolved.to_string_lossy().to_string();
+                if resolved_str != s {
+                    let before = result.len();
+                    result.splice(offset..end, resolved_str.bytes());
+                    let after = result.len();
+                    offset = end + after - before;
+                    continue;
+                }
+                offset = end;
+            } else {
+                offset += 1;
+            }
+        }
+        result
+    }
+
+    fn resolve_session_relative_path(session_root: &Path, path: &str) -> PathBuf {
+        let p = PathBuf::from(path);
+        if p.is_absolute() {
+            return p;
+        }
+        if let Some(rest) = path.strip_prefix("data/") {
+            session_root.join("data").join(rest)
+        } else {
+            // Only rewrite explicit data/ paths; leave other relative strings
+            // (e.g. plugin-specific state markers) untouched.
+            p
+        }
     }
 
     fn resolve_session_external_path(session_root: &Path, path: &str) -> PathBuf {
@@ -5704,6 +5793,14 @@ impl Maolan {
 
     fn clap_state_from_json(v: &Value) -> Option<maolan_engine::clap::ClapPluginState> {
         serde_json::from_value(v.clone()).ok()
+    }
+
+    fn clap_state_from_json_resolved(
+        v: &Value,
+        session_root: &Path,
+    ) -> Option<maolan_engine::clap::ClapPluginState> {
+        let resolved = Self::resolve_collected_plugin_state_paths(v, session_root);
+        serde_json::from_value(resolved).ok()
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -8833,8 +8930,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let temp_home =
-            std::env::temp_dir().join(format!("maolan_scan_track_templates_{unique}"));
+        let temp_home = std::env::temp_dir().join(format!("maolan_scan_track_templates_{unique}"));
         let track_templates = temp_home.join(".config/maolan/track_templates");
         let valid = track_templates.join("Valid");
         let invalid = track_templates.join("InvalidSession");
@@ -8871,8 +8967,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let temp_home =
-            std::env::temp_dir().join(format!("maolan_scan_group_templates_{unique}"));
+        let temp_home = std::env::temp_dir().join(format!("maolan_scan_group_templates_{unique}"));
         let group_templates = temp_home.join(".config/maolan/group_templates");
         let valid = group_templates.join("Valid");
         let invalid = group_templates.join("Invalid");
@@ -9011,8 +9106,12 @@ mod tests {
             copied_files: HashMap::new(),
         };
 
-        let (_, rel1) = op.collect_file(external_file.to_string_lossy().as_ref()).unwrap();
-        let (_, rel2) = op.collect_file(external_file.to_string_lossy().as_ref()).unwrap();
+        let (_, rel1) = op
+            .collect_file(external_file.to_string_lossy().as_ref())
+            .unwrap();
+        let (_, rel2) = op
+            .collect_file(external_file.to_string_lossy().as_ref())
+            .unwrap();
         assert_eq!(rel1, rel2);
         assert_eq!(op.copied_files.len(), 1);
 
@@ -9034,7 +9133,12 @@ mod tests {
         let mut copied = HashMap::new();
         copied.insert(external.clone(), "data/external.wav".to_string());
 
-        let state = json!(session_root.join("external.wav").to_string_lossy().to_string());
+        let state = json!(
+            session_root
+                .join("external.wav")
+                .to_string_lossy()
+                .to_string()
+        );
         let rewritten = Maolan::rewrite_plugin_state_paths(&state, &session_root, &copied);
         assert_eq!(rewritten, json!("data/external.wav"));
 

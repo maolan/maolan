@@ -91,11 +91,7 @@ impl ApplyTemplateView {
                 info_text = "Unable to read group template".to_string();
                 can_apply = false;
             }
-        } else if let Some(track) = state
-            .tracks
-            .iter()
-            .find(|t| t.name == dialog.track_name)
-        {
+        } else if let Some(track) = state.tracks.iter().find(|t| t.name == dialog.track_name) {
             if let Some((t_audio_ins, t_audio_outs, t_midi_ins, t_midi_outs)) =
                 Self::load_track_template_config(selected_display)
             {

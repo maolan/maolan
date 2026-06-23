@@ -499,7 +499,10 @@ impl Maolan {
             | Message::RequestBatch(_)
             | Message::MeterPollTick => return self.handle_session_message(message),
             Message::EscapePressed => {
-                if matches!(self.modal, Some(Show::AddTrack | Show::ApplyTemplate { .. })) {
+                if matches!(
+                    self.modal,
+                    Some(Show::AddTrack | Show::ApplyTemplate { .. })
+                ) {
                     self.modal = None;
                     self.state.blocking_write().apply_template_dialog = None;
                 } else if self.state.blocking_read().track_marker_dialog.is_some() {
@@ -2582,6 +2585,18 @@ impl Maolan {
                         };
                         self.handle_clap_file_references_response(&plugin_ref, refs);
                     }
+                    Action::TrackClapStateDirty {
+                        track_name,
+                        instance_id,
+                    }
+                    | Action::ClipClapStateDirty {
+                        track_name,
+                        clip_idx: _,
+                        instance_id,
+                    } => {
+                        tracing::info!(%track_name, instance_id, "DAW received CLAP state dirty");
+                        self.engine_dirty = true;
+                    }
                     _ => {}
                 }
                 let handled_response_state = self.handle_response_engine_state_action(a);
@@ -3602,6 +3617,8 @@ impl Maolan {
                             state: clap_state,
                             ..
                         } => {
+                            let state_len = clap_state.bytes.len();
+                            tracing::info!(%track_name, instance_id = *_instance_id, %plugin_path, state_len, "DAW received TrackClapStateSnapshot");
                             let mut state = self.state.blocking_write();
                             state
                                 .clap_states_by_track
@@ -3618,7 +3635,10 @@ impl Maolan {
                                         .iter_mut()
                                         .find(|plugin| plugin.instance_id == *_instance_id)
                                 {
+                                    tracing::info!(%track_name, instance_id = *_instance_id, "DAW updated plugin_graphs_by_track state");
                                     plugin.state = Some(state_json.clone());
+                                } else {
+                                    tracing::warn!(%track_name, instance_id = *_instance_id, "DAW could not find plugin in plugin_graphs_by_track");
                                 }
                                 if state.plugin_graph_clip.is_none()
                                     && state.plugin_graph_track.as_deref()
@@ -9002,12 +9022,7 @@ impl Maolan {
         Task::none()
     }
 
-    fn handle_step_record_note(
-        &mut self,
-        channel: u8,
-        pitch: u8,
-        velocity: u8,
-    ) -> Task<Message> {
+    fn handle_step_record_note(&mut self, channel: u8, pitch: u8, velocity: u8) -> Task<Message> {
         let piano = match self.state.blocking_read().piano.as_ref() {
             Some(p) => p.clone(),
             None => return Task::none(),
@@ -9020,10 +9035,10 @@ impl Maolan {
         let samples_per_beat = self.samples_per_beat();
         let samples_per_bar = self.samples_per_bar();
         let interval = match self.midi_snap_mode {
-            SnapMode::NoSnap | SnapMode::Clips => {
-                (samples_per_beat / 4.0).max(1.0) as usize
-            }
-            mode => mode.interval_samples(samples_per_beat, samples_per_bar).max(1.0) as usize,
+            SnapMode::NoSnap | SnapMode::Clips => (samples_per_beat / 4.0).max(1.0) as usize,
+            mode => mode
+                .interval_samples(samples_per_beat, samples_per_bar)
+                .max(1.0) as usize,
         };
 
         let start_sample = self.step_recording_cursor_samples.clamp(0, clip_length);

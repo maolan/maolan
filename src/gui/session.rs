@@ -251,6 +251,8 @@ impl Maolan {
                     .iter()
                     .map(|p| {
                         let state_json = p.state.clone().unwrap_or(Value::Null);
+                        let has_state = !state_json.is_null();
+                        tracing::info!(%track_name, instance_id = p.instance_id, format = %p.format, has_state, "save: writing plugin state");
                         json!({"format": p.format, "uri": Self::plugin_save_uri(p), "state": state_json})
                     })
                     .collect();
@@ -443,11 +445,7 @@ impl Maolan {
         }
     }
 
-    fn build_track_template_actions(
-        &self,
-        track_name: &str,
-        json: &Value,
-    ) -> Vec<Action> {
+    fn build_track_template_actions(&self, track_name: &str, json: &Value) -> Vec<Action> {
         let mut restore_actions = vec![];
 
         let (vst3_plugins, clap_plugins) = {
@@ -1509,6 +1507,8 @@ impl Maolan {
                     .iter()
                     .map(|p| {
                         let state_json = p.state.clone().unwrap_or(Value::Null);
+                        let has_state = !state_json.is_null();
+                        tracing::info!(%track_name, instance_id = p.instance_id, format = %p.format, has_state, "save: writing plugin state");
                         json!({"format": p.format, "uri": Self::plugin_save_uri(p), "state": state_json})
                     })
                     .collect();
@@ -2871,12 +2871,18 @@ impl Maolan {
                                         plugin_path,
                                         instance_id: Some(instance_id),
                                     });
-                                    if let Some(state) = Self::clap_state_from_json(&p["state"]) {
+                                    if let Some(state) = Self::clap_state_from_json_resolved(
+                                        &p["state"],
+                                        &session_root,
+                                    ) {
+                                        tracing::info!(%track_name, instance_id, state_len = state.bytes.len(), "load: restoring CLAP plugin state");
                                         restore_actions.push(Action::TrackClapRestoreState {
                                             track_name: track_name.clone(),
                                             instance_id,
                                             state,
                                         });
+                                    } else {
+                                        tracing::info!(%track_name, instance_id, "load: no CLAP plugin state to restore");
                                     }
                                 } else {
                                     warnings.push(format!(
@@ -3040,6 +3046,11 @@ impl Maolan {
             }
             return self.send(Action::SetSessionPath(path));
         }
+        tracing::info!(
+            track_count = track_names.len(),
+            clip_count = clip_targets.len(),
+            "save: requesting CLAP state snapshots"
+        );
         let tasks = track_names
             .into_iter()
             .flat_map(|track_name| {
@@ -3101,11 +3112,7 @@ impl Maolan {
 
         let track = {
             let state = self.state.blocking_read();
-            state
-                .tracks
-                .iter()
-                .find(|t| t.name == track_name)
-                .cloned()
+            state.tracks.iter().find(|t| t.name == track_name).cloned()
         };
         let Some(track) = track else {
             return Task::done(Message::Response(Err(format!(
@@ -3116,12 +3123,18 @@ impl Maolan {
 
         let audio = json.get("track").and_then(|t| t.get("audio"));
         let midi = json.get("track").and_then(|t| t.get("midi"));
-        let t_audio_ins = audio.and_then(|a| a.get("ins")).and_then(Value::as_u64).unwrap_or(1) as usize;
+        let t_audio_ins = audio
+            .and_then(|a| a.get("ins"))
+            .and_then(Value::as_u64)
+            .unwrap_or(1) as usize;
         let t_audio_outs = audio
             .and_then(|a| a.get("outs"))
             .and_then(Value::as_u64)
             .unwrap_or(1) as usize;
-        let t_midi_ins = midi.and_then(|m| m.get("ins")).and_then(Value::as_u64).unwrap_or(0) as usize;
+        let t_midi_ins = midi
+            .and_then(|m| m.get("ins"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
         let t_midi_outs = midi
             .and_then(|m| m.get("outs"))
             .and_then(Value::as_u64)
@@ -3192,11 +3205,8 @@ impl Maolan {
             .filter(|t| t.vca_master.as_deref() == Some(&group_name))
             .cloned()
             .collect();
-        let existing_names: std::collections::HashSet<String> = state
-            .tracks
-            .iter()
-            .map(|t| t.name.clone())
-            .collect();
+        let existing_names: std::collections::HashSet<String> =
+            state.tracks.iter().map(|t| t.name.clone()).collect();
         drop(state);
 
         let mut unmatched_members: Vec<_> = existing_members.iter().collect();
@@ -3219,101 +3229,100 @@ impl Maolan {
                 .position(|t| t.name == original_name)
                 .map(|idx| unmatched_members.remove(idx).clone());
 
-            let (target_name, _audio_ins, _audio_outs, _midi_ins, _midi_outs) = if let Some(existing)
-                = matched_track
-            {
-                let audio_ins = track_json
-                    .get("audio")
-                    .and_then(|a| a.get("ins"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1) as usize;
-                let audio_outs = track_json
-                    .get("audio")
-                    .and_then(|a| a.get("outs"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1) as usize;
-                let midi_ins = track_json
-                    .get("midi")
-                    .and_then(|m| m.get("ins"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
-                let midi_outs = track_json
-                    .get("midi")
-                    .and_then(|m| m.get("outs"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
+            let (target_name, _audio_ins, _audio_outs, _midi_ins, _midi_outs) =
+                if let Some(existing) = matched_track {
+                    let audio_ins = track_json
+                        .get("audio")
+                        .and_then(|a| a.get("ins"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1) as usize;
+                    let audio_outs = track_json
+                        .get("audio")
+                        .and_then(|a| a.get("outs"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1) as usize;
+                    let midi_ins = track_json
+                        .get("midi")
+                        .and_then(|m| m.get("ins"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+                    let midi_outs = track_json
+                        .get("midi")
+                        .and_then(|m| m.get("outs"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
 
-                if existing.primary_audio_ins() != audio_ins
-                    || existing.primary_audio_outs() != audio_outs
-                    || existing.midi.ins != midi_ins
-                    || existing.midi.outs != midi_outs
-                {
-                    errors.push(format!(
-                        "Track '{}' input/output counts do not match template",
-                        existing.name
-                    ));
-                    continue;
-                }
-
-                name_map.insert(original_name.to_string(), existing.name.clone());
-                restore_actions.push(Action::TrackClearPlugins {
-                    track_name: existing.name.clone(),
-                });
-                (existing.name, audio_ins, audio_outs, midi_ins, midi_outs)
-            } else {
-                let new_name = if tracks_json.len() == 1 {
-                    group_name.clone()
-                } else {
-                    let base = format!("{} {}", group_name, original_name);
-                    if existing_names.contains(&base) {
-                        let mut n = 2;
-                        loop {
-                            let candidate = format!("{} {}", base, n);
-                            if !existing_names.contains(&candidate) {
-                                break candidate;
-                            }
-                            n += 1;
-                        }
-                    } else {
-                        base
+                    if existing.primary_audio_ins() != audio_ins
+                        || existing.primary_audio_outs() != audio_outs
+                        || existing.midi.ins != midi_ins
+                        || existing.midi.outs != midi_outs
+                    {
+                        errors.push(format!(
+                            "Track '{}' input/output counts do not match template",
+                            existing.name
+                        ));
+                        continue;
                     }
+
+                    name_map.insert(original_name.to_string(), existing.name.clone());
+                    restore_actions.push(Action::TrackClearPlugins {
+                        track_name: existing.name.clone(),
+                    });
+                    (existing.name, audio_ins, audio_outs, midi_ins, midi_outs)
+                } else {
+                    let new_name = if tracks_json.len() == 1 {
+                        group_name.clone()
+                    } else {
+                        let base = format!("{} {}", group_name, original_name);
+                        if existing_names.contains(&base) {
+                            let mut n = 2;
+                            loop {
+                                let candidate = format!("{} {}", base, n);
+                                if !existing_names.contains(&candidate) {
+                                    break candidate;
+                                }
+                                n += 1;
+                            }
+                        } else {
+                            base
+                        }
+                    };
+
+                    let audio_ins = track_json
+                        .get("audio")
+                        .and_then(|a| a.get("ins"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1) as usize;
+                    let audio_outs = track_json
+                        .get("audio")
+                        .and_then(|a| a.get("outs"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1) as usize;
+                    let midi_ins = track_json
+                        .get("midi")
+                        .and_then(|m| m.get("ins"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+                    let midi_outs = track_json
+                        .get("midi")
+                        .and_then(|m| m.get("outs"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+
+                    restore_actions.push(Action::AddTrack {
+                        name: new_name.clone(),
+                        audio_ins,
+                        midi_ins,
+                        audio_outs,
+                        midi_outs,
+                    });
+                    restore_actions.push(Action::TrackSetVcaMaster {
+                        track_name: new_name.clone(),
+                        master_track: Some(group_name.clone()),
+                    });
+                    name_map.insert(original_name.to_string(), new_name.clone());
+                    (new_name, audio_ins, audio_outs, midi_ins, midi_outs)
                 };
-
-                let audio_ins = track_json
-                    .get("audio")
-                    .and_then(|a| a.get("ins"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1) as usize;
-                let audio_outs = track_json
-                    .get("audio")
-                    .and_then(|a| a.get("outs"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1) as usize;
-                let midi_ins = track_json
-                    .get("midi")
-                    .and_then(|m| m.get("ins"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
-                let midi_outs = track_json
-                    .get("midi")
-                    .and_then(|m| m.get("outs"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
-
-                restore_actions.push(Action::AddTrack {
-                    name: new_name.clone(),
-                    audio_ins,
-                    midi_ins,
-                    audio_outs,
-                    midi_outs,
-                });
-                restore_actions.push(Action::TrackSetVcaMaster {
-                    track_name: new_name.clone(),
-                    master_track: Some(group_name.clone()),
-                });
-                name_map.insert(original_name.to_string(), new_name.clone());
-                (new_name, audio_ins, audio_outs, midi_ins, midi_outs)
-            };
 
             if let Some(value) = track_json
                 .get("midi")
@@ -3413,9 +3422,8 @@ impl Maolan {
                 if let Some(value) = master_json
                     .get("midi")
                     .and_then(|m| m.get("editor_view_mode"))
-                    && let Ok(mode) = serde_json::from_value::<
-                        crate::message::MidiEditorViewMode,
-                    >(value.clone())
+                    && let Ok(mode) =
+                        serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
                 {
                     self.pending_track_midi_editor_view_mode
                         .insert(group_name.clone(), mode);
@@ -3457,7 +3465,6 @@ impl Maolan {
             Self::restore_actions_task(restore_actions)
         }
     }
-
 }
 
 #[cfg(test)]
@@ -3863,11 +3870,13 @@ mod tests {
         let track_json_path = template_dir.join("track.json");
         assert!(track_json_path.exists(), "track template file should exist");
         let metadata = track_json_path.metadata().expect("file metadata");
-        assert!(metadata.len() > 0, "track template file should not be empty");
-        let saved: serde_json::Value = serde_json::from_reader(
-            File::open(&track_json_path).expect("open track template"),
-        )
-        .expect("parse track template");
+        assert!(
+            metadata.len() > 0,
+            "track template file should not be empty"
+        );
+        let saved: serde_json::Value =
+            serde_json::from_reader(File::open(&track_json_path).expect("open track template"))
+                .expect("parse track template");
 
         let plugins = saved["graph"]["plugins"].as_array().expect("plugins array");
         assert_eq!(plugins.len(), 1);
@@ -3928,11 +3937,13 @@ mod tests {
         let app = Maolan::default();
         {
             let mut state = app.state.blocking_write();
-            state.clap_plugins.push(maolan_engine::clap::ClapPluginInfo {
-                path: "/usr/lib/clap/DrumMachine.clap::com.example.drummachine".to_string(),
-                name: "Drum Machine".to_string(),
-                capabilities: None,
-            });
+            state
+                .clap_plugins
+                .push(maolan_engine::clap::ClapPluginInfo {
+                    path: "/usr/lib/clap/DrumMachine.clap::com.example.drummachine".to_string(),
+                    name: "Drum Machine".to_string(),
+                    capabilities: None,
+                });
         }
         let json = json!({
             "track": {"name": "Drums", "audio": {"ins": 2, "outs": 2}, "midi": {"ins": 0, "outs": 0}},

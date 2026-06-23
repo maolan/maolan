@@ -850,14 +850,19 @@ impl Workspace {
             ((sample as f32 - clip_start_samples as f32) * horizontal_pixels_per_sample).max(0.0)
         });
         let step_cursor_x = if args.step_recording_active {
-            Some((args.step_recording_cursor_samples as f32 * horizontal_pixels_per_sample).max(0.0))
+            Some(
+                (args.step_recording_cursor_samples as f32 * horizontal_pixels_per_sample).max(0.0),
+            )
         } else {
             None
         };
 
-        let piano_content = self
-            .midi_edit
-            .view(pixels_per_sample, samples_per_bar, playhead_x, step_cursor_x);
+        let piano_content = self.midi_edit.view(
+            pixels_per_sample,
+            samples_per_bar,
+            playhead_x,
+            step_cursor_x,
+        );
 
         container(
             column![

@@ -3,9 +3,29 @@
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod x11 {
     use std::os::raw::{c_char, c_int, c_uint, c_ulong};
+    use std::sync::Once;
 
     pub type Display = std::ffi::c_void;
     pub type Window = c_ulong;
+
+    #[repr(C)]
+    pub struct XErrorEvent {
+        _private: [u8; 0],
+    }
+
+    pub type XErrorHandler =
+        Option<unsafe extern "C" fn(display: *mut Display, event: *mut XErrorEvent) -> c_int>;
+
+    unsafe extern "C" fn ignore_x_error(_display: *mut Display, _event: *mut XErrorEvent) -> c_int {
+        0
+    }
+
+    fn install_x_error_handler() {
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| unsafe {
+            XSetErrorHandler(Some(ignore_x_error));
+        });
+    }
 
     #[link(name = "X11")]
     unsafe extern "C" {
@@ -37,6 +57,7 @@ pub mod x11 {
             height: c_uint,
         ) -> c_int;
         pub fn XFlush(display: *mut Display) -> c_int;
+        pub fn XSetErrorHandler(handler: XErrorHandler) -> XErrorHandler;
     }
 
     pub struct ContainerWindow {
@@ -90,6 +111,8 @@ pub mod x11 {
         width: u32,
         height: u32,
     ) -> Result<ContainerWindow, String> {
+        install_x_error_handler();
+
         let display_name_c = display_name.and_then(|s| std::ffi::CString::new(s).ok());
         let display_name_ptr = display_name_c
             .as_ref()

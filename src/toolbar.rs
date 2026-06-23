@@ -4,15 +4,15 @@ use crate::{
     icon::metronome::metronome,
     message::{Message, SnapMode},
 };
-use maolan_engine::message::GlobalMidiLearnTarget;
 use iced::{
     Alignment, Background, Border, Color, Length, Theme,
-    widget::{button, container, mouse_area, pick_list, row, text, text_input, Space},
+    widget::{Space, button, container, mouse_area, pick_list, row, text, text_input},
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind,
     sliders_vertical, square, volume_x,
 };
+use maolan_engine::message::GlobalMidiLearnTarget;
 #[derive(Debug, Default)]
 pub struct Toolbar;
 

@@ -54,9 +54,7 @@ impl Maolan {
                     )
                 };
                 let Some(template) = template else {
-                    return Task::done(Message::Response(Err(
-                        "No template selected".to_string(),
-                    )));
+                    return Task::done(Message::Response(Err("No template selected".to_string())));
                 };
                 self.modal = None;
                 self.state.blocking_write().apply_template_dialog = None;

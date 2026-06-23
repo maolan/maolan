@@ -32,6 +32,20 @@ pub fn request_audio_ports_rescan() {
     AUDIO_PORTS_RESCAN_REQUESTED.store(true, Ordering::Release);
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
+fn close_x11_gui_window(window: &mut Option<crate::gui_x11::x11::ContainerWindow>) {
+    if let Some(window) = window.take() {
+        drop(window);
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn abandon_x11_gui_window(window: &mut Option<crate::gui_x11::x11::ContainerWindow>) {
+    if let Some(window) = window.take() {
+        std::mem::forget(window);
+    }
+}
+
 struct PortBuffers {
     inputs: Vec<ClapAudioBuffer>,
     outputs: Vec<ClapAudioBuffer>,
@@ -281,6 +295,16 @@ impl HostRuntime {
         let header = unsafe { header_ref(self.mapping.as_ptr()) };
 
         unsafe {
+            let host_ptr = plugin.host_ptr();
+            if !host_ptr.is_null() {
+                let host_data = (*host_ptr).host_data as *mut crate::clap::HostData;
+                if !host_data.is_null() {
+                    (*host_data).header = header as *const _ as *mut _;
+                }
+            }
+        }
+
+        unsafe {
             maolan_plugin_protocol::protocol::write_plugin_name_to_scratch(ptr, &plugin.name());
         }
 
@@ -407,6 +431,18 @@ impl HostRuntime {
                 break;
             }
 
+            if crate::clap::take_host_gui_closed_requested() {
+                plugin.gui_destroy();
+                #[cfg(windows)]
+                {
+                    clap_gui_window = None;
+                }
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    close_x11_gui_window(&mut clap_gui_window_x11);
+                }
+            }
+
             let req = header.request_type.load(Ordering::Acquire);
             if req != 0 {
                 let scratch = unsafe { scratch_ptr(ptr) };
@@ -506,10 +542,12 @@ impl HostRuntime {
                             }
                             #[cfg(all(unix, not(target_os = "macos")))]
                             {
+                                let already_created = plugin.gui_created();
                                 if plugin.gui_created() {
-                                    plugin.gui_destroy();
+                                    abandon_x11_gui_window(&mut clap_gui_window_x11);
+                                } else {
+                                    close_x11_gui_window(&mut clap_gui_window_x11);
                                 }
-                                clap_gui_window_x11 = None;
 
                                 let title = std::path::Path::new(self.real_plugin_path())
                                     .file_stem()
@@ -521,31 +559,32 @@ impl HostRuntime {
                                     Ok(window) => {
                                         let window_id = window.window();
                                         window.map();
-                                        let result = plugin
-                                            .gui_create("x11", false)
-                                            .inspect(|_| ())
-                                            .inspect_err(|_e| ())
-                                            .and_then(|_| {
-                                                plugin
-                                                    .gui_get_size()
-                                                    .inspect(|(_w, _h)| ())
-                                                    .inspect_err(|_e| ())
-                                            })
-                                            .and_then(|(w, h)| {
-                                                if w > 0 && h > 0 {
-                                                    window.resize(w, h);
-                                                }
-                                                plugin
-                                                    .gui_set_parent(window_id)
-                                                    .inspect(|_| ())
-                                                    .inspect_err(|_e| ())
-                                            })
-                                            .and_then(|_| {
-                                                plugin
-                                                    .gui_show()
-                                                    .inspect(|_| ())
-                                                    .inspect_err(|_e| ())
-                                            });
+                                        let result = if already_created {
+                                            Ok(())
+                                        } else {
+                                            plugin
+                                                .gui_create("x11", false)
+                                                .inspect(|_| ())
+                                                .inspect_err(|_e| ())
+                                        }
+                                        .and_then(|_| {
+                                            plugin
+                                                .gui_get_size()
+                                                .inspect(|(_w, _h)| ())
+                                                .inspect_err(|_e| ())
+                                        })
+                                        .and_then(|(w, h)| {
+                                            if w > 0 && h > 0 {
+                                                window.resize(w, h);
+                                            }
+                                            plugin
+                                                .gui_set_parent(window_id)
+                                                .inspect(|_| ())
+                                                .inspect_err(|_e| ())
+                                        })
+                                        .and_then(|_| {
+                                            plugin.gui_show().inspect(|_| ()).inspect_err(|_e| ())
+                                        });
                                         if result.is_ok() {
                                             clap_gui_window_x11 = Some(window);
                                         }
@@ -576,17 +615,26 @@ impl HostRuntime {
                         }
                     }
                     4 => {
+                        let hide_result = if plugin.gui_created() {
+                            plugin.gui_hide()
+                        } else {
+                            Ok(())
+                        };
+                        plugin.gui_destroy();
                         #[cfg(windows)]
-                        if let Some(ref window) = clap_gui_window {
-                            unsafe {
-                                ShowWindow(window.hwnd, SW_HIDE);
+                        {
+                            if let Some(ref window) = clap_gui_window {
+                                unsafe {
+                                    ShowWindow(window.hwnd, SW_HIDE);
+                                }
                             }
+                            clap_gui_window = None;
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
-                        if let Some(ref window) = clap_gui_window_x11 {
-                            window.unmap();
+                        {
+                            close_x11_gui_window(&mut clap_gui_window_x11);
                         }
-                        plugin.gui_hide()
+                        hide_result
                     }
                     5 => {
                         std::sync::atomic::fence(Ordering::SeqCst);
@@ -609,7 +657,9 @@ impl HostRuntime {
                         Err(e) => Err(e),
                     },
                     7 => {
-                        if let Some((index, path)) = unsafe { read_file_reference_update_from_scratch(ptr) } {
+                        if let Some((index, path)) =
+                            unsafe { read_file_reference_update_from_scratch(ptr) }
+                        {
                             plugin.update_file_reference_path(index, &path)
                         } else {
                             Err("Invalid file-reference update in scratch".to_string())
