@@ -2,7 +2,10 @@ use std::cell::Cell;
 use std::ffi::{CStr, CString, c_char, c_ulong, c_void};
 use std::path::Path;
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -43,6 +46,12 @@ pub fn host_timers() -> &'static Mutex<Vec<HostTimer>> {
 pub fn host_fds() -> &'static Mutex<Vec<HostFd>> {
     static FDS: OnceLock<Mutex<Vec<HostFd>>> = OnceLock::new();
     FDS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+static HOST_GUI_CLOSED_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+pub fn take_host_gui_closed_requested() -> bool {
+    HOST_GUI_CLOSED_REQUESTED.swap(false, Ordering::AcqRel)
 }
 
 pub fn next_timer_id() -> u32 {
@@ -464,11 +473,15 @@ pub struct ClapHostState {
 pub struct ClapPluginFileReference {
     pub count: Option<unsafe extern "C" fn(*const ClapPlugin) -> u32>,
     pub get: Option<
-        unsafe extern "C" fn(*const ClapPlugin, index: u32, path: *mut c_char, path_size: u32) -> bool,
+        unsafe extern "C" fn(
+            *const ClapPlugin,
+            index: u32,
+            path: *mut c_char,
+            path_size: u32,
+        ) -> bool,
     >,
-    pub get_hash: Option<
-        unsafe extern "C" fn(*const ClapPlugin, index: u32, hash: *mut u8) -> bool,
-    >,
+    pub get_hash:
+        Option<unsafe extern "C" fn(*const ClapPlugin, index: u32, hash: *mut u8) -> bool>,
     pub update_path:
         Option<unsafe extern "C" fn(*const ClapPlugin, index: u32, path: *const c_char) -> bool>,
 }
@@ -476,8 +489,7 @@ pub struct ClapPluginFileReference {
 #[repr(C)]
 pub struct ClapHostFileReference {
     pub changed: Option<unsafe extern "C" fn(*const ClapHost)>,
-    pub set_path:
-        Option<unsafe extern "C" fn(*const ClapHost, index: u32, path: *const c_char)>,
+    pub set_path: Option<unsafe extern "C" fn(*const ClapHost, index: u32, path: *const c_char)>,
     pub set_copy_path:
         Option<unsafe extern "C" fn(*const ClapHost, index: u32, path: *const c_char)>,
 }
@@ -486,6 +498,7 @@ pub struct ClapHostFileReference {
 pub struct HostData {
     pub host: *mut ClapHost,
     pub plugin: *const ClapPlugin,
+    pub header: *mut maolan_plugin_protocol::protocol::ShmHeader,
 }
 
 use libloading::Library;
@@ -607,6 +620,7 @@ impl PluginInstance {
         let host_data = Box::into_raw(Box::new(HostData {
             host: &mut *host,
             plugin,
+            header: std::ptr::null_mut(),
         }));
         host.host_data = host_data.cast::<c_void>();
 
@@ -674,6 +688,10 @@ impl PluginInstance {
 
     pub fn plugin_ptr(&self) -> *const ClapPlugin {
         self.plugin
+    }
+
+    pub fn host_ptr(&self) -> *const ClapHost {
+        self.host.as_ref() as *const _
     }
 
     pub fn activate(
@@ -766,37 +784,44 @@ impl PluginInstance {
                 .map(|f| f(self.plugin, CLAP_EXT_FILE_REFERENCE.as_ptr()))
         };
         match ext {
-            Some(ptr) if !ptr.is_null() => Ok(ptr as *const ClapPluginFileReference),
-            _ => Err("Plugin does not support clap.file-reference".to_string()),
+            Some(ptr) if !ptr.is_null() => {
+                tracing::info!("Plugin supports clap.file-reference");
+                Ok(ptr as *const ClapPluginFileReference)
+            }
+            _ => {
+                tracing::info!("Plugin does not support clap.file-reference");
+                Err("Plugin does not support clap.file-reference".to_string())
+            }
         }
     }
 
     pub fn file_reference_count(&self) -> Result<u32, String> {
         let ext = self.file_reference_extension()?;
         let count = unsafe { (*ext).count }.ok_or("clap.file-reference.count is null")?;
-        Ok(unsafe { count(self.plugin) })
+        let n = unsafe { count(self.plugin) };
+        tracing::info!(count = n, "clap.file-reference count");
+        Ok(n)
     }
 
-    pub fn file_references(&self) -> Result<Vec<maolan_plugin_protocol::protocol::FileReference>, String> {
+    pub fn file_references(
+        &self,
+    ) -> Result<Vec<maolan_plugin_protocol::protocol::FileReference>, String> {
         let ext = self.file_reference_extension()?;
         let count_fn = unsafe { (*ext).count }.ok_or("clap.file-reference.count is null")?;
         let get_fn = unsafe { (*ext).get }.ok_or("clap.file-reference.get is null")?;
         let count = unsafe { count_fn(self.plugin) };
+        tracing::info!(count, "Enumerating clap.file-reference entries");
         let mut refs = Vec::with_capacity(count as usize);
         for index in 0..count {
             let mut buffer = vec![0i8; 2048];
-            if unsafe {
-                get_fn(
-                    self.plugin,
-                    index,
-                    buffer.as_mut_ptr(),
-                    buffer.len() as u32,
-                )
-            } {
+            if unsafe { get_fn(self.plugin, index, buffer.as_mut_ptr(), buffer.len() as u32) } {
                 let cstr = unsafe { CStr::from_ptr(buffer.as_ptr()) };
                 if let Ok(s) = cstr.to_str() {
+                    tracing::info!(index, path = %s, "Got clap.file-reference path");
                     refs.push((index, s.to_string()));
                 }
+            } else {
+                tracing::warn!(index, "clap.file-reference get() returned false");
             }
         }
         Ok(refs)
@@ -804,13 +829,15 @@ impl PluginInstance {
 
     pub fn update_file_reference_path(&self, index: u32, path: &str) -> Result<(), String> {
         let ext = self.file_reference_extension()?;
-        let update = unsafe { (*ext).update_path }
-            .ok_or("clap.file-reference.update_path is null")?;
+        let update =
+            unsafe { (*ext).update_path }.ok_or("clap.file-reference.update_path is null")?;
         let path_c = CString::new(path).map_err(|e| e.to_string())?;
         if unsafe { update(self.plugin, index, path_c.as_ptr()) } {
             Ok(())
         } else {
-            Err(format!("plugin rejected file-reference path update for index {index}"))
+            Err(format!(
+                "plugin rejected file-reference path update for index {index}"
+            ))
         }
     }
 
@@ -1163,10 +1190,33 @@ unsafe extern "C" fn host_gui_request_show(_host: *const ClapHost) -> bool {
 unsafe extern "C" fn host_gui_request_hide(_host: *const ClapHost) -> bool {
     false
 }
-unsafe extern "C" fn host_gui_closed(_host: *const ClapHost, _was_destroyed: bool) {}
+unsafe extern "C" fn host_gui_closed(_host: *const ClapHost, was_destroyed: bool) {
+    let _ = was_destroyed;
+    HOST_GUI_CLOSED_REQUESTED.store(true, Ordering::Release);
+}
 
-unsafe extern "C" fn host_state_mark_dirty(_host: *const ClapHost) {
+unsafe extern "C" fn host_state_mark_dirty(host: *const ClapHost) {
     tracing::info!("Plugin called clap_host_state.mark_dirty()");
+    if host.is_null() {
+        tracing::warn!("host_state_mark_dirty: host is null");
+        return;
+    }
+    let host_data = unsafe { (*host).host_data as *mut HostData };
+    if host_data.is_null() {
+        tracing::warn!("host_state_mark_dirty: host_data is null");
+        return;
+    }
+    let header = unsafe { (*host_data).header };
+    if header.is_null() {
+        tracing::warn!("host_state_mark_dirty: header is null");
+        return;
+    }
+    unsafe {
+        (*header)
+            .state_dirty
+            .store(1, std::sync::atomic::Ordering::Release);
+    }
+    tracing::info!("host_state_mark_dirty: set state_dirty=1");
 }
 
 unsafe extern "C" fn host_file_reference_changed(_host: *const ClapHost) {

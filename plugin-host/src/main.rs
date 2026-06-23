@@ -29,19 +29,19 @@ fn setup_parent_death_signal() {
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn setup_parent_death_signal() {}
 
-fn parse_log_level(args: &mut Vec<String>) -> Option<tracing::Level> {
+fn parse_log_level(args: &mut Vec<String>) -> Option<Option<tracing::Level>> {
     if let Some(pos) = args.iter().position(|a| a == "--log-level") {
         args.remove(pos);
         if pos < args.len() {
             let level_str = args.remove(pos);
-            match level_str.as_str() {
+            Some(match level_str.as_str() {
                 "none" => None,
                 "info" => Some(tracing::Level::INFO),
                 "warning" => Some(tracing::Level::WARN),
                 "error" => Some(tracing::Level::ERROR),
                 "debug" => Some(tracing::Level::DEBUG),
-                _ => None,
-            }
+                _ => return None,
+            })
         } else {
             None
         }
@@ -54,6 +54,14 @@ fn main() {
     setup_parent_death_signal();
 
     let mut args: Vec<String> = std::env::args().collect();
+    let log_level = parse_log_level(&mut args);
+
+    if let Some(Some(level)) = log_level {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_max_level(level)
+            .init();
+    }
 
     if args.len() < 2 {
         print_usage();
@@ -97,8 +105,6 @@ fn main() {
         let code = maolan_plugin_host::scan::run_scan(&format, &path, output.as_deref());
         std::process::exit(code);
     }
-
-    let log_level = parse_log_level(&mut args);
 
     let format = args[1].clone();
 
@@ -168,11 +174,12 @@ fn main() {
         (plugin_spec.clone(), String::new())
     };
 
-    let level = log_level.unwrap_or(tracing::Level::INFO);
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_max_level(level)
-        .init();
+    if log_level.is_none() {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_max_level(tracing::Level::INFO)
+            .init();
+    }
 
     match format.as_str() {
         "vst3" => {

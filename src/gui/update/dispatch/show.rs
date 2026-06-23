@@ -180,14 +180,13 @@ impl Maolan {
                     track_name: track_name.clone(),
                     is_group: *is_group,
                 });
-                self.state.blocking_write().apply_template_dialog = Some(
-                    crate::state::ApplyTemplateDialog {
+                self.state.blocking_write().apply_template_dialog =
+                    Some(crate::state::ApplyTemplateDialog {
                         track_name: track_name.clone(),
                         is_group: *is_group,
                         selected_template: None,
                         available_templates: Vec::new(),
-                    },
-                );
+                    });
                 if *is_group {
                     Task::perform(
                         async { crate::gui::scan_group_templates() },

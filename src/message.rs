@@ -921,7 +921,12 @@ pub enum Message {
     SetSnapMode(SnapMode),
     SetMidiSnapMode(SnapMode),
     ToggleStepRecording,
-    StepRecordNote { device: String, channel: u8, pitch: u8, velocity: u8 },
+    StepRecordNote {
+        device: String,
+        channel: u8,
+        pitch: u8,
+        velocity: u8,
+    },
     RecordFolderSelected(Option<PathBuf>),
 
     SendMessageFinished(Result<(), String>),

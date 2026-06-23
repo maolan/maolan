@@ -332,6 +332,7 @@ impl Maolan {
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
+                tracing::info!(%track_name, instance_id, "DAW requesting CLAP UI");
                 self.info(format!(
                     "Requesting CLAP UI for track '{}' instance {}",
                     track_name, instance_id

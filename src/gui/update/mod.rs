@@ -740,10 +740,7 @@ impl Maolan {
 
     /// Finishes an in-progress save once all pending graph/state snapshots are done.
     /// Returns a task when the save is delegated to an async helper.
-    pub(super) fn complete_pending_save(
-        &mut self,
-        track_name: &str,
-    ) -> Option<Task<Message>> {
+    pub(super) fn complete_pending_save(&mut self, track_name: &str) -> Option<Task<Message>> {
         if !self.pending_save_ready() {
             return None;
         }
@@ -756,8 +753,7 @@ impl Maolan {
 
         if is_template {
             if let Err(e) = self.save_template(path.clone()) {
-                self.state.blocking_write().message =
-                    format!("Failed to save template: {}", e);
+                self.state.blocking_write().message = format!("Failed to save template: {}", e);
             } else {
                 self.state.blocking_write().message = "Template saved".to_string();
                 let templates = crate::gui::scan_templates();
@@ -768,8 +764,7 @@ impl Maolan {
             return Some(self.save_track_as_template(track_name, path));
         } else if let Err(e) = self.save(path.clone()) {
             self.pending_exit_after_save = false;
-            self.state.blocking_write().message =
-                format!("Failed to save session: {}", e);
+            self.state.blocking_write().message = format!("Failed to save session: {}", e);
         } else {
             return Some(Task::batch(vec![
                 self.send(Action::MarkHistorySavePoint),
@@ -3644,7 +3639,12 @@ mod tests {
 
     #[test]
     fn complete_pending_save_writes_track_template() {
-        use std::{fs, sync::LazyLock, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
+        use std::{
+            fs,
+            sync::LazyLock,
+            sync::Mutex,
+            time::{SystemTime, UNIX_EPOCH},
+        };
 
         static GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
         let _guard = GUARD.lock().expect("lock guard");
@@ -3652,8 +3652,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let temp_home =
-            std::env::temp_dir().join(format!("maolan_complete_pending_save_{unique}"));
+        let temp_home = std::env::temp_dir().join(format!("maolan_complete_pending_save_{unique}"));
         let template_path = temp_home.join(".config/maolan/track_templates/Drums");
 
         let old_home = std::env::var("HOME").ok();

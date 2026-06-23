@@ -41,6 +41,7 @@ fn spawn_plugin_host(
     #[cfg(windows)]
     cmd.arg(events.daw_to_host_name())
         .arg(events.host_to_daw_name());
+    append_parent_log_level(&mut cmd);
     cmd.stdin(Stdio::null()).stdout(Stdio::null());
 
     if cfg!(test) {
@@ -56,6 +57,15 @@ fn spawn_plugin_host(
     events.close_daw_unused();
 
     Ok((child, mapping, events))
+}
+
+fn append_parent_log_level(cmd: &mut Command) {
+    let parent_args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = parent_args.iter().position(|a| a == "--log-level")
+        && pos + 1 < parent_args.len()
+    {
+        cmd.arg("--log-level").arg(&parent_args[pos + 1]);
+    }
 }
 
 fn shutdown_host(child: &mut Child, mapping: &ShmMapping, events: &EventPair, timeout: Duration) {

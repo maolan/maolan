@@ -72,6 +72,7 @@ pub fn scan_plugin_file(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    append_parent_log_level(&mut cmd);
 
     let mut child = cmd
         .spawn()
@@ -114,6 +115,15 @@ pub fn scan_plugin_file(
         String::from_utf8(output).map_err(|e| format!("scanner output is not valid UTF-8: {e}"))?;
 
     serde_json::from_str(&json).map_err(|e| format!("scanner output is not valid JSON: {e}"))
+}
+
+fn append_parent_log_level(cmd: &mut Command) {
+    let parent_args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = parent_args.iter().position(|a| a == "--log-level")
+        && pos + 1 < parent_args.len()
+    {
+        cmd.arg("--log-level").arg(&parent_args[pos + 1]);
+    }
 }
 
 pub fn scan_or_blocklist(
