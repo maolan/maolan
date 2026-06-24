@@ -470,6 +470,7 @@ pub struct Maolan {
     track_rename: track_rename::TrackRenameView,
     track_group: track_group::TrackGroupView,
     track_marker: track_marker::TrackMarkerView,
+    modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView,
     track_template_save: track_template_save::TrackTemplateSaveView,
     track_group_template_save: track_group_template_save::TrackGroupTemplateSaveView,
     template_save: template_save::TemplateSaveView,
@@ -550,6 +551,9 @@ pub struct Maolan {
     toolbar_visible: bool,
     show_log_window: bool,
     shortcuts_pane_visible: bool,
+    modulators_pane_visible: bool,
+    pub modulators: Vec<crate::state::Modulator>,
+    pub selected_modulator_id: Option<usize>,
     hw_mixer: mixosc::app::StatusApp,
     mixer_level_edit_track: Option<String>,
     mixer_level_edit_input: String,
@@ -765,6 +769,9 @@ impl Default for Maolan {
             track_rename: track_rename::TrackRenameView::new(state.clone()),
             track_group: track_group::TrackGroupView::new(state.clone()),
             track_marker: track_marker::TrackMarkerView::new(state.clone()),
+            modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView::new(
+                state.clone(),
+            ),
             track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
             track_group_template_save: track_group_template_save::TrackGroupTemplateSaveView::new(
                 state.clone(),
@@ -846,6 +853,9 @@ impl Default for Maolan {
             toolbar_visible: true,
             show_log_window: false,
             shortcuts_pane_visible: false,
+            modulators_pane_visible: false,
+            modulators: vec![],
+            selected_modulator_id: None,
             hw_mixer: mixosc::app::StatusApp::default(),
             mixer_level_edit_track: None,
             mixer_level_edit_input: String::new(),
@@ -6182,6 +6192,12 @@ impl Maolan {
                 Err(_) => Message::Response(Err("Channel closed".to_string())),
             },
         )
+    }
+
+    fn send_modulators_to_engine(&self) -> Task<Message> {
+        let engine_modulators: Vec<maolan_engine::modulator::Modulator> =
+            self.modulators.iter().map(Into::into).collect();
+        self.send(Action::SetModulators(engine_modulators))
     }
 
     fn selected_export_formats(&self) -> Vec<ExportFormat> {

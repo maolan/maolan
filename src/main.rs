@@ -12,6 +12,8 @@ mod hw;
 mod icon;
 mod menu;
 mod message;
+mod modulator_target_dialog;
+mod modulators_pane;
 mod platform_caps;
 mod plugin_host;
 mod shortcuts_pane;

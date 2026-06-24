@@ -44,6 +44,7 @@ impl Menu {
         toolbar_visible: bool,
         log_visible: bool,
         shortcuts_pane_visible: bool,
+        modulators_pane_visible: bool,
     ) -> iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
@@ -92,7 +93,7 @@ impl Menu {
                         "Delete unused files",
                         Message::DeleteUnusedSessionMediaFiles
                     )),
-                    (menu_item("Collect to session", Message::CollectToSession)),
+                    (menu_item("Consolidate", Message::CollectToSession)),
                     (menu_item("Export", Message::OpenExporter)),
                     (menu_item("Quit", Message::WindowCloseRequested)),
                 ))
@@ -185,6 +186,11 @@ impl Menu {
                         "Shortcuts",
                         shortcuts_pane_visible,
                         Message::ToggleShortcutsPane
+                    )),
+                    (menu_checkbox_item(
+                        "Modulators",
+                        modulators_pane_visible,
+                        Message::ToggleModulatorsPane
                     )),
                     (menu_item("About", Message::Show(Show::About))),
                 ))

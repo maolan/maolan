@@ -326,6 +326,8 @@ impl Maolan {
                             Message::PianoGrooveSelectedNotes
                         } else if s == "n" {
                             Message::ToggleShortcutsPane
+                        } else if s == "m" {
+                            Message::ToggleModulatorsPane
                         } else if s == "c" {
                             Message::ToggleCutIndicator
                         } else {

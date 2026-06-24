@@ -43,6 +43,7 @@ pub(crate) use platform_linux::{discover_alsa_input_devices, discover_alsa_outpu
 pub(crate) use platform_openbsd::discover_openbsd_audio_devices;
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     sync::Arc,
     time::Instant,
 };
@@ -50,6 +51,202 @@ use tokio::sync::RwLock;
 pub use track::{EditorMarker, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
 
 pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ModulatorShape {
+    Sine,
+    Triangle,
+    Saw,
+    Square,
+    SampleHold,
+}
+
+impl fmt::Display for ModulatorShape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sine => write!(f, "Sine"),
+            Self::Triangle => write!(f, "Triangle"),
+            Self::Saw => write!(f, "Saw"),
+            Self::Square => write!(f, "Square"),
+            Self::SampleHold => write!(f, "Sample & Hold"),
+        }
+    }
+}
+
+impl Default for ModulatorShape {
+    fn default() -> Self {
+        Self::Sine
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ModulatorController {
+    Volume,
+    Balance,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ModulatorTarget {
+    pub track_name: String,
+    pub controller: ModulatorController,
+    pub min: f32,
+    pub max: f32,
+}
+
+impl<'de> serde::Deserialize<'de> for ModulatorTarget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct ModulatorTargetData {
+            track_name: String,
+            controller: ModulatorController,
+            #[serde(default)]
+            min: Option<f32>,
+            #[serde(default)]
+            max: Option<f32>,
+        }
+        let data = ModulatorTargetData::deserialize(deserializer)?;
+        let (default_min, default_max) = match data.controller {
+            ModulatorController::Volume => (-90.0, 20.0),
+            ModulatorController::Balance => (-1.0, 1.0),
+        };
+        Ok(Self {
+            track_name: data.track_name,
+            controller: data.controller,
+            min: data.min.unwrap_or(default_min),
+            max: data.max.unwrap_or(default_max),
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Modulator {
+    pub id: usize,
+    pub name: String,
+    pub shape: ModulatorShape,
+    pub rate_hz: f32,
+    pub phase: f32,
+    pub bipolar: bool,
+    pub enabled: bool,
+    pub targets: Vec<ModulatorTarget>,
+}
+
+impl<'de> serde::Deserialize<'de> for Modulator {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct ModulatorData {
+            id: usize,
+            name: String,
+            shape: ModulatorShape,
+            rate_hz: f32,
+            phase: f32,
+            bipolar: bool,
+            enabled: bool,
+            #[serde(default)]
+            target: Option<ModulatorTarget>,
+            #[serde(default)]
+            targets: Vec<ModulatorTarget>,
+        }
+        let data = ModulatorData::deserialize(deserializer)?;
+        let targets = if data.targets.is_empty() {
+            data.target.into_iter().collect()
+        } else {
+            data.targets
+        };
+        Ok(Self {
+            id: data.id,
+            name: data.name,
+            shape: data.shape,
+            rate_hz: data.rate_hz,
+            phase: data.phase,
+            bipolar: data.bipolar,
+            enabled: data.enabled,
+            targets,
+        })
+    }
+}
+
+impl Modulator {
+    pub fn new(id: usize) -> Self {
+        Self {
+            id,
+            name: format!("Modulator {id}"),
+            shape: ModulatorShape::default(),
+            rate_hz: 1.0,
+            phase: 0.0,
+            bipolar: false,
+            enabled: true,
+            targets: Vec::new(),
+        }
+    }
+}
+
+impl From<&Modulator> for maolan_engine::modulator::Modulator {
+    fn from(m: &Modulator) -> Self {
+        Self {
+            id: m.id,
+            name: m.name.clone(),
+            shape: m.shape.into(),
+            rate_hz: m.rate_hz,
+            phase: m.phase,
+            bipolar: m.bipolar,
+            enabled: m.enabled,
+            targets: m.targets.iter().cloned().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ModulatorShape> for maolan_engine::modulator::ModulatorShape {
+    fn from(shape: ModulatorShape) -> Self {
+        match shape {
+            ModulatorShape::Sine => Self::Sine,
+            ModulatorShape::Triangle => Self::Triangle,
+            ModulatorShape::Saw => Self::Saw,
+            ModulatorShape::Square => Self::Square,
+            ModulatorShape::SampleHold => Self::SampleHold,
+        }
+    }
+}
+
+impl From<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
+    fn from(t: ModulatorTarget) -> Self {
+        match t.controller {
+            ModulatorController::Volume => {
+                if t.track_name == "hw:out" {
+                    Self::HwOutVolume {
+                        min: t.min,
+                        max: t.max,
+                    }
+                } else {
+                    Self::TrackVolume {
+                        track_name: t.track_name,
+                        min: t.min,
+                        max: t.max,
+                    }
+                }
+            }
+            ModulatorController::Balance => {
+                if t.track_name == "hw:out" {
+                    Self::HwOutBalance {
+                        min: t.min,
+                        max: t.max,
+                    }
+                } else {
+                    Self::TrackBalance {
+                        track_name: t.track_name,
+                        min: t.min,
+                        max: t.max,
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AudioBackendOption {
@@ -374,6 +571,16 @@ pub struct TrackMarkerDialog {
 }
 
 #[derive(Debug, Clone)]
+pub struct ModulatorTargetDialog {
+    pub modulator_id: usize,
+    pub track_name: String,
+    pub controller: ModulatorController,
+    pub min_input: String,
+    pub max_input: String,
+    pub existing: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct TempoPoint {
     pub sample: usize,
     pub bpm: f32,
@@ -567,6 +774,7 @@ pub struct StateData {
     pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
     pub track_group_template_save_dialog: Option<TrackGroupTemplateSaveDialog>,
     pub track_marker_dialog: Option<TrackMarkerDialog>,
+    pub modulator_target_dialog: Option<ModulatorTargetDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
     pub apply_template_dialog: Option<ApplyTemplateDialog>,
     pub pending_track_template_loads: Vec<(String, String)>,
@@ -751,6 +959,7 @@ impl Default for StateData {
             track_template_save_dialog: None,
             track_group_template_save_dialog: None,
             track_marker_dialog: None,
+            modulator_target_dialog: None,
             template_save_dialog: None,
             apply_template_dialog: None,
             pending_track_template_loads: Vec::new(),
@@ -1061,5 +1270,25 @@ mod tests {
         let backend = default_audio_backend();
 
         let _ = backend;
+    }
+
+    #[test]
+    fn modulator_sine_value_at_zero_phase() {
+        let m = Modulator {
+            id: 1,
+            name: "Test".to_string(),
+            shape: ModulatorShape::Sine,
+            rate_hz: 1.0,
+            phase: 0.0,
+            bipolar: false,
+            enabled: true,
+            targets: Vec::new(),
+        };
+        let engine_m: maolan_engine::modulator::Modulator = (&m).into();
+        let sample_rate = 48000.0;
+        assert!((engine_m.value_at(0, sample_rate) - 0.5).abs() < 0.001);
+        assert!((engine_m.value_at(sample_rate as usize / 4, sample_rate) - 1.0).abs() < 0.001);
+        assert!((engine_m.value_at(sample_rate as usize / 2, sample_rate) - 0.5).abs() < 0.001);
+        assert!((engine_m.value_at(sample_rate as usize * 3 / 4, sample_rate) - 0.0).abs() < 0.001);
     }
 }

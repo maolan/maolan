@@ -287,6 +287,7 @@ impl Maolan {
 
         let result = json!({
             "tracks": tracks_json,
+            "modulators": &self.modulators,
             "connections": &state.connections,
             "graphs": graphs,
             "metadata": {
@@ -1541,6 +1542,7 @@ impl Maolan {
         let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
         let result = json!({
             "tracks": tracks_json,
+            "modulators": &self.modulators,
             "connections": &state.connections,
             "graphs": graphs,
             "metadata": {
@@ -2194,6 +2196,11 @@ impl Maolan {
             )
         {
             self.midi_snap_mode = mode;
+        }
+        if let Some(modulators) = session.get("modulators") {
+            self.modulators =
+                serde_json::from_value::<Vec<crate::state::Modulator>>(modulators.clone())
+                    .unwrap_or_default();
         }
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {
@@ -2966,6 +2973,9 @@ impl Maolan {
             });
         }
 
+        let engine_modulators: Vec<maolan_engine::modulator::Modulator> =
+            self.modulators.iter().map(Into::into).collect();
+        restore_actions.push(Action::SetModulators(engine_modulators));
         restore_actions.push(Action::EndSessionRestore);
         Ok(Self::restore_actions_task(restore_actions))
     }

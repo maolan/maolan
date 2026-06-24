@@ -22,25 +22,21 @@ impl Maolan {
                 true
             }
             Action::TrackAutomationLevel(name, level) => {
-                if let Some(track) = self
-                    .state
-                    .blocking_write()
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.name == *name)
-                {
+                tracing::debug!(%name, level, "DAW received TrackAutomationLevel");
+                let mut state = self.state.blocking_write();
+                if name == "hw:out" {
+                    state.hw_out_level = *level;
+                } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
                     track.level = *level;
                 }
                 true
             }
             Action::TrackAutomationBalance(name, balance) => {
-                if let Some(track) = self
-                    .state
-                    .blocking_write()
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.name == *name)
-                {
+                tracing::debug!(%name, balance, "DAW received TrackAutomationBalance");
+                let mut state = self.state.blocking_write();
+                if name == "hw:out" {
+                    state.hw_out_balance = *balance;
+                } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
                     track.balance = *balance;
                 }
                 true

@@ -173,6 +173,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub mixer_level_edit_track: Option<&'a str>,
     pub mixer_level_edit_input: &'a str,
     pub sample_rate: f64,
+    pub modulators_pane_visible: bool,
+    pub selected_modulator: Option<&'a crate::state::Modulator>,
 }
 
 impl Workspace {
@@ -300,6 +302,8 @@ impl Workspace {
             mixer_level_edit_track,
             mixer_level_edit_input,
             sample_rate,
+            modulators_pane_visible,
+            selected_modulator,
         } = args;
         let (
             tracks_width,
@@ -768,6 +772,8 @@ impl Workspace {
                     mixer_level_edit_input,
                     window_width,
                     mixer_scroll_x,
+                    modulators_pane_visible,
+                    selected_modulator,
                 ),
             ]
             .width(Length::Fill)

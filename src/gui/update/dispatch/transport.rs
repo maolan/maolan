@@ -161,6 +161,7 @@ impl Maolan {
                     if !actions.is_empty() {
                         tasks.extend(actions.into_iter().map(|a| self.send(a)));
                     }
+
                 }
                 if !tasks.is_empty() {
                     return Task::batch(tasks);
