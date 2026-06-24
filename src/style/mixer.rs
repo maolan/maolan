@@ -61,6 +61,27 @@ pub fn bay() -> container::Style {
     }
 }
 
+pub fn modulator_target(assigned: bool) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color {
+            r: 1.0,
+            g: 0.78,
+            b: 0.27,
+            a: if assigned { 0.25 } else { 0.08 },
+        })),
+        border: Border {
+            color: if assigned {
+                rgb(255, 200, 70)
+            } else {
+                rgb(180, 150, 80)
+            },
+            width: if assigned { 2.0 } else { 1.5 },
+            radius: 4.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn readout() -> container::Style {
     container::Style {
         background: Some(Background::Color(rgb(31, 38, 52))),

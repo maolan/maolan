@@ -178,6 +178,17 @@ impl fmt::Display for PreferencesDeviceOption {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ModulatorChange {
+    Name(String),
+    Shape(crate::state::ModulatorShape),
+    RateHz(f32),
+    Phase(f32),
+    Bipolar(bool),
+    Enabled(bool),
+    Targets(Vec<crate::state::ModulatorTarget>),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TrackAutomationTarget {
     Volume,
@@ -940,6 +951,32 @@ pub enum Message {
     ToggleToolbarVisibility,
     ToggleLogVisibility,
     ToggleShortcutsPane,
+    ToggleModulatorsPane,
+    ModulatorAdd,
+    ModulatorRemove(usize),
+    ModulatorSelect(Option<usize>),
+    ModulatorToggleTarget {
+        id: usize,
+        target: crate::state::ModulatorTarget,
+    },
+    ModulatorUpdate {
+        id: usize,
+        change: ModulatorChange,
+    },
+    ModulatorTargetShow {
+        modulator_id: usize,
+        track_name: String,
+        controller: crate::state::ModulatorController,
+    },
+    ModulatorTargetMinInput(String),
+    ModulatorTargetMaxInput(String),
+    ModulatorTargetConfirm,
+    ModulatorTargetCancel,
+    ModulatorTargetRemove {
+        modulator_id: usize,
+        track_name: String,
+        controller: crate::state::ModulatorController,
+    },
     ToggleCutIndicator,
     HwMixer(mixosc::app::Message),
     LogViewAction(text_editor::Action),

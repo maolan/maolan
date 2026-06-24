@@ -26,8 +26,8 @@ use crate::{
     },
     platform_caps,
     state::{
-        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
-        TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
+        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing,
+        TempoPoint, TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
     },
     ui_timing::DOUBLE_CLICK,
     widget::midi_edit::{CTRL_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, SYSEX_SCROLL_ID},
@@ -1976,6 +1976,7 @@ impl Maolan {
                     }
                 }
             }
+
             if let Some(v) = vol {
                 let level_db = (-90.0 + v * 110.0).clamp(-90.0, 20.0);
                 if runtime

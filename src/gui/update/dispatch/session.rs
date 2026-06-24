@@ -146,6 +146,7 @@ impl Maolan {
                 for name in existing_tracks {
                     tasks.push(self.send(Action::RemoveTrack(name)));
                 }
+                tasks.push(self.send_modulators_to_engine());
                 tasks.push(self.send(Action::EndSessionRestore));
                 {
                     let mut state = self.state.blocking_write();
@@ -177,6 +178,8 @@ impl Maolan {
                 self.pending_track_freeze_restore.clear();
                 self.pending_track_midi_editor_view_mode.clear();
                 self.pending_track_freeze_bounce.clear();
+                self.modulators.clear();
+                self.selected_modulator_id = None;
                 self.freeze_in_progress = false;
                 self.freeze_progress = 0.0;
                 self.freeze_track_name = None;

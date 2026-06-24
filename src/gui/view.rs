@@ -176,6 +176,9 @@ impl Maolan {
             if state.apply_template_dialog.is_some() {
                 return self.wrap_with_log_window(self.apply_template.view());
             }
+            if state.modulator_target_dialog.is_some() {
+                return self.wrap_with_log_window(self.modulator_target_dialog.view());
+            }
             match self.modal {
                 Some(Show::ExportSettings) => {
                     self.wrap_with_log_window(self.export_settings_view())
@@ -297,6 +300,10 @@ impl Maolan {
                             mixer_level_edit_track: self.mixer_level_edit_track.as_deref(),
                             mixer_level_edit_input: &self.mixer_level_edit_input,
                             sample_rate: self.playback_rate_hz,
+                            modulators_pane_visible: self.modulators_pane_visible,
+                            selected_modulator: self
+                                .selected_modulator_id
+                                .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
                         }),
                         View::Connections => self.connections.view(),
                         View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
@@ -350,6 +357,10 @@ impl Maolan {
                             mixer_level_edit_track: None,
                             mixer_level_edit_input: "",
                             sample_rate: self.playback_rate_hz,
+                            modulators_pane_visible: self.modulators_pane_visible,
+                            selected_modulator: self
+                                .selected_modulator_id
+                                .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
                         }),
                         View::PitchCorrection => {
                             self.workspace.pitch_correction_view(WorkspaceViewArgs {
@@ -399,6 +410,10 @@ impl Maolan {
                                 mixer_level_edit_track: None,
                                 mixer_level_edit_input: "",
                                 sample_rate: self.playback_rate_hz,
+                                modulators_pane_visible: self.modulators_pane_visible,
+                                selected_modulator: self
+                                    .selected_modulator_id
+                                    .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
                             })
                         }
                     };
@@ -410,6 +425,7 @@ impl Maolan {
                         self.toolbar_visible,
                         self.show_log_window,
                         self.shortcuts_pane_visible,
+                        self.modulators_pane_visible,
                     ),];
                     if self.toolbar_visible {
                         content = content.push(self.toolbar.view(ToolbarViewState {
@@ -616,6 +632,18 @@ impl Maolan {
                             crate::shortcuts_pane::ShortcutsPane::view(
                                 view_kind,
                                 shortcuts_hint.as_deref()
+                            )
+                        ]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into();
+                    }
+                    if self.modulators_pane_visible {
+                        view = row![
+                            container(view).width(Length::Fill),
+                            crate::modulators_pane::ModulatorsPane::view(
+                                &self.modulators,
+                                self.selected_modulator_id,
                             )
                         ]
                         .width(Length::Fill)

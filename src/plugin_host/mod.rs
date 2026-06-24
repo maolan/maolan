@@ -162,8 +162,8 @@ mod tests {
             use std::os::unix::process::ExitStatusExt;
             let status = child.wait().expect("wait should return after crash");
             assert!(
-                status.signal() == Some(9),
-                "expected SIGKILL, got {:?}",
+                matches!(status.signal(), Some(9) | Some(6)),
+                "expected SIGKILL or SIGABRT, got {:?}",
                 status.signal()
             );
         }

@@ -186,6 +186,7 @@ fn workspace_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
                 "Delete / Backspace: Remove selected",
                 "Escape: Cancel / clear",
                 "N: Toggle shortcuts pane",
+                "M: Toggle modulators pane",
                 "C: Toggle cut indicator",
             ],
             hint

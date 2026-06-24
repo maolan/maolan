@@ -1,13 +1,14 @@
 use crate::{
     consts::{state_ids::METRONOME_TRACK_ID, workspace_mixer::*},
     message::Message,
-    state::{State, Track},
+    state::{ModulatorController, State, Track},
     style,
 };
 use iced::{
     Alignment, Element, Length,
     widget::{
-        Space, button, column, container, lazy, mouse_area, row, scrollable, text, text_input,
+        Space, Stack, button, column, container, lazy, mouse_area, row, scrollable, text,
+        text_input,
     },
 };
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
@@ -148,25 +149,51 @@ impl Mixer {
         .into()
     }
 
-    fn pan_section(track_name: String, value: f32) -> Element<'static, Message> {
+    fn pan_section(
+        track_name: String,
+        value: f32,
+        assignable: bool,
+        assigned: bool,
+        selected_id: Option<usize>,
+    ) -> Element<'static, Message> {
         let on_change_track = track_name.clone();
         let learn_track = track_name.clone();
+        let show_message = selected_id.map(|id| Message::ModulatorTargetShow {
+            modulator_id: id,
+            track_name: track_name.clone(),
+            controller: ModulatorController::Balance,
+        });
+        let slider = mouse_area(
+            horizontal_slider(-1.0..=1.0, value, move |value| {
+                Message::Request(Action::TrackBalance(on_change_track.clone(), value))
+            })
+            .width(Length::Fixed(PAN_SLIDER_WIDTH))
+            .height(Length::Fixed(PAN_ROW_HEIGHT))
+            .double_click_reset(0.0),
+        )
+        .on_right_press(Message::TrackMidiLearnArm {
+            track_name: learn_track,
+            target: TrackMidiLearnTarget::Balance,
+        });
+        let control: Element<'static, Message> = if assignable {
+            Stack::new()
+                .push(slider)
+                .push(
+                    mouse_area(
+                        container(Space::new().width(Length::Fill).height(Length::Fill))
+                            .style(move |_theme| style::mixer::modulator_target(assigned)),
+                    )
+                    .on_press(show_message.unwrap()),
+                )
+                .into()
+        } else {
+            slider.into()
+        };
         row![
             container(text(Self::format_balance(value)).size(9))
                 .width(Length::Fixed(24.0))
                 .align_x(Alignment::Center),
-            mouse_area(
-                horizontal_slider(-1.0..=1.0, value, move |value| {
-                    Message::Request(Action::TrackBalance(on_change_track.clone(), value))
-                })
-                .width(Length::Fixed(PAN_SLIDER_WIDTH))
-                .height(Length::Fixed(PAN_ROW_HEIGHT))
-                .double_click_reset(0.0),
-            )
-            .on_right_press(Message::TrackMidiLearnArm {
-                track_name: learn_track,
-                target: TrackMidiLearnTarget::Balance,
-            }),
+            control,
         ]
         .spacing(4)
         .align_y(Alignment::Center)
@@ -177,13 +204,36 @@ impl Mixer {
         (balance.clamp(-1.0, 1.0) * 100.0).round() as i16
     }
 
-    fn pan_section_cached(track_name: String, value: f32) -> Element<'static, Message> {
-        let dep = (track_name, Self::quantized_balance_hundredths(value));
+    fn pan_section_cached(
+        track_name: String,
+        value: f32,
+        modulators_pane_visible: bool,
+        selected_modulator: Option<&crate::state::Modulator>,
+    ) -> Element<'static, Message> {
+        let (assignable, assigned, selected_id) = Self::modulator_assignment_state(
+            modulators_pane_visible,
+            selected_modulator,
+            &track_name,
+            ModulatorController::Balance,
+        );
+        let dep = (
+            track_name,
+            Self::quantized_balance_hundredths(value),
+            assignable,
+            assigned,
+            selected_id,
+        );
         lazy(
             dep,
-            move |(track_name, value_hundredths)| -> Element<'static, Message> {
+            move |(track_name, value_hundredths, assignable, assigned, selected_id)| -> Element<'static, Message> {
                 let value = (*value_hundredths as f32) / 100.0;
-                Self::pan_section(track_name.clone(), value)
+                Self::pan_section(
+                    track_name.clone(),
+                    value,
+                    *assignable,
+                    *assigned,
+                    *selected_id,
+                )
             },
         )
         .into()
@@ -209,6 +259,22 @@ impl Mixer {
         q as f32 - 90.0
     }
 
+    fn modulator_assignment_state(
+        modulators_pane_visible: bool,
+        selected_modulator: Option<&crate::state::Modulator>,
+        track_name: &str,
+        controller: ModulatorController,
+    ) -> (bool, bool, Option<usize>) {
+        let assignable = modulators_pane_visible && selected_modulator.is_some();
+        let id = selected_modulator.map(|m| m.id);
+        let assigned = selected_modulator.map_or(false, |m| {
+            m.targets
+                .iter()
+                .any(|t| t.track_name == track_name && t.controller == controller)
+        });
+        (assignable, assigned, id)
+    }
+
     fn fader_bay(
         track_name: String,
         channels: usize,
@@ -216,6 +282,9 @@ impl Mixer {
         value: f32,
         fader_height: f32,
         show_ticks: bool,
+        assignable: bool,
+        assigned: bool,
+        selected_id: Option<usize>,
     ) -> Element<'static, Message> {
         let channels = channels.max(1);
         container(
@@ -227,20 +296,39 @@ impl Mixer {
                         Self::level_to_qdb(value),
                         (fader_height.max(0.0) * 10.0).round() as u16,
                         show_ticks,
+                        assignable,
+                        assigned,
+                        selected_id,
                     ),
-                    move |(track_name, _channels, value_qdb, fader_height_tenths, show_ticks)| -> Element<'static, Message> {
+                    move |(
+                        track_name,
+                        _channels,
+                        value_qdb,
+                        fader_height_tenths,
+                        show_ticks,
+                        assignable,
+                        assigned,
+                        selected_id,
+                    )|
+                          -> Element<'static, Message> {
                         let value = Self::qdb_to_level(*value_qdb);
                         let fader_height = *fader_height_tenths as f32 / 10.0;
+                        let assignable = *assignable;
+                        let assigned = *assigned;
+                        let selected_id = *selected_id;
                         let on_change_track = track_name.clone();
                         let learn_track = track_name.clone();
                         let slider = mouse_area(
                             container(
                                 slider(FADER_MIN_DB..=FADER_MAX_DB, value, move |value| {
-                                    Message::Request(Action::TrackLevel(on_change_track.clone(), value))
+                                    Message::Request(Action::TrackLevel(
+                                        on_change_track.clone(),
+                                        value,
+                                    ))
                                 })
                                 .width(Length::Fixed(FADER_WIDTH))
                                 .height(Length::Fixed(fader_height))
-                                .double_click_reset(0.0)
+                                .double_click_reset(0.0),
                             )
                             .padding([7.0, 8.0]),
                         )
@@ -248,11 +336,39 @@ impl Mixer {
                             track_name: learn_track,
                             target: TrackMidiLearnTarget::Volume,
                         });
-
-                        if *show_ticks {
-                            row![slider, ticks::ticks(FADER_MIN_DB..=FADER_MAX_DB, fader_height)].into()
+                        let control = if assignable {
+                            Stack::new()
+                                .push(slider)
+                                .push(
+                                    mouse_area(
+                                        container(
+                                            Space::new().width(Length::Fill).height(Length::Fill),
+                                        )
+                                        .style(
+                                            move |_theme| style::mixer::modulator_target(assigned),
+                                        ),
+                                    )
+                                    .on_press(
+                                        Message::ModulatorTargetShow {
+                                            modulator_id: selected_id.unwrap(),
+                                            track_name: track_name.clone(),
+                                            controller: ModulatorController::Volume,
+                                        },
+                                    ),
+                                )
+                                .into()
                         } else {
                             slider.into()
+                        };
+
+                        if *show_ticks {
+                            row![
+                                control,
+                                ticks::ticks(FADER_MIN_DB..=FADER_MAX_DB, fader_height)
+                            ]
+                            .into()
+                        } else {
+                            control
                         }
                     },
                 ),
@@ -273,7 +389,15 @@ impl Mixer {
         value: f32,
         fader_height: f32,
         show_ticks: bool,
+        modulators_pane_visible: bool,
+        selected_modulator: Option<&crate::state::Modulator>,
     ) -> Element<'static, Message> {
+        let (assignable, assigned, selected_id) = Self::modulator_assignment_state(
+            modulators_pane_visible,
+            selected_modulator,
+            &track_name,
+            ModulatorController::Volume,
+        );
         Self::fader_bay(
             track_name,
             channels,
@@ -281,6 +405,9 @@ impl Mixer {
             value,
             fader_height,
             show_ticks,
+            assignable,
+            assigned,
+            selected_id,
         )
     }
 
@@ -490,6 +617,8 @@ impl Mixer {
         editing_input: &'a str,
         viewport_width: f32,
         scroll_x: f32,
+        modulators_pane_visible: bool,
+        selected_modulator: Option<&'a crate::state::Modulator>,
     ) -> Element<'a, Message> {
         let mut strips = row![].spacing(2).align_y(Alignment::Start);
         let state = self.state.blocking_read();
@@ -556,7 +685,12 @@ impl Mixer {
         {
             let strip_width = Self::strip_width_for_channels(track.audio.outs);
             let pan = if track.audio.outs == 2 {
-                Some(Self::pan_section_cached(track.name.clone(), track.balance))
+                Some(Self::pan_section_cached(
+                    track.name.clone(),
+                    track.balance,
+                    modulators_pane_visible,
+                    selected_modulator,
+                ))
             } else {
                 None
             };
@@ -567,6 +701,8 @@ impl Mixer {
                 track.level,
                 fader_height,
                 true,
+                modulators_pane_visible,
+                selected_modulator,
             );
             metronome_strip = Some(
                 mouse_area(Self::strip_shell(
@@ -597,7 +733,12 @@ impl Mixer {
             let strip_name = track.name.clone();
             let strip_width = spec.width;
             let pan = if track.audio.outs == 2 {
-                Some(Self::pan_section_cached(track.name.clone(), track.balance))
+                Some(Self::pan_section_cached(
+                    track.name.clone(),
+                    track.balance,
+                    modulators_pane_visible,
+                    selected_modulator,
+                ))
             } else {
                 None
             };
@@ -608,6 +749,8 @@ impl Mixer {
                 track.level,
                 fader_height,
                 true,
+                modulators_pane_visible,
+                selected_modulator,
             );
             let solo_upstream = upstream_track_names.contains(&track.name);
             let strip: Element<'a, Message> = mouse_area(Self::strip_shell(
@@ -650,6 +793,8 @@ impl Mixer {
                 Some(Self::pan_section_cached(
                     "hw:out".to_string(),
                     hw_out_balance,
+                    modulators_pane_visible,
+                    selected_modulator,
                 ))
             } else {
                 None
@@ -661,6 +806,8 @@ impl Mixer {
                 hw_out_level,
                 fader_height,
                 true,
+                modulators_pane_visible,
+                selected_modulator,
             ),
             StripReadout {
                 track_name: "hw:out".to_string(),
