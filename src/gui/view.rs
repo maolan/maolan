@@ -1,6 +1,7 @@
 use super::Maolan;
 use crate::{
     consts::state_ids::METRONOME_TRACK_ID,
+    menu::MenuViewState,
     message::{Message, Show},
     state::View,
     toolbar::ToolbarViewState,
@@ -418,15 +419,15 @@ impl Maolan {
                         }
                     };
 
-                    let mut content = column![self.menu.view(
-                        self.tracks_visible,
-                        self.editor_visible,
-                        self.mixer_visible,
-                        self.toolbar_visible,
-                        self.show_log_window,
-                        self.shortcuts_pane_visible,
-                        self.modulators_pane_visible,
-                    ),];
+                    let mut content = column![self.menu.view(MenuViewState {
+                        tracks_visible: self.tracks_visible,
+                        editor_visible: self.editor_visible,
+                        mixer_visible: self.mixer_visible,
+                        toolbar_visible: self.toolbar_visible,
+                        log_visible: self.show_log_window,
+                        shortcuts_pane_visible: self.shortcuts_pane_visible,
+                        modulators_pane_visible: self.modulators_pane_visible,
+                    }),];
                     if self.toolbar_visible {
                         content = content.push(self.toolbar.view(ToolbarViewState {
                             playing: self.playing,
