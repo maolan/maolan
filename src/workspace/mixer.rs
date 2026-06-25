@@ -30,6 +30,13 @@ struct StripReadout<'a> {
     level_label: &'static str,
 }
 
+#[derive(Clone, Copy, Hash)]
+struct ModulatorAssignment {
+    assignable: bool,
+    assigned: bool,
+    selected_id: Option<usize>,
+}
+
 struct TrackStripSpec<'a> {
     track: &'a Track,
     width: f32,
@@ -210,7 +217,7 @@ impl Mixer {
         modulators_pane_visible: bool,
         selected_modulator: Option<&crate::state::Modulator>,
     ) -> Element<'static, Message> {
-        let (assignable, assigned, selected_id) = Self::modulator_assignment_state(
+        let assignment = Self::modulator_assignment_state(
             modulators_pane_visible,
             selected_modulator,
             &track_name,
@@ -219,21 +226,18 @@ impl Mixer {
         let dep = (
             track_name,
             Self::quantized_balance_hundredths(value),
-            assignable,
-            assigned,
-            selected_id,
+            assignment,
         );
         lazy(
             dep,
-            move |(track_name, value_hundredths, assignable, assigned, selected_id)| -> Element<'static, Message> {
+            move |(track_name, value_hundredths, assignment)| -> Element<'static, Message> {
                 let value = (*value_hundredths as f32) / 100.0;
-                Self::pan_section(
-                    track_name.clone(),
-                    value,
-                    *assignable,
-                    *assigned,
-                    *selected_id,
-                )
+                let ModulatorAssignment {
+                    assignable,
+                    assigned,
+                    selected_id,
+                } = *assignment;
+                Self::pan_section(track_name.clone(), value, assignable, assigned, selected_id)
             },
         )
         .into()
@@ -264,15 +268,19 @@ impl Mixer {
         selected_modulator: Option<&crate::state::Modulator>,
         track_name: &str,
         controller: ModulatorController,
-    ) -> (bool, bool, Option<usize>) {
+    ) -> ModulatorAssignment {
         let assignable = modulators_pane_visible && selected_modulator.is_some();
         let id = selected_modulator.map(|m| m.id);
-        let assigned = selected_modulator.map_or(false, |m| {
+        let assigned = selected_modulator.is_some_and(|m| {
             m.targets
                 .iter()
                 .any(|t| t.track_name == track_name && t.controller == controller)
         });
-        (assignable, assigned, id)
+        ModulatorAssignment {
+            assignable,
+            assigned,
+            selected_id: id,
+        }
     }
 
     fn fader_bay(
@@ -282,9 +290,7 @@ impl Mixer {
         value: f32,
         fader_height: f32,
         show_ticks: bool,
-        assignable: bool,
-        assigned: bool,
-        selected_id: Option<usize>,
+        assignment: ModulatorAssignment,
     ) -> Element<'static, Message> {
         let channels = channels.max(1);
         container(
@@ -296,9 +302,7 @@ impl Mixer {
                         Self::level_to_qdb(value),
                         (fader_height.max(0.0) * 10.0).round() as u16,
                         show_ticks,
-                        assignable,
-                        assigned,
-                        selected_id,
+                        assignment,
                     ),
                     move |(
                         track_name,
@@ -306,16 +310,16 @@ impl Mixer {
                         value_qdb,
                         fader_height_tenths,
                         show_ticks,
-                        assignable,
-                        assigned,
-                        selected_id,
+                        assignment,
                     )|
                           -> Element<'static, Message> {
                         let value = Self::qdb_to_level(*value_qdb);
                         let fader_height = *fader_height_tenths as f32 / 10.0;
-                        let assignable = *assignable;
-                        let assigned = *assigned;
-                        let selected_id = *selected_id;
+                        let ModulatorAssignment {
+                            assignable,
+                            assigned,
+                            selected_id,
+                        } = *assignment;
                         let on_change_track = track_name.clone();
                         let learn_track = track_name.clone();
                         let slider = mouse_area(
@@ -380,35 +384,6 @@ impl Mixer {
         .padding(BAY_INSET)
         .style(|_theme| style::mixer::bay())
         .into()
-    }
-
-    fn fader_bay_cached(
-        track_name: String,
-        channels: usize,
-        levels_db: &[f32],
-        value: f32,
-        fader_height: f32,
-        show_ticks: bool,
-        modulators_pane_visible: bool,
-        selected_modulator: Option<&crate::state::Modulator>,
-    ) -> Element<'static, Message> {
-        let (assignable, assigned, selected_id) = Self::modulator_assignment_state(
-            modulators_pane_visible,
-            selected_modulator,
-            &track_name,
-            ModulatorController::Volume,
-        );
-        Self::fader_bay(
-            track_name,
-            channels,
-            levels_db,
-            value,
-            fader_height,
-            show_ticks,
-            assignable,
-            assigned,
-            selected_id,
-        )
     }
 
     fn strip_width_for_channels(channels: usize) -> f32 {
@@ -694,15 +669,20 @@ impl Mixer {
             } else {
                 None
             };
-            let bay = Self::fader_bay_cached(
+            let assignment = Self::modulator_assignment_state(
+                modulators_pane_visible,
+                selected_modulator,
+                &track.name,
+                ModulatorController::Volume,
+            );
+            let bay = Self::fader_bay(
                 track.name.clone(),
                 track.audio.outs,
                 &track.meter_out_db,
                 track.level,
                 fader_height,
                 true,
-                modulators_pane_visible,
-                selected_modulator,
+                assignment,
             );
             metronome_strip = Some(
                 mouse_area(Self::strip_shell(
@@ -742,15 +722,20 @@ impl Mixer {
             } else {
                 None
             };
-            let bay = Self::fader_bay_cached(
+            let assignment = Self::modulator_assignment_state(
+                modulators_pane_visible,
+                selected_modulator,
+                &track.name,
+                ModulatorController::Volume,
+            );
+            let bay = Self::fader_bay(
                 track.name.clone(),
                 track.audio.outs,
                 &track.meter_out_db,
                 track.level,
                 fader_height,
                 true,
-                modulators_pane_visible,
-                selected_modulator,
+                assignment,
             );
             let solo_upstream = upstream_track_names.contains(&track.name);
             let strip: Element<'a, Message> = mouse_area(Self::strip_shell(
@@ -799,16 +784,23 @@ impl Mixer {
             } else {
                 None
             },
-            Self::fader_bay_cached(
-                "hw:out".to_string(),
-                hw_out_channels.max(1),
-                &state.hw_out_meter_db,
-                hw_out_level,
-                fader_height,
-                true,
-                modulators_pane_visible,
-                selected_modulator,
-            ),
+            {
+                let assignment = Self::modulator_assignment_state(
+                    modulators_pane_visible,
+                    selected_modulator,
+                    "hw:out",
+                    ModulatorController::Volume,
+                );
+                Self::fader_bay(
+                    "hw:out".to_string(),
+                    hw_out_channels.max(1),
+                    &state.hw_out_meter_db,
+                    hw_out_level,
+                    fader_height,
+                    true,
+                    assignment,
+                )
+            },
             StripReadout {
                 track_name: "hw:out".to_string(),
                 editing: editing_track == Some("hw:out"),

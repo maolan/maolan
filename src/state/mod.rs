@@ -53,7 +53,9 @@ pub use track::{EditorMarker, Track, TrackAutomationLane, TrackAutomationPoint, 
 pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum ModulatorShape {
+    #[default]
     Sine,
     Triangle,
     Saw,
@@ -73,11 +75,6 @@ impl fmt::Display for ModulatorShape {
     }
 }
 
-impl Default for ModulatorShape {
-    fn default() -> Self {
-        Self::Sine
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ModulatorController {

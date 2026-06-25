@@ -17,6 +17,17 @@ pub struct Menu {
     recent_session_paths: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+pub struct MenuViewState {
+    pub tracks_visible: bool,
+    pub editor_visible: bool,
+    pub mixer_visible: bool,
+    pub toolbar_visible: bool,
+    pub log_visible: bool,
+    pub shortcuts_pane_visible: bool,
+    pub modulators_pane_visible: bool,
+}
+
 impl Menu {
     pub fn update(&mut self, _message: &Message) {}
 
@@ -36,16 +47,7 @@ impl Menu {
         format!("{base}  ({path})")
     }
 
-    pub fn view(
-        &self,
-        tracks_visible: bool,
-        editor_visible: bool,
-        mixer_visible: bool,
-        toolbar_visible: bool,
-        log_visible: bool,
-        shortcuts_pane_visible: bool,
-        modulators_pane_visible: bool,
-    ) -> iced::Element<'_, Message> {
+    pub fn view(&self, state: MenuViewState) -> iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
         let mut new_menu_items: Vec<Item<'_, Message, _, _>> =
@@ -173,23 +175,35 @@ impl Menu {
             }),
             (menu_dropdown("View", Message::None), {
                 menu_tpl(menu_items!(
-                    (menu_checkbox_item("Tracks", tracks_visible, Message::ToggleTracksVisibility)),
-                    (menu_checkbox_item("Editor", editor_visible, Message::ToggleEditorVisibility)),
-                    (menu_checkbox_item("Mixer", mixer_visible, Message::ToggleMixerVisibility)),
+                    (menu_checkbox_item(
+                        "Tracks",
+                        state.tracks_visible,
+                        Message::ToggleTracksVisibility
+                    )),
+                    (menu_checkbox_item(
+                        "Editor",
+                        state.editor_visible,
+                        Message::ToggleEditorVisibility
+                    )),
+                    (menu_checkbox_item(
+                        "Mixer",
+                        state.mixer_visible,
+                        Message::ToggleMixerVisibility
+                    )),
                     (menu_checkbox_item(
                         "Toolbar",
-                        toolbar_visible,
+                        state.toolbar_visible,
                         Message::ToggleToolbarVisibility
                     )),
-                    (menu_checkbox_item("Log", log_visible, Message::ToggleLogVisibility)),
+                    (menu_checkbox_item("Log", state.log_visible, Message::ToggleLogVisibility)),
                     (menu_checkbox_item(
                         "Shortcuts",
-                        shortcuts_pane_visible,
+                        state.shortcuts_pane_visible,
                         Message::ToggleShortcutsPane
                     )),
                     (menu_checkbox_item(
                         "Modulators",
-                        modulators_pane_visible,
+                        state.modulators_pane_visible,
                         Message::ToggleModulatorsPane
                     )),
                     (menu_item("About", Message::Show(Show::About))),
