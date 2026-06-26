@@ -18,7 +18,7 @@ use crate::{
     consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
     consts::gui_update_mod::ATTACK_ALPHA,
     consts::state_ids::METRONOME_TRACK_ID,
-    consts::state_track::TRACK_MIN_HEIGHT,
+    consts::state_track::TRACK_SUBTRACK_MIN_HEIGHT,
     consts::widget_piano::PITCH_MAX,
     message::{
         ClipPitchCorrectionRequest, ClipStretchRequest, ExportNormalizeMode, ExportRenderMode,
@@ -26,8 +26,8 @@ use crate::{
     },
     platform_caps,
     state::{
-        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing,
-        TempoPoint, TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
+        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
+        TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
     },
     ui_timing::DOUBLE_CLICK,
     widget::midi_edit::{CTRL_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, SYSEX_SCROLL_ID},
@@ -1122,7 +1122,9 @@ impl Maolan {
         match target {
             TrackAutomationTarget::Volume => AutomationWriteKey::Volume,
             TrackAutomationTarget::Balance => AutomationWriteKey::Balance,
-            TrackAutomationTarget::Mute => AutomationWriteKey::Mute,
+            TrackAutomationTarget::MidiCc { channel, cc } => {
+                AutomationWriteKey::MidiCc { channel, cc }
+            }
             TrackAutomationTarget::Lv2Parameter {
                 instance_id, index, ..
             } => AutomationWriteKey::Lv2 { instance_id, index },
@@ -1165,6 +1167,11 @@ impl Maolan {
         if track.automation_mode == TrackAutomationMode::Read {
             return;
         }
+        let previous_lane_height = track
+            .lane_layout()
+            .lane_height
+            .max(TRACK_SUBTRACK_MIN_HEIGHT);
+        let previously_visible = track.automation_lane_count();
         if let Some(lane) = track
             .automation_lanes
             .iter_mut()
@@ -1192,7 +1199,8 @@ impl Maolan {
                     }],
                 });
         }
-        track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+        let lanes_delta = track.automation_lane_count() as isize - previously_visible as isize;
+        track.adjust_height_for_automation_lanes(previous_lane_height, lanes_delta);
     }
 
     fn record_manual_override(
@@ -1497,28 +1505,6 @@ impl Maolan {
                     normalized,
                 );
                 self.record_manual_override(track_name, TrackAutomationTarget::Balance, normalized);
-            }
-            Action::TrackToggleMute(track_name) if track_name != "hw:out" => {
-                let next = {
-                    let state = self.state.blocking_read();
-                    state
-                        .tracks
-                        .iter()
-                        .find(|t| t.name == *track_name)
-                        .map(|t| !t.muted)
-                };
-                if let Some(next) = next {
-                    self.record_automation_point(
-                        track_name,
-                        TrackAutomationTarget::Mute,
-                        if next { 1.0 } else { 0.0 },
-                    );
-                    self.record_manual_override(
-                        track_name,
-                        TrackAutomationTarget::Mute,
-                        if next { 1.0 } else { 0.0 },
-                    );
-                }
             }
             Action::TrackSetVst3Parameter {
                 track_name,
@@ -1852,7 +1838,7 @@ impl Maolan {
             }
             let mut vol = None;
             let mut bal = None;
-            let mut muted = None;
+            let mut midi_cc_updates: Vec<(u8, u8, u8)> = Vec::new();
             let runtime = self
                 .track_automation_runtime
                 .entry(track.name.clone())
@@ -1885,7 +1871,12 @@ impl Maolan {
                 match lane.target {
                     TrackAutomationTarget::Volume => vol = value,
                     TrackAutomationTarget::Balance => bal = value,
-                    TrackAutomationTarget::Mute => muted = value.map(|v| v >= 0.5),
+                    TrackAutomationTarget::MidiCc { channel, cc } => {
+                        if let Some(v) = value {
+                            let cc_value = (v * 127.0).round() as u8;
+                            midi_cc_updates.push((channel, cc, cc_value));
+                        }
+                    }
                     #[cfg(all(unix, not(target_os = "macos")))]
                     TrackAutomationTarget::Lv2Parameter {
                         instance_id,
@@ -1997,11 +1988,21 @@ impl Maolan {
                     actions.push(Action::TrackAutomationBalance(track.name.clone(), balance));
                 }
             }
-            if let Some(v) = muted
-                && runtime.muted != Some(v)
-            {
-                runtime.muted = Some(v);
-                actions.push(Action::TrackAutomationMute(track.name.clone(), v));
+            for (channel, cc, value) in midi_cc_updates {
+                let key = (channel, cc);
+                if runtime
+                    .midi_cc
+                    .get(&key)
+                    .is_none_or(|current| *current != value)
+                {
+                    runtime.midi_cc.insert(key, value);
+                    actions.push(Action::TrackMidiCc {
+                        track_name: track.name.clone(),
+                        channel,
+                        cc,
+                        value,
+                    });
+                }
             }
         }
         actions
@@ -3615,18 +3616,17 @@ mod tests {
         let key1 = Maolan::automation_key(TrackAutomationTarget::Volume);
         let key2 = Maolan::automation_key(TrackAutomationTarget::Volume);
         let key3 = Maolan::automation_key(TrackAutomationTarget::Balance);
+        let key4 = Maolan::automation_key(TrackAutomationTarget::MidiCc { channel: 0, cc: 7 });
 
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
+        assert_ne!(key1, key4);
     }
 
     #[test]
     fn key_has_explicit_gesture_lifecycle() {
         use super::AutomationWriteKey;
 
-        assert!(!Maolan::key_has_explicit_gesture_lifecycle(
-            AutomationWriteKey::Mute
-        ));
         assert!(!Maolan::key_has_explicit_gesture_lifecycle(
             AutomationWriteKey::Volume
         ));

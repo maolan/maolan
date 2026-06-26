@@ -184,7 +184,6 @@ pub enum ModulatorChange {
     Shape(crate::state::ModulatorShape),
     RateHz(f32),
     Phase(f32),
-    Bipolar(bool),
     Enabled(bool),
     Targets(Vec<crate::state::ModulatorTarget>),
 }
@@ -193,7 +192,10 @@ pub enum ModulatorChange {
 pub enum TrackAutomationTarget {
     Volume,
     Balance,
-    Mute,
+    MidiCc {
+        channel: u8,
+        cc: u8,
+    },
     Lv2Parameter {
         instance_id: usize,
         index: u32,
@@ -236,7 +238,14 @@ impl fmt::Display for TrackAutomationTarget {
         match self {
             Self::Volume => write!(f, "Volume"),
             Self::Balance => write!(f, "Balance"),
-            Self::Mute => write!(f, "Mute"),
+            Self::MidiCc { channel, cc } => {
+                let name = crate::midi::standard_cc_name(*cc);
+                if name.is_empty() {
+                    write!(f, "MIDI CC {} (ch {})", cc, channel + 1)
+                } else {
+                    write!(f, "MIDI CC {} (ch {}) - {}", cc, channel + 1, name)
+                }
+            }
             Self::Lv2Parameter {
                 instance_id, index, ..
             } => write!(f, "LV2 {}:{}", instance_id, index),
@@ -249,6 +258,23 @@ impl fmt::Display for TrackAutomationTarget {
                 param_id,
                 ..
             } => write!(f, "CLAP {}:{}", instance_id, param_id),
+        }
+    }
+}
+
+impl TrackAutomationTarget {
+    pub fn is_modulatable(self) -> bool {
+        true
+    }
+
+    pub fn default_range(self) -> (f32, f32) {
+        match self {
+            Self::Volume => (-90.0, 20.0),
+            Self::Balance => (-1.0, 1.0),
+            Self::MidiCc { .. } => (0.0, 127.0),
+            Self::Vst3Parameter { .. } => (0.0, 1.0),
+            Self::ClapParameter { min, max, .. } => (min as f32, max as f32),
+            Self::Lv2Parameter { min, max, .. } => (min, max),
         }
     }
 }
@@ -598,9 +624,6 @@ pub enum Message {
     ApplyTemplate(ApplyTemplate),
     SelectTrack(String),
     SelectTrackFromMixer(String),
-    TrackAutomationToggle {
-        track_name: String,
-    },
     TrackFreezeToggle {
         track_name: String,
     },
@@ -646,9 +669,14 @@ pub enum Message {
     TrackAutomationCycleMode {
         track_name: String,
     },
-    TrackAutomationAddLane {
+    TrackAutomationToggleLane {
         track_name: String,
         target: TrackAutomationTarget,
+    },
+    TrackAutomationAddPluginLanes {
+        track_name: String,
+        plugin_path: String,
+        format: String,
     },
     TrackAutomationLaneHover {
         track_name: String,
@@ -800,6 +828,8 @@ pub enum Message {
         track_name: String,
         position: Point,
     },
+    TrackContextMenuSubmenuOpen(crate::state::TrackContextSubmenu),
+    TrackContextMenuSubmenuClose,
     HandleTrackZones(Vec<(Id, Rectangle)>),
 
     MouseMoved(mouse::Event),
@@ -966,7 +996,7 @@ pub enum Message {
     ModulatorTargetShow {
         modulator_id: usize,
         track_name: String,
-        controller: crate::state::ModulatorController,
+        target: TrackAutomationTarget,
     },
     ModulatorTargetMinInput(String),
     ModulatorTargetMaxInput(String),
@@ -975,7 +1005,7 @@ pub enum Message {
     ModulatorTargetRemove {
         modulator_id: usize,
         track_name: String,
-        controller: crate::state::ModulatorController,
+        target: TrackAutomationTarget,
     },
     ToggleCutIndicator,
     HwMixer(mixosc::app::Message),

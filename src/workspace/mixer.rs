@@ -1,7 +1,7 @@
 use crate::{
     consts::{state_ids::METRONOME_TRACK_ID, workspace_mixer::*},
-    message::Message,
-    state::{ModulatorController, State, Track},
+    message::{Message, TrackAutomationTarget},
+    state::{State, Track},
     style,
 };
 use iced::{
@@ -168,7 +168,7 @@ impl Mixer {
         let show_message = selected_id.map(|id| Message::ModulatorTargetShow {
             modulator_id: id,
             track_name: track_name.clone(),
-            controller: ModulatorController::Balance,
+            target: TrackAutomationTarget::Balance,
         });
         let slider = mouse_area(
             horizontal_slider(-1.0..=1.0, value, move |value| {
@@ -221,7 +221,7 @@ impl Mixer {
             modulators_pane_visible,
             selected_modulator,
             &track_name,
-            ModulatorController::Balance,
+            TrackAutomationTarget::Balance,
         );
         let dep = (
             track_name,
@@ -267,14 +267,14 @@ impl Mixer {
         modulators_pane_visible: bool,
         selected_modulator: Option<&crate::state::Modulator>,
         track_name: &str,
-        controller: ModulatorController,
+        target: TrackAutomationTarget,
     ) -> ModulatorAssignment {
         let assignable = modulators_pane_visible && selected_modulator.is_some();
         let id = selected_modulator.map(|m| m.id);
         let assigned = selected_modulator.is_some_and(|m| {
             m.targets
                 .iter()
-                .any(|t| t.track_name == track_name && t.controller == controller)
+                .any(|t| t.track_name == track_name && t.target == target)
         });
         ModulatorAssignment {
             assignable,
@@ -356,7 +356,7 @@ impl Mixer {
                                         Message::ModulatorTargetShow {
                                             modulator_id: selected_id.unwrap(),
                                             track_name: track_name.clone(),
-                                            controller: ModulatorController::Volume,
+                                            target: TrackAutomationTarget::Volume,
                                         },
                                     ),
                                 )
@@ -673,7 +673,7 @@ impl Mixer {
                 modulators_pane_visible,
                 selected_modulator,
                 &track.name,
-                ModulatorController::Volume,
+                TrackAutomationTarget::Volume,
             );
             let bay = Self::fader_bay(
                 track.name.clone(),
@@ -726,7 +726,7 @@ impl Mixer {
                 modulators_pane_visible,
                 selected_modulator,
                 &track.name,
-                ModulatorController::Volume,
+                TrackAutomationTarget::Volume,
             );
             let bay = Self::fader_bay(
                 track.name.clone(),
@@ -789,7 +789,7 @@ impl Mixer {
                     modulators_pane_visible,
                     selected_modulator,
                     "hw:out",
-                    ModulatorController::Volume,
+                    TrackAutomationTarget::Volume,
                 );
                 Self::fader_bay(
                     "hw:out".to_string(),

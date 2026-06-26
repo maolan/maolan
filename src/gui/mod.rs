@@ -232,7 +232,9 @@ fn build_offline_automation_lanes(
         let target = match lane.target {
             TrackAutomationTarget::Volume => OfflineAutomationTarget::Volume,
             TrackAutomationTarget::Balance => OfflineAutomationTarget::Balance,
-            TrackAutomationTarget::Mute => OfflineAutomationTarget::Mute,
+            TrackAutomationTarget::MidiCc { channel, cc } => {
+                OfflineAutomationTarget::MidiCc { channel, cc }
+            }
             #[cfg(all(unix, not(target_os = "macos")))]
             TrackAutomationTarget::Lv2Parameter {
                 instance_id,
@@ -353,7 +355,7 @@ pub(super) static AUDIO_PEAK_UPDATES: LazyLock<Mutex<Vec<AudioPeakChunkUpdate>>>
 enum AutomationWriteKey {
     Volume,
     Balance,
-    Mute,
+    MidiCc { channel: u8, cc: u8 },
     Lv2 { instance_id: usize, index: u32 },
     Vst3 { instance_id: usize, param_id: u32 },
     Clap { instance_id: usize, param_id: u32 },
@@ -375,7 +377,7 @@ struct TouchAutomationOverride {
 struct TrackAutomationRuntime {
     level_db: Option<f32>,
     balance: Option<f32>,
-    muted: Option<bool>,
+    midi_cc: HashMap<(u8, u8), u8>,
     #[cfg(all(unix, not(target_os = "macos")))]
     lv2_params: HashMap<(usize, u32), f32>,
     vst3_params: HashMap<(usize, u32), f32>,

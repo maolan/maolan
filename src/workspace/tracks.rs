@@ -11,13 +11,18 @@ use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
     alignment::Horizontal,
     widget::{
-        Column, Row, Space, button, column, container, lazy, mouse_area, pick_list, row, text,
+        Column, Row, Space, Stack, button, column, container, lazy, mouse_area, pick_list, row,
+        scrollable, text,
     },
 };
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
-use std::hash::{Hash, Hasher};
+use maolan_widgets::horizontal_slider::horizontal_slider;
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 #[derive(Debug, Default)]
 pub struct Tracks {
@@ -28,6 +33,120 @@ pub struct Tracks {
 struct VisibleAutomationLane {
     target: TrackAutomationTarget,
     points_len: usize,
+}
+
+fn automation_target_current_value(target: TrackAutomationTarget, level: f32, balance: f32) -> f32 {
+    match target {
+        TrackAutomationTarget::Volume => level,
+        TrackAutomationTarget::Balance => balance,
+        _ => {
+            let (min, max) = target.default_range();
+            (min + max) / 2.0
+        }
+    }
+}
+
+fn automation_target_set_message(
+    target: TrackAutomationTarget,
+    track_name: String,
+    value: f32,
+) -> Option<Message> {
+    match target {
+        TrackAutomationTarget::Volume => {
+            Some(Message::Request(Action::TrackLevel(track_name, value)))
+        }
+        TrackAutomationTarget::Balance => {
+            Some(Message::Request(Action::TrackBalance(track_name, value)))
+        }
+        TrackAutomationTarget::MidiCc { channel, cc } => {
+            Some(Message::Request(Action::TrackMidiCc {
+                track_name,
+                channel,
+                cc,
+                value: value.round().clamp(0.0, 127.0) as u8,
+            }))
+        }
+        TrackAutomationTarget::ClapParameter {
+            instance_id,
+            param_id,
+            ..
+        } => Some(Message::Request(Action::TrackSetClapParameter {
+            track_name,
+            instance_id,
+            param_id,
+            value: value as f64,
+        })),
+        TrackAutomationTarget::Vst3Parameter {
+            instance_id,
+            param_id,
+        } => Some(Message::Request(Action::TrackSetVst3Parameter {
+            track_name,
+            instance_id,
+            param_id,
+            value,
+        })),
+        #[cfg(all(unix, not(target_os = "macos")))]
+        TrackAutomationTarget::Lv2Parameter {
+            instance_id, index, ..
+        } => Some(Message::Request(Action::TrackSetLv2ControlValue {
+            track_name,
+            instance_id,
+            index,
+            value,
+        })),
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        TrackAutomationTarget::Lv2Parameter { .. } => None,
+    }
+}
+
+fn automation_lane_header_control(
+    track_name: String,
+    level: f32,
+    balance: f32,
+    lane: &VisibleAutomationLane,
+    selected_modulator: Option<&crate::state::Modulator>,
+) -> Element<'static, Message> {
+    let target = lane.target;
+    let (min, max) = target.default_range();
+    let value = automation_target_current_value(target, level, balance);
+    let track_name_for_slider = track_name.clone();
+    let slider = horizontal_slider(min..=max, value, move |v| {
+        automation_target_set_message(target, track_name_for_slider.clone(), v)
+            .unwrap_or(Message::DeselectClips)
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(12.0));
+    let label = text(format!("{}", target))
+        .size(9)
+        .width(Length::Fixed(70.0));
+    let base: Element<'static, Message> = row![label, slider]
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .into();
+
+    let Some(m) = selected_modulator else {
+        return base;
+    };
+    let assigned = m
+        .targets
+        .iter()
+        .any(|t| t.track_name == track_name && t.target == target);
+    let show_message = Message::ModulatorTargetShow {
+        modulator_id: m.id,
+        track_name,
+        target,
+    };
+    Stack::new()
+        .push(base)
+        .push(
+            mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .style(move |_theme| crate::style::mixer::modulator_target(assigned)),
+            )
+            .on_press(show_message),
+        )
+        .into()
 }
 
 #[derive(Clone)]
@@ -53,6 +172,7 @@ struct TrackViewData {
     midi_ins: usize,
     midi_outs: usize,
     midi_lane_channels: Vec<Option<u8>>,
+    level: f32,
     balance: f32,
     automation_mode: String,
     visible_automation_lanes: Vec<VisibleAutomationLane>,
@@ -80,9 +200,62 @@ struct VcaStripViewData {
     next_same: bool,
 }
 
+fn context_menu_panel_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(palette.background.weak.color)),
+        border: Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn context_menu_panel(
+    items: Vec<Element<'static, Message>>,
+    width: f32,
+) -> Element<'static, Message> {
+    container(Column::with_children(items).spacing(2))
+        .width(Length::Fixed(width))
+        .padding(6)
+        .style(context_menu_panel_style)
+        .into()
+}
+
+fn context_menu_scrollable_panel(
+    items: Vec<Element<'static, Message>>,
+    width: f32,
+    max_height: f32,
+) -> Element<'static, Message> {
+    container(scrollable(Column::with_children(items).spacing(2)).height(Length::Fixed(max_height)))
+        .width(Length::Fixed(width))
+        .padding(6)
+        .style(context_menu_panel_style)
+        .into()
+}
+
+fn context_submenu_item(
+    label: String,
+    submenu: crate::state::TrackContextSubmenu,
+    active: bool,
+) -> Element<'static, Message> {
+    let item = menu::submenu(label, Message::None);
+    mouse_area(
+        container(item)
+            .style(move |_theme| style::menu_submenu_background(active))
+            .width(Length::Fill)
+            .height(Length::Shrink),
+    )
+    .on_enter(Message::TrackContextMenuSubmenuOpen(submenu.clone()))
+    .into()
+}
+
 pub(super) fn track_context_menu_overlay(
     state: &StateData,
     max_y: f32,
+    selected_modulator: Option<&crate::state::Modulator>,
 ) -> Option<(Point, Element<'static, Message>)> {
     let menu_state = state.track_context_menu.as_ref()?;
     let track = state
@@ -103,41 +276,15 @@ pub(super) fn track_context_menu_overlay(
     }
 
     let track_name = track.name.clone();
-    let has_visible_automation = track.automation_lanes.iter().any(|lane| lane.visible);
     let freeze_supported = track.midi.ins == 0;
-    let mut items = vec![
-        menu::menu_item(
-            "Automation: Volume",
-            Message::TrackAutomationAddLane {
-                track_name: track_name.clone(),
-                target: TrackAutomationTarget::Volume,
-            },
-        ),
-        menu::menu_item(
-            "Automation: Balance",
-            Message::TrackAutomationAddLane {
-                track_name: track_name.clone(),
-                target: TrackAutomationTarget::Balance,
-            },
-        ),
-        menu::menu_item(
-            "Automation: Mute",
-            Message::TrackAutomationAddLane {
-                track_name: track_name.clone(),
-                target: TrackAutomationTarget::Mute,
-            },
-        ),
+    let mut items = vec![context_submenu_item(
+        "Automation".to_string(),
+        crate::state::TrackContextSubmenu::Automation,
+        menu_state.submenu == Some(crate::state::TrackContextSubmenu::Automation),
+    )];
+
+    items.extend(vec![
         menu::menu_item("Rename", Message::TrackRenameShow(track_name.clone())),
-        menu::menu_item(
-            if has_visible_automation {
-                "Hide Automation (A-)"
-            } else {
-                "Show Automation (A+)"
-            },
-            Message::TrackAutomationToggle {
-                track_name: track_name.clone(),
-            },
-        ),
         menu::menu_item(
             format!("Automation Mode: {}", track.automation_mode),
             Message::TrackAutomationCycleMode {
@@ -206,7 +353,65 @@ pub(super) fn track_context_menu_overlay(
                 target: TrackMidiLearnTarget::DiskMonitor,
             },
         ),
-    ];
+    ]);
+
+    if let Some(modulator) = selected_modulator {
+        let mut modulator_items = Vec::new();
+        for target in [
+            TrackAutomationTarget::Volume,
+            TrackAutomationTarget::Balance,
+        ] {
+            if !target.is_modulatable() {
+                continue;
+            }
+            let is_assigned = modulator
+                .targets
+                .iter()
+                .any(|t| t.track_name == track_name && t.target == target);
+            modulator_items.push(menu::menu_item(
+                format!(
+                    "Modulator {} {} {}",
+                    modulator.name,
+                    if is_assigned { "✓" } else { " " },
+                    target
+                ),
+                Message::ModulatorTargetShow {
+                    modulator_id: modulator.id,
+                    track_name: track_name.clone(),
+                    target,
+                },
+            ));
+        }
+        for lane in track.automation_lanes.iter().filter(|lane| lane.visible) {
+            if !lane.target.is_modulatable() {
+                continue;
+            }
+            if matches!(
+                lane.target,
+                TrackAutomationTarget::Volume | TrackAutomationTarget::Balance
+            ) {
+                continue;
+            }
+            let is_assigned = modulator
+                .targets
+                .iter()
+                .any(|t| t.track_name == track_name && t.target == lane.target);
+            modulator_items.push(menu::menu_item(
+                format!(
+                    "Modulator {} {} {}",
+                    modulator.name,
+                    if is_assigned { "✓" } else { " " },
+                    lane.target
+                ),
+                Message::ModulatorTargetShow {
+                    modulator_id: modulator.id,
+                    track_name: track_name.clone(),
+                    target: lane.target,
+                },
+            ));
+        }
+        items.extend(modulator_items);
+    }
 
     let is_group_master = state
         .tracks
@@ -411,30 +616,135 @@ pub(super) fn track_context_menu_overlay(
         ));
     }
 
+    let is_automation_visible = |target: &TrackAutomationTarget| {
+        track
+            .automation_lanes
+            .iter()
+            .any(|lane| lane.target == *target && lane.visible)
+    };
+    let automation_menu_item =
+        |label: String, target: TrackAutomationTarget| -> Element<'static, Message> {
+            let visible = is_automation_visible(&target);
+            menu::menu_item(
+                format!("{} {}", if visible { "✓" } else { " " }, label),
+                Message::TrackAutomationToggleLane {
+                    track_name: track_name.clone(),
+                    target,
+                },
+            )
+        };
+
+    let mut automation_items: Vec<Element<'static, Message>> = vec![
+        automation_menu_item("Volume".to_string(), TrackAutomationTarget::Volume),
+        automation_menu_item("Balance".to_string(), TrackAutomationTarget::Balance),
+    ];
+
+    let mut plugin_submenu_items: Vec<Element<'static, Message>> = Vec::new();
+    if let Some((plugins, _)) = state.plugin_graphs_by_track.get(&track_name) {
+        for plugin in plugins {
+            if plugin.format.eq_ignore_ascii_case("LV2")
+                && !cfg!(all(unix, not(target_os = "macos")))
+            {
+                continue;
+            }
+            let plugin_label = format!("{} ({})", plugin.name, plugin.format);
+            let plugin_submenu_key = crate::state::TrackContextSubmenu::Plugin {
+                instance_id: plugin.instance_id,
+                format: plugin.format.clone(),
+            };
+            let is_active = menu_state.submenu == Some(plugin_submenu_key.clone());
+            automation_items.push(context_submenu_item(
+                plugin_label.clone(),
+                plugin_submenu_key.clone(),
+                is_active,
+            ));
+            if is_active {
+                if let Some(cached) = state
+                    .plugin_parameters_by_track
+                    .get(&track_name)
+                    .and_then(|cache| cache.get(&plugin.instance_id))
+                {
+                    for param in cached {
+                        let target = if plugin.format.eq_ignore_ascii_case("CLAP") {
+                            TrackAutomationTarget::ClapParameter {
+                                instance_id: plugin.instance_id,
+                                param_id: param.param_id,
+                                min: param.min,
+                                max: param.max,
+                            }
+                        } else {
+                            TrackAutomationTarget::Vst3Parameter {
+                                instance_id: plugin.instance_id,
+                                param_id: param.param_id,
+                            }
+                        };
+                        plugin_submenu_items.push(automation_menu_item(param.name.clone(), target));
+                    }
+                } else {
+                    plugin_submenu_items
+                        .push(menu::menu_item("Loading parameters...", Message::None));
+                }
+            }
+        }
+    }
+
+    let has_midi = track.midi.ins > 0 || track.midi.outs > 0;
+    let mut midi_submenu_items: Vec<Element<'static, Message>> = Vec::new();
+    if has_midi {
+        automation_items.push(context_submenu_item(
+            "MIDI".to_string(),
+            crate::state::TrackContextSubmenu::Midi,
+            menu_state.submenu == Some(crate::state::TrackContextSubmenu::Midi),
+        ));
+        if menu_state.submenu == Some(crate::state::TrackContextSubmenu::Midi) {
+            for cc in 0u8..=127 {
+                let name = crate::midi::standard_cc_name(cc);
+                let label = if name.is_empty() {
+                    format!("CC{}", cc)
+                } else {
+                    format!("CC{} - {}", cc, name)
+                };
+                midi_submenu_items.push(automation_menu_item(
+                    label,
+                    TrackAutomationTarget::MidiCc { channel: 0, cc },
+                ));
+            }
+        }
+    }
+
     let menu_height = items.len() as f32 * 32.0 + 10.0;
 
-    let panel = container(Column::with_children(items).spacing(2))
-        .width(Length::Fill)
-        .padding(6)
-        .style(|theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(Background::Color(palette.background.weak.color)),
-                border: Border {
-                    color: palette.background.strong.color,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..container::Style::default()
-            }
-        })
-        .into();
+    let main_panel = context_menu_panel(items, 220.0);
+    let mut panels = vec![main_panel];
+    if menu_state.submenu.is_some() {
+        panels.push(context_menu_panel(automation_items, 220.0));
+    }
+    if menu_state
+        .submenu
+        .as_ref()
+        .is_some_and(|s| matches!(s, crate::state::TrackContextSubmenu::Plugin { .. }))
+    {
+        panels.push(context_menu_panel(plugin_submenu_items, 260.0));
+    }
+    if menu_state
+        .submenu
+        .as_ref()
+        .is_some_and(|s| matches!(s, crate::state::TrackContextSubmenu::Midi))
+    {
+        let midi_max_height = (max_y - 20.0).clamp(200.0, 500.0);
+        panels.push(context_menu_scrollable_panel(
+            midi_submenu_items,
+            280.0,
+            midi_max_height,
+        ));
+    }
     let mut y = (top + menu_state.anchor.y).max(0.0);
     if y + menu_height > max_y {
         y = (max_y - menu_height).max(0.0);
     }
 
-    Some((Point::new(menu_state.anchor.x.max(0.0), y), panel))
+    let combined = Row::with_children(panels).spacing(4).into();
+    Some((Point::new(menu_state.anchor.x.max(0.0), y), combined))
 }
 
 impl Tracks {
@@ -477,6 +787,7 @@ impl Tracks {
         track_width_px: f32,
         row_index: usize,
         vca: Option<&VcaStripViewData>,
+        selected_modulator: Option<&crate::state::Modulator>,
     ) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         row_index.hash(&mut hasher);
@@ -504,6 +815,7 @@ impl Tracks {
         track.midi_ins.hash(&mut hasher);
         track.midi_outs.hash(&mut hasher);
         track.midi_lane_channels.hash(&mut hasher);
+        track.level.to_bits().hash(&mut hasher);
         track.balance.to_bits().hash(&mut hasher);
         track.automation_mode.hash(&mut hasher);
         track.midi_learn_vol.hash(&mut hasher);
@@ -517,9 +829,11 @@ impl Tracks {
         for lane in &track.visible_automation_lanes {
             std::mem::discriminant(&lane.target).hash(&mut hasher);
             match lane.target {
-                TrackAutomationTarget::Volume
-                | TrackAutomationTarget::Balance
-                | TrackAutomationTarget::Mute => {}
+                TrackAutomationTarget::Volume | TrackAutomationTarget::Balance => {}
+                TrackAutomationTarget::MidiCc { channel, cc } => {
+                    channel.hash(&mut hasher);
+                    cc.hash(&mut hasher);
+                }
                 TrackAutomationTarget::Lv2Parameter {
                     instance_id,
                     index,
@@ -551,6 +865,16 @@ impl Tracks {
                 }
             }
             lane.points_len.hash(&mut hasher);
+        }
+        if let Some(m) = selected_modulator {
+            m.id.hash(&mut hasher);
+            for lane in &track.visible_automation_lanes {
+                let assigned = m
+                    .targets
+                    .iter()
+                    .any(|t| t.track_name == track.name && t.target == lane.target);
+                assigned.hash(&mut hasher);
+            }
         }
         if let Some(vca) = vca {
             vca.label.hash(&mut hasher);
@@ -603,6 +927,7 @@ impl Tracks {
         track_width_px: f32,
         index: usize,
         vca: Option<VcaStripViewData>,
+        selected_modulator: Option<&crate::state::Modulator>,
     ) -> Element<'static, Message> {
         let selected = track.selected;
         let height = track.height;
@@ -646,7 +971,7 @@ impl Tracks {
         let midi_learn_disk_monitor = track.midi_learn_disk_monitor;
         let layout = track.layout;
         let lane_h = layout.lane_height.max(12.0);
-        let has_visible_automation = !track.visible_automation_lanes.is_empty();
+
         let inline_midi_lane_selector =
             !track.is_master && track.audio_ins == 0 && track.midi_ins > 0;
         let max_name_chars = (((track_width_px - 98.0) / 7.0).floor() as i32).clamp(10, 64);
@@ -942,16 +1267,13 @@ impl Tracks {
         }
         for lane in &track.visible_automation_lanes {
             lane_rows = lane_rows.push(
-                container(
-                    row![
-                        Self::info_badge("AUTO".to_string(), false),
-                        text(format!("{}", lane.target)).size(11),
-                        Space::new().width(Length::Fill),
-                        text(format!("{} pts", lane.points_len)).size(10),
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(6),
-                )
+                container(automation_lane_header_control(
+                    track.name.clone(),
+                    track.level,
+                    track.balance,
+                    lane,
+                    selected_modulator,
+                ))
                 .width(Length::Fill)
                 .height(Length::Fixed(lane_h))
                 .padding([4, 6])
@@ -980,7 +1302,6 @@ impl Tracks {
         );
         let mode_label = track.automation_mode.clone();
         let balance_label = Self::format_balance(track.balance);
-        let automation_hint = if has_visible_automation { "AUTO" } else { "" };
 
         let body = row![
             controls,
@@ -994,12 +1315,6 @@ impl Tracks {
                         Self::info_badge(send_io, false),
                         Self::info_badge(mode_label, false),
                         Self::info_badge(balance_label, false),
-                        container(text(automation_hint).size(9))
-                            .padding([1, 0])
-                            .style(|_theme: &Theme| container::Style {
-                                text_color: Some(Color::from_rgba(0.77, 0.67, 0.52, 0.96)),
-                                ..container::Style::default()
-                            }),
                     ]
                     .spacing(4)
                     .align_y(Alignment::Center),
@@ -1134,7 +1449,11 @@ impl Tracks {
             .into()
     }
 
-    pub fn view(&self, visible_window: VisibleTrackWindow) -> Element<'_, Message> {
+    pub fn view(
+        &self,
+        visible_window: VisibleTrackWindow,
+        selected_modulator: Option<&crate::state::Modulator>,
+    ) -> Element<'_, Message> {
         let (tracks, width) = {
             let state = self.state.blocking_read();
             let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
@@ -1206,6 +1525,7 @@ impl Tracks {
                             midi_ins: track.midi.ins,
                             midi_outs: track.midi.outs,
                             midi_lane_channels: track.midi_lane_channels.clone(),
+                            level: track.level,
                             balance: track.balance,
                             automation_mode: track.automation_mode.to_string(),
                             visible_automation_lanes: track
@@ -1315,12 +1635,26 @@ impl Tracks {
             .zip(vca_view_data)
             .filter(|((_, (_, track)), _)| !track.hidden)
             .collect();
+        let selected_modulator_arc = Arc::new(selected_modulator.cloned());
         let children: Vec<Element<'_, Message>> = filtered
             .into_iter()
             .map(|((_visible_index, (index, track)), vca)| {
-                let hash = Self::track_row_render_hash(&track, track_width_px, index, vca.as_ref());
+                let hash = Self::track_row_render_hash(
+                    &track,
+                    track_width_px,
+                    index,
+                    vca.as_ref(),
+                    selected_modulator,
+                );
+                let selected_modulator_arc = selected_modulator_arc.clone();
                 lazy(hash, move |_| {
-                    Self::render_track_row(track.clone(), track_width_px, index, vca.clone())
+                    Self::render_track_row(
+                        track.clone(),
+                        track_width_px,
+                        index,
+                        vca.clone(),
+                        selected_modulator_arc.as_ref().as_ref(),
+                    )
                 })
                 .into()
             })

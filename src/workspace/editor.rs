@@ -2,7 +2,7 @@ use super::VisibleTrackWindow;
 use crate::{
     consts::{
         state_ids::METRONOME_TRACK_ID,
-        state_track::{TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT},
+        state_track::TRACK_SUBTRACK_GAP,
         workspace::{AUDIO_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BASE, MIN_TICK_SPACING_PX},
         workspace_editor::CHECKPOINTS,
     },
@@ -96,7 +96,9 @@ fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Colo
     match target {
         crate::message::TrackAutomationTarget::Volume => Color::from_rgba(0.98, 0.78, 0.22, 0.95),
         crate::message::TrackAutomationTarget::Balance => Color::from_rgba(0.88, 0.62, 0.24, 0.95),
-        crate::message::TrackAutomationTarget::Mute => Color::from_rgba(0.95, 0.45, 0.22, 0.95),
+        crate::message::TrackAutomationTarget::MidiCc { .. } => {
+            Color::from_rgba(0.95, 0.45, 0.22, 0.95)
+        }
         crate::message::TrackAutomationTarget::Lv2Parameter { .. } => {
             Color::from_rgba(0.6, 0.5, 0.95, 0.95)
         }
@@ -244,7 +246,7 @@ impl canvas::Program<Message> for TrackLaneBackgroundCanvas {
         let geom = state
             .cache
             .draw(renderer, bounds.size(), |frame: &mut Frame| {
-                let mut y = 0.0;
+                let mut y = self.header_height;
                 for i in 0..self.audio_lanes {
                     let is_last = i + 1 == self.audio_lanes && self.midi_lanes == 0;
                     let h = if is_last {
@@ -350,12 +352,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let layout = track.lane_layout();
     let lane_height = layout.lane_height.max(12.0);
     let lane_clip_height = (lane_height - 6.0).max(12.0);
-    let total_lanes = (layout.audio_lanes + layout.midi_lanes).max(1);
-    let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
-    let editor_lane_height =
-        ((track.height - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
-    let editor_lane_top =
-        |lane_index: usize| lane_index as f32 * (editor_lane_height + TRACK_SUBTRACK_GAP);
     let track_name_cloned = track.name.clone();
     let mut selected_audio_indices = HashSet::new();
     let mut selected_midi_indices = HashSet::new();
@@ -378,7 +374,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         pin(track_lane_background_overlay(
             height,
             layout.header_height,
-            editor_lane_height,
+            lane_height,
             if track.is_master { 0 } else { track.audio.ins },
             if track.is_master { 0 } else { track.midi.ins },
         ))
@@ -548,10 +544,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 })
                 .unwrap_or(clip.start as f32);
 
-            let _lane = 0;
-            let lane_top = editor_lane_top(0) + 1.0;
+            let lane = 0;
+            let lane_top = track.lane_top(Kind::Audio, lane) + 1.0;
             let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-            let clip_height = (editor_lane_height - 2.0).max(8.0);
+            let clip_height = (lane_height - 2.0).max(8.0);
             let display_clip_label =
                 AudioClipWidget::<Message>::label_for_width(&clip_label, clip_width);
             let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -777,9 +773,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 })
                 .unwrap_or(clip.start as f32);
             let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
-            let lane_top = editor_lane_top(layout.audio_lanes + lane) + 1.0;
+            let lane_top = track.lane_top(Kind::MIDI, lane) + 1.0;
             let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-            let clip_height = (editor_lane_height - 2.0).max(8.0);
+            let clip_height = (lane_height - 2.0).max(8.0);
             let display_clip_label =
                 MIDIClipWidget::<Message>::label_for_width(&clip_label, clip_width);
             let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -1009,8 +1005,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             }
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let clip_height = (editor_lane_height - 2.0).max(8.0);
-                        let lane_top = editor_lane_top(0) + 1.0;
+                        let clip_height = (lane_height - 2.0).max(8.0);
+                        let lane_top = track.lane_top(Kind::Audio, 0) + 1.0;
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
                                 + active_clip_snap_adjust_samples;
@@ -1095,7 +1091,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             }
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let lane_top = editor_lane_top(0) + 1.0;
+                        let lane = source_clip
+                            .input_channel
+                            .min(track.midi.ins.saturating_sub(1));
+                        let lane_top = track.lane_top(Kind::MIDI, lane) + 1.0;
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
                                 + active_clip_snap_adjust_samples;
@@ -1105,7 +1104,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         );
                         clips.push(
                             pin(MIDIClipWidget::new(widget_midi_clip_data(source_clip))
-                                .with_size(clip_width, (editor_lane_height - 2.0).max(8.0))
+                                .with_size(clip_width, (lane_height - 2.0).max(8.0))
                                 .with_label(display_clip_label)
                                 .preview(
                                     if active_target_valid {
@@ -1132,7 +1131,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     {
         let preview_width =
             ((preview_current - preview_start) as f32 * pixels_per_sample).max(12.0);
-        let preview_top = editor_lane_top(0) + 1.0;
+        let preview_top = track.lane_top(Kind::Audio, 0) + 1.0;
         let preview_peaks = recording_preview_peaks
             .and_then(|map| map.get(&track.name))
             .cloned()
@@ -1563,7 +1562,6 @@ impl Editor {
                     last.value.to_bits().hash(&mut hasher);
                 }
             }
-
             for clip in &track.audio.clips {
                 clip.name.hash(&mut hasher);
                 clip.start.hash(&mut hasher);
@@ -1836,11 +1834,12 @@ mod tests {
 
         let volume_color = automation_point_color(TrackAutomationTarget::Volume);
         let balance_color = automation_point_color(TrackAutomationTarget::Balance);
-        let mute_color = automation_point_color(TrackAutomationTarget::Mute);
+        let midi_cc_color =
+            automation_point_color(TrackAutomationTarget::MidiCc { channel: 0, cc: 7 });
 
         assert!(volume_color.a > 0.0);
         assert!(balance_color.a > 0.0);
-        assert!(mute_color.a > 0.0);
+        assert!(midi_cc_color.a > 0.0);
 
         assert_ne!(volume_color.r, balance_color.r);
     }

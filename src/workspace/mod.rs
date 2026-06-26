@@ -428,7 +428,11 @@ impl Workspace {
             self.tempo.height() + self.ruler.height() + tracks_total_height;
         let track_context_menu_overlay = {
             let state = self.state.blocking_read();
-            tracks::track_context_menu_overlay(&state, track_viewport_height - 36.0)
+            tracks::track_context_menu_overlay(
+                &state,
+                track_viewport_height - 36.0,
+                selected_modulator,
+            )
         };
         let clip_context_menu_overlay = {
             let state = self.state.blocking_read();
@@ -535,14 +539,15 @@ impl Workspace {
         .height(Length::Fixed(16.0));
 
         let editor_with_zoom = right_lanes_with_scrollbar;
-        let tracks_scrolled = scrollable(self.tracks.view(tracks_visible_window))
-            .id(Id::new(TRACKS_SCROLL_ID))
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::hidden(),
-            ))
-            .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
-            .width(tracks_width)
-            .height(Length::Fill);
+        let tracks_scrolled =
+            scrollable(self.tracks.view(tracks_visible_window, selected_modulator))
+                .id(Id::new(TRACKS_SCROLL_ID))
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::hidden(),
+                ))
+                .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
+                .width(tracks_width)
+                .height(Length::Fill);
 
         let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
             bpm: tempo,

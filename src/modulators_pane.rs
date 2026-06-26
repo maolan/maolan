@@ -114,32 +114,21 @@ fn modulator_card<'a>(m: &'a Modulator, selected: bool) -> Element<'a, Message> 
         "",
     );
 
-    let bipolar_row =
-        row![
-            checkbox(m.bipolar)
-                .label("Bipolar")
-                .on_toggle(|v| Message::ModulatorUpdate {
-                    id: m.id,
-                    change: ModulatorChange::Bipolar(v),
-                }),
-        ];
-
-    let card =
-        container(column![name_row, shape_row, rate_row, phase_row, bipolar_row,].spacing(8))
-            .style(move |_theme| container::Style {
-                background: Some(Background::Color(Color::from_rgba(0.18, 0.2, 0.24, 0.6))),
-                border: Border {
-                    color: if selected {
-                        Color::from_rgb(0.9, 0.75, 0.25)
-                    } else {
-                        Color::from_rgba(0.34, 0.42, 0.56, 0.72)
-                    },
-                    width: if selected { 2.0 } else { 1.0 },
-                    radius: 6.0.into(),
+    let card = container(column![name_row, shape_row, rate_row, phase_row,].spacing(8))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.18, 0.2, 0.24, 0.6))),
+            border: Border {
+                color: if selected {
+                    Color::from_rgb(0.9, 0.75, 0.25)
+                } else {
+                    Color::from_rgba(0.34, 0.42, 0.56, 0.72)
                 },
-                ..container::Style::default()
-            })
-            .padding(10);
+                width: if selected { 2.0 } else { 1.0 },
+                radius: 6.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .padding(10);
 
     mouse_area(card)
         .on_press(Message::ModulatorSelect(Some(m.id)))
