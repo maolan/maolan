@@ -49,7 +49,7 @@ In the Windows environment execute the following:
 The repository root is a single Cargo package (not a workspace).
 
 ```bash
-cargo build --release
+cargo build --workspace --release
 cargo run --release
 ```
 
