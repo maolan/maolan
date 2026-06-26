@@ -337,6 +337,20 @@ impl Track {
         self.height < self.min_height_for_layout()
     }
 
+    pub fn adjust_height_for_automation_lanes(
+        &mut self,
+        previous_lane_height: f32,
+        lanes_delta: isize,
+    ) {
+        let min_height = self.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+        if self.collapsed() || lanes_delta == 0 {
+            self.height = self.height.max(min_height);
+            return;
+        }
+        let lane_step = previous_lane_height.max(TRACK_SUBTRACK_MIN_HEIGHT) + TRACK_SUBTRACK_GAP;
+        self.height = (self.height + lanes_delta as f32 * lane_step).max(min_height);
+    }
+
     pub fn lane_layout(&self) -> TrackLaneLayout {
         if self.collapsed() {
             TrackLaneLayout {

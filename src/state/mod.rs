@@ -52,8 +52,7 @@ pub use track::{EditorMarker, Track, TrackAutomationLane, TrackAutomationPoint, 
 
 pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum ModulatorShape {
     #[default]
     Sine,
@@ -75,19 +74,18 @@ impl fmt::Display for ModulatorShape {
     }
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum ModulatorController {
-    Volume,
-    Balance,
-}
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ModulatorTarget {
     pub track_name: String,
-    pub controller: ModulatorController,
+    pub target: TrackAutomationTarget,
     pub min: f32,
     pub max: f32,
+}
+
+impl ModulatorTarget {
+    fn is_modulatable(&self) -> bool {
+        self.target.is_modulatable()
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for ModulatorTarget {
@@ -96,24 +94,93 @@ impl<'de> serde::Deserialize<'de> for ModulatorTarget {
         D: serde::Deserializer<'de>,
     {
         #[derive(serde::Deserialize)]
-        struct ModulatorTargetData {
+        struct NewShape {
             track_name: String,
-            controller: ModulatorController,
+            target: TrackAutomationTarget,
             #[serde(default)]
             min: Option<f32>,
             #[serde(default)]
             max: Option<f32>,
         }
-        let data = ModulatorTargetData::deserialize(deserializer)?;
-        let (default_min, default_max) = match data.controller {
-            ModulatorController::Volume => (-90.0, 20.0),
-            ModulatorController::Balance => (-1.0, 1.0),
+
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum OldTargetValue {
+            Target(TrackAutomationTarget),
+            MidiCc { channel: u8, cc: u8 },
+        }
+
+        #[derive(serde::Deserialize)]
+        struct KindShape {
+            track_name: String,
+            #[serde(alias = "kind")]
+            target: String,
+            value: OldTargetValue,
+            #[serde(default)]
+            min: Option<f32>,
+            #[serde(default)]
+            max: Option<f32>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ControllerShape {
+            track_name: String,
+            #[serde(alias = "volume", alias = "balance")]
+            controller: String,
+            #[serde(default)]
+            min: Option<f32>,
+            #[serde(default)]
+            max: Option<f32>,
+        }
+
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Shape {
+            New(NewShape),
+            Kind(KindShape),
+            Controller(ControllerShape),
+        }
+
+        let shape = Shape::deserialize(deserializer)?;
+        let (track_name, target, min, max) = match shape {
+            Shape::New(new) => (new.track_name, new.target, new.min, new.max),
+            Shape::Kind(kind) => {
+                let target = match kind.target.as_str() {
+                    "MidiCc" => {
+                        let OldTargetValue::MidiCc { channel, cc } = kind.value else {
+                            return Err(serde::de::Error::custom("invalid MidiCc value"));
+                        };
+                        TrackAutomationTarget::MidiCc { channel, cc }
+                    }
+                    _ => {
+                        let OldTargetValue::Target(target) = kind.value else {
+                            return Err(serde::de::Error::custom("invalid automation value"));
+                        };
+                        target
+                    }
+                };
+                (kind.track_name, target, kind.min, kind.max)
+            }
+            Shape::Controller(controller) => {
+                let target = match controller.controller.as_str() {
+                    "volume" => TrackAutomationTarget::Volume,
+                    "balance" => TrackAutomationTarget::Balance,
+                    _ => TrackAutomationTarget::Volume,
+                };
+                (
+                    controller.track_name,
+                    target,
+                    controller.min,
+                    controller.max,
+                )
+            }
         };
+        let (default_min, default_max) = target.default_range();
         Ok(Self {
-            track_name: data.track_name,
-            controller: data.controller,
-            min: data.min.unwrap_or(default_min),
-            max: data.max.unwrap_or(default_max),
+            track_name,
+            target,
+            min: min.unwrap_or(default_min),
+            max: max.unwrap_or(default_max),
         })
     }
 }
@@ -125,7 +192,6 @@ pub struct Modulator {
     pub shape: ModulatorShape,
     pub rate_hz: f32,
     pub phase: f32,
-    pub bipolar: bool,
     pub enabled: bool,
     pub targets: Vec<ModulatorTarget>,
 }
@@ -142,7 +208,8 @@ impl<'de> serde::Deserialize<'de> for Modulator {
             shape: ModulatorShape,
             rate_hz: f32,
             phase: f32,
-            bipolar: bool,
+            #[serde(default)]
+            _bipolar: Option<bool>,
             enabled: bool,
             #[serde(default)]
             target: Option<ModulatorTarget>,
@@ -161,7 +228,6 @@ impl<'de> serde::Deserialize<'de> for Modulator {
             shape: data.shape,
             rate_hz: data.rate_hz,
             phase: data.phase,
-            bipolar: data.bipolar,
             enabled: data.enabled,
             targets,
         })
@@ -176,7 +242,6 @@ impl Modulator {
             shape: ModulatorShape::default(),
             rate_hz: 1.0,
             phase: 0.0,
-            bipolar: false,
             enabled: true,
             targets: Vec::new(),
         }
@@ -191,9 +256,13 @@ impl From<&Modulator> for maolan_engine::modulator::Modulator {
             shape: m.shape.into(),
             rate_hz: m.rate_hz,
             phase: m.phase,
-            bipolar: m.bipolar,
             enabled: m.enabled,
-            targets: m.targets.iter().cloned().map(Into::into).collect(),
+            targets: m
+                .targets
+                .iter()
+                .cloned()
+                .filter_map(|t| t.try_into().ok())
+                .collect(),
         }
     }
 }
@@ -210,37 +279,77 @@ impl From<ModulatorShape> for maolan_engine::modulator::ModulatorShape {
     }
 }
 
-impl From<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
-    fn from(t: ModulatorTarget) -> Self {
-        match t.controller {
-            ModulatorController::Volume => {
+impl TryFrom<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
+    type Error = ();
+
+    fn try_from(t: ModulatorTarget) -> Result<Self, Self::Error> {
+        if !t.is_modulatable() {
+            return Err(());
+        }
+        match t.target {
+            TrackAutomationTarget::Volume => {
                 if t.track_name == "hw:out" {
-                    Self::HwOutVolume {
+                    Ok(Self::HwOutVolume {
                         min: t.min,
                         max: t.max,
-                    }
+                    })
                 } else {
-                    Self::TrackVolume {
+                    Ok(Self::TrackVolume {
                         track_name: t.track_name,
                         min: t.min,
                         max: t.max,
-                    }
+                    })
                 }
             }
-            ModulatorController::Balance => {
+            TrackAutomationTarget::Balance => {
                 if t.track_name == "hw:out" {
-                    Self::HwOutBalance {
+                    Ok(Self::HwOutBalance {
                         min: t.min,
                         max: t.max,
-                    }
+                    })
                 } else {
-                    Self::TrackBalance {
+                    Ok(Self::TrackBalance {
                         track_name: t.track_name,
                         min: t.min,
                         max: t.max,
-                    }
+                    })
                 }
             }
+            TrackAutomationTarget::ClapParameter {
+                instance_id,
+                param_id,
+                ..
+            } => Ok(Self::ClapParameter {
+                track_name: t.track_name,
+                instance_id,
+                param_id,
+                min: f64::from(t.min),
+                max: f64::from(t.max),
+            }),
+            TrackAutomationTarget::Vst3Parameter {
+                instance_id,
+                param_id,
+            } => Ok(Self::Vst3Parameter {
+                track_name: t.track_name,
+                instance_id,
+                param_id,
+                min: t.min,
+                max: t.max,
+            }),
+            TrackAutomationTarget::Lv2Parameter {
+                instance_id, index, ..
+            } => Ok(Self::Lv2Parameter {
+                track_name: t.track_name,
+                instance_id,
+                index,
+                min: t.min,
+                max: t.max,
+            }),
+            TrackAutomationTarget::MidiCc { channel, cc } => Ok(Self::MidiCc {
+                track_name: t.track_name,
+                channel,
+                cc,
+            }),
         }
     }
 }
@@ -403,11 +512,29 @@ pub struct ClipContextMenuState {
     pub anchor: Point,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum TrackContextSubmenu {
+    Automation,
+    Plugin { instance_id: usize, format: String },
+    Midi,
+}
+
 #[derive(Debug, Clone)]
 pub struct TrackContextMenuState {
     pub track_name: String,
     pub anchor: Point,
+    pub submenu: Option<TrackContextSubmenu>,
 }
+
+#[derive(Debug, Clone)]
+pub struct PluginParameterInfo {
+    pub param_id: u32,
+    pub name: String,
+    pub min: f64,
+    pub max: f64,
+}
+
+pub type PluginParameterCache = HashMap<usize, Vec<PluginParameterInfo>>;
 
 #[derive(Debug, Clone)]
 pub enum Resizing {
@@ -571,7 +698,7 @@ pub struct TrackMarkerDialog {
 pub struct ModulatorTargetDialog {
     pub modulator_id: usize,
     pub track_name: String,
-    pub controller: ModulatorController,
+    pub target: TrackAutomationTarget,
     pub min_input: String,
     pub max_input: String,
     pub existing: bool,
@@ -757,6 +884,7 @@ pub struct StateData {
     pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
     pub plugin_graph_connections: Vec<PluginGraphConnection>,
     pub plugin_graphs_by_track: HashMap<String, PluginGraphSnapshot>,
+    pub plugin_parameters_by_track: HashMap<String, PluginParameterCache>,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugins: std::collections::HashSet<usize>,
     pub plugin_graph_plugin_positions: HashMap<usize, Point>,
@@ -942,6 +1070,7 @@ impl Default for StateData {
             plugin_graph_plugins: vec![],
             plugin_graph_connections: vec![],
             plugin_graphs_by_track: HashMap::new(),
+            plugin_parameters_by_track: HashMap::new(),
             plugin_graph_selected_connections: HashSet::new(),
             plugin_graph_selected_plugins: std::collections::HashSet::new(),
             plugin_graph_plugin_positions: HashMap::new(),
@@ -1246,6 +1375,7 @@ mod tests {
         let state = TrackContextMenuState {
             track_name: "Drums".to_string(),
             anchor: iced::Point::new(50.0, 50.0),
+            submenu: None,
         };
         assert_eq!(state.track_name, "Drums");
     }
@@ -1277,7 +1407,6 @@ mod tests {
             shape: ModulatorShape::Sine,
             rate_hz: 1.0,
             phase: 0.0,
-            bipolar: false,
             enabled: true,
             targets: Vec::new(),
         };
@@ -1287,5 +1416,98 @@ mod tests {
         assert!((engine_m.value_at(sample_rate as usize / 4, sample_rate) - 1.0).abs() < 0.001);
         assert!((engine_m.value_at(sample_rate as usize / 2, sample_rate) - 0.5).abs() < 0.001);
         assert!((engine_m.value_at(sample_rate as usize * 3 / 4, sample_rate) - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn modulator_target_serializes_round_trip_automation() {
+        let target = ModulatorTarget {
+            track_name: "Drums".to_string(),
+            target: TrackAutomationTarget::Volume,
+            min: -90.0,
+            max: 20.0,
+        };
+        let json = serde_json::to_string(&target).unwrap();
+        let parsed: ModulatorTarget = serde_json::from_str(&json).unwrap();
+        assert_eq!(target, parsed);
+    }
+
+    #[test]
+    fn modulator_target_deserializes_old_controller_format() {
+        let json = r#"{"track_name":"Drums","controller":"volume","min":-90.0,"max":20.0}"#;
+        let parsed: ModulatorTarget = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.track_name, "Drums");
+        assert_eq!(parsed.target, TrackAutomationTarget::Volume);
+        assert!((parsed.min - -90.0).abs() < f32::EPSILON);
+        assert!((parsed.max - 20.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn modulator_target_deserializes_prev_target_format() {
+        let json = r#"{"track_name":"Drums","target":"Volume","min":-90.0,"max":20.0}"#;
+        let parsed: ModulatorTarget = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.track_name, "Drums");
+        assert_eq!(parsed.target, TrackAutomationTarget::Volume);
+    }
+
+    #[test]
+    fn modulator_target_deserializes_old_midi_cc_kind_format() {
+        let json = r#"{"track_name":"Synth","kind":"MidiCc","value":{"channel":2,"cc":7},"min":0.0,"max":127.0}"#;
+        let parsed: ModulatorTarget = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.track_name, "Synth");
+        assert_eq!(
+            parsed.target,
+            TrackAutomationTarget::MidiCc { channel: 2, cc: 7 }
+        );
+        assert!((parsed.min - 0.0).abs() < f32::EPSILON);
+        assert!((parsed.max - 127.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn modulator_target_serializes_round_trip_midi_cc() {
+        let target = ModulatorTarget {
+            track_name: "Synth".to_string(),
+            target: TrackAutomationTarget::MidiCc { channel: 2, cc: 7 },
+            min: 0.0,
+            max: 127.0,
+        };
+        let json = serde_json::to_string(&target).unwrap();
+        let parsed: ModulatorTarget = serde_json::from_str(&json).unwrap();
+        assert_eq!(target, parsed);
+    }
+
+    #[test]
+    fn track_automation_target_midi_cc_round_trip() {
+        let target = TrackAutomationTarget::MidiCc { channel: 3, cc: 11 };
+        let json = serde_json::to_string(&target).unwrap();
+        let parsed: TrackAutomationTarget = serde_json::from_str(&json).unwrap();
+        assert_eq!(target, parsed);
+    }
+
+    #[test]
+    fn modulator_target_converts_to_engine_track_volume() {
+        let target = ModulatorTarget {
+            track_name: "Drums".to_string(),
+            target: TrackAutomationTarget::Volume,
+            min: -90.0,
+            max: 20.0,
+        };
+        let engine_target: maolan_engine::modulator::ModulatorTarget = target.try_into().unwrap();
+        assert!(
+            matches!(engine_target, maolan_engine::modulator::ModulatorTarget::TrackVolume { track_name, min, max } if track_name == "Drums" && (min - -90.0).abs() < f32::EPSILON && (max - 20.0).abs() < f32::EPSILON)
+        );
+    }
+
+    #[test]
+    fn modulator_target_converts_to_engine_track_balance() {
+        let target = ModulatorTarget {
+            track_name: "Drums".to_string(),
+            target: TrackAutomationTarget::Balance,
+            min: -1.0,
+            max: 1.0,
+        };
+        let engine_target: maolan_engine::modulator::ModulatorTarget = target.try_into().unwrap();
+        assert!(
+            matches!(engine_target, maolan_engine::modulator::ModulatorTarget::TrackBalance { track_name, min, max } if track_name == "Drums" && (min - -1.0).abs() < f32::EPSILON && (max - 1.0).abs() < f32::EPSILON)
+        );
     }
 }

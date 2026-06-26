@@ -41,18 +41,6 @@ impl Maolan {
                 }
                 true
             }
-            Action::TrackAutomationMute(name, muted) => {
-                if let Some(track) = self
-                    .state
-                    .blocking_write()
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.name == *name)
-                {
-                    track.muted = *muted;
-                }
-                true
-            }
             Action::TrackToggleMute(name) => {
                 let mut state = self.state.blocking_write();
                 if name == "hw:out" {

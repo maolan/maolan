@@ -19,6 +19,17 @@ pub fn app_background() -> container::Style {
     }
 }
 
+pub fn menu_submenu_background(active: bool) -> container::Style {
+    if active {
+        container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.25, 0.32, 0.45, 0.55))),
+            ..container::Style::default()
+        }
+    } else {
+        container::Style::default()
+    }
+}
+
 fn track_toggle_button_style(
     theme: &Theme,
     active: bool,

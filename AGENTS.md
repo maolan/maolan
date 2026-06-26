@@ -17,3 +17,7 @@ If `cargo clippy --all-targets --fix --allow-dirty` does **not** automatically f
 - Address the underlying issue reported by clippy.
 
 Always ensure both commands complete successfully with no remaining warnings before finishing.
+
+## Build Profile
+
+Always build, run, and test in debug mode. Do **not** pass `--release` to any `cargo` command (including `cargo build`, `cargo run`, `cargo test`, `cargo check`, `cargo clippy`, etc.) unless explicitly requested by the user.

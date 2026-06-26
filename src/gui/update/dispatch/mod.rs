@@ -1,5 +1,5 @@
 use super::*;
-use crate::consts::state_track::TRACK_MIN_HEIGHT;
+use crate::consts::state_track::{TRACK_MIN_HEIGHT, TRACK_SUBTRACK_MIN_HEIGHT};
 use crate::consts::widget_piano::PITCH_MAX;
 use crate::message::{ModulatorChange, SnapMode, TrackAutomationTarget};
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -315,10 +315,9 @@ impl Maolan {
         }
         if matches!(
             message,
-            Message::TrackAutomationAddLane { .. }
+            Message::TrackAutomationToggleLane { .. }
                 | Message::TrackRenameShow(_)
                 | Message::TrackGroupShow { .. }
-                | Message::TrackAutomationToggle { .. }
                 | Message::TrackAutomationCycleMode { .. }
                 | Message::TrackTemplateSaveShow(_)
                 | Message::TrackGroupTemplateSaveShow(_)
@@ -3694,84 +3693,124 @@ impl Maolan {
                             track_name,
                             instance_id,
                             parameters,
-                        } if self
-                            .pending_add_clap_automation_instances
-                            .remove(&(track_name.clone(), *instance_id)) =>
-                        {
-                            let mut state = self.state.blocking_write();
-                            if let Some(track) =
-                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        } => {
+                            let pending = self
+                                .pending_add_clap_automation_instances
+                                .remove(&(track_name.clone(), *instance_id));
                             {
-                                for param in parameters {
-                                    let target = TrackAutomationTarget::ClapParameter {
-                                        instance_id: *instance_id,
-                                        param_id: param.id,
-                                        min: param.min_value,
-                                        max: param.max_value,
-                                    };
-                                    if let Some(existing) = track
-                                        .automation_lanes
-                                        .iter_mut()
-                                        .find(|lane| lane.target == target)
-                                    {
-                                        existing.visible = true;
-                                    } else {
-                                        track.automation_lanes.push(
-                                            crate::state::TrackAutomationLane {
-                                                target,
-                                                visible: true,
-                                                points: vec![],
-                                            },
-                                        );
-                                    }
-                                }
-                                track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
-                                state.message = format!(
-                                    "Added {} CLAP automation lanes on '{}'",
-                                    parameters.len(),
-                                    track_name
+                                let mut state = self.state.blocking_write();
+                                let cached = state
+                                    .plugin_parameters_by_track
+                                    .entry(track_name.clone())
+                                    .or_default();
+                                cached.insert(
+                                    *instance_id,
+                                    parameters
+                                        .iter()
+                                        .map(|p| crate::state::PluginParameterInfo {
+                                            param_id: p.id,
+                                            name: p.name.clone(),
+                                            min: p.min_value,
+                                            max: p.max_value,
+                                        })
+                                        .collect(),
                                 );
+                                if pending
+                                    && let Some(track) =
+                                        state.tracks.iter_mut().find(|t| t.name == *track_name)
+                                {
+                                    for param in parameters {
+                                        let target = TrackAutomationTarget::ClapParameter {
+                                            instance_id: *instance_id,
+                                            param_id: param.id,
+                                            min: param.min_value,
+                                            max: param.max_value,
+                                        };
+                                        if let Some(existing) = track
+                                            .automation_lanes
+                                            .iter_mut()
+                                            .find(|lane| lane.target == target)
+                                        {
+                                            existing.visible = true;
+                                        } else {
+                                            track.automation_lanes.push(
+                                                crate::state::TrackAutomationLane {
+                                                    target,
+                                                    visible: true,
+                                                    points: vec![],
+                                                },
+                                            );
+                                        }
+                                    }
+                                    track.height =
+                                        track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+                                    state.message = format!(
+                                        "Added {} CLAP automation lanes on '{}'",
+                                        parameters.len(),
+                                        track_name
+                                    );
+                                }
                             }
                         }
                         Action::TrackVst3Parameters {
                             track_name,
                             instance_id,
                             parameters,
-                        } if self
-                            .pending_add_vst3_automation_instances
-                            .remove(&(track_name.clone(), *instance_id)) =>
-                        {
-                            let mut state = self.state.blocking_write();
-                            if let Some(track) =
-                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        } => {
+                            let pending = self
+                                .pending_add_vst3_automation_instances
+                                .remove(&(track_name.clone(), *instance_id));
                             {
-                                for param in parameters {
-                                    let target = TrackAutomationTarget::Vst3Parameter {
-                                        instance_id: *instance_id,
-                                        param_id: param.id,
-                                    };
-                                    if let Some(existing) = track
-                                        .automation_lanes
-                                        .iter_mut()
-                                        .find(|lane| lane.target == target)
-                                    {
-                                        existing.visible = true;
-                                    } else {
-                                        track.automation_lanes.push(
-                                            crate::state::TrackAutomationLane {
-                                                target,
-                                                visible: true,
-                                                points: vec![],
-                                            },
-                                        );
-                                    }
-                                }
-                                track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
-                                state.message = format!(
-                                    "Added {} VST3 automation lanes on '{}'",
-                                    parameters.len(),
-                                    track_name
+                                let mut state = self.state.blocking_write();
+                                let cached = state
+                                    .plugin_parameters_by_track
+                                    .entry(track_name.clone())
+                                    .or_default();
+                                cached.insert(
+                                    *instance_id,
+                                    parameters
+                                        .iter()
+                                        .map(|p| crate::state::PluginParameterInfo {
+                                            param_id: p.id,
+                                            name: p.title.clone(),
+                                            min: 0.0,
+                                            max: 1.0,
+                                        })
+                                        .collect(),
                                 );
+                                if pending
+                                    && let Some(track) =
+                                        state.tracks.iter_mut().find(|t| t.name == *track_name)
+                                {
+                                    for param in parameters {
+                                        let target = TrackAutomationTarget::Vst3Parameter {
+                                            instance_id: *instance_id,
+                                            param_id: param.id,
+                                        };
+                                        if let Some(existing) = track
+                                            .automation_lanes
+                                            .iter_mut()
+                                            .find(|lane| lane.target == target)
+                                        {
+                                            existing.visible = true;
+                                        } else {
+                                            track.automation_lanes.push(
+                                                crate::state::TrackAutomationLane {
+                                                    target,
+                                                    visible: true,
+                                                    points: vec![],
+                                                },
+                                            );
+                                        }
+                                    }
+                                    track.height =
+                                        track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+                                    state.message = format!(
+                                        "Added {} VST3 automation lanes on '{}'",
+                                        parameters.len(),
+                                        track_name
+                                    );
+                                }
                             }
                         }
                         Action::TrackSnapshotAllClapStates { track_name: _ } => {}
@@ -4477,8 +4516,8 @@ impl Maolan {
                         crate::message::TrackAutomationTarget::Balance => {
                             OfflineAutomationTarget::Balance
                         }
-                        crate::message::TrackAutomationTarget::Mute => {
-                            OfflineAutomationTarget::Mute
+                        crate::message::TrackAutomationTarget::MidiCc { channel, cc } => {
+                            OfflineAutomationTarget::MidiCc { channel, cc }
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
                         crate::message::TrackAutomationTarget::Lv2Parameter {
@@ -4610,8 +4649,8 @@ impl Maolan {
                         crate::message::TrackAutomationTarget::Balance => {
                             OfflineAutomationTarget::Balance
                         }
-                        crate::message::TrackAutomationTarget::Mute => {
-                            OfflineAutomationTarget::Mute
+                        crate::message::TrackAutomationTarget::MidiCc { channel, cc } => {
+                            OfflineAutomationTarget::MidiCc { channel, cc }
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
                         crate::message::TrackAutomationTarget::Lv2Parameter {
@@ -4737,32 +4776,39 @@ impl Maolan {
                     frozen: false,
                 });
             }
-            Message::TrackAutomationToggle { ref track_name } => {
+            Message::TrackAutomationToggleLane {
+                ref track_name,
+                target,
+            } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state
                     .tracks
                     .iter_mut()
                     .find(|track| track.name == track_name.as_str())
                 {
-                    let any_visible = track.automation_lanes.iter().any(|lane| lane.visible);
-                    if any_visible {
-                        for lane in &mut track.automation_lanes {
-                            lane.visible = false;
-                        }
-                    } else if track.automation_lanes.is_empty() {
+                    let previous_lane_height = track
+                        .lane_layout()
+                        .lane_height
+                        .max(TRACK_SUBTRACK_MIN_HEIGHT);
+                    let previously_visible = track.automation_lane_count();
+                    if let Some(lane) = track
+                        .automation_lanes
+                        .iter_mut()
+                        .find(|lane| lane.target == target)
+                    {
+                        lane.visible = !lane.visible;
+                    } else {
                         track
                             .automation_lanes
                             .push(crate::state::TrackAutomationLane {
-                                target: crate::message::TrackAutomationTarget::Volume,
+                                target,
                                 visible: true,
                                 points: vec![],
                             });
-                    } else {
-                        for lane in &mut track.automation_lanes {
-                            lane.visible = true;
-                        }
                     }
-                    track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+                    let lanes_delta =
+                        track.automation_lane_count() as isize - previously_visible as isize;
+                    track.adjust_height_for_automation_lanes(previous_lane_height, lanes_delta);
                 }
             }
             Message::TrackColorChanged {
@@ -4830,33 +4876,30 @@ impl Maolan {
                     _ => {}
                 }
             }
-            Message::TrackAutomationAddLane {
+            Message::TrackAutomationAddPluginLanes {
                 ref track_name,
-                target,
+                ref plugin_path,
+                ref format,
             } => {
-                let mut state = self.state.blocking_write();
-                if let Some(track) = state
-                    .tracks
-                    .iter_mut()
-                    .find(|track| track.name == track_name.as_str())
-                {
-                    if let Some(lane) = track
-                        .automation_lanes
-                        .iter_mut()
-                        .find(|lane| lane.target == target)
-                    {
-                        lane.visible = true;
-                    } else {
-                        track
-                            .automation_lanes
-                            .push(crate::state::TrackAutomationLane {
-                                target,
-                                visible: true,
-                                points: vec![],
-                            });
+                match format.as_str() {
+                    "CLAP" => {
+                        self.pending_add_clap_automation_paths
+                            .insert((track_name.clone(), plugin_path.clone()));
                     }
-                    track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+                    "VST3" => {
+                        self.pending_add_vst3_automation_paths
+                            .insert((track_name.clone(), plugin_path.clone()));
+                    }
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    "LV2" => {
+                        self.pending_add_lv2_automation_uris
+                            .insert((track_name.clone(), plugin_path.clone()));
+                    }
+                    _ => {}
                 }
+                return self.send(Action::TrackGetPluginGraph {
+                    track_name: track_name.clone(),
+                });
             }
             Message::TrackAutomationLaneHover {
                 ref track_name,
@@ -4887,6 +4930,11 @@ impl Maolan {
                     .iter_mut()
                     .find(|track| track.name == track_name.as_str())
                 {
+                    let previous_lane_height = track
+                        .lane_layout()
+                        .lane_height
+                        .max(TRACK_SUBTRACK_MIN_HEIGHT);
+                    let previously_visible = track.automation_lane_count();
                     let lane_height = track.lane_layout().lane_height.max(12.0);
                     let lane_value_h = (lane_height - 6.0).max(1.0);
                     let value = (1.0 - ((hover_position.y - 3.0) / lane_value_h)).clamp(0.0, 1.0);
@@ -4915,6 +4963,9 @@ impl Maolan {
                                 points: vec![crate::state::TrackAutomationPoint { sample, value }],
                             });
                     }
+                    let lanes_delta =
+                        track.automation_lane_count() as isize - previously_visible as isize;
+                    track.adjust_height_for_automation_lanes(previous_lane_height, lanes_delta);
                 }
             }
             Message::TrackAutomationLaneDeletePoint {
@@ -5702,6 +5753,55 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.track_context_hover = Some((track_name.clone(), position));
             }
+            Message::TrackContextMenuSubmenuOpen(ref submenu) => {
+                let track_name = {
+                    let mut state = self.state.blocking_write();
+                    if let Some(menu) = &mut state.track_context_menu {
+                        menu.submenu = Some(submenu.clone());
+                        Some(menu.track_name.clone())
+                    } else {
+                        None
+                    }
+                };
+                if let Some(track_name) = track_name {
+                    let state = self.state.blocking_read();
+                    let plugins = state
+                        .plugin_graphs_by_track
+                        .get(&track_name)
+                        .map(|(plugins, _)| plugins.clone())
+                        .unwrap_or_default();
+                    drop(state);
+                    let mut tasks = Vec::new();
+                    match submenu {
+                        crate::state::TrackContextSubmenu::Automation
+                        | crate::state::TrackContextSubmenu::Plugin { .. } => {
+                            for plugin in &plugins {
+                                if plugin.format.eq_ignore_ascii_case("CLAP") {
+                                    tasks.push(self.send(Action::TrackGetClapParameters {
+                                        track_name: track_name.clone(),
+                                        instance_id: plugin.instance_id,
+                                    }));
+                                } else if plugin.format.eq_ignore_ascii_case("VST3") {
+                                    tasks.push(self.send(Action::TrackGetVst3Parameters {
+                                        track_name: track_name.clone(),
+                                        instance_id: plugin.instance_id,
+                                    }));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    if !tasks.is_empty() {
+                        return Task::batch(tasks);
+                    }
+                }
+            }
+            Message::TrackContextMenuSubmenuClose => {
+                let mut state = self.state.blocking_write();
+                if let Some(menu) = &mut state.track_context_menu {
+                    menu.submenu = None;
+                }
+            }
             Message::TrackContextMenuToggle(ref track_name) => {
                 let mut state = self.state.blocking_write();
                 if state
@@ -5720,6 +5820,7 @@ impl Maolan {
                     state.track_context_menu = Some(crate::state::TrackContextMenuState {
                         track_name: track_name.clone(),
                         anchor,
+                        submenu: None,
                     });
                 }
                 state.clip_context_menu = None;
@@ -8859,7 +8960,6 @@ impl Maolan {
                         ModulatorChange::Shape(v) => m.shape = *v,
                         ModulatorChange::RateHz(v) => m.rate_hz = *v,
                         ModulatorChange::Phase(v) => m.phase = *v,
-                        ModulatorChange::Bipolar(v) => m.bipolar = *v,
                         ModulatorChange::Enabled(v) => m.enabled = *v,
                         ModulatorChange::Targets(v) => m.targets = v.clone(),
                     }
@@ -8869,12 +8969,9 @@ impl Maolan {
             Message::ModulatorTargetShow {
                 modulator_id,
                 ref track_name,
-                controller,
+                target,
             } => {
-                let (default_min, default_max) = match controller {
-                    crate::state::ModulatorController::Volume => (-90.0, 20.0),
-                    crate::state::ModulatorController::Balance => (-1.0, 1.0),
-                };
+                let (default_min, default_max) = target.default_range();
                 let existing = self
                     .modulators
                     .iter()
@@ -8882,7 +8979,7 @@ impl Maolan {
                     .and_then(|m| {
                         m.targets
                             .iter()
-                            .find(|t| t.track_name == *track_name && t.controller == controller)
+                            .find(|t| t.track_name == *track_name && t.target == target)
                     });
                 let existing_bool = existing.is_some();
                 let (min_input, max_input) = existing
@@ -8893,7 +8990,7 @@ impl Maolan {
                     Some(crate::state::ModulatorTargetDialog {
                         modulator_id,
                         track_name: track_name.clone(),
-                        controller,
+                        target,
                         min_input,
                         max_input,
                         existing: existing_bool,
@@ -8922,15 +9019,17 @@ impl Maolan {
                     .iter_mut()
                     .find(|m| m.id == dialog.modulator_id)
                 {
-                    if let Some(target) = m.targets.iter_mut().find(|t| {
-                        t.track_name == dialog.track_name && t.controller == dialog.controller
-                    }) {
+                    if let Some(target) = m
+                        .targets
+                        .iter_mut()
+                        .find(|t| t.track_name == dialog.track_name && t.target == dialog.target)
+                    {
                         target.min = min;
                         target.max = max;
                     } else {
                         m.targets.push(crate::state::ModulatorTarget {
                             track_name: dialog.track_name,
-                            controller: dialog.controller,
+                            target: dialog.target,
                             min,
                             max,
                         });
@@ -8945,11 +9044,11 @@ impl Maolan {
             Message::ModulatorTargetRemove {
                 modulator_id,
                 ref track_name,
-                controller,
+                target,
             } => {
                 if let Some(m) = self.modulators.iter_mut().find(|m| m.id == modulator_id) {
                     m.targets
-                        .retain(|t| !(t.track_name == *track_name && t.controller == controller));
+                        .retain(|t| !(t.track_name == *track_name && t.target == target));
                 }
                 self.state.blocking_write().modulator_target_dialog = None;
                 return self.send_modulators_to_engine();
@@ -9370,5 +9469,35 @@ mod tests {
 
         assert!((app.generate_audio_progress - 0.42).abs() < f32::EPSILON);
         assert_eq!(app.generate_audio_operation.as_deref(), Some("Generating"));
+    }
+
+    #[test]
+    fn modulator_target_confirm_adds_volume_target() {
+        let mut app = Maolan {
+            modulators: vec![crate::state::Modulator::new(1)],
+            ..Maolan::default()
+        };
+        app.state.blocking_write().modulator_target_dialog =
+            Some(crate::state::ModulatorTargetDialog {
+                modulator_id: 1,
+                track_name: "Drums".to_string(),
+                target: crate::message::TrackAutomationTarget::Volume,
+                min_input: "-90".to_string(),
+                max_input: "20".to_string(),
+                existing: false,
+            });
+
+        let _ = app.update(Message::ModulatorTargetConfirm);
+
+        let m = app.modulators.iter().find(|m| m.id == 1).unwrap();
+        assert_eq!(m.targets.len(), 1);
+        assert_eq!(m.targets[0].track_name, "Drums");
+        assert_eq!(
+            m.targets[0].target,
+            crate::message::TrackAutomationTarget::Volume
+        );
+        assert!((m.targets[0].min - -90.0).abs() < f32::EPSILON);
+        assert!((m.targets[0].max - 20.0).abs() < f32::EPSILON);
+        assert!(app.state.blocking_read().modulator_target_dialog.is_none());
     }
 }

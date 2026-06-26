@@ -1,7 +1,4 @@
-use crate::{
-    message::Message,
-    state::{ModulatorController, State},
-};
+use crate::{message::Message, state::State};
 use iced::{
     Alignment, Element, Length,
     widget::{button, column, container, row, text, text_input},
@@ -34,10 +31,7 @@ impl ModulatorTargetDialogView {
             return container("").into();
         };
 
-        let controller_label = match dialog.controller {
-            ModulatorController::Volume => "Volume",
-            ModulatorController::Balance => "Pan",
-        };
+        let target_label = dialog.target.to_string();
 
         let min_ok = dialog.min_input.trim().parse::<f32>().is_ok();
         let max_ok = dialog.max_input.trim().parse::<f32>().is_ok();
@@ -62,7 +56,7 @@ impl ModulatorTargetDialogView {
                     .on_press(Message::ModulatorTargetRemove {
                         modulator_id: dialog.modulator_id,
                         track_name: dialog.track_name.clone(),
-                        controller: dialog.controller,
+                        target: dialog.target,
                     })
                     .style(button::secondary),
             );
@@ -72,7 +66,7 @@ impl ModulatorTargetDialogView {
             column![
                 text(format!(
                     "Assign modulator to {} - {}",
-                    dialog.track_name, controller_label
+                    dialog.track_name, target_label
                 ))
                 .size(16),
                 row![
