@@ -4,6 +4,13 @@ rustflags = ["-L", "native=/usr/X11R6/lib"]
 [target.x86_64-unknown-freebsd]
 rustflags = ["-L", "native=/usr/local/lib"]
 
-[env]
+[target.x86_64-unknown-freebsd.env]
 LIBCLANG_PATH = "/usr/local/llvm19/lib"
 BINDGEN_EXTRA_CLANG_ARGS = "-I/usr/local/include"
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-L", "native=/usr/lib64"]
+
+[target.x86_64-unknown-linux-gnu.env]
+LIBCLANG_PATH = "/usr/lib64"
+BINDGEN_EXTRA_CLANG_ARGS = "-I/usr/include"
