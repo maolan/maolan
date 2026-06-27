@@ -19,11 +19,8 @@ struct OpenAudioSelection {
     chosen_sample_rate_hz: i32,
     exclusive: bool,
     period_frames: usize,
-    realtime_frames: usize,
-    low_watermark_frames: usize,
     nperiods: usize,
     sync_mode: bool,
-    hybrid_buffer_enabled: bool,
 }
 
 trait DeviceId {
@@ -330,11 +327,6 @@ impl HW {
         let device = Self::selected_device_id(selected_is_jack, selected_hw);
         let bits = Self::selected_bits(selected_is_jack, selection.chosen_bits);
 
-        let (realtime_frames, low_watermark_frames) = if selection.hybrid_buffer_enabled {
-            (selection.realtime_frames, selection.low_watermark_frames)
-        } else {
-            (selection.period_frames, selection.period_frames)
-        };
         Action::OpenAudioDevice {
             device,
             input_device: selection.input_device,
@@ -342,11 +334,8 @@ impl HW {
             bits,
             exclusive: selection.exclusive,
             period_frames: selection.period_frames,
-            realtime_frames,
-            low_watermark_frames,
             nperiods: selection.nperiods,
             sync_mode: selection.sync_mode,
-            hybrid_enabled: selection.hybrid_buffer_enabled,
             actual_period_frames: 0,
             input_channels: 0,
             output_channels: 0,
@@ -358,21 +347,6 @@ impl HW {
         let frame_options = vec![
             16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
         ];
-        let constrained_period_options = |max_frames: usize| -> Vec<usize> {
-            frame_options
-                .iter()
-                .copied()
-                .filter(|v| *v <= max_frames.max(1))
-                .collect()
-        };
-        let watermark_options_for = |max_frames: usize, realtime: usize| -> Vec<usize> {
-            let step = realtime.max(1);
-            frame_options
-                .iter()
-                .copied()
-                .filter(|v| *v <= max_frames.max(1) && (*v % step == 0))
-                .collect()
-        };
         let nperiod_options: Vec<usize> = (1..=16).collect();
         let fallback_sample_rates = vec![
             8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
@@ -393,11 +367,8 @@ impl HW {
             sample_rate_hz,
             exclusive,
             mut period_frames,
-            mut realtime_frames,
-            mut low_watermark_frames,
             nperiods,
             sync_mode,
-            hybrid_buffer_enabled,
         ) = {
             let state = self.state.blocking_read();
             (
@@ -408,20 +379,11 @@ impl HW {
                 state.hw_sample_rate_hz,
                 state.oss_exclusive,
                 state.oss_period_frames,
-                state.oss_realtime_frames,
-                state.oss_low_watermark_frames,
                 state.oss_nperiods,
                 state.oss_sync_mode,
-                state.oss_hybrid_buffer_enabled,
             )
         };
         period_frames = period_frames.max(1);
-        realtime_frames = realtime_frames.max(1).min(period_frames);
-        low_watermark_frames = low_watermark_frames.max(1).min(period_frames);
-        low_watermark_frames = (low_watermark_frames / realtime_frames.max(1))
-            .max(1)
-            .saturating_mul(realtime_frames.max(1))
-            .min(period_frames);
         #[cfg(target_os = "linux")]
         let (available_input_hw, mut selected_input_hw) = {
             let state = self.state.blocking_read();
@@ -605,20 +567,6 @@ impl HW {
                 .find(|v| *v >= period_frames)
                 .or_else(|| period_options.last().copied())
                 .unwrap_or(period_frames);
-            realtime_frames = realtime_frames.min(period_frames).max(1);
-            low_watermark_frames = low_watermark_frames.min(period_frames).max(1);
-            low_watermark_frames = (low_watermark_frames / realtime_frames.max(1))
-                .max(1)
-                .saturating_mul(realtime_frames.max(1))
-                .min(period_frames);
-        }
-        let realtime_options = constrained_period_options(period_frames);
-        let low_watermark_options = watermark_options_for(period_frames, realtime_frames);
-        if !low_watermark_options.contains(&low_watermark_frames) {
-            low_watermark_frames = low_watermark_options
-                .last()
-                .copied()
-                .unwrap_or(realtime_frames.min(period_frames).max(1));
         }
         let plugins_loaded = self.plugins_loaded();
         let mut submit = button("Open Audio");
@@ -661,11 +609,8 @@ impl HW {
                 chosen_sample_rate_hz,
                 exclusive,
                 period_frames,
-                realtime_frames,
-                low_watermark_frames,
                 nperiods,
                 sync_mode,
-                hybrid_buffer_enabled,
             };
             submit = submit.on_press(Message::Request(Self::open_audio_action(
                 selected_is_jack,
@@ -758,52 +703,19 @@ impl HW {
             }
             let latency_ms =
                 (period_frames as f64 * nperiods as f64 * 1000.0) / chosen_sample_rate_hz as f64;
-            content = content
-                .push(
-                    row![
-                        text("Period frames:"),
-                        pick_list(
-                            period_options.clone(),
-                            Some(period_frames),
-                            Message::HWPeriodFramesChanged
-                        )
-                        .placeholder("Period"),
-                        text(format!("{latency_ms:.1} ms"))
-                    ]
-                    .spacing(10),
-                )
-                .push(
-                    checkbox(hybrid_buffer_enabled)
-                        .label("Hybrid buffer")
-                        .on_toggle(Message::HWHybridBufferToggled),
-                );
-            if hybrid_buffer_enabled {
-                content = content
-                    .push(
-                        row![
-                            text("Realtime frames:"),
-                            pick_list(
-                                realtime_options,
-                                Some(realtime_frames),
-                                Message::HWRealtimeFramesChanged
-                            )
-                            .placeholder("Realtime")
-                        ]
-                        .spacing(10),
+            content = content.push(
+                row![
+                    text("Period frames:"),
+                    pick_list(
+                        period_options.clone(),
+                        Some(period_frames),
+                        Message::HWPeriodFramesChanged
                     )
-                    .push(
-                        row![
-                            text("Low watermark:"),
-                            pick_list(
-                                low_watermark_options,
-                                Some(low_watermark_frames),
-                                Message::HWLowWatermarkFramesChanged
-                            )
-                            .placeholder("Low watermark")
-                        ]
-                        .spacing(10),
-                    );
-            }
+                    .placeholder("Period"),
+                    text(format!("{latency_ms:.1} ms"))
+                ]
+                .spacing(10),
+            );
             content = content
                 .push(
                     row![
@@ -962,11 +874,8 @@ mod tests {
             chosen_sample_rate_hz: 48000,
             exclusive: false,
             period_frames: 1024,
-            realtime_frames: 64,
-            low_watermark_frames: 256,
             nperiods: 2,
             sync_mode: true,
-            hybrid_buffer_enabled: true,
         };
         assert_eq!(selection.chosen_bits, 24);
         assert_eq!(selection.chosen_sample_rate_hz, 48000);

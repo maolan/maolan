@@ -304,9 +304,6 @@ impl Maolan {
                 "punch_enabled": self.punch_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
-                "realtime_frames": state.oss_realtime_frames,
-                "low_watermark_frames": state.oss_low_watermark_frames,
-                "hybrid_buffer_enabled": state.oss_hybrid_buffer_enabled,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -994,9 +991,6 @@ impl Maolan {
                 "punch_enabled": self.punch_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
-                "realtime_frames": state.oss_realtime_frames,
-                "low_watermark_frames": state.oss_low_watermark_frames,
-                "hybrid_buffer_enabled": state.oss_hybrid_buffer_enabled,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -1412,17 +1406,6 @@ impl Maolan {
             .get("period_frames")
             .and_then(Value::as_u64)
             .map(|v| v.max(1) as usize);
-        let loaded_realtime_frames = transport
-            .get("realtime_frames")
-            .and_then(Value::as_u64)
-            .map(|v| v.max(1) as usize);
-        let loaded_low_watermark_frames = transport
-            .get("low_watermark_frames")
-            .and_then(Value::as_u64)
-            .map(|v| v.max(1) as usize);
-        let loaded_hybrid_buffer_enabled = transport
-            .get("hybrid_buffer_enabled")
-            .and_then(Value::as_bool);
 
         self.loop_range_samples = loaded_loop_range;
         self.loop_enabled = loaded_loop_enabled;
@@ -1430,25 +1413,6 @@ impl Maolan {
         self.punch_enabled = loaded_punch_enabled;
         if let Some(v) = loaded_period_frames {
             self.state.blocking_write().oss_period_frames = v;
-        }
-        if let Some(v) = loaded_realtime_frames {
-            self.state.blocking_write().oss_realtime_frames = v;
-        }
-        if let Some(v) = loaded_low_watermark_frames {
-            self.state.blocking_write().oss_low_watermark_frames = v;
-        }
-        if let Some(v) = loaded_hybrid_buffer_enabled {
-            self.state.blocking_write().oss_hybrid_buffer_enabled = v;
-        }
-        {
-            let mut st = self.state.blocking_write();
-            st.oss_realtime_frames = st.oss_realtime_frames.min(st.oss_period_frames);
-            st.oss_low_watermark_frames = st.oss_low_watermark_frames.min(st.oss_period_frames);
-            let step = st.oss_realtime_frames.max(1);
-            st.oss_low_watermark_frames = (st.oss_low_watermark_frames / step)
-                .max(1)
-                .saturating_mul(step)
-                .min(st.oss_period_frames);
         }
 
         restore_actions.push(Action::SetLoopRange(loaded_loop_range));
