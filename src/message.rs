@@ -1209,11 +1209,8 @@ pub enum Message {
     HWBitsChanged(usize),
     HWSampleRateChanged(i32),
     HWPeriodFramesChanged(usize),
-    HWRealtimeFramesChanged(usize),
-    HWLowWatermarkFramesChanged(usize),
     HWNPeriodsChanged(usize),
     HWSyncModeToggled(bool),
-    HWHybridBufferToggled(bool),
 
     ClipRenameShow {
         track_idx: String,

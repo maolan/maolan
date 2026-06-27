@@ -829,11 +829,8 @@ pub struct StateData {
     #[cfg(any(unix, target_os = "windows"))]
     pub oss_bits: usize,
     pub oss_period_frames: usize,
-    pub oss_realtime_frames: usize,
-    pub oss_low_watermark_frames: usize,
     pub oss_nperiods: usize,
     pub oss_sync_mode: bool,
-    pub oss_hybrid_buffer_enabled: bool,
     pub opened_midi_in_hw: Vec<String>,
     pub opened_midi_out_hw: Vec<String>,
     pub global_midi_learn_play_pause: Option<maolan_engine::message::MidiLearnBinding>,
@@ -1012,11 +1009,8 @@ impl Default for StateData {
             #[cfg(any(unix, target_os = "windows"))]
             oss_bits: cfg.default_audio_bit_depth,
             oss_period_frames: crate::consts::audio_defaults::PERIOD_FRAMES,
-            oss_realtime_frames: crate::consts::audio_defaults::REALTIME_FRAMES,
-            oss_low_watermark_frames: crate::consts::audio_defaults::LOW_WATERMARK_FRAMES,
             oss_nperiods: crate::consts::audio_defaults::NPERIODS,
             oss_sync_mode: crate::consts::audio_defaults::SYNC_MODE,
-            oss_hybrid_buffer_enabled: crate::consts::audio_defaults::HYBRID_BUFFER_ENABLED,
             opened_midi_in_hw: vec![],
             opened_midi_out_hw: vec![],
             global_midi_learn_play_pause: None,

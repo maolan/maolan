@@ -49,11 +49,8 @@ impl Maolan {
                 bits,
                 exclusive,
                 period_frames,
-                realtime_frames,
-                low_watermark_frames,
                 nperiods,
                 sync_mode,
-                hybrid_enabled,
                 actual_period_frames,
                 input_channels,
                 output_channels,
@@ -66,33 +63,22 @@ impl Maolan {
                     *period_frames
                 };
                 state.message = format!(
-                    "Opened device {} (rate={} Hz, bits={}, channels={}/{}, period_frames={}, realtime_frames={}, low_watermark_frames={}, periods={}, bytes_per_frame={}, exclusive={}, sync_mode={}, hybrid={})",
+                    "Opened device {} (rate={} Hz, bits={}, channels={}/{}, period_frames={}, periods={}, bytes_per_frame={}, exclusive={}, sync_mode={})",
                     device,
                     sample_rate_hz,
                     bits,
                     input_channels,
                     output_channels,
                     configured_period_frames,
-                    realtime_frames,
-                    low_watermark_frames,
                     nperiods,
                     bytes_per_frame,
                     exclusive,
                     sync_mode,
-                    hybrid_enabled,
                 );
                 state.hw_loaded = true;
                 state.hw_sample_rate_hz = *sample_rate_hz;
                 state.oss_period_frames = configured_period_frames.max(1);
-                state.oss_realtime_frames = (*realtime_frames).max(1).min(state.oss_period_frames);
-                let step = state.oss_realtime_frames.max(1);
-                state.oss_low_watermark_frames =
-                    ((*low_watermark_frames).max(1).min(state.oss_period_frames) / step)
-                        .max(1)
-                        .saturating_mul(step)
-                        .min(state.oss_period_frames);
                 state.oss_nperiods = (*nperiods).max(1);
-                state.oss_hybrid_buffer_enabled = *hybrid_enabled;
                 true
             }
             Action::OpenMidiInputDevice(s) => {
