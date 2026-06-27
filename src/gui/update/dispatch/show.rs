@@ -66,15 +66,10 @@ impl Maolan {
             Show::AddTrack => {
                 self.modal = Some(Show::AddTrack);
                 self.add_track.set_available_templates(Vec::new());
-                self.add_track.set_available_group_templates(Vec::new());
                 Task::batch(vec![
                     Task::perform(
                         async { crate::gui::scan_track_templates() },
                         Message::TrackTemplatesLoaded,
-                    ),
-                    Task::perform(
-                        async { crate::gui::scan_group_templates() },
-                        Message::GroupTemplatesLoaded,
                     ),
                     iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
                 ])
@@ -172,32 +167,20 @@ impl Maolan {
                 });
                 Task::none()
             }
-            Show::ApplyTemplate {
-                track_name,
-                is_group,
-            } => {
+            Show::ApplyTemplate { track_name } => {
                 self.modal = Some(Show::ApplyTemplate {
                     track_name: track_name.clone(),
-                    is_group: *is_group,
                 });
                 self.state.blocking_write().apply_template_dialog =
                     Some(crate::state::ApplyTemplateDialog {
                         track_name: track_name.clone(),
-                        is_group: *is_group,
                         selected_template: None,
                         available_templates: Vec::new(),
                     });
-                if *is_group {
-                    Task::perform(
-                        async { crate::gui::scan_group_templates() },
-                        Message::GroupTemplatesLoaded,
-                    )
-                } else {
-                    Task::perform(
-                        async { crate::gui::scan_track_templates() },
-                        Message::TrackTemplatesLoaded,
-                    )
-                }
+                Task::perform(
+                    async { crate::gui::scan_track_templates() },
+                    Message::TrackTemplatesLoaded,
+                )
             }
         }
     }

@@ -93,7 +93,7 @@ pub mod state_ids {
 pub mod state_track {
     pub const TRACK_FOLDER_HEADER_HEIGHT: f32 = 24.0;
     pub const TRACK_SUBTRACK_GAP: f32 = 2.0;
-    pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 22.0;
+    pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 18.0;
     pub const TRACK_MIN_HEIGHT: f32 = 82.0;
 }
 
@@ -365,7 +365,7 @@ mod tests {
     fn state_track_constants_are_expected_values() {
         assert_eq!(state_track::TRACK_FOLDER_HEADER_HEIGHT, 24.0);
         assert_eq!(state_track::TRACK_SUBTRACK_GAP, 2.0);
-        assert_eq!(state_track::TRACK_SUBTRACK_MIN_HEIGHT, 22.0);
+        assert_eq!(state_track::TRACK_SUBTRACK_MIN_HEIGHT, 18.0);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

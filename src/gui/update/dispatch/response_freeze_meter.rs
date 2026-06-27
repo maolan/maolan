@@ -228,7 +228,10 @@ impl Maolan {
             } => {
                 let mut state = self.state.blocking_write();
                 let visible_tracks = visible_mixer_track_names(self, &state);
-                let has_input_monitor = state.tracks.iter().any(|track| track.input_monitor);
+                let has_input_monitor = state.tracks.iter().any(|track| {
+                    track.input_monitor.iter().any(|&m| m)
+                        || track.midi_input_monitor.iter().any(|&m| m)
+                });
                 let allow_live_hw_out = self.playing && (!self.paused || has_input_monitor);
                 if (!allow_live_hw_out || hw_out_db.is_empty()) && !state.hw_out_meter_db.is_empty()
                 {
@@ -244,8 +247,10 @@ impl Maolan {
                     {
                         continue;
                     }
-                    let allow_live_track_out =
-                        self.playing && (!self.paused || track.input_monitor);
+                    let allow_live_track_out = self.playing
+                        && (!self.paused
+                            || track.input_monitor.iter().any(|&m| m)
+                            || track.midi_input_monitor.iter().any(|&m| m));
                     if !allow_live_track_out || track_meters.is_empty() {
                         let silence = vec![-90.0; track.meter_out_db.len()];
                         Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);

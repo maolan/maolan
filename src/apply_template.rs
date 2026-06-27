@@ -49,49 +49,20 @@ impl ApplyTemplateView {
         Some((audio_ins, audio_outs, midi_ins, midi_outs))
     }
 
-    fn load_group_template_track_count(template_name: &str) -> Option<usize> {
-        use std::fs::File;
-        use std::io::BufReader;
-
-        let home = std::env::var("HOME").ok()?;
-        let template_path = format!(
-            "{}/.config/maolan/group_templates/{}/group.json",
-            home, template_name
-        );
-
-        let file = File::open(template_path).ok()?;
-        let reader = BufReader::new(file);
-        let json: serde_json::Value = serde_json::from_reader(reader).ok()?;
-
-        let tracks = json.get("tracks")?.as_array()?;
-        Some(tracks.len())
-    }
-
     pub fn view(&self) -> Element<'_, Message> {
         let state = self.state.blocking_read();
         let Some(dialog) = &state.apply_template_dialog else {
             return container("").into();
         };
 
-        let target_label = if dialog.is_group {
-            format!("Group: {}", dialog.track_name)
-        } else {
-            format!("Track: {}", dialog.track_name)
-        };
+        let target_label = format!("Track: {}", dialog.track_name);
 
         let selected_display = dialog.selected_template.as_deref().unwrap_or("");
 
         let mut info_text = String::new();
         let mut can_apply = !selected_display.is_empty();
 
-        if dialog.is_group {
-            if let Some(count) = Self::load_group_template_track_count(selected_display) {
-                info_text = format!("Group template: {} tracks", count);
-            } else if !selected_display.is_empty() {
-                info_text = "Unable to read group template".to_string();
-                can_apply = false;
-            }
-        } else if let Some(track) = state.tracks.iter().find(|t| t.name == dialog.track_name) {
+        if let Some(track) = state.tracks.iter().find(|t| t.name == dialog.track_name) {
             if let Some((t_audio_ins, t_audio_outs, t_midi_ins, t_midi_outs)) =
                 Self::load_track_template_config(selected_display)
             {
@@ -196,7 +167,6 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         state.blocking_write().apply_template_dialog = Some(crate::state::ApplyTemplateDialog {
             track_name: "Kick".to_string(),
-            is_group: false,
             selected_template: None,
             available_templates: vec![],
         });

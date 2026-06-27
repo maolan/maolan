@@ -317,16 +317,13 @@ impl Maolan {
             message,
             Message::TrackAutomationToggleLane { .. }
                 | Message::TrackRenameShow(_)
-                | Message::TrackGroupShow { .. }
                 | Message::TrackAutomationCycleMode { .. }
                 | Message::TrackTemplateSaveShow(_)
-                | Message::TrackGroupTemplateSaveShow(_)
                 | Message::TrackFreezeToggle { .. }
                 | Message::TrackFreezeFlatten { .. }
                 | Message::TrackToggleFolder { .. }
                 | Message::TrackSetFolder { .. }
                 | Message::TrackSetParent { .. }
-                | Message::TrackSetVcaMaster { .. }
                 | Message::TrackMidiLearnArm { .. }
                 | Message::TrackMidiLearnClear { .. }
                 | Message::TrackAddReturn(_)
@@ -488,10 +485,8 @@ impl Maolan {
             }
             Message::AddTrack(crate::message::AddTrack::Submit)
             | Message::AddTrackFromTemplate { .. }
-            | Message::AddGroupFromTemplate { .. }
             | Message::ApplyTemplate(crate::message::ApplyTemplate::Submit)
             | Message::ApplyTrackTemplate { .. }
-            | Message::ApplyGroupTemplate { .. }
             | Message::NewFromTemplate(_)
             | Message::NewSession
             | Message::Request(_)
@@ -504,8 +499,8 @@ impl Maolan {
                 ) {
                     self.modal = None;
                     self.state.blocking_write().apply_template_dialog = None;
-                } else if self.state.blocking_read().track_marker_dialog.is_some() {
-                    self.state.blocking_write().track_marker_dialog = None;
+                } else if self.state.blocking_read().marker_dialog.is_some() {
+                    self.state.blocking_write().marker_dialog = None;
                 }
             }
             Message::Cancel => {
@@ -2810,9 +2805,6 @@ impl Maolan {
                                 state.clap_states_by_track.remove(name);
                                 state.vst3_states_by_track.remove(name);
                                 for track in &mut state.tracks {
-                                    if track.vca_master.as_deref() == Some(name.as_str()) {
-                                        track.vca_master = None;
-                                    }
                                     if track.parent_track.as_deref() == Some(name.as_str()) {
                                         track.parent_track = None;
                                     }
@@ -4070,11 +4062,6 @@ impl Maolan {
                                 old_name,
                                 new_name,
                             );
-                            for track in &mut state.tracks {
-                                if track.vca_master.as_deref() == Some(old_name.as_str()) {
-                                    track.vca_master = Some(new_name.clone());
-                                }
-                            }
                             state.message = format!("Renamed track to '{}'", new_name);
                             refresh_midi_clip_previews = true;
                         }
@@ -4110,20 +4097,6 @@ impl Maolan {
                 self.pending_save_vst3_states.clear();
                 self.pending_save_is_template = false;
                 self.state.blocking_write().message = e.clone();
-            }
-            Message::TrackSetVcaMaster {
-                ref track_name,
-                ref master_track,
-            } => {
-                if master_track.as_deref() == Some(track_name.as_str()) {
-                    self.state.blocking_write().message =
-                        "Track cannot be its own VCA master".to_string();
-                    return Task::none();
-                }
-                return self.send(Action::TrackSetVcaMaster {
-                    track_name: track_name.clone(),
-                    master_track: master_track.clone(),
-                });
             }
             Message::TrackToggleFolder { ref track_name } => {
                 {
@@ -4223,6 +4196,31 @@ impl Maolan {
                     track_name: track_name.clone(),
                     lane,
                     channel: channel.to_engine(),
+                });
+            }
+            Message::TrackSetupToggle(ref track_name) => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    track.setup_open = !track.setup_open;
+                }
+            }
+            Message::TrackMidiSetupChannelSelected {
+                ref track_name,
+                channel,
+            } => {
+                let engine_channel = channel.to_engine();
+                {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        for lane_channel in track.midi_lane_channels.iter_mut() {
+                            *lane_channel = engine_channel;
+                        }
+                    }
+                }
+                return self.send(Action::TrackSetMidiLaneChannel {
+                    track_name: track_name.clone(),
+                    lane: 0,
+                    channel: engine_channel,
                 });
             }
             Message::TrackAddReturn(ref track_name) => {
@@ -5018,70 +5016,19 @@ impl Maolan {
                     }
                 }
             }
-            Message::TrackMarkerCreate(ref track_name) => {
-                let marker_x = {
-                    let state = self.state.blocking_read();
-                    state.editor_cursor.unwrap_or(state.cursor).x
-                };
-                let marker_sample = self
-                    .snap_mode
-                    .snap_sample(
-                        timeline_x_to_sample_f32(marker_x, self.pixels_per_sample(), 0.0) as f64,
-                        self.samples_per_beat(),
-                        self.samples_per_bar(),
-                    )
-                    .max(0.0) as usize;
-                self.state.blocking_write().track_marker_dialog =
-                    Some(crate::state::TrackMarkerDialog {
-                        track_name: track_name.clone(),
-                        sample: marker_sample,
-                        marker_index: None,
-                        name: String::new(),
-                    });
-                return iced::widget::operation::focus(
-                    crate::track_marker::TrackMarkerView::name_input_id(),
-                );
-            }
             Message::MarkerLaneCreate { sample } => {
-                self.state.blocking_write().track_marker_dialog =
-                    Some(crate::state::TrackMarkerDialog {
-                        track_name: String::new(),
-                        sample,
-                        marker_index: None,
-                        name: String::new(),
-                    });
+                self.state.blocking_write().marker_dialog = Some(crate::state::MarkerDialog {
+                    sample,
+                    marker_index: None,
+                    name: String::new(),
+                });
                 return iced::widget::operation::focus(
-                    crate::track_marker::TrackMarkerView::name_input_id(),
+                    crate::track_marker::MarkerView::name_input_id(),
                 );
             }
-            Message::TrackMarkerRenameShow {
-                ref track_name,
-                marker_index,
-            } => {
-                let dialog = {
-                    let state = self.state.blocking_read();
-                    state
-                        .tracks
-                        .iter()
-                        .find(|t| t.name == *track_name)
-                        .and_then(|track| track.editor_markers.get(marker_index))
-                        .map(|marker| crate::state::TrackMarkerDialog {
-                            track_name: track_name.clone(),
-                            sample: marker.sample,
-                            marker_index: Some(marker_index),
-                            name: marker.name.clone(),
-                        })
-                };
-                if let Some(dialog) = dialog {
-                    self.state.blocking_write().track_marker_dialog = Some(dialog);
-                    return iced::widget::operation::focus(
-                        crate::track_marker::TrackMarkerView::name_input_id(),
-                    );
-                }
-            }
-            Message::TrackMarkerNameInput(_) => {}
-            Message::TrackMarkerNameConfirm => {
-                let dialog = self.state.blocking_read().track_marker_dialog.clone();
+            Message::MarkerNameInput(_) => {}
+            Message::MarkerNameConfirm => {
+                let dialog = self.state.blocking_read().marker_dialog.clone();
                 let Some(dialog) = dialog else {
                     return Task::none();
                 };
@@ -5090,77 +5037,23 @@ impl Maolan {
                     return Task::none();
                 }
                 let mut state = self.state.blocking_write();
-                if dialog.track_name.is_empty() {
-                    let markers = &mut state.session_markers;
-                    if let Some(marker_index) = dialog.marker_index {
-                        if let Some(marker) = markers.get_mut(marker_index) {
-                            marker.name = marker_name;
-                        }
-                    } else {
-                        markers.push(crate::state::EditorMarker {
-                            sample: dialog.sample,
-                            name: marker_name,
-                        });
+                let markers = &mut state.session_markers;
+                if let Some(marker_index) = dialog.marker_index {
+                    if let Some(marker) = markers.get_mut(marker_index) {
+                        marker.name = marker_name;
                     }
-                    markers.sort_unstable_by_key(|marker| marker.sample);
-                    markers.dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
-                } else if let Some(track) = state
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.name == dialog.track_name)
-                {
-                    if let Some(marker_index) = dialog.marker_index {
-                        if let Some(marker) = track.editor_markers.get_mut(marker_index) {
-                            marker.name = marker_name;
-                        }
-                    } else {
-                        track.editor_markers.push(crate::state::EditorMarker {
-                            sample: dialog.sample,
-                            name: marker_name,
-                        });
-                    }
-                    track
-                        .editor_markers
-                        .sort_unstable_by_key(|marker| marker.sample);
-                    track
-                        .editor_markers
-                        .dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
-                }
-                state.track_marker_dialog = None;
-            }
-            Message::TrackMarkerNameCancel => {
-                self.state.blocking_write().track_marker_dialog = None;
-            }
-            Message::TrackMarkerDragStart {
-                ref track_name,
-                marker_index,
-            } => {
-                let mut state = self.state.blocking_write();
-                let initial_sample = state
-                    .tracks
-                    .iter()
-                    .find(|t| t.name == *track_name)
-                    .and_then(|track| track.editor_markers.get(marker_index))
-                    .map(|marker| marker.sample);
-                if let Some(initial_sample) = initial_sample {
-                    state.resizing = Some(Resizing::TrackMarker {
-                        track_name: track_name.clone(),
-                        marker_index,
-                        initial_sample,
-                        initial_mouse_x: state.editor_cursor.unwrap_or(state.cursor).x,
+                } else {
+                    markers.push(crate::state::EditorMarker {
+                        sample: dialog.sample,
+                        name: marker_name,
                     });
                 }
+                markers.sort_unstable_by_key(|marker| marker.sample);
+                markers.dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
+                state.marker_dialog = None;
             }
-            Message::TrackMarkerDelete {
-                ref track_name,
-                marker_index,
-            } => {
-                let mut state = self.state.blocking_write();
-                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                    && marker_index < track.editor_markers.len()
-                {
-                    track.editor_markers.remove(marker_index);
-                }
+            Message::MarkerNameCancel => {
+                self.state.blocking_write().marker_dialog = None;
             }
             Message::SelectClip {
                 ref track_idx,
@@ -5600,64 +5493,6 @@ impl Maolan {
             Message::TrackRenameCancel => {
                 self.state.blocking_write().track_rename_dialog = None;
             }
-            Message::TrackGroupShow { ref track_name } => {
-                let mut state = self.state.blocking_write();
-                let selected_tracks = state
-                    .tracks
-                    .iter()
-                    .filter(|track| {
-                        state.selected.contains(track.name.as_str()) && !track.is_master
-                    })
-                    .map(|track| track.name.clone())
-                    .collect::<Vec<_>>();
-                if selected_tracks.len() <= 1
-                    || !selected_tracks.iter().any(|name| name == track_name)
-                {
-                    return Task::none();
-                }
-                state.track_group_dialog = Some(crate::state::TrackGroupDialog {
-                    selected_tracks,
-                    name: String::new(),
-                });
-            }
-            Message::TrackGroupInput(_) => {}
-            Message::TrackGroupConfirm => {
-                let dialog = self.state.blocking_read().track_group_dialog.clone();
-                let Some(dialog) = dialog else {
-                    return Task::none();
-                };
-
-                let group_name = dialog.name.trim().to_string();
-                if group_name.is_empty() || dialog.selected_tracks.len() <= 1 {
-                    return Task::none();
-                }
-                if self
-                    .state
-                    .blocking_read()
-                    .tracks
-                    .iter()
-                    .any(|track| track.name == group_name)
-                {
-                    self.state.blocking_write().message =
-                        format!("A track named '{group_name}' already exists");
-                    return Task::none();
-                }
-
-                self.state.blocking_write().track_group_dialog = None;
-
-                let mut actions = vec![Action::BeginHistoryGroup];
-                for track_name in dialog.selected_tracks {
-                    actions.push(Action::TrackSetVcaMaster {
-                        track_name,
-                        master_track: Some(group_name.clone()),
-                    });
-                }
-                actions.push(Action::EndHistoryGroup);
-                return Self::restore_actions_task(actions);
-            }
-            Message::TrackGroupCancel => {
-                self.state.blocking_write().track_group_dialog = None;
-            }
             Message::TrackTemplateSaveShow(ref track_name) => {
                 let mut state = self.state.blocking_write();
                 state.track_template_save_dialog = Some(crate::state::TrackTemplateSaveDialog {
@@ -5696,54 +5531,6 @@ impl Maolan {
             }
             Message::TrackTemplateSaveCancel => {
                 self.state.blocking_write().track_template_save_dialog = None;
-                self.modal = None;
-            }
-            Message::TrackGroupTemplateSaveShow(ref track_name) => {
-                let state = self.state.blocking_read();
-                let group_name = state
-                    .tracks
-                    .iter()
-                    .find(|t| t.name == *track_name)
-                    .and_then(|t| t.vca_master.clone())
-                    .unwrap_or_default();
-                drop(state);
-                let mut state = self.state.blocking_write();
-                state.track_group_template_save_dialog =
-                    Some(crate::state::TrackGroupTemplateSaveDialog {
-                        group_name,
-                        name: String::new(),
-                    });
-                drop(state);
-                self.modal = Some(Show::SaveTemplateAs);
-            }
-            Message::TrackGroupTemplateSaveInput(_) => {
-                self.track_group_template_save.update(&message);
-            }
-            Message::TrackGroupTemplateSaveConfirm => {
-                let dialog = self
-                    .state
-                    .blocking_read()
-                    .track_group_template_save_dialog
-                    .clone();
-                let Some(dialog) = dialog else {
-                    return Task::none();
-                };
-
-                let name = dialog.name.trim().to_string();
-                if name.is_empty() {
-                    return Task::none();
-                }
-
-                self.state.blocking_write().track_group_template_save_dialog = None;
-                self.modal = None;
-
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let template_path = format!("{}/.config/maolan/group_templates/{}", home, name);
-
-                return self.save_group_as_template(&dialog.group_name, template_path);
-            }
-            Message::TrackGroupTemplateSaveCancel => {
-                self.state.blocking_write().track_group_template_save_dialog = None;
                 self.modal = None;
             }
             Message::TrackContextMenuHover {
@@ -6449,13 +6236,6 @@ impl Maolan {
                 };
                 match resizing {
                     Some(Resizing::Track(..)) => {}
-                    Some(Resizing::TrackMarker {
-                        ref track_name,
-                        marker_index,
-                        ..
-                    }) => {
-                        let _ = (track_name, marker_index);
-                    }
                     Some(Resizing::Clip {
                         kind,
                         ref track_name,
@@ -6807,33 +6587,8 @@ impl Maolan {
                 let resizing = self.state.blocking_read().resizing.clone();
                 let can_start_midi_drag = self.midi_lane_at_position(position).is_some();
                 let cut_preview_active = self.state.blocking_read().cut_preview_active;
-                let marker_drag_update = if let Some(Resizing::TrackMarker {
-                    ref track_name,
-                    marker_index,
-                    initial_sample,
-                    initial_mouse_x,
-                }) = resizing
-                {
-                    let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
-                    let delta_samples = (position.x - initial_mouse_x) / pixels_per_sample;
-                    Some((
-                        track_name.clone(),
-                        marker_index,
-                        (initial_sample as f64 + delta_samples as f64)
-                            .max(0.0)
-                            .round() as usize,
-                    ))
-                } else {
-                    None
-                };
                 let mut state = self.state.blocking_write();
                 state.editor_cursor = Some(position);
-                if let Some((track_name, marker_index, marker_sample)) = marker_drag_update
-                    && let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
-                    && marker_index < track.editor_markers.len()
-                {
-                    track.editor_markers[marker_index].sample = marker_sample;
-                }
                 if state.mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))
                     && self.clip.is_none()
@@ -6913,53 +6668,6 @@ impl Maolan {
                 };
                 self.clip_preview_snap_adjust_samples = 0.0;
                 self.clip_snap_targets.clear();
-                let marker_snap_update = if let Some(Resizing::TrackMarker {
-                    ref track_name,
-                    marker_index,
-                    ..
-                }) = resizing.clone()
-                {
-                    let current_sample = {
-                        let state = self.state.blocking_read();
-                        state
-                            .tracks
-                            .iter()
-                            .find(|t| t.name == *track_name)
-                            .and_then(|track| track.editor_markers.get(marker_index))
-                            .map(|marker| marker.sample)
-                    };
-                    current_sample.map(|current_sample| {
-                        let samples_per_beat = self.samples_per_beat();
-                        let samples_per_bar = self.samples_per_bar();
-                        (
-                            track_name.clone(),
-                            marker_index,
-                            self.snap_mode
-                                .snap_sample(
-                                    current_sample as f64,
-                                    samples_per_beat,
-                                    samples_per_bar,
-                                )
-                                .max(0.0) as usize,
-                        )
-                    })
-                } else {
-                    None
-                };
-                if let Some((track_name, marker_index, snapped_sample)) = marker_snap_update {
-                    let mut state = self.state.blocking_write();
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name) {
-                        if marker_index < track.editor_markers.len() {
-                            track.editor_markers[marker_index].sample = snapped_sample;
-                        }
-                        track
-                            .editor_markers
-                            .sort_unstable_by_key(|marker| marker.sample);
-                        track
-                            .editor_markers
-                            .dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
-                    }
-                }
                 if let Some(Resizing::Clip {
                     kind,
                     track_name,
@@ -8791,18 +8499,7 @@ impl Maolan {
             }
             Message::TrackTemplatesLoaded(ref templates) => {
                 self.add_track.set_available_templates(templates.clone());
-                if let Some(dialog) = &mut self.state.blocking_write().apply_template_dialog
-                    && !dialog.is_group
-                {
-                    dialog.available_templates = templates.clone();
-                }
-            }
-            Message::GroupTemplatesLoaded(ref templates) => {
-                self.add_track
-                    .set_available_group_templates(templates.clone());
-                if let Some(dialog) = &mut self.state.blocking_write().apply_template_dialog
-                    && dialog.is_group
-                {
+                if let Some(dialog) = &mut self.state.blocking_write().apply_template_dialog {
                     dialog.available_templates = templates.clone();
                 }
             }

@@ -4,6 +4,7 @@ pub mod input;
 pub mod mixer;
 pub mod mute;
 pub mod phase_invert;
+pub mod setup;
 pub mod solo;
 
 use crate::consts::APP_BACKGROUND_COLOR;
@@ -27,6 +28,39 @@ pub fn menu_submenu_background(active: bool) -> container::Style {
         }
     } else {
         container::Style::default()
+    }
+}
+
+fn track_icon_button_style(theme: &Theme, active: bool, accent: Color) -> Style {
+    let palette = theme.extended_palette();
+    let active_bg = Color { a: 0.96, ..accent };
+    let active_border = Color {
+        r: (accent.r + 0.20).min(1.0),
+        g: (accent.g + 0.20).min(1.0),
+        b: (accent.b + 0.20).min(1.0),
+        a: 1.0,
+    };
+    Style {
+        background: if active {
+            Some(Background::Color(active_bg))
+        } else {
+            None
+        },
+        text_color: if active {
+            Color::from_rgb(0.08, 0.10, 0.14)
+        } else {
+            palette.background.base.text
+        },
+        border: Border {
+            color: if active {
+                active_border
+            } else {
+                Color::from_rgba(0.34, 0.42, 0.56, 0.72)
+            },
+            width: if active { 1.6 } else { 1.0 },
+            radius: 6.0.into(),
+        },
+        ..Style::default()
     }
 }
 

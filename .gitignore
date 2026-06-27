@@ -3,3 +3,4 @@ logs/
 .worktrees/
 .codex
 dist/
+*.core

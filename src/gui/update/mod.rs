@@ -34,7 +34,6 @@ use crate::{
     workspace::{
         EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID, PIANO_TEMPO_SCROLL_ID,
         TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID, WORKSPACE_TEMPO_SCROLL_ID,
-        timeline_x_to_sample_f32,
     },
 };
 use iced::widget::{Id, operation};
@@ -1656,79 +1655,6 @@ impl Maolan {
             }
             _ => {}
         }
-    }
-
-    fn vca_group_tracks_for(&self, track_name: &str) -> Vec<String> {
-        let state = self.state.blocking_read();
-        let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
-            return vec![track_name.to_string()];
-        };
-        let mut members = if let Some(group_name) = track.vca_master.as_deref() {
-            state
-                .tracks
-                .iter()
-                .filter(|t| t.vca_master.as_deref() == Some(group_name))
-                .map(|t| t.name.clone())
-                .collect::<Vec<_>>()
-        } else {
-            let mut members = vec![track.name.clone()];
-            members.extend(
-                state
-                    .tracks
-                    .iter()
-                    .filter(|t| t.vca_master.as_deref() == Some(track.name.as_str()))
-                    .map(|t| t.name.clone()),
-            );
-            members
-        };
-        members.sort();
-        members.dedup();
-        members
-    }
-
-    fn expand_request_to_vca_group(&self, action: &Action) -> Option<Vec<Action>> {
-        let (source_track, builder): (&str, fn(String, &Action) -> Action) = match action {
-            Action::TrackLevel(track_name, _) => (track_name.as_str(), |name, a| match a {
-                Action::TrackLevel(_, level) => Action::TrackLevel(name, *level),
-                _ => unreachable!(),
-            }),
-            Action::TrackBalance(track_name, _) => (track_name.as_str(), |name, a| match a {
-                Action::TrackBalance(_, balance) => Action::TrackBalance(name, *balance),
-                _ => unreachable!(),
-            }),
-            Action::TrackToggleArm(track_name) => {
-                (track_name.as_str(), |name, _| Action::TrackToggleArm(name))
-            }
-            Action::TrackToggleMute(track_name) => {
-                (track_name.as_str(), |name, _| Action::TrackToggleMute(name))
-            }
-            Action::TrackToggleSolo(track_name) => {
-                (track_name.as_str(), |name, _| Action::TrackToggleSolo(name))
-            }
-            Action::TrackToggleMaster(track_name) => (track_name.as_str(), |name, _| {
-                Action::TrackToggleMaster(name)
-            }),
-            Action::TrackToggleInputMonitor(track_name) => (track_name.as_str(), |name, _| {
-                Action::TrackToggleInputMonitor(name)
-            }),
-            Action::TrackToggleDiskMonitor(track_name) => (track_name.as_str(), |name, _| {
-                Action::TrackToggleDiskMonitor(name)
-            }),
-            _ => return None,
-        };
-        if source_track == "hw:out" {
-            return None;
-        }
-        let members = self.vca_group_tracks_for(source_track);
-        if members.len() <= 1 {
-            return None;
-        }
-        Some(
-            members
-                .into_iter()
-                .map(|name| builder(name, action))
-                .collect(),
-        )
     }
 
     fn folder_children_for(&self, folder_name: &str) -> Vec<String> {
