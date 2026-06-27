@@ -370,6 +370,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     }
     let selected_audio_count = selected_audio_indices.len();
     let selected_midi_count = selected_midi_indices.len();
+
     clips.push(
         pin(track_lane_background_overlay(
             height,

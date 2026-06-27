@@ -27,7 +27,7 @@ pub enum Show {
     Open,
     About,
     TrackColor { track_name: String },
-    ApplyTemplate { track_name: String, is_group: bool },
+    ApplyTemplate { track_name: String },
     BranchManager,
     BranchTrackList(String),
 }
@@ -646,10 +646,6 @@ pub enum Message {
         track_name: String,
         parent_name: Option<String>,
     },
-    TrackSetVcaMaster {
-        track_name: String,
-        master_track: Option<String>,
-    },
     TrackAddReturn(String),
     TrackAddSend(String),
     TrackMidiLearnArm {
@@ -692,22 +688,9 @@ pub enum Message {
         target: TrackAutomationTarget,
         sample: usize,
     },
-    TrackMarkerCreate(String),
-    TrackMarkerRenameShow {
-        track_name: String,
-        marker_index: usize,
-    },
-    TrackMarkerDragStart {
-        track_name: String,
-        marker_index: usize,
-    },
-    TrackMarkerNameInput(String),
-    TrackMarkerNameConfirm,
-    TrackMarkerNameCancel,
-    TrackMarkerDelete {
-        track_name: String,
-        marker_index: usize,
-    },
+    MarkerNameInput(String),
+    MarkerNameConfirm,
+    MarkerNameCancel,
     MarkerLaneCreate {
         sample: usize,
     },
@@ -1146,6 +1129,11 @@ pub enum Message {
         lane: usize,
         channel: MidiLaneChannelSelection,
     },
+    TrackSetupToggle(String),
+    TrackMidiSetupChannelSelected {
+        track_name: String,
+        channel: MidiLaneChannelSelection,
+    },
     PianoVelocityKindSelected(PianoVelocityKind),
     PianoRpnKindSelected(PianoRpnKind),
     PianoNrpnKindSelected(PianoNrpnKind),
@@ -1269,21 +1257,10 @@ pub enum Message {
     TrackRenameInput(String),
     TrackRenameConfirm,
     TrackRenameCancel,
-    TrackGroupShow {
-        track_name: String,
-    },
-    TrackGroupInput(String),
-    TrackGroupConfirm,
-    TrackGroupCancel,
-
     TrackTemplateSaveShow(String),
     TrackTemplateSaveInput(String),
     TrackTemplateSaveConfirm,
     TrackTemplateSaveCancel,
-    TrackGroupTemplateSaveShow(String),
-    TrackGroupTemplateSaveInput(String),
-    TrackGroupTemplateSaveConfirm,
-    TrackGroupTemplateSaveCancel,
     TrackContextMenuToggle(String),
 
     TemplateSaveInput(String),
@@ -1310,20 +1287,10 @@ pub enum Message {
         audio_outs: usize,
         midi_outs: usize,
     },
-    AddGroupFromTemplate {
-        base_name: String,
-        template: String,
-    },
     ApplyTrackTemplate {
         track_name: String,
         template: String,
     },
-    ApplyGroupTemplate {
-        group_name: String,
-        template: String,
-    },
-
-    GroupTemplatesLoaded(Vec<String>),
 
     Undo,
     Redo,

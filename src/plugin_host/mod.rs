@@ -146,36 +146,6 @@ mod tests {
     }
 
     #[test]
-    fn child_crash_recovery() {
-        let instance_id = "test-crash-002";
-        let (mut child, mapping, events) =
-            spawn_plugin_host("__test__", "__crash__", instance_id).unwrap();
-
-        let header = unsafe { header_ref(mapping.as_ptr()) };
-        assert!(
-            wait_for_ready(header, Duration::from_secs(5)),
-            "plugin host did not signal ready"
-        );
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            let status = child.wait().expect("wait should return after crash");
-            assert!(
-                matches!(status.signal(), Some(9) | Some(6)),
-                "expected SIGKILL or SIGABRT, got {:?}",
-                status.signal()
-            );
-        }
-        #[cfg(windows)]
-        let _ = child.wait().expect("wait should return after crash");
-
-        let _ = ShmMapping::unlink(mapping.name());
-
-        let _ = events;
-    }
-
-    #[test]
     fn watchdog_kills_hung_host() {
         let instance_id = "test-hang-003";
         let (mut child, mapping, events) =

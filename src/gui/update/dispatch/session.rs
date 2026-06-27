@@ -37,41 +37,25 @@ impl Maolan {
                     .push((name.clone(), template.clone()));
                 task
             }
-            Message::AddGroupFromTemplate {
-                ref base_name,
-                ref template,
-            } => self.load_group_template(base_name.clone(), template.clone()),
             Message::ApplyTemplate(crate::message::ApplyTemplate::Submit) => {
-                let (track_name, is_group, template) = {
+                let (track_name, template) = {
                     let state = self.state.blocking_read();
                     let Some(dialog) = state.apply_template_dialog.as_ref() else {
                         return Task::none();
                     };
-                    (
-                        dialog.track_name.clone(),
-                        dialog.is_group,
-                        dialog.selected_template.clone(),
-                    )
+                    (dialog.track_name.clone(), dialog.selected_template.clone())
                 };
                 let Some(template) = template else {
                     return Task::done(Message::Response(Err("No template selected".to_string())));
                 };
                 self.modal = None;
                 self.state.blocking_write().apply_template_dialog = None;
-                if is_group {
-                    self.apply_group_template(track_name, template)
-                } else {
-                    self.apply_track_template(track_name, template)
-                }
+                self.apply_track_template(track_name, template)
             }
             Message::ApplyTrackTemplate {
                 ref track_name,
                 ref template,
             } => self.apply_track_template(track_name.clone(), template.clone()),
-            Message::ApplyGroupTemplate {
-                ref group_name,
-                ref template,
-            } => self.apply_group_template(group_name.clone(), template.clone()),
             Message::NewFromTemplate(ref template_name) => {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 let template_path = format!(
@@ -199,14 +183,6 @@ impl Maolan {
                 if let Action::TransportPosition(sample) = a {
                     self.transport_samples = *sample as f64;
                 }
-                if let Some(expanded) = self.expand_request_to_vca_group(a) {
-                    let mut tasks = Vec::with_capacity(expanded.len());
-                    for action in expanded {
-                        self.maybe_record_automation_from_request(&action);
-                        tasks.push(self.send(action));
-                    }
-                    return Task::batch(tasks);
-                }
                 if let Some(expanded) = self.expand_request_to_folder_children(a) {
                     let mut tasks = Vec::with_capacity(expanded.len());
                     for action in expanded {
@@ -225,12 +201,7 @@ impl Maolan {
                     if let Action::TransportPosition(sample) = action {
                         self.transport_samples = *sample as f64;
                     }
-                    if let Some(expanded) = self.expand_request_to_vca_group(action) {
-                        for expanded_action in expanded {
-                            self.maybe_record_automation_from_request(&expanded_action);
-                            tasks.push(self.send(expanded_action));
-                        }
-                    } else if let Some(expanded) = self.expand_request_to_folder_children(action) {
+                    if let Some(expanded) = self.expand_request_to_folder_children(action) {
                         for expanded_action in expanded {
                             self.maybe_record_automation_from_request(&expanded_action);
                             tasks.push(self.send(expanded_action));

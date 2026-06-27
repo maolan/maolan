@@ -9,14 +9,13 @@ use crate::{
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
-    alignment::Horizontal,
     widget::{
-        Column, Row, Space, Stack, button, column, container, lazy, mouse_area, pick_list, row,
-        scrollable, text,
+        Column, Row, Space, Stack, button, column, container, lazy, mouse_area, pick_list, pin,
+        row, scrollable, text,
     },
 };
 use iced_drop::droppable;
-use iced_fonts::lucide::{audio_waveform, disc};
+use iced_fonts::lucide::{audio_waveform, disc, settings};
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
 use maolan_widgets::horizontal_slider::horizontal_slider;
 use std::{
@@ -163,14 +162,17 @@ struct TrackViewData {
     soloed: bool,
     solo_upstream: bool,
     is_master: bool,
-    input_monitor: bool,
-    disk_monitor: bool,
+    input_monitor: Vec<bool>,
+    disk_monitor: Vec<bool>,
+    midi_input_monitor: Vec<bool>,
+    midi_disk_monitor: Vec<bool>,
     audio_ins: usize,
     audio_outs: usize,
     primary_audio_ins: usize,
     primary_audio_outs: usize,
     midi_ins: usize,
     midi_outs: usize,
+    setup_open: bool,
     midi_lane_channels: Vec<Option<u8>>,
     level: f32,
     balance: f32,
@@ -183,7 +185,6 @@ struct TrackViewData {
     midi_learn_arm: bool,
     midi_learn_input_monitor: bool,
     midi_learn_disk_monitor: bool,
-    vca_master: Option<String>,
     color: Option<iced::Color>,
     is_folder: bool,
     folder_open: bool,
@@ -191,13 +192,6 @@ struct TrackViewData {
     hidden: bool,
     effective_muted: bool,
     effective_soloed: bool,
-}
-
-#[derive(Clone)]
-struct VcaStripViewData {
-    label: String,
-    prev_same: bool,
-    next_same: bool,
 }
 
 fn context_menu_panel_style(theme: &Theme) -> container::Style {
@@ -299,7 +293,6 @@ pub(super) fn track_context_menu_overlay(
             "Apply template",
             Message::Show(Show::ApplyTemplate {
                 track_name: track_name.clone(),
-                is_group: false,
             }),
         ),
         menu::menu_item("Add Return", Message::TrackAddReturn(track_name.clone())),
@@ -413,12 +406,7 @@ pub(super) fn track_context_menu_overlay(
         items.extend(modulator_items);
     }
 
-    let is_group_master = state
-        .tracks
-        .iter()
-        .any(|t| t.vca_master.as_deref() == Some(&track_name));
-    let is_in_group = track.vca_master.is_some() || is_group_master;
-    if track.primary_audio_outs() == 2 && !is_in_group {
+    if track.primary_audio_outs() == 2 {
         items.push(menu::menu_item(
             if track.is_master {
                 "Unmaster"
@@ -499,57 +487,6 @@ pub(super) fn track_context_menu_overlay(
                 ));
             }
         }
-    }
-
-    let selected_tracks: Vec<_> = state
-        .tracks
-        .iter()
-        .filter(|candidate| state.selected.contains(candidate.name.as_str()))
-        .map(|candidate| candidate.name.clone())
-        .collect();
-    let can_group_selected =
-        selected_tracks.len() > 1 && selected_tracks.iter().any(|name| name == &track.name);
-
-    if can_group_selected && !track.is_master {
-        items.push(menu::menu_item(
-            "Group",
-            Message::TrackGroupShow {
-                track_name: track_name.clone(),
-            },
-        ));
-    }
-
-    if let Some(master) = track.vca_master.as_ref() {
-        if !track.is_master {
-            items.push(menu::menu_item(
-                format!("Group: Ungroup ({master})"),
-                Message::TrackSetVcaMaster {
-                    track_name: track_name.clone(),
-                    master_track: None,
-                },
-            ));
-        }
-        items.push(menu::menu_item(
-            "Save group as template",
-            Message::TrackGroupTemplateSaveShow(track_name.clone()),
-        ));
-        items.push(menu::menu_item(
-            "Apply group template",
-            Message::Show(Show::ApplyTemplate {
-                track_name: master.clone(),
-                is_group: true,
-            }),
-        ));
-    }
-
-    if is_group_master {
-        items.push(menu::menu_item(
-            "Apply group template",
-            Message::Show(Show::ApplyTemplate {
-                track_name: track_name.clone(),
-                is_group: true,
-            }),
-        ));
     }
 
     if track.midi_learn_volume.is_some() {
@@ -759,34 +696,10 @@ impl Tracks {
         value.chars().take(max_chars).collect()
     }
 
-    fn rotate_text_cw(value: &str, max_chars: usize) -> String {
-        Self::trim_with_ellipsis(value, max_chars)
-            .chars()
-            .map(|c| c.to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn char_slice(value: &str, start: usize, len: usize) -> String {
-        value.chars().skip(start).take(len).collect()
-    }
-
-    fn format_balance(balance: f32) -> String {
-        let balance = balance.clamp(-1.0, 1.0);
-        if balance.abs() < 0.005 {
-            "C".to_string()
-        } else if balance < 0.0 {
-            format!("L{}", (-balance * 100.0).round() as i32)
-        } else {
-            format!("R{}", (balance * 100.0).round() as i32)
-        }
-    }
-
     fn track_row_render_hash(
         track: &TrackViewData,
         track_width_px: f32,
         row_index: usize,
-        vca: Option<&VcaStripViewData>,
         selected_modulator: Option<&crate::state::Modulator>,
     ) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -808,12 +721,15 @@ impl Tracks {
         track.solo_upstream.hash(&mut hasher);
         track.input_monitor.hash(&mut hasher);
         track.disk_monitor.hash(&mut hasher);
+        track.midi_input_monitor.hash(&mut hasher);
+        track.midi_disk_monitor.hash(&mut hasher);
         track.audio_ins.hash(&mut hasher);
         track.audio_outs.hash(&mut hasher);
         track.primary_audio_ins.hash(&mut hasher);
         track.primary_audio_outs.hash(&mut hasher);
         track.midi_ins.hash(&mut hasher);
         track.midi_outs.hash(&mut hasher);
+        track.setup_open.hash(&mut hasher);
         track.midi_lane_channels.hash(&mut hasher);
         track.level.to_bits().hash(&mut hasher);
         track.balance.to_bits().hash(&mut hasher);
@@ -876,11 +792,6 @@ impl Tracks {
                 assigned.hash(&mut hasher);
             }
         }
-        if let Some(vca) = vca {
-            vca.label.hash(&mut hasher);
-            vca.prev_same.hash(&mut hasher);
-            vca.next_same.hash(&mut hasher);
-        }
         if let Some(color) = track.color {
             color.r.to_bits().hash(&mut hasher);
             color.g.to_bits().hash(&mut hasher);
@@ -926,12 +837,11 @@ impl Tracks {
         track: TrackViewData,
         track_width_px: f32,
         index: usize,
-        vca: Option<VcaStripViewData>,
         selected_modulator: Option<&crate::state::Modulator>,
     ) -> Element<'static, Message> {
         let selected = track.selected;
         let height = track.height;
-        let (outer_body_bg, header_bg, inner_body_bg) = if let Some(color) = track.color {
+        let (outer_body_bg, header_bg, _inner_body_bg) = if let Some(color) = track.color {
             let with_alpha = |c: Color, a: f32| Color::from_rgba(c.r, c.g, c.b, a);
             if selected {
                 (
@@ -961,7 +871,7 @@ impl Tracks {
                 )
             }
         };
-        let is_resize_hovered = track.resize_hovered;
+
         let midi_learn_vol = track.midi_learn_vol;
         let midi_learn_bal = track.midi_learn_bal;
         let midi_learn_mute = track.midi_learn_mute;
@@ -972,8 +882,6 @@ impl Tracks {
         let layout = track.layout;
         let lane_h = layout.lane_height.max(12.0);
 
-        let inline_midi_lane_selector =
-            !track.is_master && track.audio_ins == 0 && track.midi_ins > 0;
         let max_name_chars = (((track_width_px - 98.0) / 7.0).floor() as i32).clamp(10, 64);
         let learn_count = [
             midi_learn_vol,
@@ -988,33 +896,6 @@ impl Tracks {
         .filter(|bound| **bound)
         .count();
         let resize_handle_height = 6.0;
-        let outer_spacing = 6.0;
-        let inner_vertical_padding = 8.0;
-        let lane_row_count = if track.is_master {
-            track.visible_automation_lanes.len()
-        } else {
-            track
-                .midi_ins
-                .saturating_sub(usize::from(inline_midi_lane_selector))
-                + track.visible_automation_lanes.len()
-        };
-        let lane_rows_height = if lane_row_count > 0 {
-            lane_row_count as f32 * lane_h
-                + lane_row_count.saturating_sub(1) as f32 * TRACK_SUBTRACK_GAP
-        } else {
-            0.0
-        };
-        let header_vertical_padding = 4.0;
-        let body_vertical_padding = 6.0;
-        let inner_available_height = (height - inner_vertical_padding).max(16.0);
-        let body_height = (inner_available_height
-            - TRACK_FOLDER_HEADER_HEIGHT
-            - header_vertical_padding
-            - resize_handle_height
-            - outer_spacing
-            - lane_rows_height
-            - body_vertical_padding)
-            .max(0.0);
         let mut title_badges = row![].spacing(4).align_y(Alignment::Center);
         if track.frozen {
             title_badges = title_badges.push(Self::info_badge("FRZ".to_string(), false));
@@ -1158,7 +1039,7 @@ impl Tracks {
         if !track.is_master {
             controls.push(
                 button(
-                    container(audio_waveform().size(13))
+                    container(settings().size(13))
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .center_x(Length::Fill)
@@ -1167,27 +1048,8 @@ impl Tracks {
                 .width(Length::Fixed(22.0))
                 .height(Length::Fixed(22.0))
                 .padding(0)
-                .style(move |theme, _state| style::input::style(theme, track.input_monitor))
-                .on_press(Message::Request(Action::TrackToggleInputMonitor(
-                    track.name.clone(),
-                )))
-                .into(),
-            );
-            controls.push(
-                button(
-                    container(disc().size(13))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill),
-                )
-                .width(Length::Fixed(22.0))
-                .height(Length::Fixed(22.0))
-                .padding(0)
-                .style(move |theme, _state| style::disk::style(theme, track.disk_monitor))
-                .on_press(Message::Request(Action::TrackToggleDiskMonitor(
-                    track.name.clone(),
-                )))
+                .style(move |theme, _status| style::setup::style(theme, track.setup_open))
+                .on_press(Message::TrackSetupToggle(track.name.clone()))
                 .into(),
             );
         }
@@ -1195,76 +1057,7 @@ impl Tracks {
             .spacing(4)
             .align_y(Alignment::Center);
 
-        let inline_midi_channel: Element<'static, Message> = if inline_midi_lane_selector {
-            let track_name = track.name.clone();
-            let selected_channel = MidiLaneChannelSelection::from_engine(
-                track.midi_lane_channels.first().copied().flatten(),
-            );
-            container(
-                pick_list(
-                    MidiLaneChannelSelection::ALL,
-                    Some(selected_channel),
-                    move |channel| Message::TrackMidiLaneChannelSelected {
-                        track_name: track_name.clone(),
-                        lane: 0,
-                        channel,
-                    },
-                )
-                .placeholder("Channel"),
-            )
-            .padding([0, 2])
-            .into()
-        } else {
-            Space::new().into()
-        };
-
         let mut lane_rows: Column<'static, Message> = column![];
-        if !track.is_master {
-            for lane_index in 0..track.midi_ins {
-                if inline_midi_lane_selector && lane_index == 0 {
-                    continue;
-                }
-                let track_name = track.name.clone();
-                let selected_channel = MidiLaneChannelSelection::from_engine(
-                    track.midi_lane_channels.get(lane_index).copied().flatten(),
-                );
-                lane_rows = lane_rows.push(
-                    container(
-                        row![
-                            Self::info_badge(format!("MIDI {}", lane_index + 1), true),
-                            Space::new().width(Length::Fill),
-                            pick_list(
-                                MidiLaneChannelSelection::ALL,
-                                Some(selected_channel),
-                                move |channel| Message::TrackMidiLaneChannelSelected {
-                                    track_name: track_name.clone(),
-                                    lane: lane_index,
-                                    channel,
-                                },
-                            )
-                            .placeholder("Channel"),
-                        ]
-                        .align_y(Alignment::Center)
-                        .spacing(6),
-                    )
-                    .width(Length::Fill)
-                    .height(Length::Fixed(lane_h))
-                    .padding([4, 6])
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgba(
-                            0.08, 0.18, 0.14, 0.9,
-                        ))),
-                        border: Border {
-                            color: Color::from_rgba(0.34, 0.63, 0.48, 0.26),
-                            width: 1.0,
-                            radius: 6.0.into(),
-                        },
-                        text_color: Some(Color::from_rgb(0.83, 0.93, 0.88)),
-                        ..container::Style::default()
-                    }),
-                );
-            }
-        }
         for lane in &track.visible_automation_lanes {
             lane_rows = lane_rows.push(
                 container(automation_lane_header_control(
@@ -1290,146 +1083,289 @@ impl Tracks {
             );
         }
 
-        let audio_io = format!("A {}/{}", track.audio_ins, track.audio_outs);
-        let return_io = format!(
-            "RET {}",
-            track.audio_ins.saturating_sub(track.primary_audio_ins)
-        );
-        let midi_io = format!("M {}/{}", track.midi_ins, track.midi_outs);
-        let send_io = format!(
-            "SND {}",
-            track.audio_outs.saturating_sub(track.primary_audio_outs)
-        );
-        let mode_label = track.automation_mode.clone();
-        let balance_label = Self::format_balance(track.balance);
+        let body = row![controls].spacing(8).align_y(Alignment::Start);
 
-        let body = row![
-            controls,
-            if !track.is_master {
-                column![
-                    row![
-                        inline_midi_channel,
-                        Self::info_badge(audio_io, false),
-                        Self::info_badge(return_io, false),
-                        Self::info_badge(midi_io, false),
-                        Self::info_badge(send_io, false),
-                        Self::info_badge(mode_label, false),
-                        Self::info_badge(balance_label, false),
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
-                ]
-                .spacing(3)
-                .width(Length::Fill)
-                .align_x(Horizontal::Left)
-                .into()
-            } else {
-                Element::from(Space::new().width(Length::Fill))
-            },
-        ]
-        .spacing(8)
-        .align_y(Alignment::Start);
+        let body_container_height = 22.0 + 6.0;
+        let buttons_bottom = TRACK_FOLDER_HEADER_HEIGHT + body_container_height;
+        let resize_top = height - resize_handle_height;
+        let show_buttons = resize_top >= buttons_bottom;
 
-        let track_ui: Column<'static, Message> = column![
-            header,
+        let is_resize_hovered = track.resize_hovered;
+
+        let body_element: Element<'static, Message> = if show_buttons {
             container(body)
-                .height(Length::Fixed(body_height))
+                .height(Length::Shrink)
                 .padding([3, 6])
                 .style(move |_theme| container::Style {
-                    background: Some(Background::Color(inner_body_bg)),
+                    background: None,
                     border: Border {
                         color: Color::from_rgba(
                             0.71,
                             0.82,
                             0.97,
-                            if selected { 0.22 } else { 0.1 }
+                            if selected { 0.22 } else { 0.1 },
                         ),
                         width: 1.0,
                         radius: 8.0.into(),
                     },
                     text_color: Some(Color::from_rgb(0.90, 0.93, 0.98)),
                     ..container::Style::default()
-                }),
-            lane_rows.spacing(TRACK_SUBTRACK_GAP),
-            mouse_area(
-                mouse_area(
-                    container("")
+                })
+                .into()
+        } else {
+            Space::new().height(Length::Fixed(0.0)).into()
+        };
+
+        let setup_panel: Element<'static, Message> = if track.setup_open {
+            let mut setup_lanes: Column<'static, Message> = column![];
+            let track_name = track.name.clone();
+
+            for lane in 0..track.audio_ins.min(if track.is_master { 0 } else { 1 }) {
+                let input_monitor = track.input_monitor.get(lane).copied().unwrap_or(false);
+                let disk_monitor = track.disk_monitor.get(lane).copied().unwrap_or(false);
+                setup_lanes = setup_lanes.push(
+                    container(
+                        row![
+                            button(
+                                container(audio_waveform().size(13))
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .center_x(Length::Fill)
+                                    .center_y(Length::Fill),
+                            )
+                            .width(Length::Fixed(22.0))
+                            .height(Length::Fixed(22.0))
+                            .padding(0)
+                            .style(move |theme, _state| style::input::style(theme, input_monitor))
+                            .on_press(Message::Request(
+                                Action::TrackToggleInputMonitor {
+                                    track_name: track.name.clone(),
+                                    lane,
+                                }
+                            )),
+                            button(
+                                container(disc().size(13))
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .center_x(Length::Fill)
+                                    .center_y(Length::Fill),
+                            )
+                            .width(Length::Fixed(22.0))
+                            .height(Length::Fixed(22.0))
+                            .padding(0)
+                            .style(move |theme, _state| style::disk::style(theme, disk_monitor))
+                            .on_press(Message::Request(
+                                Action::TrackToggleDiskMonitor {
+                                    track_name: track.name.clone(),
+                                    lane,
+                                }
+                            )),
+                        ]
+                        .spacing(4)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_h))
+                    .padding([4, 6])
+                    .style(move |_theme| container::Style {
+                        background: None,
+                        ..container::Style::default()
+                    }),
+                );
+            }
+
+            for lane_index in 0..if track.is_master { 0 } else { track.midi_ins } {
+                let selected_channel = MidiLaneChannelSelection::from_engine(
+                    track.midi_lane_channels.get(lane_index).copied().flatten(),
+                );
+                let midi_input_monitor = track
+                    .midi_input_monitor
+                    .get(lane_index)
+                    .copied()
+                    .unwrap_or(false);
+                let midi_disk_monitor = track
+                    .midi_disk_monitor
+                    .get(lane_index)
+                    .copied()
+                    .unwrap_or(false);
+                setup_lanes = setup_lanes.push(
+                    container(
+                        row![
+                            button(
+                                container(audio_waveform().size(13))
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .center_x(Length::Fill)
+                                    .center_y(Length::Fill),
+                            )
+                            .width(Length::Fixed(22.0))
+                            .height(Length::Fixed(22.0))
+                            .padding(0)
+                            .style(move |theme, _state| style::input::style(
+                                theme,
+                                midi_input_monitor
+                            ))
+                            .on_press(Message::Request(
+                                Action::TrackToggleMidiInputMonitor {
+                                    track_name: track.name.clone(),
+                                    lane: lane_index,
+                                }
+                            )),
+                            button(
+                                container(disc().size(13))
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .center_x(Length::Fill)
+                                    .center_y(Length::Fill),
+                            )
+                            .width(Length::Fixed(22.0))
+                            .height(Length::Fixed(22.0))
+                            .padding(0)
+                            .style(move |theme, _state| style::disk::style(
+                                theme,
+                                midi_disk_monitor
+                            ))
+                            .on_press(Message::Request(
+                                Action::TrackToggleMidiDiskMonitor {
+                                    track_name: track.name.clone(),
+                                    lane: lane_index,
+                                }
+                            )),
+                            Space::new().width(Length::Fill),
+                            pick_list(MidiLaneChannelSelection::ALL, Some(selected_channel), {
+                                let track_name = track_name.clone();
+                                move |channel| Message::TrackMidiSetupChannelSelected {
+                                    track_name: track_name.clone(),
+                                    channel,
+                                }
+                            })
+                            .width(Length::Shrink)
+                            .placeholder("Channel"),
+                        ]
+                        .align_y(Alignment::Center)
+                        .spacing(6),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_h))
+                    .padding([4, 6])
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(
+                            0.12, 0.16, 0.22, 0.9,
+                        ))),
+                        border: Border {
+                            color: Color::from_rgba(0.40, 0.45, 0.55, 0.25),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        text_color: Some(Color::from_rgb(0.90, 0.93, 0.98)),
+                        ..container::Style::default()
+                    }),
+                );
+            }
+
+            for _ in 0..track.visible_automation_lanes.len() {
+                setup_lanes = setup_lanes.push(
+                    container(Space::new())
                         .width(Length::Fill)
-                        .height(Length::Fixed(resize_handle_height))
+                        .height(Length::Fixed(lane_h))
                         .style(move |_theme| container::Style {
-                            background: Some(Background::Color(if is_resize_hovered {
-                                Color::from_rgba(0.51, 0.68, 0.92, 0.95)
-                            } else {
-                                Color::from_rgba(0.33, 0.40, 0.52, 0.65)
-                            })),
-                            border: Border {
-                                color: Color::TRANSPARENT,
-                                width: 0.0,
-                                radius: 2.0.into(),
-                            },
+                            background: None,
                             ..container::Style::default()
                         }),
-                )
-                .on_enter(Message::TrackResizeHover(track.name.clone(), true))
-                .on_exit(Message::TrackResizeHover(track.name.clone(), false))
-                .on_press(Message::TrackResizeStart(track.name.clone())),
-            )
-            .on_enter(Message::ShortcutsHint(Some("Resize height".to_string())))
-            .on_exit(Message::ShortcutsHint(None)),
-        ]
-        .spacing(TRACK_SUBTRACK_GAP);
+                );
+            }
 
-        let vca_strip_width = 12.0;
-        let vca_strip = if let Some(vca) = vca {
-            container(
-                container(text(vca.label).size(9).align_x(Horizontal::Center))
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-            )
-            .width(Length::Fixed(vca_strip_width))
-            .height(Length::Fill)
-            .padding([6, 1])
-            .style(move |_theme| container::Style {
-                background: Some(Background::Color(Color::from_rgba(0.25, 0.34, 0.49, 0.92))),
-                border: Border {
-                    color: Color::from_rgba(0.82, 0.9, 1.0, 0.18),
-                    width: 1.0,
-                    radius: iced::border::Radius {
-                        top_left: if vca.prev_same { 0.0 } else { 4.0 },
-                        top_right: 0.0,
-                        bottom_right: 0.0,
-                        bottom_left: if vca.next_same { 0.0 } else { 4.0 },
-                    },
-                },
-                text_color: Some(Color::from_rgb(0.89, 0.93, 0.99)),
-                ..container::Style::default()
-            })
-        } else {
-            container("")
-                .width(Length::Fixed(vca_strip_width))
+            container(setup_lanes.spacing(TRACK_SUBTRACK_GAP))
+                .width(Length::Fixed(160.0))
                 .height(Length::Fill)
+                .padding([0, 6])
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.08, 0.10, 0.14, 0.6))),
+                    border: Border {
+                        color: Color::from_rgba(0.40, 0.45, 0.55, 0.25),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..container::Style::default()
+                })
+                .into()
+        } else {
+            Space::new().width(Length::Fixed(0.0)).into()
         };
-        let vca_strip = container(row![Space::new().width(Length::Fixed(4.0)), vca_strip])
-            .width(Length::Fixed(vca_strip_width + 4.0))
+
+        let track_content: Element<'static, Message> = column![
+            header,
+            body_element,
+            Space::new().height(Length::Fill),
+            lane_rows.spacing(TRACK_SUBTRACK_GAP),
+        ]
+        .spacing(0)
+        .into();
+
+        let resize_handle = mouse_area(
+            mouse_area(
+                container("")
+                    .width(Length::Fill)
+                    .height(Length::Fixed(resize_handle_height))
+                    .style(move |_theme| container::Style {
+                        background: if is_resize_hovered {
+                            Some(Background::Color(Color::from_rgba(0.51, 0.68, 0.92, 0.95)))
+                        } else {
+                            None
+                        },
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 2.0.into(),
+                        },
+                        ..container::Style::default()
+                    }),
+            )
+            .on_enter(Message::TrackResizeHover(track.name.clone(), true))
+            .on_exit(Message::TrackResizeHover(track.name.clone(), false))
+            .on_press(Message::TrackResizeStart(track.name.clone())),
+        )
+        .on_enter(Message::ShortcutsHint(Some("Resize height".to_string())))
+        .on_exit(Message::ShortcutsHint(None));
+
+        let track_ui = Stack::new()
+            .push(track_content)
+            .push(pin(resize_handle).position(Point::new(
+                0.0,
+                (height - 8.0 - resize_handle_height).max(0.0),
+            )))
             .height(Length::Fill);
-        let track_body = container(row![
+
+        let track_body_content = container(row![
             Space::new().width(Length::Fixed(indent)),
-            track_ui.width(Length::Fill)
+            track_ui.width(Length::Fill),
+            setup_panel
         ])
         .id(track.name.clone())
         .width(Length::Fill)
-        .height(Length::Fixed(height))
-        .padding([4, 6])
+        .height(Length::Fill)
+        .padding([0, 6])
         .style(move |_theme| container::Style {
             background: Some(Background::Color(outer_body_bg)),
-            border: Border {
-                color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
-                width: 1.0,
-                radius: 8.0.into(),
-            },
             ..container::Style::default()
         });
-        let track_body = container(row![vca_strip, track_body])
+
+        let track_body_border = container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_theme| container::Style {
+                background: None,
+                border: Border {
+                    color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                ..container::Style::default()
+            });
+
+        let track_body = Stack::new()
+            .push(track_body_border)
+            .push(track_body_content)
             .width(Length::Fill)
             .height(Length::Fixed(height));
 
@@ -1516,14 +1452,17 @@ impl Tracks {
                             soloed: track.soloed,
                             solo_upstream: upstream_track_names.contains(&track.name),
                             is_master: track.is_master,
-                            input_monitor: track.input_monitor,
-                            disk_monitor: track.disk_monitor,
+                            input_monitor: track.input_monitor.clone(),
+                            disk_monitor: track.disk_monitor.clone(),
+                            midi_input_monitor: track.midi_input_monitor.clone(),
+                            midi_disk_monitor: track.midi_disk_monitor.clone(),
                             audio_ins: track.audio.ins,
                             audio_outs: track.audio.outs,
                             primary_audio_ins: track.primary_audio_ins(),
                             primary_audio_outs: track.primary_audio_outs(),
                             midi_ins: track.midi.ins,
                             midi_outs: track.midi.outs,
+                            setup_open: track.setup_open,
                             midi_lane_channels: track.midi_lane_channels.clone(),
                             level: track.level,
                             balance: track.balance,
@@ -1544,7 +1483,6 @@ impl Tracks {
                             midi_learn_arm: track.midi_learn_arm.is_some(),
                             midi_learn_input_monitor: track.midi_learn_input_monitor.is_some(),
                             midi_learn_disk_monitor: track.midi_learn_disk_monitor.is_some(),
-                            vca_master: track.vca_master.clone(),
                             color: track.color,
                             is_folder: track.is_folder,
                             folder_open: track.folder_open,
@@ -1567,92 +1505,19 @@ impl Tracks {
             + track_heights.iter().sum::<f32>()
             + visible_window.bottom_padding)
             .max(1.0);
-        let mut vca_has_followers = std::collections::HashSet::new();
-        for (_, track) in &tracks {
-            if let Some(master) = track.vca_master.as_ref() {
-                vca_has_followers.insert(master.clone());
-            }
-        }
-        let vca_display_labels: Vec<Option<String>> = tracks
-            .iter()
-            .map(|(_, track)| {
-                track.vca_master.clone().or_else(|| {
-                    vca_has_followers
-                        .contains(&track.name)
-                        .then(|| track.name.clone())
-                })
-            })
-            .collect();
-        let vca_view_data: Vec<Option<VcaStripViewData>> = tracks
-            .iter()
-            .enumerate()
-            .map(|(index, _track)| {
-                let master = vca_display_labels[index].as_ref()?;
-                let prev_same =
-                    index > 0 && vca_display_labels[index - 1].as_deref() == Some(master.as_str());
-                let next_same = index + 1 < vca_display_labels.len()
-                    && vca_display_labels[index + 1].as_deref() == Some(master.as_str());
-                let mut group_start = index;
-                while group_start > 0
-                    && vca_display_labels[group_start - 1].as_deref() == Some(master.as_str())
-                {
-                    group_start -= 1;
-                }
-                let mut group_end = index;
-                while group_end + 1 < vca_display_labels.len()
-                    && vca_display_labels[group_end + 1].as_deref() == Some(master.as_str())
-                {
-                    group_end += 1;
-                }
-                let line_h = 10.0;
-                let cap_for = |h: f32| -> usize { ((h - 8.0).max(0.0) / line_h).floor() as usize };
-                let mut capacity_before = 0usize;
-                for h in &track_heights[group_start..index] {
-                    capacity_before += cap_for(*h);
-                }
-                let segment_capacity = cap_for(track_heights[index]);
-                let label = if segment_capacity == 0 {
-                    String::new()
-                } else {
-                    let mut group_capacity = 0usize;
-                    for h in &track_heights[group_start..=group_end] {
-                        group_capacity += cap_for(*h);
-                    }
-                    let full = Self::trim_with_ellipsis(master, group_capacity.max(1));
-                    let segment = Self::char_slice(&full, capacity_before, segment_capacity);
-                    Self::rotate_text_cw(&segment, segment_capacity)
-                };
-                Some(VcaStripViewData {
-                    label,
-                    prev_same,
-                    next_same,
-                })
-            })
-            .collect();
-        let filtered: Vec<_> = tracks
-            .into_iter()
-            .enumerate()
-            .zip(vca_view_data)
-            .filter(|((_, (_, track)), _)| !track.hidden)
-            .collect();
         let selected_modulator_arc = Arc::new(selected_modulator.cloned());
-        let children: Vec<Element<'_, Message>> = filtered
+        let children: Vec<Element<'_, Message>> = tracks
             .into_iter()
-            .map(|((_visible_index, (index, track)), vca)| {
-                let hash = Self::track_row_render_hash(
-                    &track,
-                    track_width_px,
-                    index,
-                    vca.as_ref(),
-                    selected_modulator,
-                );
+            .filter(|(_, track)| !track.hidden)
+            .map(|(index, track)| {
+                let hash =
+                    Self::track_row_render_hash(&track, track_width_px, index, selected_modulator);
                 let selected_modulator_arc = selected_modulator_arc.clone();
                 lazy(hash, move |_| {
                     Self::render_track_row(
                         track.clone(),
                         track_width_px,
                         index,
-                        vca.clone(),
                         selected_modulator_arc.as_ref().as_ref(),
                     )
                 })

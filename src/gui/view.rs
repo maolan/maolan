@@ -162,14 +162,8 @@ impl Maolan {
             if state.track_rename_dialog.is_some() {
                 return self.wrap_with_log_window(self.track_rename.view());
             }
-            if state.track_group_dialog.is_some() {
-                return self.wrap_with_log_window(self.track_group.view());
-            }
             if state.track_template_save_dialog.is_some() {
                 return self.wrap_with_log_window(self.track_template_save.view());
-            }
-            if state.track_group_template_save_dialog.is_some() {
-                return self.wrap_with_log_window(self.track_group_template_save.view());
             }
             if state.template_save_dialog.is_some() {
                 return self.wrap_with_log_window(self.template_save.view());
@@ -230,7 +224,7 @@ impl Maolan {
                     let playhead_time_label = format!("{minutes:02}:{seconds:02}.{millis:03}");
                     let (playhead_bar, playhead_beat) =
                         self.playhead_bar_beat(&state, playhead_sample);
-                    let show_track_marker_dialog = state.track_marker_dialog.is_some();
+                    let show_marker_dialog = state.marker_dialog.is_some();
                     let shortcuts_hint = state.shortcuts_hint.clone();
                     let status_message = state.message.clone();
                     let plugin_graph_track = state.plugin_graph_track.clone();
@@ -618,7 +612,7 @@ impl Maolan {
                         .height(Length::Fill)
                         .into();
                     }
-                    if show_track_marker_dialog {
+                    if show_marker_dialog {
                         view = row![
                             container(view).width(Length::Fill),
                             self.track_marker.view()

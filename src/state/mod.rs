@@ -558,12 +558,6 @@ pub enum Resizing {
         initial_samples: usize,
         initial_mouse_x: f32,
     },
-    TrackMarker {
-        track_name: String,
-        marker_index: usize,
-        initial_sample: usize,
-        initial_mouse_x: f32,
-    },
     Mixer(f32, f32),
     Track(String, f32, f32),
     Tracks(f32, f32),
@@ -650,12 +644,6 @@ pub struct TrackRenameDialog {
 }
 
 #[derive(Debug, Clone)]
-pub struct TrackGroupDialog {
-    pub selected_tracks: Vec<String>,
-    pub name: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct TemplateSaveDialog {
     pub name: String,
 }
@@ -663,7 +651,6 @@ pub struct TemplateSaveDialog {
 #[derive(Debug, Clone)]
 pub struct ApplyTemplateDialog {
     pub track_name: String,
-    pub is_group: bool,
     pub selected_template: Option<String>,
     pub available_templates: Vec<String>,
 }
@@ -675,20 +662,13 @@ pub struct TrackTemplateSaveDialog {
 }
 
 #[derive(Debug, Clone)]
-pub struct TrackGroupTemplateSaveDialog {
-    pub group_name: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct PluginGraphClipTarget {
     pub track_name: String,
     pub clip_idx: usize,
 }
 
 #[derive(Debug, Clone)]
-pub struct TrackMarkerDialog {
-    pub track_name: String,
+pub struct MarkerDialog {
     pub sample: usize,
     pub marker_index: Option<usize>,
     pub name: String,
@@ -895,10 +875,8 @@ pub struct StateData {
     pub last_selected_track: Option<String>,
     pub clip_rename_dialog: Option<ClipRenameDialog>,
     pub track_rename_dialog: Option<TrackRenameDialog>,
-    pub track_group_dialog: Option<TrackGroupDialog>,
     pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
-    pub track_group_template_save_dialog: Option<TrackGroupTemplateSaveDialog>,
-    pub track_marker_dialog: Option<TrackMarkerDialog>,
+    pub marker_dialog: Option<MarkerDialog>,
     pub modulator_target_dialog: Option<ModulatorTargetDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
     pub apply_template_dialog: Option<ApplyTemplateDialog>,
@@ -947,7 +925,6 @@ pub struct StateData {
     pub session_track_number: String,
     pub session_genre: String,
     pub available_templates: Vec<String>,
-    pub available_group_templates: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1081,10 +1058,8 @@ impl Default for StateData {
             last_selected_track: None,
             clip_rename_dialog: None,
             track_rename_dialog: None,
-            track_group_dialog: None,
             track_template_save_dialog: None,
-            track_group_template_save_dialog: None,
-            track_marker_dialog: None,
+            marker_dialog: None,
             modulator_target_dialog: None,
             template_save_dialog: None,
             apply_template_dialog: None,
@@ -1140,7 +1115,6 @@ impl Default for StateData {
             session_track_number: String::new(),
             session_genre: String::new(),
             available_templates: vec![],
-            available_group_templates: vec![],
         }
     }
 }

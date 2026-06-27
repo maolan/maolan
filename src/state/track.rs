@@ -58,13 +58,6 @@ pub struct TrackAutomationPoint {
     pub value: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackAutomationLane {
-    pub target: TrackAutomationTarget,
-    pub visible: bool,
-    pub points: Vec<TrackAutomationPoint>,
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub struct EditorMarker {
     pub sample: usize,
@@ -96,6 +89,13 @@ impl<'de> Deserialize<'de> for EditorMarker {
             LegacyOrCurrent::Current { sample, name } => Ok(Self { sample, name }),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackAutomationLane {
+    pub target: TrackAutomationTarget,
+    pub visible: bool,
+    pub points: Vec<TrackAutomationPoint>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -161,8 +161,12 @@ pub struct Track {
     pub phase_inverted: bool,
     pub soloed: bool,
     pub is_master: bool,
-    pub input_monitor: bool,
-    pub disk_monitor: bool,
+    pub input_monitor: Vec<bool>,
+    pub disk_monitor: Vec<bool>,
+    #[serde(default)]
+    pub midi_input_monitor: Vec<bool>,
+    #[serde(default)]
+    pub midi_disk_monitor: Vec<bool>,
     #[serde(default)]
     pub midi_learn_volume: Option<maolan_engine::message::MidiLearnBinding>,
     #[serde(default)]
@@ -178,8 +182,6 @@ pub struct Track {
     #[serde(default)]
     pub midi_learn_disk_monitor: Option<maolan_engine::message::MidiLearnBinding>,
     #[serde(default)]
-    pub vca_master: Option<String>,
-    #[serde(default)]
     pub frozen: bool,
     #[serde(default)]
     pub is_folder: bool,
@@ -188,6 +190,8 @@ pub struct Track {
     #[serde(default)]
     pub parent_track: Option<String>,
     pub height: f32,
+    #[serde(default)]
+    pub setup_open: bool,
     #[serde(default)]
     pub primary_audio_ins: usize,
     #[serde(default)]
@@ -204,8 +208,6 @@ pub struct Track {
     pub frozen_render_clip: Option<String>,
     #[serde(default)]
     pub automation_lanes: Vec<TrackAutomationLane>,
-    #[serde(default)]
-    pub editor_markers: Vec<EditorMarker>,
     #[serde(default = "default_automation_mode")]
     pub automation_mode: TrackAutomationMode,
     #[serde(with = "PointDef")]
@@ -242,8 +244,10 @@ impl Track {
             phase_inverted: false,
             soloed: false,
             is_master: false,
-            input_monitor: false,
-            disk_monitor: true,
+            input_monitor: vec![false; audio_ins],
+            disk_monitor: vec![true; audio_ins],
+            midi_input_monitor: vec![false; midi_ins],
+            midi_disk_monitor: vec![true; midi_ins],
             midi_learn_volume: None,
             midi_learn_balance: None,
             midi_learn_mute: None,
@@ -251,7 +255,6 @@ impl Track {
             midi_learn_arm: None,
             midi_learn_input_monitor: None,
             midi_learn_disk_monitor: None,
-            vca_master: None,
             frozen: false,
             is_folder: false,
             folder_open: true,
@@ -265,9 +268,9 @@ impl Track {
             frozen_midi_backup: vec![],
             frozen_render_clip: None,
             automation_lanes: vec![],
-            editor_markers: vec![],
             automation_mode: TrackAutomationMode::Read,
             height: 82.0,
+            setup_open: false,
             position: Point::new(100.0, 100.0),
             color: None,
         };
@@ -361,12 +364,12 @@ impl Track {
             }
         } else {
             let total_lanes = self.total_lane_count().max(1);
-            let available = (self.height - TRACK_FOLDER_HEADER_HEIGHT).max(0.0);
+            let available = self.height.max(0.0);
             let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
             let lane_height =
                 ((available - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
             TrackLaneLayout {
-                header_height: TRACK_FOLDER_HEADER_HEIGHT,
+                header_height: 0.0,
                 lane_height,
                 audio_lanes: self.audio_lane_count(),
                 midi_lanes: self.midi_lane_count(),
@@ -539,16 +542,6 @@ mod tests {
         };
         assert!(lane.visible);
         assert!(lane.points.is_empty());
-    }
-
-    #[test]
-    fn editor_marker_creation() {
-        let marker = EditorMarker {
-            sample: 48000,
-            name: "Verse".to_string(),
-        };
-        assert_eq!(marker.sample, 48000);
-        assert_eq!(marker.name, "Verse");
     }
 
     #[test]

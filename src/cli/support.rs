@@ -278,14 +278,60 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
     push_optional_toggle(actions, track, "is_master", || {
         Action::TrackToggleMaster(name.clone())
     });
-    push_optional_toggle(actions, track, "input_monitor", || {
-        Action::TrackToggleInputMonitor(name.clone())
-    });
-    if matches!(
+    if let Some(values) = track.get("input_monitor").and_then(Value::as_array) {
+        for (lane, value) in values.iter().enumerate() {
+            if value.as_bool().unwrap_or(false) {
+                actions.push(Action::TrackToggleInputMonitor {
+                    track_name: name.clone(),
+                    lane,
+                });
+            }
+        }
+    } else {
+        push_optional_toggle(actions, track, "input_monitor", || {
+            Action::TrackToggleInputMonitor {
+                track_name: name.clone(),
+                lane: 0,
+            }
+        });
+    }
+    if let Some(values) = track.get("disk_monitor").and_then(Value::as_array) {
+        for (lane, value) in values.iter().enumerate() {
+            if !value.as_bool().unwrap_or(true) {
+                actions.push(Action::TrackToggleDiskMonitor {
+                    track_name: name.clone(),
+                    lane,
+                });
+            }
+        }
+    } else if matches!(
         track.get("disk_monitor").and_then(Value::as_bool),
         Some(false)
     ) {
-        actions.push(Action::TrackToggleDiskMonitor(name.clone()));
+        actions.push(Action::TrackToggleDiskMonitor {
+            track_name: name.clone(),
+            lane: 0,
+        });
+    }
+    if let Some(values) = track.get("midi_input_monitor").and_then(Value::as_array) {
+        for (lane, value) in values.iter().enumerate() {
+            if value.as_bool().unwrap_or(false) {
+                actions.push(Action::TrackToggleMidiInputMonitor {
+                    track_name: name.clone(),
+                    lane,
+                });
+            }
+        }
+    }
+    if let Some(values) = track.get("midi_disk_monitor").and_then(Value::as_array) {
+        for (lane, value) in values.iter().enumerate() {
+            if !value.as_bool().unwrap_or(true) {
+                actions.push(Action::TrackToggleMidiDiskMonitor {
+                    track_name: name.clone(),
+                    lane,
+                });
+            }
+        }
     }
 
     if let Some(channels) = track.get("midi_lane_channels").and_then(Value::as_array) {
@@ -1028,7 +1074,7 @@ mod tests {
         assert_eq!(
             actions
                 .iter()
-                .filter(|action| matches!(action, Action::TrackToggleDiskMonitor(name) if name == "Track 1"))
+                .filter(|action| matches!(action, Action::TrackToggleDiskMonitor { track_name, .. } if track_name == "Track 1"))
                 .count(),
             1
         );

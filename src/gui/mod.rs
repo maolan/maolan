@@ -30,8 +30,7 @@ use crate::{
         PianoControllerPoint, PianoNote, PianoSysExPoint, PitchCorrectionData,
         PitchCorrectionPoint, State, StateData,
     },
-    template_save, toolbar, track_group, track_group_template_save, track_marker, track_rename,
-    track_template_save, workspace,
+    template_save, toolbar, track_marker, track_rename, track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
 use ffmpeg_next::{
@@ -470,11 +469,9 @@ pub struct Maolan {
     apply_template: crate::apply_template::ApplyTemplateView,
     clip_rename: clip_rename::ClipRenameView,
     track_rename: track_rename::TrackRenameView,
-    track_group: track_group::TrackGroupView,
-    track_marker: track_marker::TrackMarkerView,
+    track_marker: track_marker::MarkerView,
     modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView,
     track_template_save: track_template_save::TrackTemplateSaveView,
-    track_group_template_save: track_group_template_save::TrackGroupTemplateSaveView,
     template_save: template_save::TemplateSaveView,
     #[cfg(all(unix, not(target_os = "macos")))]
     plugin_filter: String,
@@ -703,27 +700,6 @@ fn scan_track_templates() -> Vec<String> {
         .collect()
 }
 
-fn scan_group_templates() -> Vec<String> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let templates_dir = format!("{}/.config/maolan/group_templates", home);
-
-    let Ok(entries) = std::fs::read_dir(&templates_dir) else {
-        return vec![];
-    };
-
-    entries
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            if path.is_dir() && path.join("group.json").is_file() {
-                path.file_name()?.to_str().map(|s| s.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 impl Default for Maolan {
     fn default() -> Self {
         let prefs = load_preferences();
@@ -769,15 +745,11 @@ impl Default for Maolan {
             apply_template: crate::apply_template::ApplyTemplateView::new(state.clone()),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             track_rename: track_rename::TrackRenameView::new(state.clone()),
-            track_group: track_group::TrackGroupView::new(state.clone()),
-            track_marker: track_marker::TrackMarkerView::new(state.clone()),
+            track_marker: track_marker::MarkerView::new(state.clone()),
             modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView::new(
                 state.clone(),
             ),
             track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
-            track_group_template_save: track_group_template_save::TrackGroupTemplateSaveView::new(
-                state.clone(),
-            ),
             template_save: template_save::TemplateSaveView::new(state.clone()),
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_filter: String::new(),
@@ -7288,7 +7260,6 @@ impl Maolan {
         self.apply_template.update(message);
         self.clip_rename.update(message);
         self.track_rename.update(message);
-        self.track_group.update(message);
         self.track_marker.update(message);
     }
 }
@@ -8540,8 +8511,7 @@ mod tests {
             modal: Some(Show::AddTrack),
             ..Maolan::default()
         };
-        app.state.blocking_write().track_marker_dialog = Some(crate::state::TrackMarkerDialog {
-            track_name: "Track".to_string(),
+        app.state.blocking_write().marker_dialog = Some(crate::state::MarkerDialog {
             sample: 10,
             marker_index: None,
             name: "Marker".to_string(),
@@ -8549,10 +8519,10 @@ mod tests {
 
         let _ = app.update(Message::EscapePressed);
         assert!(app.modal.is_none());
-        assert!(app.state.blocking_read().track_marker_dialog.is_some());
+        assert!(app.state.blocking_read().marker_dialog.is_some());
 
         let _ = app.update(Message::EscapePressed);
-        assert!(app.state.blocking_read().track_marker_dialog.is_none());
+        assert!(app.state.blocking_read().marker_dialog.is_none());
     }
 
     #[test]
@@ -8963,43 +8933,6 @@ mod tests {
         }
 
         let templates = scan_track_templates();
-
-        if let Some(home) = old_home {
-            unsafe {
-                std::env::set_var("HOME", home);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("HOME");
-            }
-        }
-
-        assert_eq!(templates, vec!["Valid".to_string()]);
-        let _ = fs::remove_dir_all(&temp_home);
-    }
-
-    #[test]
-    fn scan_group_templates_ignores_directories_without_group_json() {
-        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock guard");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let temp_home = std::env::temp_dir().join(format!("maolan_scan_group_templates_{unique}"));
-        let group_templates = temp_home.join(".config/maolan/group_templates");
-        let valid = group_templates.join("Valid");
-        let invalid = group_templates.join("Invalid");
-        fs::create_dir_all(&valid).unwrap();
-        fs::create_dir_all(&invalid).unwrap();
-        File::create(valid.join("group.json")).unwrap();
-        File::create(invalid.join("track.json")).unwrap();
-
-        let old_home = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", &temp_home);
-        }
-
-        let templates = scan_group_templates();
 
         if let Some(home) = old_home {
             unsafe {

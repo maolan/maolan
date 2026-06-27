@@ -99,27 +99,55 @@ impl Maolan {
                 }
                 true
             }
-            Action::TrackToggleInputMonitor(name) => {
+            Action::TrackToggleInputMonitor { track_name, lane } => {
                 if let Some(track) = self
                     .state
                     .blocking_write()
                     .tracks
                     .iter_mut()
-                    .find(|t| t.name == *name)
+                    .find(|t| t.name == *track_name)
+                    && let Some(monitor) = track.input_monitor.get_mut(*lane)
                 {
-                    track.input_monitor = !track.input_monitor;
+                    *monitor = !*monitor;
                 }
                 true
             }
-            Action::TrackToggleDiskMonitor(name) => {
+            Action::TrackToggleDiskMonitor { track_name, lane } => {
                 if let Some(track) = self
                     .state
                     .blocking_write()
                     .tracks
                     .iter_mut()
-                    .find(|t| t.name == *name)
+                    .find(|t| t.name == *track_name)
+                    && let Some(monitor) = track.disk_monitor.get_mut(*lane)
                 {
-                    track.disk_monitor = !track.disk_monitor;
+                    *monitor = !*monitor;
+                }
+                true
+            }
+            Action::TrackToggleMidiInputMonitor { track_name, lane } => {
+                if let Some(track) = self
+                    .state
+                    .blocking_write()
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.name == *track_name)
+                    && let Some(monitor) = track.midi_input_monitor.get_mut(*lane)
+                {
+                    *monitor = !*monitor;
+                }
+                true
+            }
+            Action::TrackToggleMidiDiskMonitor { track_name, lane } => {
+                if let Some(track) = self
+                    .state
+                    .blocking_write()
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.name == *track_name)
+                    && let Some(monitor) = track.midi_disk_monitor.get_mut(*lane)
+                {
+                    *monitor = !*monitor;
                 }
                 true
             }
@@ -132,21 +160,6 @@ impl Maolan {
                     .find(|t| t.name == *track_name)
                 {
                     track.color = color.map(|c| iced::Color::from_rgba(c.r, c.g, c.b, c.a));
-                }
-                true
-            }
-            Action::TrackSetVcaMaster {
-                track_name,
-                master_track,
-            } => {
-                if let Some(track) = self
-                    .state
-                    .blocking_write()
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.name == *track_name)
-                {
-                    track.vca_master = master_track.clone();
                 }
                 true
             }
