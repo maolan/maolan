@@ -344,14 +344,12 @@ impl Workspace {
             let track_heights = state
                 .tracks
                 .iter()
-                .filter(|track| track.name != METRONOME_TRACK_ID)
-                .map(|track| {
-                    if track.is_inside_closed_folder(&state.tracks) {
-                        0.0
-                    } else {
-                        track.height
-                    }
+                .filter(|track| {
+                    track.name != METRONOME_TRACK_ID
+                        && track.parent_track.is_none()
+                        && !track.is_inside_closed_folder(&state.tracks)
                 })
+                .map(|track| track.visible_height(&state.tracks))
                 .collect::<Vec<_>>();
             let markers = state
                 .session_markers

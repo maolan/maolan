@@ -495,7 +495,7 @@ impl Maolan {
             Message::EscapePressed => {
                 if matches!(
                     self.modal,
-                    Some(Show::AddTrack | Show::ApplyTemplate { .. })
+                    Some(Show::AddTrack | Show::AddFolder | Show::ApplyTemplate { .. })
                 ) {
                     self.modal = None;
                     self.state.blocking_write().apply_template_dialog = None;
@@ -2681,9 +2681,10 @@ impl Maolan {
                             audio_outs,
                             midi_ins,
                             midi_outs,
+                            folder,
                         } => {
                             let mut state = self.state.blocking_write();
-                            let track = Track::new(
+                            let mut track = Track::new(
                                 name.clone(),
                                 0.0,
                                 *audio_ins,
@@ -2691,6 +2692,7 @@ impl Maolan {
                                 *midi_ins,
                                 *midi_outs,
                             );
+                            track.is_folder = *folder;
                             if let Some(index) = state.undo_track_indices.remove(name) {
                                 let insert_index = index.min(state.tracks.len());
                                 state.tracks.insert(insert_index, track);
@@ -4096,7 +4098,7 @@ impl Maolan {
                 #[cfg(target_os = "macos")]
                 self.pending_save_vst3_states.clear();
                 self.pending_save_is_template = false;
-                self.state.blocking_write().message = e.clone();
+                self.error(e.clone());
             }
             Message::TrackToggleFolder { ref track_name } => {
                 {
@@ -4114,6 +4116,8 @@ impl Maolan {
                 is_folder,
             } => {
                 let mut child_tasks = vec![];
+                let mut clear_audio_indices = Vec::new();
+                let mut clear_midi_indices = Vec::new();
                 {
                     let mut state = self.state.blocking_write();
                     if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
@@ -4121,6 +4125,16 @@ impl Maolan {
                         track.is_folder = is_folder;
                         if is_folder {
                             track.folder_open = true;
+                            if !was_folder {
+                                clear_audio_indices = (0..track.audio.clips.len()).collect();
+                                clear_midi_indices = (0..track.midi.clips.len()).collect();
+                                track.audio.clips.clear();
+                                track.midi.clips.clear();
+                                track.frozen_audio_backup.clear();
+                                track.frozen_midi_backup.clear();
+                                track.frozen_render_clip = None;
+                                track.frozen = false;
+                            }
                         } else if was_folder {
                             let children: Vec<String> = state
                                 .tracks
@@ -4141,6 +4155,20 @@ impl Maolan {
                             }
                         }
                     }
+                }
+                if !clear_audio_indices.is_empty() {
+                    child_tasks.push(self.send(Action::RemoveClip {
+                        track_name: track_name.clone(),
+                        kind: Kind::Audio,
+                        clip_indices: clear_audio_indices,
+                    }));
+                }
+                if !clear_midi_indices.is_empty() {
+                    child_tasks.push(self.send(Action::RemoveClip {
+                        track_name: track_name.clone(),
+                        kind: Kind::MIDI,
+                        clip_indices: clear_midi_indices,
+                    }));
                 }
                 child_tasks.push(self.send(Action::TrackSetFolder {
                     track_name: track_name.clone(),
@@ -6917,9 +6945,11 @@ impl Maolan {
                     {
                         let kind_matches = match clip.kind {
                             Kind::Audio => {
-                                to_track.audio.ins > 0 && from_track.audio.ins == to_track.audio.ins
+                                !to_track.is_folder
+                                    && to_track.audio.ins > 0
+                                    && from_track.audio.ins == to_track.audio.ins
                             }
-                            Kind::MIDI => to_track.midi.ins > 0,
+                            Kind::MIDI => !to_track.is_folder && to_track.midi.ins > 0,
                         };
                         if !kind_matches {
                             self.clip = None;
@@ -7241,26 +7271,143 @@ impl Maolan {
                 self.track = None;
             }
             Message::HandleTrackZones(ref zones) => {
-                if let Some(index_name) = &self.track {
-                    let dragged_id = Id::from(index_name.clone());
+                if let Some(dragged_name) = self.track.clone() {
+                    let dragged_id = Id::from(dragged_name.clone());
+
+                    // Dropped on empty space -> move the track to the root.
+                    if zones.is_empty() {
+                        let mut state = self.state.blocking_write();
+                        if let Some(dragged_index) =
+                            state.tracks.iter().position(|t| t.name == *dragged_name)
+                        {
+                            let mut moved_track = state.tracks.remove(dragged_index);
+                            let had_parent = moved_track.parent_track.is_some();
+                            moved_track.parent_track = None;
+                            state.tracks.push(moved_track);
+                            drop(state);
+                            self.track = None;
+                            if had_parent {
+                                return self.send(Action::TrackSetParent {
+                                    track_name: dragged_name.clone(),
+                                    parent_name: None,
+                                });
+                            }
+                        }
+                        self.track = None;
+                        return Task::none();
+                    }
+
                     let target_zone = zones
                         .iter()
                         .find(|(zone_id, _)| *zone_id != dragged_id)
                         .or_else(|| zones.first());
                     if let Some((track_id, _)) = target_zone {
                         let mut state = self.state.blocking_write();
-                        if let Some(index) = state.tracks.iter().position(|t| t.name == *index_name)
+                        if let Some(dragged_index) =
+                            state.tracks.iter().position(|t| t.name == *dragged_name)
                         {
-                            let moved_track = state.tracks.remove(index);
-                            let to_index = state
+                            let target_name = state
                                 .tracks
                                 .iter()
-                                .position(|t| Id::from(t.name.clone()) == *track_id);
+                                .find(|t| Id::from(t.name.clone()) == *track_id)
+                                .map(|t| t.name.clone());
 
-                            if let Some(t_idx) = to_index {
-                                state.tracks.insert(t_idx, moved_track);
-                            } else {
-                                state.tracks.push(moved_track);
+                            if let Some(target_name) = target_name {
+                                if target_name == *dragged_name {
+                                    // Dropped on itself; nothing to do.
+                                } else if state
+                                    .tracks
+                                    .iter()
+                                    .any(|t| t.name == target_name && t.is_folder)
+                                {
+                                    // Dropping onto a folder makes the dragged track a child.
+                                    let mut current = target_name.as_str();
+                                    let mut circular = false;
+                                    while !circular {
+                                        if let Some(parent) = state
+                                            .tracks
+                                            .iter()
+                                            .find(|t| t.name == current)
+                                            .and_then(|t| t.parent_track.as_deref())
+                                        {
+                                            if parent == dragged_name.as_str() {
+                                                circular = true;
+                                            } else {
+                                                current = parent;
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+
+                                    if !circular {
+                                        let mut moved_track = state.tracks.remove(dragged_index);
+                                        moved_track.parent_track = Some(target_name.clone());
+
+                                        if let Some(target_index) =
+                                            state.tracks.iter().position(|t| t.name == target_name)
+                                        {
+                                            let target_depth = state.tracks[target_index]
+                                                .folder_depth(&state.tracks);
+                                            let mut insert_index = target_index + 1;
+                                            while insert_index < state.tracks.len() {
+                                                let depth = state.tracks[insert_index]
+                                                    .folder_depth(&state.tracks);
+                                                if depth > target_depth {
+                                                    insert_index += 1;
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                            state.tracks.insert(insert_index, moved_track);
+                                        } else {
+                                            state.tracks.push(moved_track);
+                                        }
+
+                                        let mut tasks: Vec<Task<Message>> = vec![];
+                                        if let Some(folder) =
+                                            state.tracks.iter_mut().find(|t| t.name == target_name)
+                                            && !folder.folder_open
+                                        {
+                                            folder.folder_open = true;
+                                            tasks.push(self.send(Action::TrackToggleFolder {
+                                                track_name: target_name.clone(),
+                                            }));
+                                        }
+                                        drop(state);
+                                        tasks.push(self.send(Action::TrackSetParent {
+                                            track_name: dragged_name.clone(),
+                                            parent_name: Some(target_name),
+                                        }));
+                                        self.track = None;
+                                        return Task::batch(tasks);
+                                    }
+                                } else {
+                                    // Dropping onto a non-folder reorders the track and removes it
+                                    // from any folder.
+                                    let mut moved_track = state.tracks.remove(dragged_index);
+                                    let had_parent = moved_track.parent_track.is_some();
+                                    moved_track.parent_track = None;
+                                    let to_index = state
+                                        .tracks
+                                        .iter()
+                                        .position(|t| Id::from(t.name.clone()) == *track_id);
+
+                                    if let Some(t_idx) = to_index {
+                                        state.tracks.insert(t_idx, moved_track);
+                                    } else {
+                                        state.tracks.push(moved_track);
+                                    }
+
+                                    drop(state);
+                                    if had_parent {
+                                        self.track = None;
+                                        return self.send(Action::TrackSetParent {
+                                            track_name: dragged_name.clone(),
+                                            parent_name: None,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
@@ -7436,6 +7583,7 @@ impl Maolan {
                                                     midi_ins: 0,
                                                     audio_outs: channels,
                                                     midi_outs: 0,
+                                                    folder: false,
                                                 }))
                                                 .await
                                             {
@@ -7511,6 +7659,7 @@ impl Maolan {
                                                     midi_ins: 1,
                                                     audio_outs: 0,
                                                     midi_outs: 1,
+                                                    folder: false,
                                                 }))
                                                 .await
                                             {
@@ -7873,6 +8022,7 @@ impl Maolan {
                                 midi_ins: 0,
                                 audio_outs: channels,
                                 midi_outs: 0,
+                                folder: false,
                             }))
                             .await
                         {
@@ -8770,6 +8920,8 @@ impl Maolan {
             Message::Connections => {
                 let mut state = self.state.blocking_write();
                 state.view = View::Connections;
+                state.connections_folder = None;
+                state.connection_view_selection = ConnectionViewSelection::None;
             }
             Message::MidiClipPreviewLoaded {
                 ref track_idx,
@@ -8922,6 +9074,47 @@ impl Maolan {
                     }
                 }
                 return self.open_track_plugins_followup(track_name.clone());
+            }
+            Message::OpenFolderConnections(ref folder_name) => {
+                let mut state = self.state.blocking_write();
+                state.view = View::Connections;
+                state.connections_folder = Some(folder_name.clone());
+                state.connection_view_selection = ConnectionViewSelection::None;
+                state.message = format!("Opened folder connections: {}", folder_name);
+
+                let node_size = 140.0_f32;
+                let spacing = 40.0_f32;
+                let start_x = 80.0_f32;
+                let folder_y = 80.0_f32;
+                let children_y = folder_y + node_size + spacing;
+                let canvas_w = self.size.width.max(600.0);
+
+                if let Some(folder_idx) = state.tracks.iter().position(|t| t.name == *folder_name) {
+                    state.tracks[folder_idx].position = Point::new(start_x, folder_y);
+
+                    let child_names: Vec<String> = state
+                        .tracks
+                        .iter()
+                        .filter(|t| t.parent_track.as_deref() == Some(folder_name.as_str()))
+                        .map(|t| t.name.clone())
+                        .collect();
+
+                    if !child_names.is_empty() {
+                        let cols = ((canvas_w - start_x * 2.0) / (node_size + spacing))
+                            .floor()
+                            .max(1.0) as usize;
+                        let cols = cols.min(child_names.len());
+                        for (i, name) in child_names.iter().enumerate() {
+                            let col = i % cols;
+                            let row = i / cols;
+                            let x = start_x + col as f32 * (node_size + spacing);
+                            let y = children_y + row as f32 * (node_size + spacing);
+                            if let Some(child) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                                child.position = Point::new(x, y);
+                            }
+                        }
+                    }
+                }
             }
             Message::OpenHwPorts { input } => {
                 let mut state = self.state.blocking_write();

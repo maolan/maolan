@@ -34,7 +34,7 @@ impl DeviceId for String {
 }
 
 #[cfg(target_os = "freebsd")]
-fn oss_period_frame_options(
+pub(crate) fn oss_period_frame_options(
     device: &crate::state::AudioDeviceOption,
     bits: usize,
 ) -> Option<Vec<usize>> {
@@ -895,6 +895,24 @@ mod tests {
         #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
         {
             assert_eq!(HW::selected_bits(false, 24), 32);
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "freebsd")]
+    fn inspect_oss_period_options() {
+        let devices = crate::state::discover_freebsd_audio_devices();
+        for dev in devices {
+            println!("device: {}", dev.id);
+            println!("  label: {}", dev.label);
+            println!("  max_channels: {}", dev.max_channels);
+            println!("  max_buffer_bytes: {}", dev.max_buffer_bytes);
+            println!("  supported_bits: {:?}", dev.supported_bits);
+            println!("  supported_sample_rates: {:?}", dev.supported_sample_rates);
+            for bits in [8usize, 16, 24, 32] {
+                let options = oss_period_frame_options(&dev, bits);
+                println!("  period_options(bits={bits}): {:?}", options);
+            }
         }
     }
 }

@@ -14,6 +14,7 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub enum Show {
     AddTrack,
+    AddFolder,
     TrackPluginList,
     GenerateAudio,
     ExportSettings,
@@ -526,6 +527,7 @@ pub enum AddTrack {
     MIDIIns(usize),
     MIDIOuts(usize),
     TemplateSelected(String),
+    IsFolder(bool),
     Submit,
 }
 
@@ -994,6 +996,7 @@ pub enum Message {
     HwMixer(mixosc::app::Message),
     LogViewAction(text_editor::Action),
     OpenTrackPlugins(String),
+    OpenFolderConnections(String),
     OpenHwPorts {
         input: bool,
     },

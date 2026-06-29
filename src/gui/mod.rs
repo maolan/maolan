@@ -8526,6 +8526,84 @@ mod tests {
     }
 
     #[test]
+    fn add_track_submit_rejects_duplicate_name() {
+        let mut app = Maolan::default();
+        app.state
+            .blocking_write()
+            .tracks
+            .push(crate::state::Track::new(
+                "Existing".to_string(),
+                0.0,
+                1,
+                1,
+                0,
+                0,
+            ));
+        app.modal = Some(Show::AddTrack);
+        app.add_track
+            .update(&Message::AddTrack(crate::message::AddTrack::Name(
+                "Existing".to_string(),
+            )));
+
+        let _ = app.update(Message::AddTrack(crate::message::AddTrack::Submit));
+
+        assert_eq!(app.state.blocking_read().tracks.len(), 1);
+        assert!(
+            app.state
+                .blocking_read()
+                .message
+                .contains("Track 'Existing' already exists"),
+            "expected error message, got: {}",
+            app.state.blocking_read().message
+        );
+        assert!(app.modal.is_some());
+    }
+
+    #[test]
+    fn add_folder_submit_rejects_duplicate_name() {
+        let mut app = Maolan::default();
+        app.state
+            .blocking_write()
+            .tracks
+            .push(crate::state::Track::new(
+                "Existing".to_string(),
+                0.0,
+                1,
+                1,
+                0,
+                0,
+            ));
+        app.modal = Some(Show::AddFolder);
+        app.add_track
+            .update(&Message::AddTrack(crate::message::AddTrack::Name(
+                "Existing".to_string(),
+            )));
+        app.add_track
+            .update(&Message::AddTrack(crate::message::AddTrack::IsFolder(true)));
+
+        let _ = app.update(Message::AddTrack(crate::message::AddTrack::Submit));
+
+        assert_eq!(app.state.blocking_read().tracks.len(), 1);
+        assert!(
+            app.state
+                .blocking_read()
+                .tracks
+                .iter()
+                .all(|t| !t.is_folder),
+            "existing track should not have been converted to folder"
+        );
+        assert!(
+            app.state
+                .blocking_read()
+                .message
+                .contains("Track 'Existing' already exists"),
+            "expected error message, got: {}",
+            app.state.blocking_read().message
+        );
+        assert!(app.modal.is_some());
+    }
+
+    #[test]
     fn set_snap_mode_updates_state() {
         let mut app = Maolan::default();
 

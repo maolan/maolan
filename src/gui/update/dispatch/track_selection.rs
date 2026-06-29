@@ -71,8 +71,18 @@ impl Maolan {
                     && now.duration_since(*last_time) <= DOUBLE_CLICK.saturating_mul(2)
                 {
                     state.connections_last_track_click = None;
+                    let is_folder = state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == track_name)
+                        .map(|t| t.is_folder)
+                        .unwrap_or(false);
                     return Some(Task::perform(async {}, move |_| {
-                        Message::OpenTrackPlugins(track_name)
+                        if is_folder {
+                            Message::OpenFolderConnections(track_name)
+                        } else {
+                            Message::OpenTrackPlugins(track_name)
+                        }
                     }));
                 } else {
                     state.connections_last_track_click = Some((track_name.clone(), now));

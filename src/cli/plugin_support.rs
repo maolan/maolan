@@ -1,32 +1,38 @@
-use maolan_engine::{kind::Kind, message::Action};
+use maolan_engine::{
+    clap::{ClapPluginInfo, ClapPluginState},
+    kind::Kind,
+    message::Action,
+    vst3::{Vst3PluginInfo, Vst3PluginState},
+};
 use serde_json::Value;
-use std::path::Path;
+use std::collections::BTreeSet;
+use tracing::warn;
 
 #[cfg(unix)]
-pub fn load_session_plugin_restore_actions(
-    session_dir: &Path,
-    branch: &str,
-    clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
+pub fn load_session_graph_restore_actions(
+    session: &Value,
+    valid_track_names: &BTreeSet<String>,
+    clap_plugins: &[ClapPluginInfo],
+    vst3_plugins: &[Vst3PluginInfo],
 ) -> Result<Vec<Action>, String> {
-    let session = load_session_json(session_dir, branch)?;
     let mut actions = Vec::new();
-    push_track_plugin_graph_restore_actions(&mut actions, session.get("graphs"), clap_plugins)?;
+    push_track_plugin_graph_restore_actions(
+        &mut actions,
+        session.get("graphs"),
+        valid_track_names,
+        clap_plugins,
+        vst3_plugins,
+    )?;
     Ok(actions)
-}
-
-#[cfg(not(unix))]
-pub fn load_session_plugin_restore_actions(
-    _session_dir: &Path,
-    _clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
-) -> Result<Vec<Action>, String> {
-    Ok(Vec::new())
 }
 
 #[cfg(unix)]
 fn push_track_plugin_graph_restore_actions(
     actions: &mut Vec<Action>,
     graphs: Option<&Value>,
-    clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
+    valid_track_names: &BTreeSet<String>,
+    clap_plugins: &[ClapPluginInfo],
+    vst3_plugins: &[Vst3PluginInfo],
 ) -> Result<(), String> {
     use maolan_engine::message::PluginGraphNode;
 
@@ -35,13 +41,18 @@ fn push_track_plugin_graph_restore_actions(
     };
 
     for (track_name, graph) in graphs {
+        if !valid_track_names.contains(track_name) {
+            warn!(
+                "Skipping plugin graph for unknown track '{}' (valid tracks: {:?})",
+                track_name, valid_track_names
+            );
+            continue;
+        }
         actions.push(Action::TrackClearDefaultPassthrough {
             track_name: track_name.clone(),
         });
 
         let mut runtime_nodes: Vec<PluginGraphNode> = Vec::new();
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let mut next_lv2_instance_id = 0usize;
         let mut next_clap_instance_id = 0usize;
         let mut next_vst3_instance_id = 0usize;
 
@@ -51,41 +62,43 @@ fn push_track_plugin_graph_restore_actions(
                     continue;
                 };
                 match plugin.get("format").and_then(Value::as_str) {
-                    Some("LV2") => {
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        {
-                            let instance_id = next_lv2_instance_id;
-                            next_lv2_instance_id += 1;
-                            runtime_nodes.push(PluginGraphNode::Lv2PluginInstance(instance_id));
-                            actions.push(Action::TrackLoadLv2Plugin {
-                                track_name: track_name.clone(),
-                                plugin_uri: uri.to_string(),
-                                instance_id: Some(instance_id),
-                            });
-                        }
-                    }
                     Some("CLAP") => {
                         let instance_id = next_clap_instance_id;
                         next_clap_instance_id += 1;
                         runtime_nodes.push(PluginGraphNode::ClapPluginInstance(instance_id));
-                        let plugin_path = resolve_clap_plugin_path(uri, clap_plugins);
-                        if let Some(plugin_path) = plugin_path {
+                        if let Some(plugin_path) = resolve_clap_plugin_path(uri, clap_plugins) {
                             actions.push(Action::TrackLoadClapPlugin {
                                 track_name: track_name.clone(),
                                 plugin_path,
                                 instance_id: Some(instance_id),
                             });
+                            if let Some(state) = clap_state_from_json(&plugin["state"]) {
+                                actions.push(Action::TrackClapRestoreState {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    state,
+                                });
+                            }
                         }
                     }
                     Some("VST3") => {
                         let instance_id = next_vst3_instance_id;
                         next_vst3_instance_id += 1;
                         runtime_nodes.push(PluginGraphNode::Vst3PluginInstance(instance_id));
-                        actions.push(Action::TrackLoadVst3Plugin {
-                            track_name: track_name.clone(),
-                            plugin_path: uri.to_string(),
-                            instance_id: Some(instance_id),
-                        });
+                        if let Some(plugin_path) = resolve_vst3_plugin_path(uri, vst3_plugins) {
+                            actions.push(Action::TrackLoadVst3Plugin {
+                                track_name: track_name.clone(),
+                                plugin_path,
+                                instance_id: Some(instance_id),
+                            });
+                            if let Some(state) = vst3_state_from_json(&plugin["state"]) {
+                                actions.push(Action::TrackVst3RestoreState {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    state,
+                                });
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -138,6 +151,16 @@ fn push_track_plugin_graph_restore_actions(
     Ok(())
 }
 
+#[cfg(not(unix))]
+pub fn load_session_graph_restore_actions(
+    _session: &Value,
+    _valid_track_names: &BTreeSet<String>,
+    _clap_plugins: &[ClapPluginInfo],
+    _vst3_plugins: &[Vst3PluginInfo],
+) -> Result<Vec<Action>, String> {
+    Ok(Vec::new())
+}
+
 #[cfg(unix)]
 fn parse_plugin_node_with_runtime_nodes(
     value: Option<&Value>,
@@ -156,13 +179,6 @@ fn parse_plugin_node_with_runtime_nodes(
     match t {
         "track_input" => Some(PluginGraphNode::TrackInput),
         "track_output" => Some(PluginGraphNode::TrackOutput),
-        #[cfg(all(unix, not(target_os = "macos")))]
-        "plugin" => runtime_nodes
-            .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
-            .filter(|node| matches!(node, PluginGraphNode::Lv2PluginInstance(_)))
-            .cloned(),
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        "plugin" => None,
         "clap_plugin" => runtime_nodes
             .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
             .filter(|node| matches!(node, PluginGraphNode::ClapPluginInstance(_)))
@@ -176,10 +192,7 @@ fn parse_plugin_node_with_runtime_nodes(
 }
 
 #[cfg(unix)]
-fn resolve_clap_plugin_path(
-    stored: &str,
-    clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
-) -> Option<String> {
+fn resolve_clap_plugin_path(stored: &str, clap_plugins: &[ClapPluginInfo]) -> Option<String> {
     if stored.contains("::") || stored.contains('/') {
         return Some(stored.to_string());
     }
@@ -193,13 +206,39 @@ fn resolve_clap_plugin_path(
     None
 }
 
-fn load_session_json(session_dir: &Path, branch: &str) -> Result<Value, String> {
-    let session_path = session_dir.join(format!("{}.json", branch));
-    let file = std::fs::File::open(&session_path)
-        .map_err(|err| format!("Failed to open {}: {err}", session_path.display()))?;
-    let reader = std::io::BufReader::new(file);
-    serde_json::from_reader(reader)
-        .map_err(|err| format!("Failed to parse {}: {err}", session_path.display()))
+#[cfg(unix)]
+fn resolve_vst3_plugin_path(stored: &str, vst3_plugins: &[Vst3PluginInfo]) -> Option<String> {
+    if stored.contains('/') {
+        return Some(stored.to_string());
+    }
+    vst3_plugins
+        .iter()
+        .find(|info| info.path == stored || info.id == stored)
+        .map(|info| info.path.clone())
+}
+
+fn clap_state_from_json(value: &Value) -> Option<ClapPluginState> {
+    if value.is_null() {
+        return None;
+    }
+    if let Some(arr) = value.as_array() {
+        let bytes: Vec<u8> = arr
+            .iter()
+            .filter_map(|item| item.as_u64().map(|n| n as u8))
+            .collect();
+        if bytes.is_empty() {
+            return None;
+        }
+        return Some(ClapPluginState { bytes });
+    }
+    serde_json::from_value(value.clone()).ok()
+}
+
+fn vst3_state_from_json(value: &Value) -> Option<Vst3PluginState> {
+    if value.is_null() {
+        return None;
+    }
+    serde_json::from_value(value.clone()).ok()
 }
 
 fn parse_kind(value: Option<&Value>) -> Option<Kind> {

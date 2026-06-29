@@ -1,9 +1,12 @@
 use maolan_engine::{
+    clap::ClapPluginInfo,
     kind::Kind,
     message::{
         Action, AudioClipData, GlobalMidiLearnTarget, MidiClipData, MidiLearnBinding,
         PitchCorrectionPointData, TrackMidiLearnTarget,
     },
+    plugins::scan_plugins,
+    vst3::Vst3PluginInfo,
 };
 use serde_json::Value;
 use std::{collections::BTreeSet, fs::File, io::BufReader, path::Path};
@@ -140,7 +143,15 @@ pub fn load_session_restore_actions(
         push_track_restore_actions(&mut actions, track)?;
     }
 
-    push_track_graph_restore_actions(&mut actions, session.get("graphs"), &valid_track_names)?;
+    let clap_plugins = scan_plugins::<ClapPluginInfo>("clap").unwrap_or_default();
+    let vst3_plugins = scan_plugins::<Vst3PluginInfo>("vst3").unwrap_or_default();
+    let graph_actions = crate::cli::plugin_support::load_session_graph_restore_actions(
+        &session,
+        &valid_track_names,
+        &clap_plugins,
+        &vst3_plugins,
+    )?;
+    actions.extend(graph_actions);
     push_connection_restore_actions(&mut actions, session.get("connections"))?;
 
     actions.push(Action::EndSessionRestore);
@@ -243,12 +254,17 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
         .map(|value| value as usize)
         .unwrap_or(audio_outs);
 
+    let folder = track
+        .get("is_folder")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     actions.push(Action::AddTrack {
         name: name.clone(),
         audio_ins: primary_audio_ins.min(audio_ins),
         midi_ins,
         audio_outs: primary_audio_outs.min(audio_outs),
         midi_outs,
+        folder,
     });
     for _ in primary_audio_ins.min(audio_ins)..audio_ins {
         actions.push(Action::TrackAddAudioInput(name.clone()));
@@ -883,94 +899,10 @@ fn push_connection_restore_actions(
     Ok(())
 }
 
-#[cfg(unix)]
-fn push_track_graph_restore_actions(
-    actions: &mut Vec<Action>,
-    graphs: Option<&Value>,
-    valid_track_names: &BTreeSet<String>,
-) -> Result<(), String> {
-    let Some(graphs) = graphs.and_then(Value::as_object) else {
-        return Ok(());
-    };
-    for (track_name, graph) in graphs {
-        if !valid_track_names.contains(track_name) {
-            continue;
-        }
-        actions.push(Action::TrackClearDefaultPassthrough {
-            track_name: track_name.clone(),
-        });
-        if let Some(connections) = graph.get("connections").and_then(Value::as_array) {
-            for connection in connections {
-                let Some(kind) = parse_kind(connection.get("kind")) else {
-                    continue;
-                };
-                let Some(from_node) = parse_plugin_node(connection.get("from_node")) else {
-                    continue;
-                };
-                let Some(to_node) = parse_plugin_node(connection.get("to_node")) else {
-                    continue;
-                };
-                let from_port = connection
-                    .get("from_port")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
-                let to_port = connection
-                    .get("to_port")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
-                match kind {
-                    Kind::Audio => actions.push(Action::TrackConnectPluginAudio {
-                        track_name: track_name.clone(),
-                        from_node,
-                        from_port,
-                        to_node,
-                        to_port,
-                    }),
-                    Kind::MIDI => actions.push(Action::TrackConnectPluginMidi {
-                        track_name: track_name.clone(),
-                        from_node,
-                        from_port,
-                        to_node,
-                        to_port,
-                    }),
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn push_track_graph_restore_actions(
-    _actions: &mut Vec<Action>,
-    _graphs: Option<&Value>,
-    _valid_track_names: &BTreeSet<String>,
-) -> Result<(), String> {
-    Ok(())
-}
-
 fn parse_kind(value: Option<&Value>) -> Option<Kind> {
     match value.and_then(Value::as_str) {
         Some("audio") | Some("Audio") => Some(Kind::Audio),
         Some("midi") | Some("MIDI") => Some(Kind::MIDI),
-        _ => None,
-    }
-}
-
-#[cfg(unix)]
-fn parse_plugin_node(value: Option<&Value>) -> Option<maolan_engine::message::PluginGraphNode> {
-    use maolan_engine::message::PluginGraphNode;
-    let value = value?;
-    if let Some(text) = value.as_str() {
-        return match text {
-            "TrackInput" => Some(PluginGraphNode::TrackInput),
-            "TrackOutput" => Some(PluginGraphNode::TrackOutput),
-            _ => None,
-        };
-    }
-    match value.get("type").and_then(Value::as_str) {
-        Some("track_input") => Some(PluginGraphNode::TrackInput),
-        Some("track_output") => Some(PluginGraphNode::TrackOutput),
         _ => None,
     }
 }
@@ -1056,8 +988,8 @@ mod tests {
 
         assert!(actions.iter().any(|action| matches!(
             action,
-            Action::AddTrack { name, audio_ins, audio_outs, midi_ins, midi_outs }
-            if name == "Track 1" && *audio_ins == 2 && *audio_outs == 2 && *midi_ins == 1 && *midi_outs == 1
+            Action::AddTrack { name, audio_ins, audio_outs, midi_ins, midi_outs, folder }
+            if name == "Track 1" && *audio_ins == 2 && *audio_outs == 2 && *midi_ins == 1 && *midi_outs == 1 && !folder
         )));
         assert!(actions.iter().any(
             |action| matches!(action, Action::OpenMidiInputDevice(device) if device == "dev-in")

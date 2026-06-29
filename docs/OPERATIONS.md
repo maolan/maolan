@@ -104,33 +104,6 @@ Track templates intentionally do not keep:
 - audio clips
 - MIDI clips
 
-Group templates live under:
-
-`~/.config/maolan/group_templates/<name>/`
-
-Each group template stores `group.json` plus a `plugins/` directory. Group templates keep:
-
-- all tracks that share the same VCA master (group)
-- each track's settings and plugin graph
-- connections between tracks in the group
-
-When a group template is loaded from the Add Track dialog:
-
-- the base name you enter becomes the new group name (VCA master)
-- each track in the group is created with the base name as a prefix
-  - single-track groups use the base name directly
-  - multi-track groups use `"<base> <original>"`
-- plugin graphs are restored per track
-- intra-group connections are remapped to the new track names
-- all tracks in the group are automatically assigned to the new VCA master
-
-Group templates intentionally do not keep:
-
-- audio clips
-- MIDI clips
-- frozen render state or frozen backups
-- connections to tracks outside the group
-
 ## Autosave and Recovery
 
 - Autosave snapshots are generated every 15 seconds.

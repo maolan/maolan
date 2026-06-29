@@ -1681,12 +1681,17 @@ impl Maolan {
                     .and_then(|value| value.as_u64())
                     .map(|value| value as usize)
                     .unwrap_or(audio_outs);
+                let folder = track
+                    .get("is_folder")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
                 restore_actions.push(Action::AddTrack {
                     name: name.clone(),
                     audio_ins: primary_audio_ins.min(audio_ins),
                     audio_outs: primary_audio_outs.min(audio_outs),
                     midi_ins,
                     midi_outs,
+                    folder,
                 });
                 for _ in primary_audio_ins.min(audio_ins)..audio_ins {
                     restore_actions.push(Action::TrackAddAudioInput(name.clone()));

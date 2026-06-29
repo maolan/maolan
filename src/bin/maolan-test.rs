@@ -296,6 +296,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             audio_outs: 2,
             midi_ins: 1,
             midi_outs: 1,
+            folder: false,
         }))
         .await?;
 
