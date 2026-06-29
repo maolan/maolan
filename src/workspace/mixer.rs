@@ -1,18 +1,19 @@
 use crate::{
     consts::{state_ids::METRONOME_TRACK_ID, workspace_mixer::*},
     message::{Message, TrackAutomationTarget},
-    state::{State, Track},
+    state::{Modulator, State, Track},
     style,
 };
 use iced::{
-    Alignment, Element, Length,
+    Alignment, Element, Length, Padding,
     widget::{
-        Space, Stack, button, column, container, lazy, mouse_area, row, scrollable, text,
+        Row, Space, Stack, button, column, container, lazy, mouse_area, row, scrollable, text,
         text_input,
     },
 };
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
 use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider, ticks};
+use std::collections::{HashMap, HashSet};
 
 const STRIP_SPACING: f32 = 2.0;
 const STRIP_ROW_PADDING_X: f32 = 8.0;
@@ -37,9 +38,19 @@ struct ModulatorAssignment {
     selected_id: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
 struct TrackStripSpec<'a> {
     track: &'a Track,
     width: f32,
+    total_width: f32,
+}
+
+struct RenderContext<'a> {
+    editing_track: Option<&'a str>,
+    editing_input: &'a str,
+    fader_height: f32,
+    modulators_pane_visible: bool,
+    selected_modulator: Option<&'a Modulator>,
 }
 
 impl Mixer {
@@ -420,7 +431,7 @@ impl Mixer {
             return (0, 0, 0.0, 0.0);
         }
 
-        let content_width = track_specs.iter().map(|spec| spec.width).sum::<f32>()
+        let content_width = track_specs.iter().map(|spec| spec.total_width).sum::<f32>()
             + (STRIP_SPACING * track_specs.len().saturating_sub(1) as f32)
             + (STRIP_ROW_PADDING_X * 2.0);
         if viewport_width <= 0.0 || content_width <= viewport_width {
@@ -437,7 +448,7 @@ impl Mixer {
         let mut last_visible = 0usize;
         for (idx, spec) in track_specs.iter().enumerate() {
             let strip_start = current_x;
-            let strip_end = strip_start + spec.width;
+            let strip_end = strip_start + spec.total_width;
             if strip_end >= left_edge && strip_start <= right_edge {
                 first_visible = first_visible.min(idx);
                 last_visible = idx + 1;
@@ -455,7 +466,7 @@ impl Mixer {
             STRIP_ROW_PADDING_X
                 + track_specs[..first_visible]
                     .iter()
-                    .map(|spec| spec.width)
+                    .map(|spec| spec.total_width)
                     .sum::<f32>()
                 + (STRIP_SPACING * first_visible as f32)
         };
@@ -465,12 +476,125 @@ impl Mixer {
             STRIP_ROW_PADDING_X
                 + track_specs[last_visible..]
                     .iter()
-                    .map(|spec| spec.width)
+                    .map(|spec| spec.total_width)
                     .sum::<f32>()
                 + (STRIP_SPACING * (track_specs.len() - last_visible) as f32)
         };
 
         (first_visible, last_visible, left_spacer, right_spacer)
+    }
+
+    fn total_width_with_children(
+        specs: &[TrackStripSpec<'_>],
+        children_by_parent: &HashMap<String, Vec<usize>>,
+        index: usize,
+    ) -> f32 {
+        let spec = &specs[index];
+        let mut total = spec.width;
+        if spec.track.is_folder && !spec.track.folder_open {
+            return total;
+        }
+        if let Some(children) = children_by_parent.get(&spec.track.name) {
+            for &child_index in children {
+                total += STRIP_SPACING
+                    + Self::total_width_with_children(specs, children_by_parent, child_index);
+            }
+        }
+        total
+    }
+
+    fn render_track_strip<'a>(
+        spec: &TrackStripSpec<'_>,
+        children_by_parent: &HashMap<String, Vec<usize>>,
+        all_specs: &[TrackStripSpec<'_>],
+        ctx: &RenderContext<'a>,
+        selected: &HashSet<String>,
+        upstream_track_names: &HashSet<String>,
+    ) -> Element<'a, Message> {
+        let track = spec.track;
+        let pan = if track.audio.outs == 2 {
+            Some(Self::pan_section_cached(
+                track.name.clone(),
+                track.balance,
+                ctx.modulators_pane_visible,
+                ctx.selected_modulator,
+            ))
+        } else {
+            None
+        };
+        let assignment = Self::modulator_assignment_state(
+            ctx.modulators_pane_visible,
+            ctx.selected_modulator,
+            &track.name,
+            TrackAutomationTarget::Volume,
+        );
+        let bay = Self::fader_bay(
+            track.name.clone(),
+            track.audio.outs,
+            &track.meter_out_db,
+            track.level,
+            ctx.fader_height,
+            true,
+            assignment,
+        );
+        let solo_upstream = upstream_track_names.contains(&track.name);
+        let children = if track.is_folder && track.folder_open {
+            children_by_parent.get(&track.name).map(|indices| {
+                let child_elements: Vec<Element<'a, Message>> = indices
+                    .iter()
+                    .map(|&i| {
+                        Self::render_track_strip(
+                            &all_specs[i],
+                            children_by_parent,
+                            all_specs,
+                            ctx,
+                            selected,
+                            upstream_track_names,
+                        )
+                    })
+                    .collect();
+                container(
+                    Row::with_children(child_elements)
+                        .spacing(STRIP_SPACING)
+                        .align_y(Alignment::Start),
+                )
+                .padding(Padding {
+                    top: 10.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                })
+                .height(Length::Fill)
+                .width(Length::Shrink)
+                .into()
+            })
+        } else {
+            None
+        };
+        mouse_area(Self::strip_shell(
+            track.name.clone(),
+            selected.contains(track.name.as_str()),
+            track.color,
+            spec.width,
+            spec.total_width,
+            pan,
+            bay,
+            StripReadout {
+                track_name: track.name.clone(),
+                editing: ctx.editing_track == Some(track.name.as_str()),
+                edit_input: ctx.editing_input,
+                level_label: Self::format_level_db(track.level),
+            },
+            Self::strip_controls(track, solo_upstream),
+            children,
+        ))
+        .on_press(Message::SelectTrackFromMixer(track.name.clone()))
+        .on_double_click(if track.is_folder {
+            Message::OpenFolderConnections(track.name.clone())
+        } else {
+            Message::OpenTrackPlugins(track.name.clone())
+        })
+        .into()
     }
 
     fn strip_controls(track: &Track, solo_upstream: bool) -> Option<Element<'static, Message>> {
@@ -529,28 +653,30 @@ impl Mixer {
                 target: TrackMidiLearnTarget::Solo,
             }),
         );
-        let track_name = track.name.clone();
-        let arm_track = track_name.clone();
-        controls = controls.push(
-            mouse_area(
-                button(
-                    container(text("R").size(13))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill),
+        if !track.is_folder {
+            let track_name = track.name.clone();
+            let arm_track = track_name.clone();
+            controls = controls.push(
+                mouse_area(
+                    button(
+                        container(text("R").size(13))
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .center_x(Length::Fill)
+                            .center_y(Length::Fill),
+                    )
+                    .width(Length::Fixed(22.0))
+                    .height(Length::Fixed(22.0))
+                    .padding(0)
+                    .style(move |theme, _state| style::arm::style(theme, armed))
+                    .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
                 )
-                .width(Length::Fixed(22.0))
-                .height(Length::Fixed(22.0))
-                .padding(0)
-                .style(move |theme, _state| style::arm::style(theme, armed))
-                .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
-            )
-            .on_right_press(Message::TrackMidiLearnArm {
-                track_name: arm_track,
-                target: TrackMidiLearnTarget::Arm,
-            }),
-        );
+                .on_right_press(Message::TrackMidiLearnArm {
+                    track_name: arm_track,
+                    target: TrackMidiLearnTarget::Arm,
+                }),
+            );
+        }
         Some(controls.into())
     }
 
@@ -559,29 +685,54 @@ impl Mixer {
         name: String,
         selected: bool,
         color: Option<iced::Color>,
-        width: f32,
+        left_width: f32,
+        total_width: f32,
         pan_section: Option<Element<'static, Message>>,
         bay: Element<'static, Message>,
         readout: StripReadout<'a>,
         controls: Option<Element<'static, Message>>,
+        children: Option<Element<'a, Message>>,
     ) -> Element<'a, Message> {
-        let mut content = column![].spacing(8).width(Length::Fill);
-        content = content.push(pan_section.unwrap_or_else(Self::pan_placeholder));
-        content = content.push(bay).push(Self::value_pill_cached(
+        let mut left_content = column![].spacing(8).width(Length::Fill);
+        left_content = left_content.push(pan_section.unwrap_or_else(Self::pan_placeholder));
+        left_content = left_content.push(bay).push(Self::value_pill_cached(
             readout.track_name,
             readout.level_label,
             readout.editing,
             readout.edit_input,
         ));
         if let Some(controls) = controls {
-            content = content.push(controls);
+            left_content = left_content.push(controls);
         }
-        content = content.push(Self::strip_name_cached(name, width));
+        left_content = left_content.push(Self::strip_name_cached(name, left_width));
+
+        let left = container(left_content)
+            .width(Length::Fixed(left_width))
+            .height(Length::Fill)
+            .padding([8, 6]);
+
+        let content: Element<'a, Message> = if let Some(children) = children {
+            let right = container(children)
+                .padding(Padding {
+                    top: 10.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                })
+                .height(Length::Fill)
+                .width(Length::Shrink);
+            row![left, right]
+                .spacing(STRIP_SPACING)
+                .align_y(Alignment::Start)
+                .height(Length::Fill)
+                .into()
+        } else {
+            left.into()
+        };
 
         container(content)
-            .width(Length::Fixed(width))
+            .width(Length::Fixed(total_width))
             .height(Length::Fill)
-            .padding([8, 6])
             .style(move |_theme| style::mixer::strip(selected, color))
             .into()
     }
@@ -608,9 +759,13 @@ impl Mixer {
         let track_specs: Vec<_> = state
             .tracks
             .iter()
-            .map(|track| TrackStripSpec {
-                track,
-                width: Self::strip_width_for_channels(track.audio.outs),
+            .map(|track| {
+                let width = Self::strip_width_for_channels(track.audio.outs);
+                TrackStripSpec {
+                    track,
+                    width,
+                    total_width: width,
+                }
             })
             .collect();
         let metronome_width = track_specs
@@ -624,6 +779,35 @@ impl Mixer {
             .into_iter()
             .filter(|spec| spec.track.name != METRONOME_TRACK_ID)
             .collect();
+
+        let mut children_by_parent: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, spec) in normal_track_specs.iter().enumerate() {
+            if let Some(parent) = spec.track.parent_track.as_deref() {
+                children_by_parent
+                    .entry(parent.to_string())
+                    .or_default()
+                    .push(i);
+            }
+        }
+
+        let total_widths: Vec<f32> = (0..normal_track_specs.len())
+            .map(|i| Self::total_width_with_children(&normal_track_specs, &children_by_parent, i))
+            .collect();
+        let normal_track_specs: Vec<_> = normal_track_specs
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut spec)| {
+                spec.total_width = total_widths[i];
+                spec
+            })
+            .collect();
+
+        let root_specs: Vec<TrackStripSpec> = normal_track_specs
+            .iter()
+            .filter(|spec| spec.track.parent_track.is_none())
+            .copied()
+            .collect();
+
         let soloed_track_names: std::collections::HashSet<String> = state
             .tracks
             .iter()
@@ -649,8 +833,17 @@ impl Mixer {
                 }
             }
         }
+
+        let ctx = RenderContext {
+            editing_track,
+            editing_input,
+            fader_height,
+            modulators_pane_visible,
+            selected_modulator,
+        };
+
         let (first_visible, last_visible, left_spacer, right_spacer) =
-            Self::visible_track_window(&normal_track_specs, track_viewport_width, scroll_x);
+            Self::visible_track_window(&root_specs, track_viewport_width, scroll_x);
 
         if metronome_enabled
             && let Some(track) = state
@@ -690,6 +883,7 @@ impl Mixer {
                     state.selected.contains(track.name.as_str()),
                     track.color,
                     strip_width,
+                    strip_width,
                     pan,
                     bay,
                     StripReadout {
@@ -699,69 +893,25 @@ impl Mixer {
                         level_label: Self::format_level_db(track.level),
                     },
                     None,
+                    None,
                 ))
                 .on_press(Message::SelectTrackFromMixer(track.name.clone()))
                 .into(),
             );
         }
 
-        for (index, spec) in normal_track_specs.iter().enumerate() {
-            let track = spec.track;
+        for (index, spec) in root_specs.iter().enumerate() {
             if index < first_visible || index >= last_visible {
                 continue;
             }
-            let strip_name = track.name.clone();
-            let strip_width = spec.width;
-            let pan = if track.audio.outs == 2 {
-                Some(Self::pan_section_cached(
-                    track.name.clone(),
-                    track.balance,
-                    modulators_pane_visible,
-                    selected_modulator,
-                ))
-            } else {
-                None
-            };
-            let assignment = Self::modulator_assignment_state(
-                modulators_pane_visible,
-                selected_modulator,
-                &track.name,
-                TrackAutomationTarget::Volume,
-            );
-            let bay = Self::fader_bay(
-                track.name.clone(),
-                track.audio.outs,
-                &track.meter_out_db,
-                track.level,
-                fader_height,
-                true,
-                assignment,
-            );
-            let solo_upstream = upstream_track_names.contains(&track.name);
-            let strip: Element<'a, Message> = mouse_area(Self::strip_shell(
-                strip_name,
-                state.selected.contains(track.name.as_str()),
-                track.color,
-                strip_width,
-                pan,
-                bay,
-                StripReadout {
-                    track_name: track.name.clone(),
-                    editing: editing_track == Some(track.name.as_str()),
-                    edit_input: editing_input,
-                    level_label: Self::format_level_db(track.level),
-                },
-                Self::strip_controls(track, solo_upstream),
-            ))
-            .on_press(Message::SelectTrackFromMixer(track.name.clone()))
-            .on_double_click(if track.is_folder {
-                Message::OpenFolderConnections(track.name.clone())
-            } else {
-                Message::OpenTrackPlugins(track.name.clone())
-            })
-            .into();
-
-            strips = strips.push(strip);
+            strips = strips.push(Self::render_track_strip(
+                spec,
+                &children_by_parent,
+                &normal_track_specs,
+                &ctx,
+                &state.selected,
+                &upstream_track_names,
+            ));
         }
         if left_spacer > 0.0 {
             strips = row![Space::new().width(Length::Fixed(left_spacer)), strips]
@@ -777,6 +927,7 @@ impl Mixer {
             "Master".to_string(),
             master_selected,
             None,
+            master_strip_width,
             master_strip_width,
             if hw_out_channels == 2 {
                 Some(Self::pan_section_cached(
@@ -811,6 +962,7 @@ impl Mixer {
                 edit_input: editing_input,
                 level_label: Self::format_level_db(hw_out_level),
             },
+            None,
             None,
         ))
         .on_press(Message::SelectTrackFromMixer("hw:out".to_string()))

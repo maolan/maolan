@@ -903,7 +903,11 @@ impl Tracks {
             .width(Length::Fixed(18.0))
             .height(Length::Fixed(18.0))
             .padding(0)
-            .style(button::secondary)
+            .style(|theme: &Theme, _status| button::Style {
+                background: None,
+                text_color: theme.palette().text,
+                ..button::Style::default()
+            })
             .on_press(Message::TrackToggleFolder {
                 track_name: track.name.clone(),
             })
@@ -961,7 +965,7 @@ impl Tracks {
 
         let track_name = track.name.clone();
         let mut controls: Vec<Element<'static, Message>> = vec![];
-        if !track.is_master {
+        if !track.is_master && !track.is_folder {
             controls.push(
                 button(
                     container(text("R").size(13))
