@@ -4,9 +4,30 @@ impl Maolan {
     pub(super) fn handle_session_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::AddTrack(crate::message::AddTrack::Submit) => {
-                let tasks: Vec<_> = self
-                    .add_track
-                    .create_messages()
+                let existing_names: std::collections::HashSet<String> = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .map(|t| t.name.clone())
+                    .collect();
+                let messages = self.add_track.create_messages();
+                for message in &messages {
+                    let name = match message {
+                        Message::Request(maolan_engine::message::Action::AddTrack {
+                            name, ..
+                        }) => Some(name.as_str()),
+                        Message::AddTrackFromTemplate { name, .. } => Some(name.as_str()),
+                        _ => None,
+                    };
+                    if let Some(name) = name
+                        && existing_names.contains(name)
+                    {
+                        self.error(format!("Track '{}' already exists", name));
+                        return Task::none();
+                    }
+                }
+                let tasks: Vec<_> = messages
                     .into_iter()
                     .map(|message| self.handle_session_message(message))
                     .collect();
@@ -29,6 +50,7 @@ impl Maolan {
                     midi_ins,
                     audio_outs,
                     midi_outs,
+                    folder: false,
                 });
 
                 self.state

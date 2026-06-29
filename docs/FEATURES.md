@@ -7,7 +7,6 @@ Last updated: 2026-04-30
 - Track selection, reordering, resizing, and rename
 - Session template save/load
 - Track template save/load
-- Group template save/load (save/load an entire track group as a single template)
 - Session save/open/save-as
 - Recent session tracking
 - Session metadata editing:
@@ -138,7 +137,6 @@ Last updated: 2026-04-30
   - Level adjust
   - Pan adjust
   - Pre/Post fader toggle
-- VCA-like master assignment/unassignment for tracks
 - Track audio/MIDI passthrough defaults
 - Per-track plugin graph routing for:
   - Audio

@@ -4,10 +4,11 @@ use iced::{Color, Point};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::consts::state_track::{
-    TRACK_FOLDER_HEADER_HEIGHT, TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT,
+    TRACK_FOLDER_BODY_HEIGHT, TRACK_FOLDER_HEADER_HEIGHT, TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP,
+    TRACK_SUBTRACK_MIN_HEIGHT,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TrackLaneLayout {
     pub header_height: f32,
     pub lane_height: f32,
@@ -279,7 +280,7 @@ impl Track {
     }
 
     pub fn audio_lane_count(&self) -> usize {
-        if self.is_master {
+        if self.is_master || self.is_folder {
             0
         } else if self.audio.ins > 0 {
             1
@@ -313,7 +314,11 @@ impl Track {
     }
 
     pub fn midi_lane_count(&self) -> usize {
-        if self.is_master { 0 } else { self.midi.ins }
+        if self.is_master || self.is_folder {
+            0
+        } else {
+            self.midi.ins
+        }
     }
 
     pub fn automation_lane_count(&self) -> usize {
@@ -364,7 +369,11 @@ impl Track {
             }
         } else {
             let total_lanes = self.total_lane_count().max(1);
-            let available = self.height.max(0.0);
+            let available = if self.is_folder {
+                self.folder_content_height().max(0.0)
+            } else {
+                self.height.max(0.0)
+            };
             let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
             let lane_height =
                 ((available - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
@@ -457,6 +466,30 @@ impl Track {
             }
         }
         false
+    }
+
+    pub fn folder_content_height(&self) -> f32 {
+        TRACK_FOLDER_HEADER_HEIGHT + TRACK_FOLDER_BODY_HEIGHT
+    }
+
+    pub fn visible_height(&self, all_tracks: &[Track]) -> f32 {
+        if self.is_inside_closed_folder(all_tracks) {
+            return 0.0;
+        }
+        let mut height = if self.is_folder {
+            self.folder_content_height()
+        } else {
+            self.height
+        };
+        if self.is_folder && self.folder_open {
+            for child in all_tracks
+                .iter()
+                .filter(|t| t.parent_track.as_deref() == Some(self.name.as_str()))
+            {
+                height += child.visible_height(all_tracks);
+            }
+        }
+        height
     }
 
     pub fn has_folder_children(&self, all_tracks: &[Track]) -> bool {

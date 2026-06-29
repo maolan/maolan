@@ -14,6 +14,7 @@ pub struct AddTrackView {
     audio_outs: usize,
     midi_ins: usize,
     midi_outs: usize,
+    is_folder: bool,
     available_templates: Vec<String>,
     selected_template: Option<String>,
 }
@@ -44,30 +45,42 @@ impl AddTrackView {
         let count = self.count.max(1);
 
         (0..count)
-            .map(|index| {
+            .flat_map(|index| {
                 let name = if count == 1 {
                     base_name.to_string()
                 } else {
                     format!("{base_name} {}", index + 1)
                 };
-                if template_name == "empty" {
-                    Message::Request(Action::AddTrack {
+                let mut messages = Vec::with_capacity(2);
+                if self.is_folder {
+                    messages.push(Message::Request(Action::AddTrack {
                         name,
                         audio_ins: self.audio_ins,
                         midi_ins: self.midi_ins,
                         audio_outs: self.audio_outs,
                         midi_outs: self.midi_outs,
-                    })
+                        folder: true,
+                    }));
+                } else if template_name == "empty" {
+                    messages.push(Message::Request(Action::AddTrack {
+                        name,
+                        audio_ins: self.audio_ins,
+                        midi_ins: self.midi_ins,
+                        audio_outs: self.audio_outs,
+                        midi_outs: self.midi_outs,
+                        folder: false,
+                    }));
                 } else {
-                    Message::AddTrackFromTemplate {
+                    messages.push(Message::AddTrackFromTemplate {
                         name,
                         template: template_name.clone(),
                         audio_ins: self.audio_ins,
                         midi_ins: self.midi_ins,
                         audio_outs: self.audio_outs,
                         midi_outs: self.midi_outs,
-                    }
+                    });
                 }
+                messages
             })
             .collect()
     }
@@ -139,6 +152,12 @@ impl AddTrackView {
                         self.midi_outs = midi_outs;
                     }
                 }
+                AddTrack::IsFolder(is_folder) => {
+                    self.is_folder = *is_folder;
+                    if *is_folder {
+                        self.selected_template = Some("empty".to_string());
+                    }
+                }
                 AddTrack::Submit => {}
             }
         }
@@ -157,28 +176,51 @@ impl AddTrackView {
 
         let selected_display = self.selected_template.as_deref().unwrap_or("empty");
         let is_empty_template = selected_display == "empty";
+        let type_label = if self.is_folder { "Folder" } else { "Track" };
 
         let mut col = column![
             row![
-                text("Template:"),
+                text("Type:"),
                 pick_list(
-                    template_options,
-                    Some(selected_display.to_string()),
-                    |template| { Message::AddTrack(AddTrack::TemplateSelected(template)) }
+                    vec!["Track".to_string(), "Folder".to_string()],
+                    Some(type_label.to_string()),
+                    |selected| { Message::AddTrack(AddTrack::IsFolder(selected == "Folder")) }
                 )
                 .width(Length::Fixed(200.0)),
             ]
             .spacing(10),
+        ];
+
+        if !self.is_folder {
+            col = col.push(
+                row![
+                    text("Template:"),
+                    pick_list(
+                        template_options,
+                        Some(selected_display.to_string()),
+                        |template| { Message::AddTrack(AddTrack::TemplateSelected(template)) }
+                    )
+                    .width(Length::Fixed(200.0)),
+                ]
+                .spacing(10),
+            );
+        }
+
+        col = col.push(
             row![
                 text("Name:"),
-                text_input("Track name", &self.name)
-                    .id(Self::name_input_id())
-                    .on_input(|name: String| Message::AddTrack(AddTrack::Name(name)))
-                    .on_submit_maybe(create_message)
-                    .width(Length::Fixed(200.0)),
+                if self.is_folder {
+                    text_input("Folder name", &self.name)
+                } else {
+                    text_input("Track name", &self.name)
+                }
+                .id(Self::name_input_id())
+                .on_input(|name: String| Message::AddTrack(AddTrack::Name(name)))
+                .on_submit_maybe(create_message)
+                .width(Length::Fixed(200.0)),
             ]
             .spacing(10),
-        ];
+        );
 
         col = col.push(
             row![
@@ -247,7 +289,12 @@ impl AddTrackView {
             .spacing(10),
         );
 
-        container(column![text("Add Track"), col.align_x(Alignment::End).spacing(10)].spacing(10))
+        let title = if self.is_folder {
+            "Add Folder"
+        } else {
+            "Add Track"
+        };
+        container(column![text(title), col.align_x(Alignment::End).spacing(10)].spacing(10))
             .style(|_theme| container::Style {
                 border: Border {
                     color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),
@@ -271,6 +318,7 @@ impl Default for AddTrackView {
             audio_outs: 1,
             midi_ins: 0,
             midi_outs: 0,
+            is_folder: false,
             name: "".to_string(),
             available_templates: vec![],
             selected_template: Some("empty".to_string()),
@@ -431,6 +479,34 @@ mod tests {
 
         let messages = view.create_messages();
         assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn update_is_folder_sets_folder_mode() {
+        let mut view = AddTrackView::default();
+
+        view.update(&Message::AddTrack(AddTrack::IsFolder(true)));
+
+        assert!(view.is_folder);
+        assert_eq!(view.selected_template.as_deref(), Some("empty"));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn create_messages_returns_add_track_with_folder_flag_for_folders() {
+        let mut view = AddTrackView::default();
+        view.name = "Test Folder".to_string();
+        view.count = 2;
+        view.is_folder = true;
+
+        let messages = view.create_messages();
+        assert_eq!(messages.len(), 2);
+        for message in &messages {
+            assert!(matches!(
+                message,
+                Message::Request(Action::AddTrack { folder: true, .. })
+            ));
+        }
     }
 
     #[test]

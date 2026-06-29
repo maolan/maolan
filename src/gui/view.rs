@@ -597,7 +597,7 @@ impl Maolan {
                             .height(Length::Fill)
                             .into();
                     }
-                    if matches!(self.modal, Some(Show::AddTrack)) {
+                    if matches!(self.modal, Some(Show::AddTrack | Show::AddFolder)) {
                         view = row![container(view).width(Length::Fill), self.add_track.view()]
                             .width(Length::Fill)
                             .height(Length::Fill)

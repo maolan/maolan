@@ -39,7 +39,7 @@ Last updated: 2026-05-21
 - `Ctrl+Left click track`: Add track to the current selection
 - `Double click track`: Open the track plugin/routing graph
 - `Right click track`: Open track context menu
-  - Track actions such as automation lanes, rename, sends/returns, MIDI learn, freeze/flatten, template save, and grouping/VCA actions depending on track state
+  - Track actions such as automation lanes, rename, sends/returns, MIDI learn, freeze/flatten, and template save depending on track state
 - `Drag track` (grab track body): Reorder track
 - `Drag bottom track edge`: Resize track height
 

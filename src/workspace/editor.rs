@@ -4,7 +4,6 @@ use crate::{
         state_ids::METRONOME_TRACK_ID,
         state_track::TRACK_SUBTRACK_GAP,
         workspace::{AUDIO_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BASE, MIN_TICK_SPACING_PX},
-        workspace_editor::CHECKPOINTS,
     },
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State, StateData, Track},
@@ -72,6 +71,162 @@ fn widget_midi_clip_data(clip: &crate::state::MIDIClip) -> WidgetMIDIClipData {
             .map(widget_midi_clip_data)
             .collect(),
     }
+}
+
+struct EditorTrackNode<'a> {
+    track: &'a Track,
+    children: Vec<EditorTrackNode<'a>>,
+}
+
+fn build_editor_track_tree<'a>(all_tracks: &'a [Track]) -> Vec<EditorTrackNode<'a>> {
+    let visible: Vec<&'a Track> = all_tracks
+        .iter()
+        .filter(|t| t.name != METRONOME_TRACK_ID && !t.is_inside_closed_folder(all_tracks))
+        .collect();
+
+    let mut children_by_parent: std::collections::HashMap<String, Vec<&'a Track>> =
+        std::collections::HashMap::new();
+    for track in &visible {
+        if let Some(parent) = track.parent_track.as_deref() {
+            children_by_parent
+                .entry(parent.to_string())
+                .or_default()
+                .push(*track);
+        }
+    }
+
+    let mut roots = Vec::new();
+    for track in &visible {
+        if track.parent_track.is_none() {
+            roots.push(build_editor_track_subtree(track, &children_by_parent));
+        }
+    }
+    roots
+}
+
+fn build_editor_track_subtree<'a>(
+    track: &'a Track,
+    children_by_parent: &std::collections::HashMap<String, Vec<&'a Track>>,
+) -> EditorTrackNode<'a> {
+    let mut children = Vec::new();
+    if let Some(child_tracks) = children_by_parent.get(&track.name) {
+        for child in child_tracks {
+            children.push(build_editor_track_subtree(child, children_by_parent));
+        }
+    }
+    EditorTrackNode { track, children }
+}
+
+fn hash_track_node<H: Hasher>(node: &EditorTrackNode<'_>, hasher: &mut H) {
+    let track = node.track;
+    track.name.hash(hasher);
+    track.height.to_bits().hash(hasher);
+    track.armed.hash(hasher);
+    track.audio.ins.hash(hasher);
+    track.midi.ins.hash(hasher);
+    track.midi_lane_channels.hash(hasher);
+    std::mem::discriminant(&track.automation_mode).hash(hasher);
+
+    for lane in &track.automation_lanes {
+        lane.visible.hash(hasher);
+        std::mem::discriminant(&lane.target).hash(hasher);
+        lane.points.len().hash(hasher);
+        if let Some(first) = lane.points.first() {
+            first.sample.hash(hasher);
+            first.value.to_bits().hash(hasher);
+        }
+        if let Some(last) = lane.points.last() {
+            last.sample.hash(hasher);
+            last.value.to_bits().hash(hasher);
+        }
+    }
+    for clip in &track.audio.clips {
+        clip.name.hash(hasher);
+        clip.start.hash(hasher);
+        clip.length.hash(hasher);
+        clip.offset.hash(hasher);
+        clip.input_channel.hash(hasher);
+        clip.muted.hash(hasher);
+        clip.fade_enabled.hash(hasher);
+        clip.fade_in_samples.hash(hasher);
+        clip.fade_out_samples.hash(hasher);
+        clip.take_lane_override.hash(hasher);
+        clip.take_lane_pinned.hash(hasher);
+        clip.take_lane_locked.hash(hasher);
+        clip.peaks.len().hash(hasher);
+        for channel in clip.peaks.iter() {
+            channel.len().hash(hasher);
+            if channel.is_empty() {
+                continue;
+            }
+            for i in 0..crate::consts::workspace_editor::CHECKPOINTS {
+                let idx = (i * channel.len()) / crate::consts::workspace_editor::CHECKPOINTS;
+                let sample = channel[idx.min(channel.len() - 1)];
+                sample[0].to_bits().hash(hasher);
+                sample[1].to_bits().hash(hasher);
+            }
+        }
+    }
+    for clip in &track.midi.clips {
+        clip.name.hash(hasher);
+        clip.start.hash(hasher);
+        clip.length.hash(hasher);
+        clip.offset.hash(hasher);
+        clip.input_channel.hash(hasher);
+        clip.muted.hash(hasher);
+        clip.take_lane_override.hash(hasher);
+        clip.take_lane_pinned.hash(hasher);
+        clip.take_lane_locked.hash(hasher);
+    }
+
+    for child in &node.children {
+        hash_track_node(child, hasher);
+    }
+}
+
+struct TrackNodeViewArgs<'a> {
+    state: &'a StateData,
+    session_root: Option<&'a PathBuf>,
+    pixels_per_sample: f32,
+    samples_per_bar: f32,
+    snap_mode: SnapMode,
+    samples_per_beat: f64,
+    active_clip_drag: Option<&'a DraggedClip>,
+    active_target_track: Option<&'a str>,
+    active_target_valid: bool,
+    active_clip_snap_adjust_samples: f32,
+    active_clip_snap_targets: &'a [crate::state::ClipId],
+    recording_preview_bounds: Option<(usize, usize)>,
+    recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    midi_clip_previews: Option<&'a MidiClipPreviewMap>,
+}
+
+fn view_track_node(
+    node: &EditorTrackNode<'_>,
+    args: &TrackNodeViewArgs<'_>,
+) -> Element<'static, Message> {
+    let mut column = column![];
+    column = column.push(view_track_elements(TrackElementViewArgs {
+        state: args.state,
+        track: node.track,
+        session_root: args.session_root,
+        pixels_per_sample: args.pixels_per_sample,
+        samples_per_bar: args.samples_per_bar,
+        snap_mode: args.snap_mode,
+        samples_per_beat: args.samples_per_beat,
+        active_clip_drag: args.active_clip_drag,
+        active_target_track: args.active_target_track,
+        active_target_valid: args.active_target_valid,
+        active_clip_snap_adjust_samples: args.active_clip_snap_adjust_samples,
+        active_clip_snap_targets: args.active_clip_snap_targets,
+        recording_preview_bounds: args.recording_preview_bounds,
+        recording_preview_peaks: args.recording_preview_peaks,
+        midi_clip_previews: args.midi_clip_previews,
+    }));
+    for child in &node.children {
+        column = column.push(view_track_node(child, args));
+    }
+    column.into()
 }
 
 struct TrackElementViewArgs<'a> {
@@ -348,7 +503,11 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .on_press(Message::DeselectClips)
             .into(),
     ];
-    let height = track.height;
+    let height = if track.is_folder {
+        track.folder_content_height()
+    } else {
+        track.height
+    };
     let layout = track.lane_layout();
     let lane_height = layout.lane_height.max(12.0);
     let lane_clip_height = (lane_height - 6.0).max(12.0);
@@ -506,7 +665,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         }
     }
 
-    if !track.is_master {
+    if !track.is_master && !track.is_folder {
         for (index, clip) in track.audio.clips.iter().enumerate() {
             let clip_name = clip.name.clone();
             let clip_label = format!(
@@ -735,7 +894,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             }
         }
     }
-    if !track.is_master {
+    if !track.is_master && !track.is_folder {
         for (index, clip) in track.midi.clips.iter().enumerate() {
             let clip_name = clip.name.clone();
             let clip_label = format!(
@@ -1531,10 +1690,9 @@ impl Editor {
             menu.anchor.y.to_bits().hash(&mut hasher);
         }
 
-        for track in state
-            .tracks
+        let root_nodes = build_editor_track_tree(&state.tracks);
+        for root in root_nodes
             .iter()
-            .filter(|track| track.name != METRONOME_TRACK_ID)
             .skip(args.visible_track_window.start_index)
             .take(
                 args.visible_track_window
@@ -1542,66 +1700,7 @@ impl Editor {
                     .saturating_sub(args.visible_track_window.start_index),
             )
         {
-            track.name.hash(&mut hasher);
-            track.height.to_bits().hash(&mut hasher);
-            track.armed.hash(&mut hasher);
-            track.audio.ins.hash(&mut hasher);
-            track.midi.ins.hash(&mut hasher);
-            track.midi_lane_channels.hash(&mut hasher);
-            std::mem::discriminant(&track.automation_mode).hash(&mut hasher);
-
-            for lane in &track.automation_lanes {
-                lane.visible.hash(&mut hasher);
-                std::mem::discriminant(&lane.target).hash(&mut hasher);
-                lane.points.len().hash(&mut hasher);
-                if let Some(first) = lane.points.first() {
-                    first.sample.hash(&mut hasher);
-                    first.value.to_bits().hash(&mut hasher);
-                }
-                if let Some(last) = lane.points.last() {
-                    last.sample.hash(&mut hasher);
-                    last.value.to_bits().hash(&mut hasher);
-                }
-            }
-            for clip in &track.audio.clips {
-                clip.name.hash(&mut hasher);
-                clip.start.hash(&mut hasher);
-                clip.length.hash(&mut hasher);
-                clip.offset.hash(&mut hasher);
-                clip.input_channel.hash(&mut hasher);
-                clip.muted.hash(&mut hasher);
-                clip.fade_enabled.hash(&mut hasher);
-                clip.fade_in_samples.hash(&mut hasher);
-                clip.fade_out_samples.hash(&mut hasher);
-                clip.take_lane_override.hash(&mut hasher);
-                clip.take_lane_pinned.hash(&mut hasher);
-                clip.take_lane_locked.hash(&mut hasher);
-                clip.peaks.len().hash(&mut hasher);
-                for channel in clip.peaks.iter() {
-                    channel.len().hash(&mut hasher);
-                    if channel.is_empty() {
-                        continue;
-                    }
-                    for i in 0..CHECKPOINTS {
-                        let idx = (i * channel.len()) / CHECKPOINTS;
-                        let sample = channel[idx.min(channel.len() - 1)];
-                        sample[0].to_bits().hash(&mut hasher);
-                        sample[1].to_bits().hash(&mut hasher);
-                    }
-                }
-            }
-
-            for clip in &track.midi.clips {
-                clip.name.hash(&mut hasher);
-                clip.start.hash(&mut hasher);
-                clip.length.hash(&mut hasher);
-                clip.offset.hash(&mut hasher);
-                clip.input_channel.hash(&mut hasher);
-                clip.muted.hash(&mut hasher);
-                clip.take_lane_override.hash(&mut hasher);
-                clip.take_lane_pinned.hash(&mut hasher);
-                clip.take_lane_locked.hash(&mut hasher);
-            }
+            hash_track_node(root, &mut hasher);
         }
 
         if let Some(peaks_by_track) = args.recording_preview_peaks {
@@ -1683,10 +1782,9 @@ impl Editor {
                 result.push(Space::new().height(Length::Fixed(visible_track_window.top_padding)));
         }
         let state = state_handle.blocking_read();
-        for track in state
-            .tracks
+        let root_nodes = build_editor_track_tree(&state.tracks);
+        for root in root_nodes
             .iter()
-            .filter(|track| track.name != METRONOME_TRACK_ID)
             .skip(visible_track_window.start_index)
             .take(
                 visible_track_window
@@ -1694,9 +1792,8 @@ impl Editor {
                     .saturating_sub(visible_track_window.start_index),
             )
         {
-            result = result.push(view_track_elements(TrackElementViewArgs {
+            let track_node_args = TrackNodeViewArgs {
                 state: &state,
-                track,
                 session_root: session_root_ref,
                 pixels_per_sample,
                 samples_per_bar,
@@ -1710,7 +1807,8 @@ impl Editor {
                 recording_preview_bounds,
                 recording_preview_peaks: recording_preview_peaks_ref,
                 midi_clip_previews: midi_clip_previews_ref,
-            }));
+            };
+            result = result.push(view_track_node(root, &track_node_args));
         }
         if visible_track_window.bottom_padding > 0.0 {
             result = result

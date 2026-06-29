@@ -148,7 +148,7 @@ fn automation_lane_header_control(
         .into()
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct TrackViewData {
     name: String,
     height: f32,
@@ -189,6 +189,8 @@ struct TrackViewData {
     is_folder: bool,
     folder_open: bool,
     folder_depth: usize,
+    parent_track: Option<String>,
+    visible_height: f32,
     hidden: bool,
     effective_muted: bool,
     effective_soloed: bool,
@@ -441,52 +443,24 @@ pub(super) fn track_context_menu_overlay(
         }
     }
 
-    items.push(menu::menu_item(
-        if track.is_folder {
-            "Make Regular Track"
-        } else {
-            "Make Folder Track"
-        },
-        Message::TrackSetFolder {
-            track_name: track_name.clone(),
-            is_folder: !track.is_folder,
-        },
-    ));
+    if track.is_folder {
+        items.push(menu::menu_item(
+            "Folder Connections",
+            Message::OpenFolderConnections(track_name.clone()),
+        ));
+    }
 
-    if !track.is_folder && !track.is_master {
-        let mut available_folders: Vec<String> = state
-            .tracks
-            .iter()
-            .filter(|t| {
-                t.is_folder
-                    && t.name != track_name
-                    && t.parent_track.as_deref() != Some(&track_name)
-            })
-            .map(|t| t.name.clone())
-            .collect();
-
-        if let Some(ref current_parent) = track.parent_track {
-            items.push(menu::menu_item(
-                format!("Remove from Folder ({})", current_parent),
-                Message::TrackSetParent {
-                    track_name: track_name.clone(),
-                    parent_name: None,
-                },
-            ));
-        }
-
-        if !available_folders.is_empty() {
-            available_folders.sort();
-            for folder_name in available_folders {
-                items.push(menu::menu_item(
-                    format!("Move to Folder: {}", folder_name),
-                    Message::TrackSetParent {
-                        track_name: track_name.clone(),
-                        parent_name: Some(folder_name),
-                    },
-                ));
-            }
-        }
+    if !track.is_folder
+        && !track.is_master
+        && let Some(ref current_parent) = track.parent_track
+    {
+        items.push(menu::menu_item(
+            format!("Remove from Folder ({})", current_parent),
+            Message::TrackSetParent {
+                track_name: track_name.clone(),
+                parent_name: None,
+            },
+        ));
     }
 
     if track.midi_learn_volume.is_some() {
@@ -684,6 +658,12 @@ pub(super) fn track_context_menu_overlay(
     Some((Point::new(menu_state.anchor.x.max(0.0), y), combined))
 }
 
+struct TrackNode {
+    index: usize,
+    data: TrackViewData,
+    children: Vec<TrackNode>,
+}
+
 impl Tracks {
     pub fn new(state: State) -> Self {
         Self { state }
@@ -803,6 +783,10 @@ impl Tracks {
         track.is_folder.hash(&mut hasher);
         track.folder_open.hash(&mut hasher);
         track.folder_depth.hash(&mut hasher);
+        if let Some(parent) = &track.parent_track {
+            parent.hash(&mut hasher);
+        }
+        track.visible_height.to_bits().hash(&mut hasher);
         track.hidden.hash(&mut hasher);
         track.effective_muted.hash(&mut hasher);
         track.effective_soloed.hash(&mut hasher);
@@ -838,9 +822,11 @@ impl Tracks {
         track_width_px: f32,
         index: usize,
         selected_modulator: Option<&crate::state::Modulator>,
+        children: Vec<Element<'static, Message>>,
     ) -> Element<'static, Message> {
         let selected = track.selected;
         let height = track.height;
+        let visible_height = track.visible_height;
         let (outer_body_bg, header_bg, _inner_body_bg) = if let Some(color) = track.color {
             let with_alpha = |c: Color, a: f32| Color::from_rgba(c.r, c.g, c.b, a);
             if selected {
@@ -926,13 +912,11 @@ impl Tracks {
             Space::new().width(Length::Fixed(0.0)).into()
         };
 
-        let indent = track.folder_depth as f32 * 12.0;
+        let indent = 0.0;
 
-        let header = mouse_area(
+        let header_body = mouse_area(
             container(
                 row![
-                    Space::new().width(Length::Fixed(indent)),
-                    folder_toggle,
                     text(Self::trim_with_ellipsis(
                         &track.name,
                         max_name_chars as usize
@@ -944,23 +928,36 @@ impl Tracks {
                 .align_y(Alignment::Center)
                 .spacing(4),
             )
-            .height(Length::Fixed(TRACK_FOLDER_HEADER_HEIGHT))
+            .width(Length::Fill)
+            .height(Length::Fill)
             .padding([2, 6])
             .style(move |_theme| container::Style {
-                background: Some(Background::Color(header_bg)),
-                border: Border {
-                    color: Color::from_rgba(0.78, 0.87, 0.99, if selected { 0.5 } else { 0.16 }),
-                    width: 1.0,
-                    radius: 7.0.into(),
-                },
+                background: None,
                 text_color: Some(Color::from_rgb(0.92, 0.95, 1.0)),
                 ..container::Style::default()
             }),
         )
         .on_press(Message::SelectTrack(track.name.clone()))
-        .on_double_click(Message::OpenTrackPlugins(track.name.clone()))
         .on_enter(Message::ShortcutsHint(Some("Select track".to_string())))
         .on_exit(Message::ShortcutsHint(None));
+
+        let header = container(
+            row![folder_toggle, header_body]
+                .align_y(Alignment::Center)
+                .spacing(4),
+        )
+        .height(Length::Fixed(TRACK_FOLDER_HEADER_HEIGHT))
+        .padding([0, 6])
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(header_bg)),
+            border: Border {
+                color: Color::from_rgba(0.78, 0.87, 0.99, if selected { 0.5 } else { 0.16 }),
+                width: 1.0,
+                radius: 7.0.into(),
+            },
+            text_color: Some(Color::from_rgb(0.92, 0.95, 1.0)),
+            ..container::Style::default()
+        });
 
         let track_name = track.name.clone();
         let mut controls: Vec<Element<'static, Message>> = vec![];
@@ -1088,7 +1085,7 @@ impl Tracks {
         let body_container_height = 22.0 + 6.0;
         let buttons_bottom = TRACK_FOLDER_HEADER_HEIGHT + body_container_height;
         let resize_top = height - resize_handle_height;
-        let show_buttons = resize_top >= buttons_bottom;
+        let show_buttons = track.is_folder || resize_top >= buttons_bottom;
 
         let is_resize_hovered = track.resize_hovered;
 
@@ -1293,13 +1290,40 @@ impl Tracks {
             Space::new().width(Length::Fixed(0.0)).into()
         };
 
+        let (track_container_element, track_fill_element): (
+            Element<'static, Message>,
+            Element<'static, Message>,
+        ) = if track.is_folder {
+            (
+                container(Column::with_children(children).spacing(TRACK_SUBTRACK_GAP))
+                    .width(Length::Fill)
+                    .padding(iced::Padding {
+                        left: 12.0,
+                        ..Default::default()
+                    })
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.25))),
+                        ..container::Style::default()
+                    })
+                    .into(),
+                Space::new().height(Length::Fill).into(),
+            )
+        } else {
+            (
+                Space::new().height(Length::Fixed(0.0)).into(),
+                Space::new().height(Length::Fill).into(),
+            )
+        };
+
         let track_content: Element<'static, Message> = column![
             header,
             body_element,
-            Space::new().height(Length::Fill),
+            track_container_element,
+            track_fill_element,
             lane_rows.spacing(TRACK_SUBTRACK_GAP),
         ]
         .spacing(0)
+        .height(Length::Fill)
         .into();
 
         let resize_handle = mouse_area(
@@ -1332,23 +1356,19 @@ impl Tracks {
             .push(track_content)
             .push(pin(resize_handle).position(Point::new(
                 0.0,
-                (height - 8.0 - resize_handle_height).max(0.0),
+                (visible_height - 8.0 - resize_handle_height).max(0.0),
             )))
             .height(Length::Fill);
 
-        let track_body_content = container(row![
-            Space::new().width(Length::Fixed(indent)),
-            track_ui.width(Length::Fill),
-            setup_panel
-        ])
-        .id(track.name.clone())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding([0, 6])
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(outer_body_bg)),
-            ..container::Style::default()
-        });
+        let track_body_content = container(row![track_ui.width(Length::Fill), setup_panel])
+            .id(track.name.clone())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding([0, 6])
+            .style(move |_theme| container::Style {
+                background: Some(Background::Color(outer_body_bg)),
+                ..container::Style::default()
+            });
 
         let track_body_border = container(Space::new())
             .width(Length::Fill)
@@ -1356,18 +1376,24 @@ impl Tracks {
             .style(move |_theme| container::Style {
                 background: None,
                 border: Border {
-                    color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
+                    color: Color::from_rgb(0.0, 0.0, 0.0),
                     width: 1.0,
                     radius: 8.0.into(),
                 },
                 ..container::Style::default()
             });
 
-        let track_body = Stack::new()
-            .push(track_body_border)
-            .push(track_body_content)
-            .width(Length::Fill)
-            .height(Length::Fixed(height));
+        let track_body: Element<'static, Message> = row![
+            Space::new().width(Length::Fixed(indent)),
+            Stack::new()
+                .push(track_body_border)
+                .push(track_body_content)
+                .width(Length::Fill)
+                .height(Length::Fixed(visible_height))
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(visible_height))
+        .into();
 
         let track_with_drop = droppable(track_body)
             .on_drag(move |position, _| Message::TrackDrag { index, position })
@@ -1385,12 +1411,99 @@ impl Tracks {
             .into()
     }
 
+    fn render_node(
+        node: &TrackNode,
+        track_width_px: f32,
+        selected_modulator: Option<&crate::state::Modulator>,
+        force_direct: bool,
+    ) -> Element<'static, Message> {
+        let child_elements: Vec<Element<'static, Message>> = node
+            .children
+            .iter()
+            .map(|child| Self::render_node(child, track_width_px, selected_modulator, true))
+            .collect();
+
+        if node.children.is_empty() && !force_direct {
+            let hash = Self::track_row_render_hash(
+                &node.data,
+                track_width_px,
+                node.index,
+                selected_modulator,
+            );
+            let track = node.data.clone();
+            let index = node.index;
+            let selected_modulator_arc = Arc::new(selected_modulator.cloned());
+            lazy(hash, move |_| {
+                Self::render_track_row(
+                    track.clone(),
+                    track_width_px,
+                    index,
+                    selected_modulator_arc.as_ref().as_ref(),
+                    Vec::new(),
+                )
+            })
+            .into()
+        } else {
+            Self::render_track_row(
+                node.data.clone(),
+                track_width_px,
+                node.index,
+                selected_modulator,
+                child_elements,
+            )
+        }
+    }
+
+    fn build_track_tree(entries: &[(usize, TrackViewData)]) -> Vec<TrackNode> {
+        let mut children_by_parent: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (i, (_, data)) in entries.iter().enumerate() {
+            if let Some(parent) = data.parent_track.as_deref() {
+                children_by_parent
+                    .entry(parent.to_string())
+                    .or_default()
+                    .push(i);
+            }
+        }
+
+        let mut roots = Vec::new();
+        for (i, (_, data)) in entries.iter().enumerate() {
+            if data.parent_track.is_none() {
+                roots.push(Self::build_subtree(entries, i, &children_by_parent));
+            }
+        }
+        roots
+    }
+
+    fn build_subtree(
+        entries: &[(usize, TrackViewData)],
+        index: usize,
+        children_by_parent: &std::collections::HashMap<String, Vec<usize>>,
+    ) -> TrackNode {
+        let (orig_index, data) = entries[index].clone();
+        let mut children = Vec::new();
+        if let Some(child_indices) = children_by_parent.get(&data.name) {
+            for &child_index in child_indices {
+                children.push(Self::build_subtree(
+                    entries,
+                    child_index,
+                    children_by_parent,
+                ));
+            }
+        }
+        TrackNode {
+            index: orig_index,
+            data,
+            children,
+        }
+    }
+
     pub fn view(
         &self,
         visible_window: VisibleTrackWindow,
         selected_modulator: Option<&crate::state::Modulator>,
     ) -> Element<'_, Message> {
-        let (tracks, width) = {
+        let (entries, width) = {
             let state = self.state.blocking_read();
             let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
             let soloed_track_names: std::collections::HashSet<String> = state
@@ -1428,13 +1541,13 @@ impl Tracks {
                     }
                 }
             }
-            let tracks = state
+            let entries = state
                 .tracks
                 .iter()
-                .filter(|track| track.name != METRONOME_TRACK_ID)
                 .enumerate()
-                .filter(|(index, _)| {
-                    *index >= visible_window.start_index && *index < visible_window.end_index
+                .filter(|(_, track)| {
+                    track.name != METRONOME_TRACK_ID
+                        && !track.is_inside_closed_folder(&state.tracks)
                 })
                 .map(|(index, track)| {
                     (
@@ -1487,57 +1600,126 @@ impl Tracks {
                             is_folder: track.is_folder,
                             folder_open: track.folder_open,
                             folder_depth: track.folder_depth(&state.tracks),
-                            hidden: track.is_inside_closed_folder(&state.tracks),
+                            parent_track: track.parent_track.clone(),
+                            visible_height: track.visible_height(&state.tracks),
+                            hidden: false,
                             effective_muted: track.effective_muted(&state.tracks),
                             effective_soloed: track.effective_soloed(&state.tracks),
                         },
                     )
                 })
                 .collect::<Vec<_>>();
-            (tracks, state.tracks_width)
+            (entries, state.tracks_width)
         };
         let track_width_px = match width {
             Length::Fixed(v) => v,
             _ => 200.0,
         };
-        let track_heights: Vec<f32> = tracks.iter().map(|(_, t)| t.height).collect();
-        let total_height = (visible_window.top_padding
-            + track_heights.iter().sum::<f32>()
-            + visible_window.bottom_padding)
-            .max(1.0);
-        let selected_modulator_arc = Arc::new(selected_modulator.cloned());
-        let children: Vec<Element<'_, Message>> = tracks
-            .into_iter()
-            .filter(|(_, track)| !track.hidden)
-            .map(|(index, track)| {
-                let hash =
-                    Self::track_row_render_hash(&track, track_width_px, index, selected_modulator);
-                let selected_modulator_arc = selected_modulator_arc.clone();
-                lazy(hash, move |_| {
-                    Self::render_track_row(
-                        track.clone(),
-                        track_width_px,
-                        index,
-                        selected_modulator_arc.as_ref().as_ref(),
-                    )
-                })
-                .into()
-            })
+
+        let roots = Self::build_track_tree(&entries);
+
+        let root_heights: Vec<f32> = roots.iter().map(|r| r.data.visible_height).collect();
+        let start = visible_window.start_index.min(roots.len());
+        let end = visible_window.end_index.min(roots.len());
+        let top_padding = root_heights[..start].iter().sum::<f32>();
+        let bottom_padding = root_heights[end..].iter().sum::<f32>();
+        let visible_height = root_heights[start..end].iter().sum::<f32>();
+        let total_height = (top_padding + visible_height + bottom_padding).max(1.0);
+
+        let children_elements: Vec<Element<'_, Message>> = roots[start..end]
+            .iter()
+            .map(|node| Self::render_node(node, track_width_px, selected_modulator, false))
             .collect();
+
         let mut result = column![];
-        if visible_window.top_padding > 0.0 {
-            result = result.push(Space::new().height(Length::Fixed(visible_window.top_padding)));
+        if top_padding > 0.0 {
+            result = result.push(Space::new().height(Length::Fixed(top_padding)));
         }
-        for child in children {
+        for child in children_elements {
             result = result.push(child);
         }
-        if visible_window.bottom_padding > 0.0 {
-            result = result.push(Space::new().height(Length::Fixed(visible_window.bottom_padding)));
+        if bottom_padding > 0.0 {
+            result = result.push(Space::new().height(Length::Fixed(bottom_padding)));
         }
         container(result.width(width))
             .style(|_theme| crate::style::app_background())
             .width(width)
             .height(Length::Fixed(total_height))
             .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_track_tree_groups_folder_children() {
+        let entries: Vec<(usize, TrackViewData)> = vec![
+            (
+                0,
+                TrackViewData {
+                    name: "sdfv".to_string(),
+                    folder_depth: 0,
+                    is_folder: false,
+                    ..TrackViewData::default()
+                },
+            ),
+            (
+                1,
+                TrackViewData {
+                    name: "folder".to_string(),
+                    folder_depth: 0,
+                    is_folder: true,
+                    ..TrackViewData::default()
+                },
+            ),
+            (
+                2,
+                TrackViewData {
+                    name: "child".to_string(),
+                    folder_depth: 1,
+                    parent_track: Some("folder".to_string()),
+                    is_folder: false,
+                    ..TrackViewData::default()
+                },
+            ),
+        ];
+        let roots = Tracks::build_track_tree(&entries);
+        assert_eq!(roots.len(), 2);
+        assert!(roots[0].children.is_empty());
+        assert_eq!(roots[1].data.name, "folder");
+        assert_eq!(roots[1].children.len(), 1);
+        assert_eq!(roots[1].children[0].data.name, "child");
+    }
+
+    #[test]
+    fn build_track_tree_handles_child_before_parent() {
+        let entries: Vec<(usize, TrackViewData)> = vec![
+            (
+                0,
+                TrackViewData {
+                    name: "child".to_string(),
+                    folder_depth: 1,
+                    parent_track: Some("folder".to_string()),
+                    is_folder: false,
+                    ..TrackViewData::default()
+                },
+            ),
+            (
+                1,
+                TrackViewData {
+                    name: "folder".to_string(),
+                    folder_depth: 0,
+                    is_folder: true,
+                    ..TrackViewData::default()
+                },
+            ),
+        ];
+        let roots = Tracks::build_track_tree(&entries);
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].data.name, "folder");
+        assert_eq!(roots[0].children.len(), 1);
+        assert_eq!(roots[0].children[0].data.name, "child");
     }
 }

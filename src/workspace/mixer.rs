@@ -754,7 +754,11 @@ impl Mixer {
                 Self::strip_controls(track, solo_upstream),
             ))
             .on_press(Message::SelectTrackFromMixer(track.name.clone()))
-            .on_double_click(Message::OpenTrackPlugins(track.name.clone()))
+            .on_double_click(if track.is_folder {
+                Message::OpenFolderConnections(track.name.clone())
+            } else {
+                Message::OpenTrackPlugins(track.name.clone())
+            })
             .into();
 
             strips = strips.push(strip);

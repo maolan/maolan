@@ -65,6 +65,7 @@ impl Maolan {
             ),
             Show::AddTrack => {
                 self.modal = Some(Show::AddTrack);
+                self.add_track = crate::add_track::AddTrackView::default();
                 self.add_track.set_available_templates(Vec::new());
                 Task::batch(vec![
                     Task::perform(
@@ -73,6 +74,16 @@ impl Maolan {
                     ),
                     iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
                 ])
+            }
+            Show::AddFolder => {
+                self.modal = Some(Show::AddFolder);
+                self.add_track = crate::add_track::AddTrackView::default();
+                self.add_track
+                    .update(&Message::AddTrack(crate::message::AddTrack::IsFolder(true)));
+                self.add_track.set_available_templates(Vec::new());
+                Task::batch(vec![iced::widget::operation::focus(
+                    crate::add_track::AddTrackView::name_input_id(),
+                )])
             }
             Show::TrackPluginList => {
                 self.modal = Some(Show::TrackPluginList);
