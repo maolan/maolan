@@ -59,25 +59,49 @@ impl Maolan {
                     .push((name.clone(), template.clone()));
                 task
             }
+            Message::AddFolderFromTemplate {
+                ref name,
+                ref template,
+            } => {
+                self.modal = None;
+                self.apply_folder_template(name.clone(), template.clone())
+            }
             Message::ApplyTemplate(crate::message::ApplyTemplate::Submit) => {
-                let (track_name, template) = {
+                let (track_name, template, is_folder) = {
                     let state = self.state.blocking_read();
                     let Some(dialog) = state.apply_template_dialog.as_ref() else {
                         return Task::none();
                     };
-                    (dialog.track_name.clone(), dialog.selected_template.clone())
+                    let is_folder = state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == dialog.track_name)
+                        .is_some_and(|t| t.is_folder);
+                    (
+                        dialog.track_name.clone(),
+                        dialog.selected_template.clone(),
+                        is_folder,
+                    )
                 };
                 let Some(template) = template else {
                     return Task::done(Message::Response(Err("No template selected".to_string())));
                 };
                 self.modal = None;
                 self.state.blocking_write().apply_template_dialog = None;
-                self.apply_track_template(track_name, template)
+                if is_folder {
+                    self.apply_folder_template(track_name, template)
+                } else {
+                    self.apply_track_template(track_name, template)
+                }
             }
             Message::ApplyTrackTemplate {
                 ref track_name,
                 ref template,
             } => self.apply_track_template(track_name.clone(), template.clone()),
+            Message::ApplyFolderTemplate {
+                ref track_name,
+                ref template,
+            } => self.apply_folder_template(track_name.clone(), template.clone()),
             Message::NewFromTemplate(ref template_name) => {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 let template_path = format!(

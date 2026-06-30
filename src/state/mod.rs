@@ -662,12 +662,28 @@ pub struct ApplyTemplateDialog {
     pub track_name: String,
     pub selected_template: Option<String>,
     pub available_templates: Vec<String>,
+    pub available_folder_templates: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TrackTemplateSaveDialog {
     pub track_name: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingFolderTemplateMember {
+    pub new_name: String,
+    pub track_json: serde_json::Value,
+    pub parent_new_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingFolderTemplateLoad {
+    pub target_name: String,
+    pub template_name: String,
+    pub remaining: std::collections::HashSet<String>,
+    pub members: Vec<PendingFolderTemplateMember>,
 }
 
 #[derive(Debug, Clone)]
@@ -891,6 +907,7 @@ pub struct StateData {
     pub template_save_dialog: Option<TemplateSaveDialog>,
     pub apply_template_dialog: Option<ApplyTemplateDialog>,
     pub pending_track_template_loads: Vec<(String, String)>,
+    pub pending_folder_template_loads: Vec<PendingFolderTemplateLoad>,
     pub piano: Option<PianoData>,
     pub pitch_correction: Option<PitchCorrectionData>,
     pub pitch_correction_selected_points: HashSet<usize>,
@@ -1075,6 +1092,7 @@ impl Default for StateData {
             template_save_dialog: None,
             apply_template_dialog: None,
             pending_track_template_loads: Vec::new(),
+            pending_folder_template_loads: Vec::new(),
             piano: None,
             pitch_correction: None,
             pitch_correction_selected_points: HashSet::new(),

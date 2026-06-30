@@ -99,10 +99,20 @@ Each track template stores `track.json` plus a `plugins/` directory. Track templ
 - that track's plugin graph and plugin state
 - connections involving that track
 
-Track templates intentionally do not keep:
+Folder track templates are stored in the same location. A folder template's `track.json` also contains a `children` array with the saved subtree (each child has the same `track`/`graph`/`children` shape). Folder templates keep:
+
+- the folder track's settings
+- the folder's plugin graph and plugin state
+- child-to-folder-plugin connectable connections
+- disabled child-to-folder-output feeds
+- internal connections between folder members
+- the full child track subtree, recursively
+
+Track and folder templates intentionally do not keep:
 
 - audio clips
 - MIDI clips
+- connections to tracks outside the saved subtree
 
 ## Autosave and Recovery
 

@@ -67,10 +67,11 @@ impl Maolan {
                 self.modal = Some(Show::AddTrack);
                 self.add_track = crate::add_track::AddTrackView::default();
                 self.add_track.set_available_templates(Vec::new());
+                self.add_track.set_available_folder_templates(Vec::new());
                 Task::batch(vec![
                     Task::perform(
-                        async { crate::gui::scan_track_templates() },
-                        Message::TrackTemplatesLoaded,
+                        async { crate::gui::scan_track_and_folder_templates() },
+                        |(tracks, folders)| Message::TrackTemplatesLoaded(tracks, folders),
                     ),
                     iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
                 ])
@@ -81,9 +82,14 @@ impl Maolan {
                 self.add_track
                     .update(&Message::AddTrack(crate::message::AddTrack::IsFolder(true)));
                 self.add_track.set_available_templates(Vec::new());
-                Task::batch(vec![iced::widget::operation::focus(
-                    crate::add_track::AddTrackView::name_input_id(),
-                )])
+                self.add_track.set_available_folder_templates(Vec::new());
+                Task::batch(vec![
+                    Task::perform(
+                        async { crate::gui::scan_track_and_folder_templates() },
+                        |(tracks, folders)| Message::TrackTemplatesLoaded(tracks, folders),
+                    ),
+                    iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
+                ])
             }
             Show::TrackPluginList => {
                 self.modal = Some(Show::TrackPluginList);
@@ -187,10 +193,11 @@ impl Maolan {
                         track_name: track_name.clone(),
                         selected_template: None,
                         available_templates: Vec::new(),
+                        available_folder_templates: Vec::new(),
                     });
                 Task::perform(
-                    async { crate::gui::scan_track_templates() },
-                    Message::TrackTemplatesLoaded,
+                    async { crate::gui::scan_track_and_folder_templates() },
+                    |(tracks, folders)| Message::TrackTemplatesLoaded(tracks, folders),
                 )
             }
         }

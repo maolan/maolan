@@ -700,6 +700,39 @@ fn scan_track_templates() -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn is_track_template_folder(template_name: &str) -> bool {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let path = format!(
+        "{}/.config/maolan/track_templates/{}/track.json",
+        home, template_name
+    );
+    let Ok(file) = std::fs::File::open(&path) else {
+        return false;
+    };
+    let reader = std::io::BufReader::new(file);
+    let Ok(json): Result<serde_json::Value, _> = serde_json::from_reader(reader) else {
+        return false;
+    };
+    json.get("track")
+        .and_then(|t| t.get("is_folder"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+pub(crate) fn scan_track_and_folder_templates() -> (Vec<String>, Vec<String>) {
+    let all = scan_track_templates();
+    let mut track_templates = Vec::new();
+    let mut folder_templates = Vec::new();
+    for name in all {
+        if is_track_template_folder(&name) {
+            folder_templates.push(name);
+        } else {
+            track_templates.push(name);
+        }
+    }
+    (track_templates, folder_templates)
+}
+
 impl Default for Maolan {
     fn default() -> Self {
         let prefs = load_preferences();
@@ -9149,6 +9182,99 @@ mod tests {
         }
 
         assert_eq!(templates, vec!["Valid".to_string()]);
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn scan_track_and_folder_templates_splits_by_is_folder() {
+        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home =
+            std::env::temp_dir().join(format!("maolan_scan_track_and_folder_templates_{unique}"));
+        let track_templates = temp_home.join(".config/maolan/track_templates");
+        let folder = track_templates.join("Drums");
+        let track = track_templates.join("Synth");
+        fs::create_dir_all(&folder).unwrap();
+        fs::create_dir_all(&track).unwrap();
+        fs::write(
+            folder.join("track.json"),
+            r#"{"track":{"name":"Drums","is_folder":true,"audio":{"ins":2,"outs":2},"midi":{"ins":0,"outs":0}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            track.join("track.json"),
+            r#"{"track":{"name":"Synth","is_folder":false,"audio":{"ins":2,"outs":2},"midi":{"ins":0,"outs":0}}}"#,
+        )
+        .unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let (tracks, folders) = scan_track_and_folder_templates();
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(tracks, vec!["Synth".to_string()]);
+        assert_eq!(folders, vec!["Drums".to_string()]);
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn is_track_template_folder_reads_is_folder_flag() {
+        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home =
+            std::env::temp_dir().join(format!("maolan_is_track_template_folder_{unique}"));
+        let track_templates = temp_home.join(".config/maolan/track_templates");
+        let folder = track_templates.join("Drums");
+        let track = track_templates.join("Synth");
+        fs::create_dir_all(&folder).unwrap();
+        fs::create_dir_all(&track).unwrap();
+        fs::write(
+            folder.join("track.json"),
+            r#"{"track":{"name":"Drums","is_folder":true}}"#,
+        )
+        .unwrap();
+        fs::write(
+            track.join("track.json"),
+            r#"{"track":{"name":"Synth","is_folder":false}}"#,
+        )
+        .unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        assert!(is_track_template_folder("Drums"));
+        assert!(!is_track_template_folder("Synth"));
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
         let _ = fs::remove_dir_all(&temp_home);
     }
 

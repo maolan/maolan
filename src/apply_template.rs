@@ -55,16 +55,41 @@ impl ApplyTemplateView {
             return container("").into();
         };
 
-        let target_label = format!("Track: {}", dialog.track_name);
+        let target_track = state.tracks.iter().find(|t| t.name == dialog.track_name);
+        let target_is_folder = target_track.is_some_and(|t| t.is_folder);
+        let target_label = if target_is_folder {
+            format!("Folder: {}", dialog.track_name)
+        } else {
+            format!("Track: {}", dialog.track_name)
+        };
 
         let selected_display = dialog.selected_template.as_deref().unwrap_or("");
 
-        let mut info_text = String::new();
-        let mut can_apply = !selected_display.is_empty();
+        let template_options: Vec<String> = if target_is_folder {
+            dialog.available_folder_templates.clone()
+        } else {
+            dialog.available_templates.clone()
+        };
 
-        if let Some(track) = state.tracks.iter().find(|t| t.name == dialog.track_name) {
+        let effective_selected = dialog
+            .selected_template
+            .as_deref()
+            .filter(|t| {
+                if target_is_folder {
+                    crate::gui::is_track_template_folder(t)
+                } else {
+                    !crate::gui::is_track_template_folder(t)
+                }
+            })
+            .unwrap_or("")
+            .to_string();
+
+        let mut info_text = String::new();
+        let mut can_apply = !effective_selected.is_empty();
+
+        if let Some(track) = target_track {
             if let Some((t_audio_ins, t_audio_outs, t_midi_ins, t_midi_outs)) =
-                Self::load_track_template_config(selected_display)
+                Self::load_track_template_config(&effective_selected)
             {
                 let existing = (
                     track.primary_audio_ins(),
@@ -76,11 +101,12 @@ impl ApplyTemplateView {
                 let compatible = existing == template;
                 can_apply = compatible;
                 info_text = format!(
-                    "Template: audio {} in / {} out, midi {} in / {} out\nTrack: audio {} in / {} out, midi {} in / {} out\n{}",
+                    "Template: audio {} in / {} out, midi {} in / {} out\n{}: audio {} in / {} out, midi {} in / {} out\n{}",
                     template.0,
                     template.1,
                     template.2,
                     template.3,
+                    if target_is_folder { "Folder" } else { "Track" },
                     existing.0,
                     existing.1,
                     existing.2,
@@ -91,12 +117,17 @@ impl ApplyTemplateView {
                         "Incompatible input/output counts"
                     }
                 );
-            } else if !selected_display.is_empty() {
+            } else if !effective_selected.is_empty() {
                 info_text = "Unable to read track template".to_string();
                 can_apply = false;
             }
         } else {
             info_text = "Target track not found".to_string();
+            can_apply = false;
+        }
+
+        if !selected_display.is_empty() && selected_display != effective_selected {
+            info_text = "Selected template is not compatible with this track type".to_string();
             can_apply = false;
         }
 
@@ -106,10 +137,13 @@ impl ApplyTemplateView {
             button("Apply")
         };
 
-        let template_options = dialog.available_templates.clone();
         let pick = pick_list(
             template_options,
-            dialog.selected_template.clone(),
+            if effective_selected.is_empty() {
+                None
+            } else {
+                Some(effective_selected.clone())
+            },
             |template| Message::ApplyTemplate(ApplyTemplate::TemplateSelected(template)),
         )
         .placeholder("Select a template...")
@@ -169,6 +203,7 @@ mod tests {
             track_name: "Kick".to_string(),
             selected_template: None,
             available_templates: vec![],
+            available_folder_templates: vec![],
         });
         let mut view = ApplyTemplateView::new(state.clone());
 

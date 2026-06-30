@@ -16,6 +16,7 @@ pub struct AddTrackView {
     midi_outs: usize,
     is_folder: bool,
     available_templates: Vec<String>,
+    available_folder_templates: Vec<String>,
     selected_template: Option<String>,
 }
 
@@ -52,7 +53,7 @@ impl AddTrackView {
                     format!("{base_name} {}", index + 1)
                 };
                 let mut messages = Vec::with_capacity(2);
-                if self.is_folder {
+                if self.is_folder && template_name == "empty" {
                     messages.push(Message::Request(Action::AddTrack {
                         name,
                         audio_ins: self.audio_ins,
@@ -61,6 +62,11 @@ impl AddTrackView {
                         midi_outs: self.midi_outs,
                         folder: true,
                     }));
+                } else if self.is_folder {
+                    messages.push(Message::AddFolderFromTemplate {
+                        name,
+                        template: template_name.clone(),
+                    });
                 } else if template_name == "empty" {
                     messages.push(Message::Request(Action::AddTrack {
                         name,
@@ -87,6 +93,10 @@ impl AddTrackView {
 
     pub fn set_available_templates(&mut self, templates: Vec<String>) {
         self.available_templates = templates;
+    }
+
+    pub fn set_available_folder_templates(&mut self, templates: Vec<String>) {
+        self.available_folder_templates = templates;
     }
 
     fn load_template_config(template_name: &str) -> Option<(usize, usize, usize, usize)> {
@@ -154,7 +164,14 @@ impl AddTrackView {
                 }
                 AddTrack::IsFolder(is_folder) => {
                     self.is_folder = *is_folder;
+                    let current_template = self.selected_template.as_deref().unwrap_or("empty");
+                    let current_is_folder_template =
+                        crate::gui::is_track_template_folder(current_template);
                     if *is_folder {
+                        if current_template == "empty" || !current_is_folder_template {
+                            self.selected_template = Some("empty".to_string());
+                        }
+                    } else if current_is_folder_template {
                         self.selected_template = Some("empty".to_string());
                     }
                 }
@@ -171,10 +188,26 @@ impl AddTrackView {
             button("Create")
         };
 
-        let mut template_options = vec!["empty".to_string()];
-        template_options.extend(self.available_templates.clone());
+        let (template_options, selected_display) = if self.is_folder {
+            let mut options = vec!["empty".to_string()];
+            options.extend(self.available_folder_templates.clone());
+            let selected = self
+                .selected_template
+                .as_deref()
+                .filter(|t| *t == "empty" || crate::gui::is_track_template_folder(t))
+                .unwrap_or("empty");
+            (options, selected)
+        } else {
+            let mut options = vec!["empty".to_string()];
+            options.extend(self.available_templates.clone());
+            let selected = self
+                .selected_template
+                .as_deref()
+                .filter(|t| *t == "empty" || !crate::gui::is_track_template_folder(t))
+                .unwrap_or("empty");
+            (options, selected)
+        };
 
-        let selected_display = self.selected_template.as_deref().unwrap_or("empty");
         let is_empty_template = selected_display == "empty";
         let type_label = if self.is_folder { "Folder" } else { "Track" };
 
@@ -189,22 +222,17 @@ impl AddTrackView {
                 .width(Length::Fixed(200.0)),
             ]
             .spacing(10),
+            row![
+                text("Template:"),
+                pick_list(
+                    template_options,
+                    Some(selected_display.to_string()),
+                    |template| { Message::AddTrack(AddTrack::TemplateSelected(template)) }
+                )
+                .width(Length::Fixed(200.0)),
+            ]
+            .spacing(10),
         ];
-
-        if !self.is_folder {
-            col = col.push(
-                row![
-                    text("Template:"),
-                    pick_list(
-                        template_options,
-                        Some(selected_display.to_string()),
-                        |template| { Message::AddTrack(AddTrack::TemplateSelected(template)) }
-                    )
-                    .width(Length::Fixed(200.0)),
-                ]
-                .spacing(10),
-            );
-        }
 
         col = col.push(
             row![
@@ -321,6 +349,7 @@ impl Default for AddTrackView {
             is_folder: false,
             name: "".to_string(),
             available_templates: vec![],
+            available_folder_templates: vec![],
             selected_template: Some("empty".to_string()),
         }
     }
@@ -514,5 +543,25 @@ mod tests {
         let mut view = AddTrackView::default();
         view.set_available_templates(vec!["Template1".to_string(), "Template2".to_string()]);
         assert_eq!(view.available_templates.len(), 2);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn create_messages_returns_add_folder_from_template_for_folder_template() {
+        let mut view = AddTrackView::default();
+        view.name = "Drums".to_string();
+        view.is_folder = true;
+        view.selected_template = Some("DrumKit".to_string());
+
+        let messages = view.create_messages();
+
+        assert_eq!(messages.len(), 1);
+        assert!(matches!(
+            messages[0],
+            Message::AddFolderFromTemplate {
+                name: ref n,
+                template: ref t
+            } if n == "Drums" && t == "DrumKit"
+        ));
     }
 }
