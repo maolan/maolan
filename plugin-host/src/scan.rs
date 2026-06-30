@@ -46,6 +46,24 @@ pub struct ScanResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanDiagnostic {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_uri: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanOutput<T> {
+    pub errors: Vec<ScanDiagnostic>,
+    pub warnings: Vec<ScanDiagnostic>,
+    pub data: T,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClapPluginInfo {
     pub name: String,
@@ -788,18 +806,225 @@ pub fn scan_lv2_plugins() -> Vec<crate::lv2::Lv2PluginInfo> {
     crate::lv2::Lv2Host::new(48_000.0).list_plugins()
 }
 
+#[cfg(unix)]
+fn capture_stderr_during<F, R>(f: F) -> (R, String)
+where
+    F: FnOnce() -> R,
+{
+    use std::os::fd::RawFd;
+    use std::thread;
+
+    let mut pipe_fds: [RawFd; 2] = [-1; 2];
+    unsafe {
+        if libc::pipe(pipe_fds.as_mut_ptr()) != 0 {
+            return (f(), String::new());
+        }
+    }
+    let read_fd = pipe_fds[0];
+    let write_fd = pipe_fds[1];
+
+    let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
+    if saved_stderr < 0 {
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
+        return (f(), String::new());
+    }
+
+    unsafe {
+        if libc::dup2(write_fd, libc::STDERR_FILENO) < 0 {
+            libc::close(saved_stderr);
+            libc::close(read_fd);
+            libc::close(write_fd);
+            return (f(), String::new());
+        }
+    }
+
+    let reader = thread::spawn(move || {
+        let mut captured = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = unsafe { libc::read(read_fd, buf.as_mut_ptr().cast::<c_void>(), buf.len()) };
+            if n <= 0 {
+                break;
+            }
+            captured.extend_from_slice(&buf[..n as usize]);
+        }
+        unsafe {
+            libc::close(read_fd);
+        }
+        String::from_utf8_lossy(&captured).into_owned()
+    });
+
+    let result = f();
+
+    unsafe {
+        libc::dup2(saved_stderr, libc::STDERR_FILENO);
+        libc::close(saved_stderr);
+        libc::close(write_fd);
+    }
+
+    let captured = reader.join().unwrap_or_default();
+    (result, captured)
+}
+
+#[cfg(not(unix))]
+fn capture_stderr_during<F, R>(f: F) -> (R, String)
+where
+    F: FnOnce() -> R,
+{
+    (f(), String::new())
+}
+
+fn file_uri_to_bundle_uri(uri: &str) -> Option<String> {
+    let path = uri.strip_prefix("file://")?;
+    path_to_bundle_uri(path)
+}
+
+fn path_to_bundle_uri(path: &str) -> Option<String> {
+    if path.ends_with(".lv2/manifest.ttl") {
+        let bundle = &path[..path.len() - "manifest.ttl".len()];
+        Some(format!("file://{bundle}"))
+    } else if path.ends_with(".lv2/") {
+        Some(format!("file://{path}"))
+    } else if path.ends_with(".lv2") {
+        Some(format!("file://{path}/"))
+    } else {
+        None
+    }
+}
+
+fn extract_bundle_from_raw_path(message: &str) -> Option<String> {
+    for suffix in [".lv2/manifest.ttl", ".lv2/"] {
+        if let Some(pos) = message.find(suffix) {
+            let before = &message[..pos + suffix.len()];
+            let start = before.rfind(' ').map(|i| i + 1).unwrap_or(0);
+            let path = &before[start..];
+            return path_to_bundle_uri(path);
+        }
+    }
+    None
+}
+
+fn extract_uris_from_message(message: &str) -> (Option<String>, Option<String>) {
+    let mut plugin_uri = None;
+    let mut bundle_uri = None;
+
+    let mut rest = message;
+    while let Some(start) = rest.find('<') {
+        let after = &rest[start + 1..];
+        if let Some(end) = after.find('>') {
+            let uri = &after[..end];
+            if uri.starts_with("http://") || uri.starts_with("https://") || uri.starts_with("urn:")
+            {
+                plugin_uri = Some(uri.to_string());
+            } else if let Some(bundle) = file_uri_to_bundle_uri(uri) {
+                bundle_uri = Some(bundle);
+            }
+            rest = &after[end + 1..];
+        } else {
+            break;
+        }
+    }
+
+    if bundle_uri.is_none() {
+        bundle_uri = extract_bundle_from_raw_path(message);
+    }
+
+    (plugin_uri, bundle_uri)
+}
+
+fn build_diagnostic(line: &str) -> ScanDiagnostic {
+    let (plugin_uri, bundle_uri) = extract_uris_from_message(line);
+    ScanDiagnostic {
+        message: line.to_string(),
+        plugin_uri,
+        plugin_name: None,
+        bundle_uri,
+    }
+}
+
+fn classify_stderr(output: &str) -> (Vec<ScanDiagnostic>, Vec<ScanDiagnostic>) {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let lower = line.to_lowercase();
+        if lower.contains("error:") {
+            errors.push(build_diagnostic(line));
+        } else if lower.contains("warning:") || lower.contains("note:") {
+            warnings.push(build_diagnostic(line));
+        }
+    }
+    (errors, warnings)
+}
+
+fn enrich_plugin_names(diagnostics: &mut [ScanDiagnostic], data: &serde_json::Value) {
+    let items = data
+        .as_array()
+        .or_else(|| data.get("plugins").and_then(|p| p.as_array()));
+    let Some(items) = items else {
+        return;
+    };
+
+    for diag in diagnostics {
+        if diag.plugin_name.is_some() {
+            continue;
+        }
+        let search_uri = diag.plugin_uri.as_deref().or(diag.bundle_uri.as_deref());
+        let Some(search) = search_uri else {
+            continue;
+        };
+
+        for item in items {
+            for key in ["uri", "bundle_uri", "path", "id"] {
+                if let Some(value) = item.get(key).and_then(|v| v.as_str()) {
+                    if value == search {
+                        diag.plugin_name = item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        break;
+                    }
+                }
+            }
+            if diag.plugin_name.is_some() {
+                break;
+            }
+        }
+    }
+}
+
+fn serialize_scan_output<T: Serialize>(data: T, stderr: &str) -> Result<String, serde_json::Error> {
+    let (mut errors, mut warnings) = classify_stderr(stderr);
+    let data_value = serde_json::to_value(&data)?;
+    enrich_plugin_names(&mut errors, &data_value);
+    enrich_plugin_names(&mut warnings, &data_value);
+    serde_json::to_string_pretty(&ScanOutput {
+        errors,
+        warnings,
+        data: data_value,
+    })
+}
+
 pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i32 {
     let json = match format {
         "clap" => {
             if plugin_path == "--system" {
-                match serde_json::to_string_pretty(&scan_clap_plugins(false)) {
+                let (data, stderr) = capture_stderr_during(|| scan_clap_plugins(false));
+                match serialize_scan_output(data, &stderr) {
                     Ok(j) => j,
                     Err(_e) => {
                         return 1;
                     }
                 }
             } else {
-                match serde_json::to_string_pretty(&scan_clap_plugin(plugin_path)) {
+                let (data, stderr) = capture_stderr_during(|| scan_clap_plugin(plugin_path));
+                match serialize_scan_output(data, &stderr) {
                     Ok(j) => j,
                     Err(_e) => {
                         return 1;
@@ -811,7 +1036,8 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
             if plugin_path != "--system" {
                 return 1;
             }
-            match serde_json::to_string_pretty(&scan_vst3_plugins()) {
+            let (data, stderr) = capture_stderr_during(scan_vst3_plugins);
+            match serialize_scan_output(data, &stderr) {
                 Ok(j) => j,
                 Err(_e) => {
                     return 1;
@@ -823,7 +1049,8 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
             if plugin_path != "--system" {
                 return 1;
             }
-            match serde_json::to_string_pretty(&scan_lv2_plugins()) {
+            let (data, stderr) = capture_stderr_during(scan_lv2_plugins);
+            match serialize_scan_output(data, &stderr) {
                 Ok(j) => j,
                 Err(_e) => {
                     return 1;
@@ -843,5 +1070,68 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
     } else {
         println!("{json}");
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_diagnostic, classify_stderr, enrich_plugin_names};
+
+    #[test]
+    fn classify_stderr_separates_errors_and_warnings() {
+        let stderr = "error: failed to open file\n\
+            lilv_world_load_file(): error: Error loading file\n\
+            load_dir_entry(): warning: Skipping non-directory\n\
+            lilv_world_compare_versions(): note: Previously loaded\n\
+            \n\
+            some untagged line";
+        let (errors, warnings) = classify_stderr(stderr);
+        assert_eq!(errors.len(), 2);
+        assert!(errors.iter().all(|e| e.message.contains("error:")));
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[0].message.contains("warning:"));
+        assert!(warnings[1].message.contains("note:"));
+    }
+
+    #[test]
+    fn classify_stderr_extracts_bundle_and_plugin_uris() {
+        let stderr = "error: failed to open file /usr/lib/lv2/bg-midi-pattern.lv2/manifest.ttl (No such file or directory)\n\
+            lilv_world_load_file(): error: Error loading file <file:///usr/lib/lv2/bg-midi-pattern.lv2/manifest.ttl> (Unknown error)\n\
+            lilv_world_compare_versions(): warning: Ignoring duplicate version 0.1 of <http://polyeffects.com/lv2/cv_to_note> from <file:///usr/lib/lv2/cv_to_note.lv2/>";
+        let (errors, warnings) = classify_stderr(stderr);
+        assert_eq!(errors.len(), 2);
+        assert_eq!(
+            errors[0].bundle_uri,
+            Some("file:///usr/lib/lv2/bg-midi-pattern.lv2/".to_string())
+        );
+        assert_eq!(
+            errors[1].bundle_uri,
+            Some("file:///usr/lib/lv2/bg-midi-pattern.lv2/".to_string())
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0].plugin_uri,
+            Some("http://polyeffects.com/lv2/cv_to_note".to_string())
+        );
+        assert_eq!(
+            warnings[0].bundle_uri,
+            Some("file:///usr/lib/lv2/cv_to_note.lv2/".to_string())
+        );
+    }
+
+    #[test]
+    fn enrich_plugin_names_finds_name_from_data() {
+        let mut diag = build_diagnostic(
+            "lilv_world_compare_versions(): warning: Ignoring duplicate version 0.1 of <http://example.com/plugin> from <file:///usr/lib/lv2/example.lv2/>",
+        );
+        let data = serde_json::json!([
+            {
+                "uri": "http://example.com/plugin",
+                "name": "Example Plugin",
+                "bundle_uri": "file:///usr/lib/lv2/example.lv2/"
+            }
+        ]);
+        enrich_plugin_names(std::slice::from_mut(&mut diag), &data);
+        assert_eq!(diag.plugin_name, Some("Example Plugin".to_string()));
     }
 }

@@ -1,4 +1,4 @@
-use maolan_plugin_host::scan::ScanResult;
+use maolan_plugin_host::scan::{ScanDiagnostic, ScanOutput, ScanResult};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -114,7 +114,27 @@ pub fn scan_plugin_file(
     let json =
         String::from_utf8(output).map_err(|e| format!("scanner output is not valid UTF-8: {e}"))?;
 
-    serde_json::from_str(&json).map_err(|e| format!("scanner output is not valid JSON: {e}"))
+    let output: ScanOutput<ScanResult> =
+        serde_json::from_str(&json).map_err(|e| format!("scanner output is not valid JSON: {e}"))?;
+
+    log_scan_diagnostics(&output.errors, tracing::Level::ERROR);
+    log_scan_diagnostics(&output.warnings, tracing::Level::WARN);
+
+    Ok(output.data)
+}
+
+fn log_scan_diagnostics(diagnostics: &[ScanDiagnostic], level: tracing::Level) {
+    for diagnostic in diagnostics {
+        let message = &diagnostic.message;
+        let plugin_uri = diagnostic.plugin_uri.as_deref().unwrap_or("-");
+        let plugin_name = diagnostic.plugin_name.as_deref().unwrap_or("-");
+        let bundle_uri = diagnostic.bundle_uri.as_deref().unwrap_or("-");
+        if level == tracing::Level::ERROR {
+            tracing::error!(%message, %plugin_uri, %plugin_name, %bundle_uri, "plugin scan diagnostic");
+        } else {
+            tracing::warn!(%message, %plugin_uri, %plugin_name, %bundle_uri, "plugin scan diagnostic");
+        }
+    }
 }
 
 fn append_parent_log_level(cmd: &mut Command) {
