@@ -2761,6 +2761,29 @@ impl Maolan {
                                 return self.load_track_template(name.clone(), template_name);
                             }
 
+                            let folder_load = {
+                                let mut state = self.state.blocking_write();
+                                let mut found = None;
+                                for load in &mut state.pending_folder_template_loads {
+                                    if load.remaining.remove(name) {
+                                        found = Some(load.clone());
+                                        break;
+                                    }
+                                }
+                                found
+                            };
+
+                            if let Some(load) = folder_load
+                                && load.remaining.is_empty()
+                            {
+                                let mut state = self.state.blocking_write();
+                                state
+                                    .pending_folder_template_loads
+                                    .retain(|l| l.target_name != load.target_name);
+                                drop(state);
+                                return self.complete_folder_template_load(&load);
+                            }
+
                             if !matches!(self.modal, Some(Show::AutosaveRecovery)) {
                                 self.modal = None;
                             }
@@ -8799,10 +8822,14 @@ impl Maolan {
                 let key = Self::audio_clip_key(track_name, clip_name, start, length, offset);
                 self.pending_precomputed_peaks.insert(key, peaks.clone());
             }
-            Message::TrackTemplatesLoaded(ref templates) => {
-                self.add_track.set_available_templates(templates.clone());
+            Message::TrackTemplatesLoaded(ref track_templates, ref folder_templates) => {
+                self.add_track
+                    .set_available_templates(track_templates.clone());
+                self.add_track
+                    .set_available_folder_templates(folder_templates.clone());
                 if let Some(dialog) = &mut self.state.blocking_write().apply_template_dialog {
-                    dialog.available_templates = templates.clone();
+                    dialog.available_templates = track_templates.clone();
+                    dialog.available_folder_templates = folder_templates.clone();
                 }
             }
             #[cfg(any(target_os = "linux", target_os = "windows"))]

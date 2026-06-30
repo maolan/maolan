@@ -493,19 +493,26 @@ impl Maolan {
         path: String,
     ) -> Task<Message> {
         self.pending_save_path = Some(path.clone());
-        self.pending_save_tracks = std::iter::once(track_name.clone()).collect();
-        self.pending_save_clap_tracks = std::iter::once(track_name.clone()).collect();
+        let track_names: std::collections::HashSet<String> = self
+            .collect_folder_member_names(&track_name)
+            .into_iter()
+            .collect();
+        self.pending_save_tracks = track_names.clone();
+        self.pending_save_clap_tracks = track_names.clone();
         self.pending_save_clap_clips.clear();
         self.pending_save_is_template = false;
 
-        let tasks = vec![
-            self.send(Action::TrackGetPluginGraph {
-                track_name: track_name.clone(),
-            }),
-            self.send(Action::TrackSnapshotAllClapStates {
-                track_name: track_name.clone(),
-            }),
-        ];
+        let tasks: Vec<Task<Message>> = track_names
+            .into_iter()
+            .flat_map(|name| {
+                vec![
+                    self.send(Action::TrackGetPluginGraph {
+                        track_name: name.clone(),
+                    }),
+                    self.send(Action::TrackSnapshotAllClapStates { track_name: name }),
+                ]
+            })
+            .collect();
 
         self.state.blocking_write().message = format!("Saving track template for {}", track_name);
 
@@ -698,9 +705,265 @@ impl Maolan {
                     });
                 }
             }
+
+            if let Some(connectable_arr) = graph
+                .get("connectable_connections")
+                .and_then(Value::as_array)
+            {
+                let index_to_id: std::collections::HashMap<usize, usize> = runtime_nodes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, node)| match node {
+                        maolan_engine::message::PluginGraphNode::ClapPluginInstance(id)
+                        | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
+                            Some((idx, *id))
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
+                            Some((idx, *id))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for conn in Self::connectable_connections_from_json(
+                    &Value::Array(connectable_arr.clone()),
+                    &index_to_id,
+                ) {
+                    match conn.kind {
+                        Kind::Audio => restore_actions.push(Action::TrackConnectAudio {
+                            track_name: track_name.to_string(),
+                            from: conn.from,
+                            from_port: conn.from_port,
+                            to: conn.to,
+                            to_port: conn.to_port,
+                        }),
+                        Kind::MIDI => restore_actions.push(Action::TrackConnectMidi {
+                            track_name: track_name.to_string(),
+                            from: conn.from,
+                            from_port: conn.from_port,
+                            to: conn.to,
+                            to_port: conn.to_port,
+                        }),
+                    }
+                }
+            }
+
+            Self::apply_disabled_default_connections(
+                track_name,
+                &Value::Object(graph.clone()),
+                &mut restore_actions,
+            );
         }
 
         restore_actions
+    }
+
+    fn track_template_path(template_name: &str) -> String {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        format!(
+            "{}/.config/maolan/track_templates/{}/track.json",
+            home, template_name
+        )
+    }
+
+    fn read_track_template_json(template_name: &str) -> Option<Value> {
+        let path = Self::track_template_path(template_name);
+        let file = File::open(&path).ok()?;
+        let reader = BufReader::new(file);
+        serde_json::from_reader(reader).ok()
+    }
+
+    fn flatten_folder_template(
+        &self,
+        value: &Value,
+        parent_new_name: Option<String>,
+        existing: &mut std::collections::HashSet<String>,
+        members: &mut Vec<crate::state::PendingFolderTemplateMember>,
+    ) {
+        let original_name = value["track"]["name"].as_str().unwrap_or("").to_string();
+        let new_name = Self::unique_track_name(&original_name, existing);
+
+        members.push(crate::state::PendingFolderTemplateMember {
+            new_name: new_name.clone(),
+            track_json: value.clone(),
+            parent_new_name,
+        });
+
+        if let Some(children) = value["children"].as_array() {
+            for child in children {
+                self.flatten_folder_template(child, Some(new_name.clone()), existing, members);
+            }
+        }
+    }
+
+    fn remap_connectable_ref(v: &mut Value, name_map: &std::collections::HashMap<String, String>) {
+        if let Some(obj) = v.as_object_mut()
+            && obj.get("type").and_then(Value::as_str) == Some("child_track")
+            && let Some(name) = obj.get("name").and_then(Value::as_str)
+            && let Some(new) = name_map.get(name)
+        {
+            obj.insert("name".to_string(), Value::String(new.clone()));
+        }
+    }
+
+    fn remap_child_track_names_in_graph(
+        graph: &mut Value,
+        name_map: &std::collections::HashMap<String, String>,
+    ) {
+        if let Some(arr) = graph
+            .get_mut("connectable_connections")
+            .and_then(Value::as_array_mut)
+        {
+            for conn in arr {
+                if let Some(obj) = conn.as_object_mut() {
+                    Self::remap_connectable_ref(&mut obj["from"], name_map);
+                    Self::remap_connectable_ref(&mut obj["to"], name_map);
+                }
+            }
+        }
+        if let Some(arr) = graph
+            .get_mut("disabled_default_connections")
+            .and_then(Value::as_array_mut)
+        {
+            for entry in arr {
+                if let Some(name) = entry.get("child").and_then(Value::as_str)
+                    && let Some(new) = name_map.get(name)
+                {
+                    entry["child"] = Value::String(new.clone());
+                }
+            }
+        }
+    }
+
+    pub(super) fn apply_folder_template(
+        &mut self,
+        target_name: String,
+        template_name: String,
+    ) -> Task<Message> {
+        let Some(json) = Self::read_track_template_json(&template_name) else {
+            return Task::done(Message::Response(Err(format!(
+                "Failed to read folder template '{}'",
+                template_name
+            ))));
+        };
+
+        let mut existing: std::collections::HashSet<String> = self
+            .state
+            .blocking_read()
+            .tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        let mut members = Vec::new();
+        self.flatten_folder_template(&json, None, &mut existing, &mut members);
+
+        if members.is_empty() {
+            return Task::done(Message::Response(Err(
+                "Folder template has no tracks".to_string()
+            )));
+        }
+
+        let mut tasks = Vec::new();
+        for member in &members {
+            let track_json = &member.track_json["track"];
+            let audio_ins = track_json["audio"]["ins"].as_u64().unwrap_or(0) as usize;
+            let audio_outs = track_json["audio"]["outs"].as_u64().unwrap_or(0) as usize;
+            let midi_ins = track_json["midi"]["ins"].as_u64().unwrap_or(0) as usize;
+            let midi_outs = track_json["midi"]["outs"].as_u64().unwrap_or(0) as usize;
+            let folder = track_json["is_folder"].as_bool().unwrap_or(false);
+
+            tasks.push(self.send(Action::AddTrack {
+                name: member.new_name.clone(),
+                audio_ins,
+                midi_ins,
+                audio_outs,
+                midi_outs,
+                folder,
+            }));
+        }
+
+        let remaining: std::collections::HashSet<String> =
+            members.iter().map(|m| m.new_name.clone()).collect();
+        self.state
+            .blocking_write()
+            .pending_folder_template_loads
+            .push(crate::state::PendingFolderTemplateLoad {
+                target_name,
+                template_name,
+                remaining,
+                members,
+            });
+
+        Task::batch(tasks)
+    }
+
+    pub(super) fn complete_folder_template_load(
+        &mut self,
+        load: &crate::state::PendingFolderTemplateLoad,
+    ) -> Task<Message> {
+        let name_map: std::collections::HashMap<String, String> = load
+            .members
+            .iter()
+            .map(|m| {
+                let original = m.track_json["track"]["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                (original, m.new_name.clone())
+            })
+            .collect();
+
+        let mut actions = Vec::new();
+
+        for member in &load.members {
+            if let Some(parent_new_name) = &member.parent_new_name {
+                actions.push(Action::TrackSetParent {
+                    track_name: member.new_name.clone(),
+                    parent_name: Some(parent_new_name.clone()),
+                });
+            }
+        }
+
+        for member in &load.members {
+            let mut member_json = member.track_json.clone();
+            if let Some(graph) = member_json.get_mut("graph") {
+                Self::remap_child_track_names_in_graph(graph, &name_map);
+            }
+            actions.extend(self.build_track_template_actions(&member.new_name, &member_json));
+        }
+
+        if let Some(connections) = load.members[0]
+            .track_json
+            .get("connections")
+            .and_then(Value::as_array)
+        {
+            for conn in connections {
+                if let Ok(mut connection) =
+                    serde_json::from_value::<crate::state::Connection>(conn.clone())
+                {
+                    if let Some(new) = name_map.get(&connection.from_track) {
+                        connection.from_track = new.clone();
+                    }
+                    if let Some(new) = name_map.get(&connection.to_track) {
+                        connection.to_track = new.clone();
+                    }
+                    actions.push(Action::Connect {
+                        from_track: connection.from_track,
+                        from_port: connection.from_port,
+                        to_track: connection.to_track,
+                        to_port: connection.to_port,
+                        kind: connection.kind,
+                    });
+                }
+            }
+        }
+
+        self.state
+            .blocking_write()
+            .message
+            .clone_from(&format!("Applied folder template '{}'", load.template_name));
+
+        Self::restore_actions_task(actions)
     }
 
     pub(super) fn copy_track_from_branch(
@@ -858,6 +1121,134 @@ impl Maolan {
         ))
     }
 
+    fn collect_folder_member_names(&self, root_name: &str) -> Vec<String> {
+        let state = self.state.blocking_read();
+        let mut result = vec![root_name.to_string()];
+        let mut i = 0;
+        while i < result.len() {
+            let parent = result[i].clone();
+            for track in &state.tracks {
+                if track.parent_track.as_deref() == Some(&parent) && !result.contains(&track.name) {
+                    result.push(track.name.clone());
+                }
+            }
+            i += 1;
+        }
+        result
+    }
+
+    fn track_template_json(
+        &self,
+        track_name: &str,
+        state: &crate::state::StateData,
+    ) -> Option<Value> {
+        let track = state.tracks.iter().find(|t| t.name == track_name)?;
+
+        let mut track_json = serde_json::to_value(track).ok()?;
+        if let Some(audio) = track_json.get_mut("audio").and_then(Value::as_object_mut) {
+            audio.insert("clips".to_string(), Value::Array(vec![]));
+        }
+        if let Some(midi) = track_json.get_mut("midi").and_then(Value::as_object_mut) {
+            midi.insert("clips".to_string(), Value::Array(vec![]));
+        }
+
+        let graph = {
+            if let Some((plugins, connections)) = state.plugin_graphs_by_track.get(track_name) {
+                let id_to_index: std::collections::HashMap<usize, usize> = plugins
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, p)| (p.instance_id, idx))
+                    .collect();
+                let plugins_json: Vec<Value> = plugins
+                    .iter()
+                    .map(|p| {
+                        let state_json = p.state.clone().unwrap_or(Value::Null);
+                        json!({"format": p.format, "uri": Self::plugin_save_uri(p), "state": state_json})
+                    })
+                    .collect();
+                let conns_json: Vec<Value> = connections
+                    .iter()
+                    .filter_map(|c| {
+                        let from_node = Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
+                        let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
+                        Some(json!({
+                            "from_node": from_node,
+                            "from_port": c.from_port,
+                            "to_node": to_node,
+                            "to_port": c.to_port,
+                            "kind": Self::kind_to_json(c.kind),
+                        }))
+                    })
+                    .collect();
+                let connectable_conns_json: Vec<Value> = state
+                    .connectable_connections_by_track
+                    .get(track_name)
+                    .map(|conns| {
+                        conns
+                            .iter()
+                            .filter(|c| Self::is_user_connectable_connection(c))
+                            .filter_map(|c| Self::connectable_connection_to_json(c, &id_to_index))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let disabled_defaults_json: Vec<Value> = state
+                    .connectable_connections_by_track
+                    .get(track_name)
+                    .and_then(|actual| {
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == track_name)
+                            .map(|folder| {
+                                Self::disabled_default_connections_json(
+                                    folder,
+                                    &state.tracks,
+                                    actual,
+                                )
+                            })
+                    })
+                    .unwrap_or_default();
+                json!({
+                    "plugins": plugins_json,
+                    "connections": conns_json,
+                    "connectable_connections": connectable_conns_json,
+                    "disabled_default_connections": disabled_defaults_json,
+                })
+            } else {
+                Value::Null
+            }
+        };
+
+        Some(json!({
+            "track": track_json,
+            "graph": graph,
+        }))
+    }
+
+    fn build_folder_template_children(
+        &self,
+        parent_name: &str,
+        state: &crate::state::StateData,
+    ) -> Vec<Value> {
+        state
+            .tracks
+            .iter()
+            .filter(|t| t.parent_track.as_deref() == Some(parent_name))
+            .map(|child| {
+                let mut value = self
+                    .track_template_json(&child.name, state)
+                    .unwrap_or(Value::Null);
+                if let Some(obj) = value.as_object_mut() {
+                    let children = self.build_folder_template_children(&child.name, state);
+                    if !children.is_empty() {
+                        obj.insert("children".to_string(), Value::Array(children));
+                    }
+                }
+                value
+            })
+            .collect()
+    }
+
     pub(super) fn save_track_as_template(&self, track_name: &str, path: String) -> Task<Message> {
         let result = (|| -> std::io::Result<()> {
             let template_root = PathBuf::from(&path);
@@ -876,62 +1267,47 @@ impl Maolan {
                 .find(|t| t.name == track_name)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Track not found"))?;
 
-            let mut track_json = serde_json::to_value(track).map_err(io::Error::other)?;
-            if let Some(audio) = track_json.get_mut("audio").and_then(Value::as_object_mut) {
-                audio.insert("clips".to_string(), Value::Array(vec![]));
-            }
-            if let Some(midi) = track_json.get_mut("midi").and_then(Value::as_object_mut) {
-                midi.insert("clips".to_string(), Value::Array(vec![]));
-            }
+            let mut result = self
+                .track_template_json(track_name, &state)
+                .unwrap_or(Value::Null);
 
-            let graph = {
-                if let Some((plugins, connections)) = state.plugin_graphs_by_track.get(track_name) {
-                    let id_to_index: std::collections::HashMap<usize, usize> = plugins
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, p)| (p.instance_id, idx))
+            if track.is_folder {
+                if let Some(obj) = result.as_object_mut() {
+                    let children = self.build_folder_template_children(track_name, &state);
+                    if !children.is_empty() {
+                        obj.insert("children".to_string(), Value::Array(children));
+                    }
+
+                    let member_names: std::collections::HashSet<String> = self
+                        .collect_folder_member_names(track_name)
+                        .into_iter()
                         .collect();
-                    let plugins_json: Vec<Value> = plugins
+                    let internal_connections: Vec<&crate::state::Connection> = state
+                        .connections
                         .iter()
-                        .map(|p| {
-                            let state_json = p.state.clone().unwrap_or(Value::Null);
-                            json!({"format": p.format, "uri": Self::plugin_save_uri(p), "state": state_json})
+                        .filter(|c| {
+                            member_names.contains(&c.from_track)
+                                && member_names.contains(&c.to_track)
                         })
                         .collect();
-                    let conns_json: Vec<Value> = connections
-                        .iter()
-                        .filter_map(|c| {
-                            let from_node = Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
-                            let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
-                            Some(json!({
-                                "from_node": from_node,
-                                "from_port": c.from_port,
-                                "to_node": to_node,
-                                "to_port": c.to_port,
-                                "kind": Self::kind_to_json(c.kind),
-                            }))
-                        })
-                        .collect();
-                    json!({
-                        "plugins": plugins_json,
-                        "connections": conns_json,
-                    })
-                } else {
-                    Value::Null
+                    obj.insert(
+                        "connections".to_string(),
+                        serde_json::to_value(internal_connections).unwrap_or(Value::Array(vec![])),
+                    );
                 }
-            };
-
-            let track_connections: Vec<&crate::state::Connection> = state
-                .connections
-                .iter()
-                .filter(|c| c.from_track == track_name || c.to_track == track_name)
-                .collect();
-
-            let result = json!({
-                "track": track_json,
-                "graph": graph,
-                "connections": track_connections,
-            });
+            } else {
+                let track_connections: Vec<&crate::state::Connection> = state
+                    .connections
+                    .iter()
+                    .filter(|c| c.from_track == track_name || c.to_track == track_name)
+                    .collect();
+                if let Some(obj) = result.as_object_mut() {
+                    obj.insert(
+                        "connections".to_string(),
+                        serde_json::to_value(track_connections).unwrap_or(Value::Array(vec![])),
+                    );
+                }
+            }
 
             serde_json::to_writer_pretty(file, &result)?;
             Ok(())

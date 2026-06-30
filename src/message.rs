@@ -884,7 +884,7 @@ pub enum Message {
         progress: f32,
         operation: Option<String>,
     },
-    TrackTemplatesLoaded(Vec<String>),
+    TrackTemplatesLoaded(Vec<String>, Vec<String>),
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     PreferencesDevicesLoaded {
         #[cfg(target_os = "linux")]
@@ -1287,7 +1287,15 @@ pub enum Message {
         audio_outs: usize,
         midi_outs: usize,
     },
+    AddFolderFromTemplate {
+        name: String,
+        template: String,
+    },
     ApplyTrackTemplate {
+        track_name: String,
+        template: String,
+    },
+    ApplyFolderTemplate {
         track_name: String,
         template: String,
     },

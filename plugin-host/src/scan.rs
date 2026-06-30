@@ -982,12 +982,11 @@ fn enrich_plugin_names(diagnostics: &mut [ScanDiagnostic], data: &serde_json::Va
 
         for item in items {
             for key in ["uri", "bundle_uri", "path", "id"] {
-                if let Some(value) = item.get(key).and_then(|v| v.as_str()) {
-                    if value == search {
-                        diag.plugin_name =
-                            item.get("name").and_then(|v| v.as_str()).map(String::from);
-                        break;
-                    }
+                if let Some(value) = item.get(key).and_then(|v| v.as_str())
+                    && value == search
+                {
+                    diag.plugin_name = item.get("name").and_then(|v| v.as_str()).map(String::from);
+                    break;
                 }
             }
             if diag.plugin_name.is_some() {
