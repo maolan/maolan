@@ -35,6 +35,7 @@ impl Vst3Host {
     }
 
     pub fn list_plugins(&mut self) -> Vec<Vst3PluginInfo> {
+        let blocklist = crate::blocklist::Blocklist::load();
         let mut roots = default_vst3_search_roots();
 
         if let Ok(extra) = std::env::var("VST3_PATH") {
@@ -47,7 +48,7 @@ impl Vst3Host {
 
         let mut out = Vec::new();
         for root in roots {
-            collect_vst3_plugins(&root, &mut out);
+            collect_vst3_plugins(&root, &mut out, &blocklist);
         }
 
         out.sort_by_key(|a| a.name.to_lowercase());
@@ -63,12 +64,17 @@ impl Vst3Host {
     }
 }
 
-fn collect_vst3_plugins(root: &Path, out: &mut Vec<Vst3PluginInfo>) {
+fn collect_vst3_plugins(
+    root: &Path,
+    out: &mut Vec<Vst3PluginInfo>,
+    blocklist: &crate::blocklist::Blocklist,
+) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        let path_str = path.to_string_lossy().to_string();
         let Ok(ft) = entry.file_type() else {
             continue;
         };
@@ -84,16 +90,21 @@ fn collect_vst3_plugins(root: &Path, out: &mut Vec<Vst3PluginInfo>) {
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("vst3"))
         {
+            if blocklist.is_blocked(&path_str) {
+                tracing::debug!("skipping blocklisted VST3 plugin bundle: {path_str}");
+                continue;
+            }
             if let Some(info) = scan_vst3_bundle(&path) {
                 out.push(info);
             }
         } else {
-            collect_vst3_plugins(&path, out);
+            collect_vst3_plugins(&path, out, blocklist);
         }
     }
 }
 
 fn scan_vst3_bundle(bundle_path: &Path) -> Option<Vst3PluginInfo> {
+    tracing::debug!("scanning VST3 plugin bundle: {}", bundle_path.display());
     let factory = PluginFactory::from_module(bundle_path).ok()?;
     let class_count = factory.count_classes();
     if class_count == 0 {
@@ -142,12 +153,18 @@ fn scan_vst3_bundle(bundle_path: &Path) -> Option<Vst3PluginInfo> {
         }
         Err(_) => None,
     };
-    Some(class_info_to_plugin_info(
+    let info = class_info_to_plugin_info(
         &class_info,
         bundle_path,
         capabilities,
         factory_info.as_ref(),
-    ))
+    );
+    tracing::debug!(
+        "finished scanning VST3 plugin bundle: {} ({}",
+        bundle_path.display(),
+        info.name
+    );
+    Some(info)
 }
 
 fn class_info_to_plugin_info(

@@ -22,6 +22,40 @@ Last updated: 2026-05-01
   - Avoid broad build output roots when possible (for example full Cargo target trees) to reduce unrelated binary probing.
 - Passing `--log-level <level>` enables tracing output to stderr. Valid levels: none, info, warning, error, debug.
 
+## Plugin Blocklist
+
+Maolan maintains a plugin blocklist at:
+
+`~/.config/maolan/plugin-blocklist.json`
+
+The blocklist hides plugins from the plugin browser and causes the scanner to skip them entirely during system scans, so a known-bad plugin cannot crash `maolan-plugin-host --scan`. You can add entries manually, or the DAW can add them automatically when a single-plugin scan fails or the scanner host crashes.
+
+A blocklist entry uses the plugin path as the key:
+
+```json
+{
+  "entries": [
+    {
+      "path": "/usr/lib/clap/CrashingPlugin.clap",
+      "error": "scanner exited with code ...",
+      "timestamp": "2026-06-30T11:14:01+00:00"
+    }
+  ]
+}
+```
+
+Match rules per format:
+
+- **CLAP** and **VST3**: match the full plugin file path (`path` field in the scan result).
+- **LV2**: match either the `bundle_uri` (e.g. `file:///usr/lib/lv2/SomePlugin.lv2/`) or the plugin `uri`.
+
+How completely the blocklist protects the scanner depends on the format:
+
+- **CLAP** and **VST3**: the scanner skips the bundle before loading or inspecting it, so the bad code never runs.
+- **LV2**: the scanner filters blocklisted plugins *after* the LV2 world has loaded and parsed the bundle. The plugin is hidden from the UI, but a crash inside the LV2 discovery layer could still happen before the filter runs.
+
+Restart Maolan after editing the file. The status message after plugin discovery reports how many plugins were loaded and how many were blocklisted.
+
 ## Configuration File
 
 Maolan stores UI and preference state in:

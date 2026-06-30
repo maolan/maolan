@@ -6079,22 +6079,42 @@ impl Maolan {
                     button(text(format!("Load ({})", self.selected_lv2_plugins.len())))
                         .on_press(Message::LoadSelectedLv2Plugins)
                 };
-                column![
-                    text_input("Filter LV2 plugins...", &self.plugin_filter)
-                        .on_input(Message::FilterLv2Plugins)
-                        .width(Length::Fill),
-                    scrollable(lv2_list).height(Length::Fill),
-                    row![
-                        load,
-                        pick_list(
-                            Self::supported_plugin_formats(),
-                            Some(self.plugin_format),
-                            Message::PluginFormatSelected,
-                        ),
+                if state.lv2_plugins_unavailable {
+                    column![
+                        text("LV2 plugin scan is unavailable.").size(14),
+                        text(
+                            "Check the status message for details, or select another format below."
+                        )
+                        .size(12),
+                        row![
+                            load,
+                            pick_list(
+                                Self::supported_plugin_formats(),
+                                Some(self.plugin_format),
+                                Message::PluginFormatSelected,
+                            ),
+                        ]
+                        .spacing(10),
                     ]
-                    .spacing(10),
-                ]
-                .spacing(10)
+                    .spacing(10)
+                } else {
+                    column![
+                        text_input("Filter LV2 plugins...", &self.plugin_filter)
+                            .on_input(Message::FilterLv2Plugins)
+                            .width(Length::Fill),
+                        scrollable(lv2_list).height(Length::Fill),
+                        row![
+                            load,
+                            pick_list(
+                                Self::supported_plugin_formats(),
+                                Some(self.plugin_format),
+                                Message::PluginFormatSelected,
+                            ),
+                        ]
+                        .spacing(10),
+                    ]
+                    .spacing(10)
+                }
             }
             PluginFormat::Vst3 => {
                 let load = if self.selected_vst3_plugins.is_empty() {
@@ -6103,22 +6123,42 @@ impl Maolan {
                     button(text(format!("Load ({})", self.selected_vst3_plugins.len())))
                         .on_press(Message::LoadSelectedVst3Plugins)
                 };
-                column![
-                    text_input("Filter VST3 plugins...", &self.vst3_plugin_filter)
-                        .on_input(Message::FilterVst3Plugins)
-                        .width(Length::Fill),
-                    scrollable(vst3_list).height(Length::Fill),
-                    row![
-                        load,
-                        pick_list(
-                            Self::supported_plugin_formats(),
-                            Some(self.plugin_format),
-                            Message::PluginFormatSelected,
-                        ),
+                if state.vst3_plugins_unavailable {
+                    column![
+                        text("VST3 plugin scan is unavailable.").size(14),
+                        text(
+                            "Check the status message for details, or select another format below."
+                        )
+                        .size(12),
+                        row![
+                            load,
+                            pick_list(
+                                Self::supported_plugin_formats(),
+                                Some(self.plugin_format),
+                                Message::PluginFormatSelected,
+                            ),
+                        ]
+                        .spacing(10),
                     ]
-                    .spacing(10),
-                ]
-                .spacing(10)
+                    .spacing(10)
+                } else {
+                    column![
+                        text_input("Filter VST3 plugins...", &self.vst3_plugin_filter)
+                            .on_input(Message::FilterVst3Plugins)
+                            .width(Length::Fill),
+                        scrollable(vst3_list).height(Length::Fill),
+                        row![
+                            load,
+                            pick_list(
+                                Self::supported_plugin_formats(),
+                                Some(self.plugin_format),
+                                Message::PluginFormatSelected,
+                            ),
+                        ]
+                        .spacing(10),
+                    ]
+                    .spacing(10)
+                }
             }
             PluginFormat::Clap => {
                 let load = if self.selected_clap_plugins.is_empty() {
@@ -6127,22 +6167,42 @@ impl Maolan {
                     button(text(format!("Load ({})", self.selected_clap_plugins.len())))
                         .on_press(Message::LoadSelectedClapPlugins)
                 };
-                column![
-                    text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
-                        .on_input(Message::FilterClapPlugin)
-                        .width(Length::Fill),
-                    scrollable(clap_list).height(Length::Fill),
-                    row![
-                        load,
-                        pick_list(
-                            Self::supported_plugin_formats(),
-                            Some(self.plugin_format),
-                            Message::PluginFormatSelected,
-                        ),
+                if state.clap_plugins_unavailable {
+                    column![
+                        text("CLAP plugin scan is unavailable.").size(14),
+                        text(
+                            "Check the status message for details, or select another format below."
+                        )
+                        .size(12),
+                        row![
+                            load,
+                            pick_list(
+                                Self::supported_plugin_formats(),
+                                Some(self.plugin_format),
+                                Message::PluginFormatSelected,
+                            ),
+                        ]
+                        .spacing(10),
                     ]
-                    .spacing(10),
-                ]
-                .spacing(10)
+                    .spacing(10)
+                } else {
+                    column![
+                        text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
+                            .on_input(Message::FilterClapPlugin)
+                            .width(Length::Fill),
+                        scrollable(clap_list).height(Length::Fill),
+                        row![
+                            load,
+                            pick_list(
+                                Self::supported_plugin_formats(),
+                                Some(self.plugin_format),
+                                Message::PluginFormatSelected,
+                            ),
+                        ]
+                        .spacing(10),
+                    ]
+                    .spacing(10)
+                }
             }
         };
 
@@ -6256,22 +6316,40 @@ impl Maolan {
                 button(text(format!("Load ({})", self.selected_clap_plugins.len())))
                     .on_press(Message::LoadSelectedClapPlugins)
             };
-            column![
-                text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
-                    .on_input(Message::FilterClapPlugin)
-                    .width(Length::Fill),
-                scrollable(clap_list).height(Length::Fill),
-                row![
-                    load,
-                    pick_list(
-                        Self::supported_plugin_formats(),
-                        Some(self.plugin_format),
-                        Message::PluginFormatSelected,
-                    ),
+            if state.clap_plugins_unavailable {
+                column![
+                    text("CLAP plugin scan is unavailable.").size(14),
+                    text("Check the status message for details, or select another format below.")
+                        .size(12),
+                    row![
+                        load,
+                        pick_list(
+                            Self::supported_plugin_formats(),
+                            Some(self.plugin_format),
+                            Message::PluginFormatSelected,
+                        ),
+                    ]
+                    .spacing(10),
                 ]
-                .spacing(10),
-            ]
-            .spacing(10)
+                .spacing(10)
+            } else {
+                column![
+                    text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
+                        .on_input(Message::FilterClapPlugin)
+                        .width(Length::Fill),
+                    scrollable(clap_list).height(Length::Fill),
+                    row![
+                        load,
+                        pick_list(
+                            Self::supported_plugin_formats(),
+                            Some(self.plugin_format),
+                            Message::PluginFormatSelected,
+                        ),
+                    ]
+                    .spacing(10),
+                ]
+                .spacing(10)
+            }
         } else {
             let load = if self.selected_vst3_plugins.is_empty() {
                 button("Load")
@@ -6279,22 +6357,40 @@ impl Maolan {
                 button(text(format!("Load ({})", self.selected_vst3_plugins.len())))
                     .on_press(Message::LoadSelectedVst3Plugins)
             };
-            column![
-                text_input("Filter VST3 plugins...", &self.vst3_plugin_filter)
-                    .on_input(Message::FilterVst3Plugins)
-                    .width(Length::Fill),
-                scrollable(vst3_list).height(Length::Fill),
-                row![
-                    load,
-                    pick_list(
-                        Self::supported_plugin_formats(),
-                        Some(self.plugin_format),
-                        Message::PluginFormatSelected,
-                    ),
+            if state.vst3_plugins_unavailable {
+                column![
+                    text("VST3 plugin scan is unavailable.").size(14),
+                    text("Check the status message for details, or select another format below.")
+                        .size(12),
+                    row![
+                        load,
+                        pick_list(
+                            Self::supported_plugin_formats(),
+                            Some(self.plugin_format),
+                            Message::PluginFormatSelected,
+                        ),
+                    ]
+                    .spacing(10),
                 ]
-                .spacing(10),
-            ]
-            .spacing(10)
+                .spacing(10)
+            } else {
+                column![
+                    text_input("Filter VST3 plugins...", &self.vst3_plugin_filter)
+                        .on_input(Message::FilterVst3Plugins)
+                        .width(Length::Fill),
+                    scrollable(vst3_list).height(Length::Fill),
+                    row![
+                        load,
+                        pick_list(
+                            Self::supported_plugin_formats(),
+                            Some(self.plugin_format),
+                            Message::PluginFormatSelected,
+                        ),
+                    ]
+                    .spacing(10),
+                ]
+                .spacing(10)
+            }
         };
 
         container(

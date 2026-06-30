@@ -342,7 +342,7 @@ mod tests {
             return;
         }
 
-        let mut blocklist = scanner::Blocklist::default();
+        let mut blocklist = crate::plugin_blocklist::Blocklist::default();
         let result = scanner::scan_or_blocklist(
             &host_bin,
             "clap",

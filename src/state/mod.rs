@@ -898,10 +898,14 @@ pub struct StateData {
     pub lv2_plugins: Vec<Lv2PluginInfo>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_plugins_loaded: bool,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub lv2_plugins_unavailable: bool,
     pub vst3_plugins: Vec<Vst3PluginInfo>,
     pub vst3_plugins_loaded: bool,
+    pub vst3_plugins_unavailable: bool,
     pub clap_plugins: Vec<ClapPluginInfo>,
     pub clap_plugins_loaded: bool,
+    pub clap_plugins_unavailable: bool,
     pub clap_plugins_by_track: HashMap<String, Vec<String>>,
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub vst3_states_by_track: HashMap<String, HashMap<usize, Vst3PluginState>>,
@@ -1088,10 +1092,14 @@ impl Default for StateData {
             lv2_plugins: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_plugins_loaded: false,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            lv2_plugins_unavailable: false,
             vst3_plugins: vec![],
             vst3_plugins_loaded: false,
+            vst3_plugins_unavailable: false,
             clap_plugins: vec![],
             clap_plugins_loaded: false,
+            clap_plugins_unavailable: false,
             clap_plugins_by_track: HashMap::new(),
             clap_states_by_track: HashMap::new(),
             vst3_states_by_track: HashMap::new(),

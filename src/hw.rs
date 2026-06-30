@@ -105,10 +105,11 @@ impl HW {
 
     fn plugins_loaded(&self) -> bool {
         let state = self.state.blocking_read();
-        let core_plugins_loaded = state.vst3_plugins_loaded && state.clap_plugins_loaded;
+        let core_plugins_loaded = (state.vst3_plugins_loaded || state.vst3_plugins_unavailable)
+            && (state.clap_plugins_loaded || state.clap_plugins_unavailable);
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            core_plugins_loaded && state.lv2_plugins_loaded
+            core_plugins_loaded && (state.lv2_plugins_loaded || state.lv2_plugins_unavailable)
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {

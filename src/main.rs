@@ -16,6 +16,7 @@ mod midi;
 mod modulator_target_dialog;
 mod modulators_pane;
 mod platform_caps;
+mod plugin_blocklist;
 mod plugin_host;
 mod shortcuts_pane;
 mod state;

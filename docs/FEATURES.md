@@ -152,6 +152,7 @@ Last updated: 2026-04-30
 - Mixed plugin graph session/template restore
 - Plugin parameter automation for loaded plugins
 - Offline plugin bounce path for freeze/export workflows
+- Plugin blocklist (`~/.config/maolan/plugin-blocklist.json`) to hide problematic plugins from scans
 
 ## Export and Render
 - Mixdown and stem export (selected tracks)
