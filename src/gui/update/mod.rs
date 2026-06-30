@@ -335,6 +335,8 @@ impl Maolan {
         state.plugin_graph_moving_plugin = None;
         state.plugin_graph_last_plugin_click = None;
         state.plugin_graph_selected_plugins.clear();
+        state.plugin_graph_selected_connections.clear();
+        state.plugin_graph_selected_connectable_connections.clear();
     }
 
     fn open_track_plugins_followup(&self, _track_name: String) -> Task<Message> {

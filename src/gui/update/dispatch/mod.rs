@@ -3840,6 +3840,16 @@ impl Maolan {
                                 return task;
                             }
                         }
+                        Action::TrackConnectAudio { track_name, .. }
+                        | Action::TrackDisconnectAudio { track_name, .. }
+                        | Action::TrackConnectMidi { track_name, .. }
+                        | Action::TrackDisconnectMidi { track_name, .. } => {
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
+                                return task;
+                            }
+                        }
                         Action::TrackVst3StateSnapshot {
                             track_name,
                             instance_id,
@@ -3948,6 +3958,7 @@ impl Maolan {
                             track_name,
                             plugins,
                             connections,
+                            connectable_connections,
                         } => {
                             let mut state = self.state.blocking_write();
                             let keep_restore_cache = self.session_restore_in_progress
@@ -3962,13 +3973,18 @@ impl Maolan {
                             state
                                 .plugin_graphs_by_track
                                 .insert(track_name.clone(), (plugins.clone(), connections.clone()));
+                            state
+                                .connectable_connections_by_track
+                                .insert(track_name.clone(), connectable_connections.clone());
                             if state.plugin_graph_clip.is_none()
                                 && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
                             {
                                 state.plugin_graph_track = Some(track_name.clone());
                                 state.plugin_graph_plugins = plugins.clone();
                                 state.plugin_graph_connections = connections.clone();
+                                state.connectable_connections = connectable_connections.clone();
                                 state.plugin_graph_selected_connections.clear();
+                                state.plugin_graph_selected_connectable_connections.clear();
                                 state
                                     .plugin_graph_selected_plugins
                                     .retain(|id| plugins.iter().any(|p| p.instance_id == *id));
@@ -5670,6 +5686,7 @@ impl Maolan {
                 state.selected_clips.clear();
                 state.track_context_menu = None;
                 state.connection_view_selection = ConnectionViewSelection::None;
+                state.plugin_graph_selected_connectable_connections.clear();
             }
             Message::DeselectClips => {
                 let mut state = self.state.blocking_write();
@@ -5856,6 +5873,114 @@ impl Maolan {
                 let view = self.state.blocking_read().view.clone();
                 match view {
                     crate::state::View::Connections => {
+                        let (
+                            track_name,
+                            selected_plugins,
+                            selected_indices,
+                            connections,
+                            selected_connectable,
+                            connectable_connections,
+                        ) = {
+                            let state = self.state.blocking_read();
+                            if state.connections_folder.is_none() {
+                                drop(state);
+                                return self.update(Message::RemoveSelected);
+                            }
+                            let data = (
+                                state.plugin_graph_track.clone(),
+                                state.plugin_graph_selected_plugins.clone(),
+                                state.plugin_graph_selected_connections.clone(),
+                                state.plugin_graph_connections.clone(),
+                                state.plugin_graph_selected_connectable_connections.clone(),
+                                state.connectable_connections.clone(),
+                            );
+                            drop(state);
+                            data
+                        };
+                        if let Some(track_name) = track_name {
+                            if !selected_plugins.is_empty() {
+                                let mut tasks = Vec::new();
+                                let mut state = self.state.blocking_write();
+                                let plugins_to_remove: Vec<usize> =
+                                    selected_plugins.iter().copied().collect();
+                                for instance_id in plugins_to_remove {
+                                    let selected_node = state
+                                        .plugin_graph_plugins
+                                        .iter()
+                                        .find(|p| p.instance_id == instance_id)
+                                        .map(|p| p.node.clone());
+                                    if let Some(node) = selected_node {
+                                        let task = match node {
+                                            #[cfg(all(unix, not(target_os = "macos")))]
+                                            PluginGraphNode::Lv2PluginInstance(_) => {
+                                                self.send(Action::TrackUnloadLv2PluginInstance {
+                                                    track_name: track_name.clone(),
+                                                    instance_id,
+                                                })
+                                            }
+                                            PluginGraphNode::Vst3PluginInstance(_) => {
+                                                self.send(Action::TrackUnloadVst3PluginInstance {
+                                                    track_name: track_name.clone(),
+                                                    instance_id,
+                                                })
+                                            }
+                                            PluginGraphNode::ClapPluginInstance(_) => {
+                                                let plugin_path = state
+                                                    .plugin_graph_plugins
+                                                    .iter()
+                                                    .find(|p| p.instance_id == instance_id)
+                                                    .map(|p| p.uri.clone())
+                                                    .unwrap_or_default();
+                                                self.send(Action::TrackUnloadClapPlugin {
+                                                    track_name: track_name.clone(),
+                                                    plugin_path,
+                                                })
+                                            }
+                                            PluginGraphNode::TrackInput
+                                            | PluginGraphNode::TrackOutput => Task::none(),
+                                        };
+                                        tasks.push(task);
+                                    }
+                                }
+                                state.plugin_graph_selected_plugins.clear();
+                                state.plugin_graph_selected_connections.clear();
+                                state.plugin_graph_selected_connectable_connections.clear();
+                                return Task::batch(tasks);
+                            }
+                            if !selected_indices.is_empty() {
+                                let actions = connections::selection::plugin_disconnect_actions(
+                                    &track_name,
+                                    &connections,
+                                    &selected_indices,
+                                );
+                                let tasks = actions
+                                    .into_iter()
+                                    .map(|a| self.send(a))
+                                    .collect::<Vec<_>>();
+                                let mut state = self.state.blocking_write();
+                                state.plugin_graph_selected_connections.clear();
+                                state.plugin_graph_selected_plugins.clear();
+                                state.plugin_graph_selected_connectable_connections.clear();
+                                return Task::batch(tasks);
+                            }
+                            if !selected_connectable.is_empty() {
+                                let actions =
+                                    connections::selection::connectable_disconnect_actions(
+                                        &track_name,
+                                        &connectable_connections,
+                                        &selected_connectable,
+                                    );
+                                let tasks = actions
+                                    .into_iter()
+                                    .map(|a| self.send(a))
+                                    .collect::<Vec<_>>();
+                                let mut state = self.state.blocking_write();
+                                state.plugin_graph_selected_connectable_connections.clear();
+                                state.plugin_graph_selected_connections.clear();
+                                state.plugin_graph_selected_plugins.clear();
+                                return Task::batch(tasks);
+                            }
+                        }
                         return self.update(Message::RemoveSelected);
                     }
                     crate::state::View::Workspace => {
@@ -5864,13 +5989,22 @@ impl Maolan {
                     crate::state::View::TrackPlugins => {
                         #[cfg(all(unix, not(target_os = "macos")))]
                         {
-                            let (track_name, selected_plugins, selected_indices, connections) = {
+                            let (
+                                track_name,
+                                selected_plugins,
+                                selected_indices,
+                                connections,
+                                selected_connectable,
+                                connectable_connections,
+                            ) = {
                                 let state = self.state.blocking_read();
                                 (
                                     state.plugin_graph_track.clone(),
                                     state.plugin_graph_selected_plugins.clone(),
                                     state.plugin_graph_selected_connections.clone(),
                                     state.plugin_graph_connections.clone(),
+                                    state.plugin_graph_selected_connectable_connections.clone(),
+                                    state.connectable_connections.clone(),
                                 )
                             };
                             if let Some(track_name) = track_name {
@@ -5896,6 +6030,7 @@ impl Maolan {
                                         });
                                         state.plugin_graph_selected_plugins.clear();
                                         state.plugin_graph_selected_connections.clear();
+                                        state.plugin_graph_selected_connectable_connections.clear();
                                         let sync = Self::save_open_clip_plugin_graph(&mut state);
                                         return sync
                                             .map_or_else(Task::none, |action| self.send(action));
@@ -5911,6 +6046,7 @@ impl Maolan {
                                         .collect();
                                     state.plugin_graph_selected_connections.clear();
                                     state.plugin_graph_selected_plugins.clear();
+                                    state.plugin_graph_selected_connectable_connections.clear();
                                     let sync = Self::save_open_clip_plugin_graph(&mut state);
                                     return sync
                                         .map_or_else(Task::none, |action| self.send(action));
@@ -5960,26 +6096,42 @@ impl Maolan {
                                     }
                                     state.plugin_graph_selected_plugins.clear();
                                     state.plugin_graph_selected_connections.clear();
+                                    state.plugin_graph_selected_connectable_connections.clear();
                                     return Task::batch(tasks);
                                 }
-                                let actions = connections::selection::plugin_disconnect_actions(
-                                    &track_name,
-                                    &connections,
-                                    &selected_indices,
-                                );
-                                let tasks = actions
-                                    .into_iter()
-                                    .map(|a| self.send(a))
-                                    .collect::<Vec<_>>();
-                                self.state
-                                    .blocking_write()
-                                    .plugin_graph_selected_connections
-                                    .clear();
-                                self.state
-                                    .blocking_write()
-                                    .plugin_graph_selected_plugins
-                                    .clear();
-                                return Task::batch(tasks);
+                                if !selected_indices.is_empty() {
+                                    let actions = connections::selection::plugin_disconnect_actions(
+                                        &track_name,
+                                        &connections,
+                                        &selected_indices,
+                                    );
+                                    let tasks = actions
+                                        .into_iter()
+                                        .map(|a| self.send(a))
+                                        .collect::<Vec<_>>();
+                                    let mut state = self.state.blocking_write();
+                                    state.plugin_graph_selected_connections.clear();
+                                    state.plugin_graph_selected_plugins.clear();
+                                    state.plugin_graph_selected_connectable_connections.clear();
+                                    return Task::batch(tasks);
+                                }
+                                if !selected_connectable.is_empty() {
+                                    let actions =
+                                        connections::selection::connectable_disconnect_actions(
+                                            &track_name,
+                                            &connectable_connections,
+                                            &selected_connectable,
+                                        );
+                                    let tasks = actions
+                                        .into_iter()
+                                        .map(|a| self.send(a))
+                                        .collect::<Vec<_>>();
+                                    let mut state = self.state.blocking_write();
+                                    state.plugin_graph_selected_connectable_connections.clear();
+                                    state.plugin_graph_selected_connections.clear();
+                                    state.plugin_graph_selected_plugins.clear();
+                                    return Task::batch(tasks);
+                                }
                             }
                         }
                     }
@@ -9081,6 +9233,26 @@ impl Maolan {
                 state.connections_folder = Some(folder_name.clone());
                 state.connection_view_selection = ConnectionViewSelection::None;
                 state.message = format!("Opened folder connections: {}", folder_name);
+                state.plugin_graph_track = Some(folder_name.clone());
+                state.plugin_graph_clip = None;
+                Self::reset_track_plugin_view_state(&mut state);
+                if let Some((plugins, connections)) =
+                    state.plugin_graphs_by_track.get(folder_name).cloned()
+                {
+                    state.plugin_graph_plugins = plugins.clone();
+                    state.plugin_graph_connections = connections;
+                    let mut new_positions = std::collections::HashMap::new();
+                    for (idx, plugin) in plugins.iter().enumerate() {
+                        let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
+                        let pos = state
+                            .plugin_graph_plugin_positions
+                            .get(&plugin.instance_id)
+                            .copied()
+                            .unwrap_or(fallback);
+                        new_positions.insert(plugin.instance_id, pos);
+                    }
+                    state.plugin_graph_plugin_positions = new_positions;
+                }
 
                 let node_size = 140.0_f32;
                 let spacing = 40.0_f32;
@@ -9115,6 +9287,9 @@ impl Maolan {
                         }
                     }
                 }
+                return self.send(Action::TrackGetPluginGraph {
+                    track_name: folder_name.clone(),
+                });
             }
             Message::OpenHwPorts { input } => {
                 let mut state = self.state.blocking_write();

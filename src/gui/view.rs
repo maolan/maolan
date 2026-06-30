@@ -229,6 +229,7 @@ impl Maolan {
                     let status_message = state.message.clone();
                     let plugin_graph_track = state.plugin_graph_track.clone();
                     let plugin_graph_clip = state.plugin_graph_clip.clone();
+                    let connections_folder = state.connections_folder.clone();
                     let track_names: Vec<String> = state
                         .tracks
                         .iter()
@@ -462,6 +463,21 @@ impl Maolan {
                             container(
                                 row![
                                     track_selector,
+                                    button("Plugin List")
+                                        .on_press(Message::Show(Show::TrackPluginList))
+                                ]
+                                .spacing(8),
+                            )
+                            .padding(8),
+                        );
+                    }
+                    if matches!(view_kind, View::Connections)
+                        && let Some(ref folder_name) = connections_folder
+                    {
+                        content = content.push(
+                            container(
+                                row![
+                                    text(format!("Folder: {}", folder_name)),
                                     button("Plugin List")
                                         .on_press(Message::Show(Show::TrackPluginList))
                                 ]

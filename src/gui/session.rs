@@ -6,7 +6,10 @@ use crate::{
 use iced::{Length, Point, Task};
 use maolan_engine::{
     kind::Kind,
-    message::{Action, GlobalMidiLearnTarget, Message as EngineMessage},
+    message::{
+        Action, ConnectableConnection, ConnectableRef, GlobalMidiLearnTarget,
+        Message as EngineMessage,
+    },
 };
 use serde_json::{Value, json};
 use std::{
@@ -168,6 +171,96 @@ impl Maolan {
         }
     }
 
+    /// Returns the default child->folder output connections that are currently
+    /// missing. These are persisted so that disabling a child's feed to the
+    /// folder output survives a session reload.
+    fn disabled_default_connections_json(
+        folder: &crate::state::Track,
+        tracks: &[crate::state::Track],
+        actual: &[ConnectableConnection],
+    ) -> Vec<Value> {
+        let mut disabled = Vec::new();
+        for child in tracks
+            .iter()
+            .filter(|t| t.parent_track.as_deref() == Some(folder.name.as_str()))
+        {
+            let audio_out_count = folder.primary_audio_outs.min(child.primary_audio_outs);
+            for port in 0..audio_out_count {
+                let expected = ConnectableConnection {
+                    from: ConnectableRef::ChildTrack(child.name.clone()),
+                    from_port: port,
+                    to: ConnectableRef::TrackOutput,
+                    to_port: port,
+                    kind: Kind::Audio,
+                };
+                if !actual.contains(&expected) {
+                    disabled.push(json!({
+                        "child": child.name.clone(),
+                        "from_port": port,
+                        "to_port": port,
+                        "kind": Self::kind_to_json(Kind::Audio),
+                    }));
+                }
+            }
+            let midi_out_count = folder.midi.outs.min(child.midi.outs);
+            for port in 0..midi_out_count {
+                let folder_port = folder.primary_audio_outs + port;
+                let expected = ConnectableConnection {
+                    from: ConnectableRef::ChildTrack(child.name.clone()),
+                    from_port: port,
+                    to: ConnectableRef::TrackOutput,
+                    to_port: folder_port,
+                    kind: Kind::MIDI,
+                };
+                if !actual.contains(&expected) {
+                    disabled.push(json!({
+                        "child": child.name.clone(),
+                        "from_port": port,
+                        "to_port": folder_port,
+                        "kind": Self::kind_to_json(Kind::MIDI),
+                    }));
+                }
+            }
+        }
+        disabled
+    }
+
+    fn apply_disabled_default_connections(
+        track_name: &str,
+        graph_v: &Value,
+        restore_actions: &mut Vec<Action>,
+    ) {
+        let Some(disabled_arr) = graph_v["disabled_default_connections"].as_array() else {
+            return;
+        };
+        for entry in disabled_arr {
+            let Some(child) = entry["child"].as_str() else {
+                continue;
+            };
+            let from_port = entry["from_port"].as_u64().unwrap_or(0) as usize;
+            let to_port = entry["to_port"].as_u64().unwrap_or(0) as usize;
+            let Some(kind) = Self::kind_from_json(&entry["kind"]) else {
+                continue;
+            };
+            match kind {
+                Kind::Audio => restore_actions.push(Action::TrackDisconnectAudio {
+                    track_name: track_name.to_string(),
+                    from: ConnectableRef::ChildTrack(child.to_string()),
+                    from_port,
+                    to: ConnectableRef::TrackOutput,
+                    to_port,
+                }),
+                Kind::MIDI => restore_actions.push(Action::TrackDisconnectMidi {
+                    track_name: track_name.to_string(),
+                    from: ConnectableRef::ChildTrack(child.to_string()),
+                    from_port,
+                    to: ConnectableRef::TrackOutput,
+                    to_port,
+                }),
+            }
+        }
+    }
+
     fn resolve_clap_plugin_path(
         stored: &str,
         clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
@@ -270,11 +363,41 @@ impl Maolan {
                         }))
                     })
                     .collect();
+                let connectable_conns_json: Vec<Value> = state
+                    .connectable_connections_by_track
+                    .get(track_name)
+                    .map(|conns| {
+                        conns
+                            .iter()
+                            .filter(|c| Self::is_user_connectable_connection(c))
+                            .filter_map(|c| Self::connectable_connection_to_json(c, &id_to_index))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let disabled_defaults_json: Vec<Value> = state
+                    .connectable_connections_by_track
+                    .get(track_name)
+                    .and_then(|actual| {
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| &t.name == track_name)
+                            .map(|folder| {
+                                Self::disabled_default_connections_json(
+                                    folder,
+                                    &state.tracks,
+                                    actual,
+                                )
+                            })
+                    })
+                    .unwrap_or_default();
                 graphs.insert(
                     track_name.clone(),
                     json!({
                         "plugins": plugins_json,
                         "connections": conns_json,
+                        "connectable_connections": connectable_conns_json,
+                        "disabled_default_connections": disabled_defaults_json,
                     }),
                 );
             }
@@ -959,11 +1082,41 @@ impl Maolan {
                         }))
                     })
                     .collect();
+                let connectable_conns_json: Vec<Value> = state
+                    .connectable_connections_by_track
+                    .get(track_name)
+                    .map(|conns| {
+                        conns
+                            .iter()
+                            .filter(|c| Self::is_user_connectable_connection(c))
+                            .filter_map(|c| Self::connectable_connection_to_json(c, &id_to_index))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let disabled_defaults_json: Vec<Value> = state
+                    .connectable_connections_by_track
+                    .get(track_name)
+                    .and_then(|actual| {
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| &t.name == track_name)
+                            .map(|folder| {
+                                Self::disabled_default_connections_json(
+                                    folder,
+                                    &state.tracks,
+                                    actual,
+                                )
+                            })
+                    })
+                    .unwrap_or_default();
                 graphs.insert(
                     track_name.clone(),
                     json!({
                         "plugins": plugins_json,
                         "connections": conns_json,
+                        "connectable_connections": connectable_conns_json,
+                        "disabled_default_connections": disabled_defaults_json,
                     }),
                 );
             }
@@ -1113,6 +1266,7 @@ impl Maolan {
             state.session_track_number.clear();
             state.session_genre.clear();
             state.plugin_graphs_by_track.clear();
+            state.connectable_connections_by_track.clear();
         }
         let filename = format!("{}.json", self.session_branch);
         let mut p = PathBuf::from(path.clone());
@@ -1147,6 +1301,32 @@ impl Maolan {
                 .blocking_write()
                 .plugin_graphs_by_track
                 .extend(snapshots);
+            let mut connectable = self.state.blocking_write();
+            for (track_name, graph) in graphs {
+                let snapshot = Self::plugin_graph_snapshot_from_json(
+                    Some(graph),
+                    &lv2_plugins,
+                    &vst3_plugins,
+                    &clap_plugins,
+                );
+                let id_to_index: std::collections::HashMap<usize, usize> = snapshot
+                    .0
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, p)| (p.instance_id, idx))
+                    .collect();
+                let index_to_id: std::collections::HashMap<usize, usize> =
+                    id_to_index.iter().map(|(&id, &idx)| (idx, id)).collect();
+                let conns = Self::connectable_connections_from_json(
+                    &graph["connectable_connections"],
+                    &index_to_id,
+                );
+                if !conns.is_empty() {
+                    connectable
+                        .connectable_connections_by_track
+                        .insert(track_name.clone(), conns);
+                }
+            }
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
@@ -1170,6 +1350,31 @@ impl Maolan {
                 .blocking_write()
                 .plugin_graphs_by_track
                 .extend(snapshots);
+            let mut connectable = self.state.blocking_write();
+            for (track_name, graph) in graphs {
+                let snapshot = Self::plugin_graph_snapshot_from_json(
+                    Some(graph),
+                    &vst3_plugins,
+                    &clap_plugins,
+                );
+                let id_to_index: std::collections::HashMap<usize, usize> = snapshot
+                    .0
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, p)| (p.instance_id, idx))
+                    .collect();
+                let index_to_id: std::collections::HashMap<usize, usize> =
+                    id_to_index.iter().map(|(&id, &idx)| (idx, id)).collect();
+                let conns = Self::connectable_connections_from_json(
+                    &graph["connectable_connections"],
+                    &index_to_id,
+                );
+                if !conns.is_empty() {
+                    connectable
+                        .connectable_connections_by_track
+                        .insert(track_name.clone(), conns);
+                }
+            }
         }
         if let Some(global_ml) = session.get("midi_learn_global").and_then(Value::as_object) {
             if let Ok(binding) =
@@ -2390,6 +2595,54 @@ impl Maolan {
                             }
                         }
                     }
+
+                    if let Some(connectable_arr) = graph_v["connectable_connections"].as_array() {
+                        let index_to_id: std::collections::HashMap<usize, usize> =
+                            runtime_nodes
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, node)| match node {
+                                    maolan_engine::message::PluginGraphNode::ClapPluginInstance(
+                                        id,
+                                    )
+                                    | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
+                                        id,
+                                    ) => Some((idx, *id)),
+                                    #[cfg(all(unix, not(target_os = "macos")))]
+                                    maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
+                                        id,
+                                    ) => Some((idx, *id)),
+                                    _ => None,
+                                })
+                                .collect();
+                        for conn in Self::connectable_connections_from_json(
+                            &Value::Array(connectable_arr.clone()),
+                            &index_to_id,
+                        ) {
+                            match conn.kind {
+                                Kind::Audio => restore_actions.push(Action::TrackConnectAudio {
+                                    track_name: track_name.clone(),
+                                    from: conn.from,
+                                    from_port: conn.from_port,
+                                    to: conn.to,
+                                    to_port: conn.to_port,
+                                }),
+                                Kind::MIDI => restore_actions.push(Action::TrackConnectMidi {
+                                    track_name: track_name.clone(),
+                                    from: conn.from,
+                                    from_port: conn.from_port,
+                                    to: conn.to,
+                                    to_port: conn.to_port,
+                                }),
+                            }
+                        }
+                    }
+
+                    Self::apply_disabled_default_connections(
+                        track_name,
+                        graph_v,
+                        &mut restore_actions,
+                    );
                 }
             }
         }
@@ -2988,6 +3241,86 @@ mod tests {
                 ..
             } if track_name == "MyDrums" && plugin_path == "/usr/lib/clap/DrumMachine.clap::com.example.drummachine"
         )));
+    }
+
+    #[test]
+    fn disabled_default_connections_json_detects_missing_child_outputs() {
+        let mut folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 2, 2, 2);
+        folder.is_folder = true;
+        let mut child = crate::state::Track::new("Child".to_string(), 0.0, 2, 2, 2, 2);
+        child.parent_track = Some("Folder".to_string());
+        let tracks = vec![folder.clone(), child];
+        let actual = vec![
+            ConnectableConnection {
+                from: ConnectableRef::ChildTrack("Child".to_string()),
+                from_port: 0,
+                to: ConnectableRef::TrackOutput,
+                to_port: 0,
+                kind: Kind::Audio,
+            },
+            ConnectableConnection {
+                from: ConnectableRef::ChildTrack("Child".to_string()),
+                from_port: 0,
+                to: ConnectableRef::TrackOutput,
+                to_port: 2,
+                kind: Kind::MIDI,
+            },
+        ];
+
+        let disabled = Maolan::disabled_default_connections_json(&folder, &tracks, &actual);
+
+        assert_eq!(disabled.len(), 2);
+        assert!(disabled.iter().any(|d| {
+            d["child"] == "Child"
+                && d["from_port"] == 1
+                && d["to_port"] == 1
+                && d["kind"] == "audio"
+        }));
+        assert!(disabled.iter().any(|d| {
+            d["child"] == "Child" && d["from_port"] == 1 && d["to_port"] == 3 && d["kind"] == "midi"
+        }));
+    }
+
+    #[test]
+    fn apply_disabled_default_connections_generates_disconnect_actions() {
+        let graph = json!({
+            "disabled_default_connections": [
+                {"child": "Child", "from_port": 0, "to_port": 0, "kind": "audio"},
+                {"child": "Child", "from_port": 1, "to_port": 3, "kind": "midi"}
+            ]
+        });
+        let mut actions = Vec::new();
+        Maolan::apply_disabled_default_connections("Folder", &graph, &mut actions);
+
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(
+            actions[0],
+            Action::TrackDisconnectAudio {
+                ref track_name,
+                ref from,
+                from_port,
+                ref to,
+                to_port,
+            } if track_name == "Folder"
+                && from == &ConnectableRef::ChildTrack("Child".to_string())
+                && from_port == 0
+                && to == &ConnectableRef::TrackOutput
+                && to_port == 0
+        ));
+        assert!(matches!(
+            actions[1],
+            Action::TrackDisconnectMidi {
+                ref track_name,
+                ref from,
+                from_port,
+                ref to,
+                to_port,
+            } if track_name == "Folder"
+                && from == &ConnectableRef::ChildTrack("Child".to_string())
+                && from_port == 1
+                && to == &ConnectableRef::TrackOutput
+                && to_port == 3
+        ));
     }
 }
 

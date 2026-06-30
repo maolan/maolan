@@ -46,7 +46,7 @@ impl Graph {
         Self { state }
     }
 
-    fn required_height_for_ports(port_count: usize, radius: f32) -> f32 {
+    pub(crate) fn required_height_for_ports(port_count: usize, radius: f32) -> f32 {
         if port_count == 0 {
             0.0
         } else {
@@ -54,7 +54,7 @@ impl Graph {
         }
     }
 
-    fn plugin_height(plugin: &PluginGraphPlugin) -> f32 {
+    pub(crate) fn plugin_height(plugin: &PluginGraphPlugin) -> f32 {
         MIN_PLUGIN_H
             .max(Self::required_height_for_ports(
                 plugin.audio_inputs,
@@ -74,7 +74,7 @@ impl Graph {
             ))
     }
 
-    fn plugin_node_instance_id(node: &PluginGraphNode) -> Option<usize> {
+    pub(crate) fn plugin_node_instance_id(node: &PluginGraphNode) -> Option<usize> {
         match node {
             #[cfg(all(unix, not(target_os = "macos")))]
             PluginGraphNode::Lv2PluginInstance(id) => Some(*id),
@@ -120,7 +120,7 @@ impl Graph {
         )
     }
 
-    fn edge_port_y(
+    pub(crate) fn edge_port_y(
         y: f32,
         h: f32,
         audio_count: usize,
@@ -171,7 +171,7 @@ impl Graph {
         )
     }
 
-    fn plugin_input_port_y(
+    pub(crate) fn plugin_input_port_y(
         plugin: &PluginGraphPlugin,
         plugin_h: f32,
         y: f32,
@@ -188,7 +188,7 @@ impl Graph {
         )
     }
 
-    fn plugin_output_port_y(
+    pub(crate) fn plugin_output_port_y(
         plugin: &PluginGraphPlugin,
         plugin_h: f32,
         y: f32,
@@ -221,7 +221,7 @@ impl Graph {
         }
     }
 
-    fn plugin_input_port_color(plugin: &PluginGraphPlugin, port: usize) -> Color {
+    pub(crate) fn plugin_input_port_color(plugin: &PluginGraphPlugin, port: usize) -> Color {
         if port >= plugin.main_audio_inputs {
             aux_port_color()
         } else {
@@ -229,7 +229,7 @@ impl Graph {
         }
     }
 
-    fn plugin_output_port_color(plugin: &PluginGraphPlugin, port: usize) -> Color {
+    pub(crate) fn plugin_output_port_color(plugin: &PluginGraphPlugin, port: usize) -> Color {
         if port >= plugin.main_audio_outputs {
             aux_port_color()
         } else {
@@ -517,6 +517,7 @@ impl canvas::Program<Message> for Graph {
                             ctrl,
                         );
                         data.plugin_graph_selected_plugins.clear();
+                        data.plugin_graph_selected_connectable_connections.clear();
                         return Some(Action::request_redraw());
                     }
 
@@ -540,6 +541,7 @@ impl canvas::Program<Message> for Graph {
                             ctrl,
                         );
                         data.plugin_graph_selected_connections.clear();
+                        data.plugin_graph_selected_connectable_connections.clear();
                         let now = Instant::now();
                         let is_double_click = if let Some((last_instance, last_time)) =
                             data.plugin_graph_last_plugin_click
@@ -607,6 +609,7 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     data.plugin_graph_selected_connections.clear();
+                    data.plugin_graph_selected_connectable_connections.clear();
                     data.plugin_graph_selected_plugins.clear();
                     return Some(Action::request_redraw());
                 }
@@ -717,7 +720,7 @@ impl canvas::Program<Message> for Graph {
                                         PluginGraphNode::TrackInput => track
                                             .map(|t| {
                                                 if connecting.kind == Kind::Audio {
-                                                    t.audio.ins
+                                                    t.primary_audio_ins()
                                                 } else {
                                                     t.midi.ins
                                                 }
@@ -732,7 +735,7 @@ impl canvas::Program<Message> for Graph {
                                             })
                                             .map(|p| {
                                                 if connecting.kind == Kind::Audio {
-                                                    p.audio_outputs
+                                                    p.main_audio_outputs
                                                 } else {
                                                     p.midi_outputs
                                                 }
@@ -743,7 +746,7 @@ impl canvas::Program<Message> for Graph {
                                         PluginGraphNode::TrackOutput => track
                                             .map(|t| {
                                                 if connecting.kind == Kind::Audio {
-                                                    t.audio.outs
+                                                    t.primary_audio_outs()
                                                 } else {
                                                     t.midi.outs
                                                 }
@@ -758,7 +761,7 @@ impl canvas::Program<Message> for Graph {
                                             })
                                             .map(|p| {
                                                 if connecting.kind == Kind::Audio {
-                                                    p.audio_inputs
+                                                    p.main_audio_inputs
                                                 } else {
                                                     p.midi_inputs
                                                 }
@@ -1330,7 +1333,7 @@ impl canvas::Program<Message> for Graph {
                     let source_count = match &connecting.from_node {
                         PluginGraphNode::TrackInput => {
                             if connecting.kind == Kind::Audio {
-                                track.audio.ins
+                                track.primary_audio_ins()
                             } else {
                                 track.midi.ins
                             }
@@ -1344,7 +1347,7 @@ impl canvas::Program<Message> for Graph {
                             })
                             .map(|p| {
                                 if connecting.kind == Kind::Audio {
-                                    p.audio_outputs
+                                    p.main_audio_outputs
                                 } else {
                                     p.midi_outputs
                                 }

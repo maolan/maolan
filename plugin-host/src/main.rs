@@ -199,11 +199,6 @@ fn main() {
                         std::process::exit(2);
                     }
                 };
-                {
-                    let header =
-                        unsafe { maolan_plugin_protocol::protocol::header_mut(mapping.as_ptr()) };
-                    header.ready.store(1, std::sync::atomic::Ordering::Release);
-                }
                 maolan_plugin_host::vst3_lv2_host::run_vst3(
                     maolan_plugin_host::vst3_lv2_host::Vst3RunArgs {
                         plugin_path: &plugin_spec,
@@ -239,11 +234,6 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            {
-                let header =
-                    unsafe { maolan_plugin_protocol::protocol::header_mut(mapping.as_ptr()) };
-                header.ready.store(1, std::sync::atomic::Ordering::Release);
-            }
             maolan_plugin_host::vst3_lv2_host::run_lv2(
                 &plugin_spec,
                 mapping,

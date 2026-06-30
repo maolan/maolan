@@ -1,8 +1,9 @@
 use crate::clap::{
-    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_PARAMS, CLAP_EXT_TIMER_SUPPORT, ClapAudioBuffer,
-    ClapEventHeader, ClapEventParamGesture, ClapEventParamMod, ClapEventParamValue,
-    ClapPluginParams, ClapProcess, EventBuffer, EventCapture, PluginInstance, ThreadType,
-    host_timers, set_thread_type,
+    CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EXT_AUDIO_PORTS,
+    CLAP_EXT_PARAMS, CLAP_EXT_TIMER_SUPPORT, ClapAudioBuffer, ClapEventHeader, ClapEventMidi,
+    ClapEventNote, ClapEventParamGesture, ClapEventParamMod, ClapEventParamValue, ClapPluginParams,
+    ClapProcess, EventBuffer, EventCapture, PluginInstance, ThreadType, host_timers,
+    set_thread_type,
 };
 #[cfg(unix)]
 use crate::clap::{CLAP_EXT_POSIX_FD_SUPPORT, host_fds};
@@ -363,6 +364,13 @@ impl HostRuntime {
             }
         };
         unsafe {
+            let header = maolan_plugin_protocol::protocol::header_mut(ptr);
+            header
+                .midi_in_port_count
+                .store(midi_in_ports, Ordering::Release);
+            header
+                .midi_out_port_count
+                .store(midi_out_ports, Ordering::Release);
             maolan_plugin_protocol::protocol::write_port_counts_to_scratch(
                 ptr,
                 audio_in_channels,
@@ -386,10 +394,23 @@ impl HostRuntime {
             RingBuffer::new(buf, w, r, RING_CAPACITY)
         };
 
-        let midi_ring = unsafe {
-            let buf = midi_ring_ptr(ptr);
-            let (w, r) = midi_indices(ptr);
-            RingBuffer::new(buf, w, r, RING_CAPACITY)
+        let mut midi_in_rings: Vec<RingBuffer<maolan_plugin_protocol::protocol::MidiEvent>> = unsafe {
+            (0..midi_in_ports as usize)
+                .map(|port| {
+                    let buf = midi_in_ring_ptr(ptr, port);
+                    let (w, r) = midi_in_indices(ptr, port);
+                    RingBuffer::new(buf, w, r, RING_CAPACITY)
+                })
+                .collect()
+        };
+        let midi_out_rings: Vec<RingBuffer<maolan_plugin_protocol::protocol::MidiEvent>> = unsafe {
+            (0..midi_out_ports as usize)
+                .map(|port| {
+                    let buf = midi_out_ring_ptr(ptr, port);
+                    let (w, r) = midi_out_indices(ptr, port);
+                    RingBuffer::new(buf, w, r, RING_CAPACITY)
+                })
+                .collect()
         };
 
         let params_ext = unsafe {
@@ -795,16 +816,18 @@ impl HostRuntime {
                     }
                 }
             }
-            while let Some(ev) = midi_ring.pop() {
-                if has_note_ports {
-                    self.push_midi_as_clap_events(
-                        &mut event_buf,
-                        ev.data,
-                        ev.channel as u16,
-                        ev.sample_offset,
-                    );
-                } else {
-                    event_buf.push_midi(ev.data, ev.channel as u16, ev.sample_offset);
+            for (port_idx, ring) in midi_in_rings.iter_mut().enumerate() {
+                while let Some(ev) = ring.pop() {
+                    if has_note_ports {
+                        self.push_midi_as_clap_events(
+                            &mut event_buf,
+                            ev.data,
+                            port_idx as u16,
+                            ev.sample_offset,
+                        );
+                    } else {
+                        event_buf.push_midi(ev.data, port_idx as u16, ev.sample_offset);
+                    }
                 }
             }
 
@@ -911,6 +934,7 @@ impl HostRuntime {
                 if bytes.len() >= std::mem::size_of::<ClapEventHeader>() {
                     let h = unsafe { &*(bytes.as_ptr() as *const ClapEventHeader) };
                     self.echo_event_to_daw(h, &bytes, &echo_ring);
+                    self.write_midi_output_event_to_rings(h, &bytes, &midi_out_rings);
                 }
             }
 
@@ -1033,6 +1057,56 @@ impl HostRuntime {
                     event_kind: PARAM_EVENT_GESTURE_END,
                 };
                 if !echo_ring.push(echo) {}
+            }
+            _ => {}
+        }
+    }
+
+    fn write_midi_output_event_to_rings(
+        &self,
+        header: &ClapEventHeader,
+        bytes: &[u8],
+        rings: &[RingBuffer<maolan_plugin_protocol::protocol::MidiEvent>],
+    ) {
+        match header.type_ {
+            CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF
+                if bytes.len() >= std::mem::size_of::<ClapEventNote>() =>
+            {
+                let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventNote) };
+                let port = ev.port_index.max(0) as usize;
+                if let Some(ring) = rings.get(port) {
+                    let status = if header.type_ == CLAP_EVENT_NOTE_ON {
+                        0x90
+                    } else {
+                        0x80
+                    };
+                    let midi_ev = maolan_plugin_protocol::protocol::MidiEvent {
+                        sample_offset: header.time,
+                        data: [
+                            status | (ev.channel.max(0) as u8 & 0x0F),
+                            ev.key.max(0) as u8,
+                            (ev.velocity * 127.0).clamp(0.0, 127.0) as u8,
+                        ],
+                        channel: ev.channel.max(0) as u8 & 0x0F,
+                        flags: 0,
+                        _pad: 0,
+                    };
+                    let _ = ring.push(midi_ev);
+                }
+            }
+            CLAP_EVENT_MIDI if bytes.len() >= std::mem::size_of::<ClapEventMidi>() => {
+                let ev = unsafe { &*(bytes.as_ptr() as *const ClapEventMidi) };
+                let port = ev.port_index as usize;
+                if let Some(ring) = rings.get(port) {
+                    let midi_ev = maolan_plugin_protocol::protocol::MidiEvent {
+                        sample_offset: header.time,
+                        data: ev.data,
+                        channel: ev.data.first().copied().unwrap_or(0) & 0x0F,
+                        flags: 0,
+                        _pad: 0,
+                    };
+                    let _ = ring.push(midi_ev);
+                }
             }
             _ => {}
         }
