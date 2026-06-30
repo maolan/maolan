@@ -8832,7 +8832,12 @@ impl Maolan {
                     dialog.available_folder_templates = folder_templates.clone();
                 }
             }
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "windows",
+                target_os = "freebsd",
+                target_os = "openbsd"
+            ))]
             Message::PreferencesDevicesLoaded {
                 ref output_devices,
                 ref input_devices,

@@ -121,11 +121,17 @@ impl HW {
         content: iced::widget::Column<'static, Message>,
         available_hw: Vec<crate::state::AudioDeviceOption>,
         selected_hw: Option<crate::state::AudioDeviceOption>,
+        available_input_hw: Vec<crate::state::AudioDeviceOption>,
         selected_input_hw: Option<crate::state::AudioDeviceOption>,
     ) -> iced::widget::Column<'static, Message> {
-        Self::device_rows(available_hw, selected_hw, selected_input_hw)
-            .into_iter()
-            .fold(content, |content, row| content.push(row))
+        Self::device_rows(
+            available_hw,
+            selected_hw,
+            available_input_hw,
+            selected_input_hw,
+        )
+        .into_iter()
+        .fold(content, |content, row| content.push(row))
     }
 
     #[cfg(target_os = "linux")]
@@ -184,12 +190,13 @@ impl HW {
     fn device_rows(
         available_hw: Vec<crate::state::AudioDeviceOption>,
         selected_hw: Option<crate::state::AudioDeviceOption>,
+        available_input_hw: Vec<crate::state::AudioDeviceOption>,
         selected_input_hw: Option<crate::state::AudioDeviceOption>,
     ) -> Vec<iced::Element<'static, Message>> {
         vec![
             Self::device_pick_row(
                 "Input device:",
-                available_hw.clone(),
+                available_input_hw,
                 selected_input_hw,
                 Message::HWInputSelected,
                 "Choose input device",
@@ -393,7 +400,13 @@ impl HW {
             )
         };
         #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-        let mut selected_input_hw = self.state.blocking_read().selected_input_hw.clone();
+        let (available_input_hw, mut selected_input_hw) = {
+            let state = self.state.blocking_read();
+            (
+                state.available_input_hw.clone(),
+                state.selected_input_hw.clone(),
+            )
+        };
         #[cfg(target_os = "windows")]
         let (available_input_hw, mut selected_input_hw) = {
             let state = self.state.blocking_read();
@@ -423,13 +436,18 @@ impl HW {
                 crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
             })
             .collect();
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         let available_input_hw: Vec<crate::state::AudioDeviceOption> = available_input_hw
             .into_iter()
             .filter(|hw| match selected_backend {
-                crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
                 #[cfg(unix)]
                 crate::state::AudioBackendOption::Jack => false,
+                #[cfg(target_os = "freebsd")]
+                crate::state::AudioBackendOption::Oss => hw.id.starts_with("/dev/dsp"),
+                #[cfg(target_os = "openbsd")]
+                crate::state::AudioBackendOption::Sndio => !hw.id.is_empty(),
+                #[cfg(target_os = "linux")]
+                crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
             })
             .collect();
         #[cfg(target_os = "windows")]
@@ -459,7 +477,7 @@ impl HW {
         #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
         {
             selected_input_hw =
-                selected_input_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
+                selected_input_hw.filter(|s| available_input_hw.iter().any(|hw| hw.id == s.id));
         }
         #[cfg(target_os = "linux")]
         {
@@ -634,8 +652,13 @@ impl HW {
         if !selected_is_jack {
             #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
             {
-                content =
-                    Self::append_device_rows(content, available_hw, selected_hw, selected_input_hw);
+                content = Self::append_device_rows(
+                    content,
+                    available_hw,
+                    selected_hw,
+                    available_input_hw,
+                    selected_input_hw,
+                );
             }
             #[cfg(target_os = "linux")]
             {

@@ -110,14 +110,17 @@ fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
             let max_buffer_bytes = decode_max_buffer_bytes_from_dsp(dsp)
                 .or_else(|| probe_oss_buffer_bytes(&devpath))
                 .unwrap_or(0);
-            Some(AudioDeviceOption::with_oss_caps(
+            let mut device = AudioDeviceOption::with_oss_caps(
                 devpath,
                 label,
                 supported_bits,
                 supported_sample_rates,
                 max_channels,
                 max_buffer_bytes,
-            ))
+            );
+            device.supports_output = dsp_supports_output(dsp);
+            device.supports_input = dsp_supports_input(dsp);
+            Some(device)
         })
         .collect::<Vec<_>>();
 
@@ -157,7 +160,7 @@ fn max_value_from_tree(tree: &Nvtree, keys: &[&str]) -> Option<usize> {
 
 fn max_value_from_dsp(dsp: &Nvtree, keys: &[&str]) -> Option<usize> {
     let mut max_value = max_value_from_tree(dsp, keys);
-    for nested_name in ["play", "playback", "record", "capture"] {
+    for nested_name in ["info_play", "info_rec"] {
         if let Some(pair) = nvtree_find(dsp, nested_name)
             && let Nvtvalue::Nested(nested) = &pair.value
             && let Some(v) = max_value_from_tree(nested, keys)
@@ -166,6 +169,39 @@ fn max_value_from_dsp(dsp: &Nvtree, keys: &[&str]) -> Option<usize> {
         }
     }
     max_value.filter(|v| *v > 0)
+}
+
+fn bool_from_value(value: &Nvtvalue) -> Option<bool> {
+    match value {
+        Nvtvalue::Bool(b) => Some(*b),
+        Nvtvalue::Number(n) => Some(*n != 0),
+        Nvtvalue::String(s) => match s.trim().to_lowercase().as_str() {
+            "true" | "yes" | "1" => Some(true),
+            "false" | "no" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn dsp_supports_output(dsp: &Nvtree) -> bool {
+    if let Some(pair) = nvtree_find(dsp, "play") {
+        return bool_from_value(&pair.value).unwrap_or(false);
+    }
+    nvtree_find(dsp, "pchan")
+        .and_then(|pair| usize_from_value(&pair.value))
+        .map(|n| n > 0)
+        .unwrap_or(false)
+}
+
+fn dsp_supports_input(dsp: &Nvtree) -> bool {
+    if let Some(pair) = nvtree_find(dsp, "rec") {
+        return bool_from_value(&pair.value).unwrap_or(false);
+    }
+    nvtree_find(dsp, "rchan")
+        .and_then(|pair| usize_from_value(&pair.value))
+        .map(|n| n > 0)
+        .unwrap_or(false)
 }
 
 fn decode_max_channels_from_dsp(dsp: &Nvtree) -> Option<usize> {
@@ -237,7 +273,7 @@ fn decode_supported_bits_from_dsp(dsp: &Nvtree) -> Vec<usize> {
     }
 
     let mut mask = format_mask_from_tree(dsp).unwrap_or(0);
-    for nested_name in ["play", "playback", "record", "capture"] {
+    for nested_name in ["info_play", "info_rec"] {
         if let Some(pair) = nvtree_find(dsp, nested_name)
             && let Nvtvalue::Nested(nested) = &pair.value
         {
@@ -314,7 +350,7 @@ fn decode_supported_sample_rates_from_dsp(dsp: &Nvtree) -> Vec<i32> {
 
     let mut rates = BTreeSet::new();
     collect_rates_from_tree(dsp, &mut rates);
-    for nested_name in ["play", "playback", "record", "capture"] {
+    for nested_name in ["info_play", "info_rec"] {
         if let Some(pair) = nvtree_find(dsp, nested_name)
             && let Nvtvalue::Nested(nested) = &pair.value
         {
