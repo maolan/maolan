@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define CLAP_VERSION_MAJOR 1
@@ -90,6 +91,27 @@ typedef struct clap_plugin_entry {
     const void *(*get_factory)(const char *);
 } clap_plugin_entry_t;
 
+/* === Minimal audio-ports extension === */
+
+typedef uint32_t clap_id;
+#define CLAP_INVALID_ID 0xFFFFFFFF
+typedef struct clap_audio_port_info {
+    clap_id id;
+    char name[256];
+    uint32_t flags;
+    uint32_t channel_count;
+    const char *port_type;
+    clap_id in_place_pair;
+} clap_audio_port_info_t;
+
+typedef struct clap_plugin_audio_ports {
+    uint32_t (*count)(const clap_plugin_t *plugin, bool is_input);
+    bool (*get)(const clap_plugin_t *plugin, uint32_t index, bool is_input,
+                clap_audio_port_info_t *info);
+} clap_plugin_audio_ports_t;
+
+#define CLAP_EXT_AUDIO_PORTS "clap.audio-ports"
+
 /* === Plugin instance === */
 
 static bool plugin_init(const clap_plugin_t *plugin) {
@@ -141,8 +163,34 @@ static int32_t plugin_process(const clap_plugin_t *plugin, const clap_process_t 
     return 0; // CLAP_PROCESS_CONTINUE
 }
 
+static uint32_t plugin_audio_ports_count(const clap_plugin_t *plugin, bool is_input) {
+    (void)plugin; (void)is_input;
+    return 1;
+}
+
+static bool plugin_audio_ports_get(const clap_plugin_t *plugin, uint32_t index,
+                                   bool is_input, clap_audio_port_info_t *info) {
+    (void)plugin; (void)is_input;
+    if (index != 0) return false;
+    info->id = 0;
+    snprintf(info->name, sizeof(info->name), "%s", is_input ? "input" : "output");
+    info->flags = 0;
+    info->channel_count = 2;
+    info->port_type = NULL;
+    info->in_place_pair = CLAP_INVALID_ID;
+    return true;
+}
+
+static const clap_plugin_audio_ports_t plugin_audio_ports = {
+    plugin_audio_ports_count,
+    plugin_audio_ports_get,
+};
+
 static const void *plugin_get_extension(const clap_plugin_t *plugin, const char *id) {
-    (void)plugin; (void)id;
+    (void)plugin;
+    if (strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) {
+        return &plugin_audio_ports;
+    }
     return NULL;
 }
 

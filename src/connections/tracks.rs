@@ -1,12 +1,16 @@
 use crate::{
     connections::colors::{audio_port_color, aux_port_color, midi_port_color},
+    connections::plugins::{Graph as PluginGraph, select_plugin_indices},
     connections::port_kind::{can_connect_kinds, should_highlight_port},
     connections::ports::hover_radius,
-    connections::selection::is_bezier_hit,
+    connections::selection::{is_bezier_hit, select_connection_indices},
+    consts::connections_plugins::{
+        MIDI_HIT_RADIUS, PLUGIN_W, PORT_HIT_RADIUS, TRACK_IO_MARGIN_X, TRACK_IO_W,
+    },
     message::Message,
     state::{
         Connecting, ConnectionViewSelection, HW_IN_ID, HW_OUT_ID, Hovering, MIDI_HW_IN_ID,
-        MIDI_HW_OUT_ID, MovingTrack, State, StateData,
+        MIDI_HW_OUT_ID, MovingPlugin, MovingTrack, PluginConnecting, State, StateData,
     },
     ui_timing::DOUBLE_CLICK,
 };
@@ -21,7 +25,10 @@ use iced::{
         canvas::{Action, Frame, Geometry, Path, Text},
     },
 };
-use maolan_engine::{kind::Kind, message::Action as EngineAction};
+use maolan_engine::{
+    kind::Kind,
+    message::{Action as EngineAction, ConnectableRef, PluginGraphNode, PluginGraphPlugin},
+};
 use std::time::Instant;
 
 pub struct Graph {
@@ -34,6 +41,15 @@ enum TrackPortEdge {
     Right,
     Top,
     Bottom,
+}
+
+#[derive(Clone)]
+struct PluginPortHit {
+    node: PluginGraphNode,
+    port: usize,
+    is_input: bool,
+    kind: Kind,
+    pos: Point,
 }
 
 impl Graph {
@@ -143,6 +159,78 @@ impl Graph {
         iced::Size::new(Self::TRACK_NODE_SIZE, Self::TRACK_NODE_SIZE)
     }
 
+    fn plugin_box_size(plugin: &PluginGraphPlugin) -> iced::Size {
+        iced::Size::new(PLUGIN_W, PluginGraph::plugin_height(plugin))
+    }
+
+    fn plugin_node_position(
+        data: &StateData,
+        plugin: &PluginGraphPlugin,
+        idx: usize,
+        bounds: Rectangle,
+    ) -> Point {
+        data.plugin_graph_plugin_positions
+            .get(&plugin.instance_id)
+            .copied()
+            .unwrap_or_else(|| {
+                let plugin_h = PluginGraph::plugin_height(plugin);
+                let start_x = TRACK_IO_MARGIN_X + TRACK_IO_W + 200.0;
+                let max_x = (bounds.width - PLUGIN_W - 20.0).max(start_x);
+                let x = (start_x + (idx % 4) as f32 * (PLUGIN_W + 24.0)).min(max_x);
+                let y = 80.0 + (idx / 4) as f32 * (plugin_h + 40.0);
+                Point::new(x, y)
+            })
+    }
+
+    fn plugin_port_position(
+        plugin: &PluginGraphPlugin,
+        pos: Point,
+        port_idx: usize,
+        is_input: bool,
+    ) -> Option<Point> {
+        let size = Self::plugin_box_size(plugin);
+        let py = if is_input {
+            PluginGraph::plugin_input_port_y(
+                plugin,
+                size.height,
+                pos.y,
+                Self::plugin_port_kind(plugin, port_idx, true),
+                port_idx,
+            )
+        } else {
+            PluginGraph::plugin_output_port_y(
+                plugin,
+                size.height,
+                pos.y,
+                Self::plugin_port_kind(plugin, port_idx, false),
+                port_idx,
+            )
+        };
+        py.map(|y| Point::new(if is_input { pos.x } else { pos.x + size.width }, y))
+    }
+
+    fn plugin_port_kind(plugin: &PluginGraphPlugin, flat_port: usize, is_input: bool) -> Kind {
+        if is_input {
+            if flat_port < plugin.audio_inputs {
+                Kind::Audio
+            } else {
+                Kind::MIDI
+            }
+        } else if flat_port < plugin.audio_outputs {
+            Kind::Audio
+        } else {
+            Kind::MIDI
+        }
+    }
+
+    fn plugin_port_color(plugin: &PluginGraphPlugin, port_idx: usize, is_input: bool) -> Color {
+        if is_input {
+            PluginGraph::plugin_input_port_color(plugin, port_idx)
+        } else {
+            PluginGraph::plugin_output_port_color(plugin, port_idx)
+        }
+    }
+
     fn is_hw_node(name: &str) -> bool {
         name == HW_IN_ID
             || name == HW_OUT_ID
@@ -223,6 +311,499 @@ impl Graph {
             bounds.width - hw_width,
             Self::folder_output_port_y(port_idx, count, bounds.height),
         )
+    }
+
+    fn plugin_graph_node_port_position(
+        data: &StateData,
+        node: &PluginGraphNode,
+        port: usize,
+        is_input: bool,
+        bounds: Rectangle,
+        hw_width: f32,
+    ) -> Option<Point> {
+        match node {
+            PluginGraphNode::TrackInput => Self::folder_track(data)
+                .map(|t| Self::folder_input_port_position(t, port, bounds, hw_width)),
+            PluginGraphNode::TrackOutput => Self::folder_track(data)
+                .map(|t| Self::folder_output_port_position(t, port, bounds, hw_width)),
+            _ => {
+                let id = PluginGraph::plugin_node_instance_id(node)?;
+                let plugin = data
+                    .plugin_graph_plugins
+                    .iter()
+                    .find(|p| p.instance_id == id)?;
+                let idx = data
+                    .plugin_graph_plugins
+                    .iter()
+                    .position(|p| p.instance_id == id)?;
+                let pos = Self::plugin_node_position(data, plugin, idx, bounds);
+                Self::plugin_port_position(plugin, pos, port, is_input)
+            }
+        }
+    }
+
+    fn plugin_graph_node_edge(node: &PluginGraphNode, is_input: bool) -> TrackPortEdge {
+        match node {
+            PluginGraphNode::TrackInput => TrackPortEdge::Right,
+            PluginGraphNode::TrackOutput => TrackPortEdge::Left,
+            _ => {
+                if is_input {
+                    TrackPortEdge::Left
+                } else {
+                    TrackPortEdge::Right
+                }
+            }
+        }
+    }
+
+    fn connectable_ref_to_plugin_node(ref_: &ConnectableRef) -> Option<PluginGraphNode> {
+        match ref_ {
+            ConnectableRef::TrackInput => Some(PluginGraphNode::TrackInput),
+            ConnectableRef::TrackOutput => Some(PluginGraphNode::TrackOutput),
+            ConnectableRef::ClapPlugin(id) => Some(PluginGraphNode::ClapPluginInstance(*id)),
+            ConnectableRef::Vst3Plugin(id) => Some(PluginGraphNode::Vst3PluginInstance(*id)),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            ConnectableRef::Lv2Plugin(id) => Some(PluginGraphNode::Lv2PluginInstance(*id)),
+            ConnectableRef::ChildTrack(_) => None,
+        }
+    }
+
+    fn connectable_port_position(
+        data: &StateData,
+        ref_: &ConnectableRef,
+        port: usize,
+        is_input: bool,
+        kind: Kind,
+        bounds: Rectangle,
+        hw_width: f32,
+    ) -> Option<Point> {
+        if let Some(node) = Self::connectable_ref_to_plugin_node(ref_) {
+            return Self::plugin_graph_node_port_position(
+                data, &node, port, is_input, bounds, hw_width,
+            );
+        }
+        let ConnectableRef::ChildTrack(name) = ref_ else {
+            return None;
+        };
+        let track = data.tracks.iter().find(|t| &t.name == name)?;
+        let size = Self::track_box_size(track);
+        if is_input {
+            let flat_port = Self::connection_port_index(track, kind, port, true);
+            Some(Self::track_port_position(
+                track,
+                flat_port,
+                track.position,
+                size,
+            ))
+        } else {
+            let flat_port = Self::connection_port_index(track, kind, port, false);
+            Some(Self::track_output_port_position(
+                track,
+                flat_port,
+                track.position,
+                size,
+            ))
+        }
+    }
+
+    fn connectable_port_edge(ref_: &ConnectableRef, is_input: bool) -> TrackPortEdge {
+        match ref_ {
+            ConnectableRef::ChildTrack(_) => {
+                if is_input {
+                    TrackPortEdge::Left
+                } else {
+                    TrackPortEdge::Right
+                }
+            }
+            _ => {
+                if let Some(node) = Self::connectable_ref_to_plugin_node(ref_) {
+                    Self::plugin_graph_node_edge(&node, is_input)
+                } else {
+                    TrackPortEdge::Right
+                }
+            }
+        }
+    }
+
+    fn folder_plugin_port_hits(
+        data: &StateData,
+        bounds: Rectangle,
+        hw_width: f32,
+    ) -> Vec<PluginPortHit> {
+        let mut hits = Vec::new();
+        let Some(folder) = Self::folder_track(data) else {
+            return hits;
+        };
+        let in_count = Self::folder_input_count(folder);
+        for port in 0..in_count {
+            hits.push(PluginPortHit {
+                node: PluginGraphNode::TrackInput,
+                port,
+                is_input: false,
+                kind: Self::track_port_kind(folder, port, true),
+                pos: Self::folder_input_port_position(folder, port, bounds, hw_width),
+            });
+        }
+        let out_count = Self::folder_output_count(folder);
+        for port in 0..out_count {
+            hits.push(PluginPortHit {
+                node: PluginGraphNode::TrackOutput,
+                port,
+                is_input: true,
+                kind: Self::track_port_kind(folder, port, false),
+                pos: Self::folder_output_port_position(folder, port, bounds, hw_width),
+            });
+        }
+        hits
+    }
+
+    fn plugin_port_hits(data: &StateData, bounds: Rectangle, hw_width: f32) -> Vec<PluginPortHit> {
+        let mut hits = Self::folder_plugin_port_hits(data, bounds, hw_width);
+        for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate() {
+            let pos = Self::plugin_node_position(data, plugin, idx, bounds);
+            for port in 0..plugin.audio_inputs {
+                if let Some(point) = Self::plugin_port_position(plugin, pos, port, true) {
+                    hits.push(PluginPortHit {
+                        node: plugin.node.clone(),
+                        port,
+                        is_input: true,
+                        kind: Kind::Audio,
+                        pos: point,
+                    });
+                }
+            }
+            for port in 0..plugin.midi_inputs {
+                let flat = plugin.audio_inputs + port;
+                if let Some(point) = Self::plugin_port_position(plugin, pos, flat, true) {
+                    hits.push(PluginPortHit {
+                        node: plugin.node.clone(),
+                        port,
+                        is_input: true,
+                        kind: Kind::MIDI,
+                        pos: point,
+                    });
+                }
+            }
+            for port in 0..plugin.audio_outputs {
+                if let Some(point) = Self::plugin_port_position(plugin, pos, port, false) {
+                    hits.push(PluginPortHit {
+                        node: plugin.node.clone(),
+                        port,
+                        is_input: false,
+                        kind: Kind::Audio,
+                        pos: point,
+                    });
+                }
+            }
+            for port in 0..plugin.midi_outputs {
+                let flat = plugin.audio_outputs + port;
+                if let Some(point) = Self::plugin_port_position(plugin, pos, flat, false) {
+                    hits.push(PluginPortHit {
+                        node: plugin.node.clone(),
+                        port,
+                        is_input: false,
+                        kind: Kind::MIDI,
+                        pos: point,
+                    });
+                }
+            }
+        }
+        hits
+    }
+
+    fn plugin_only_port_hits(
+        data: &StateData,
+        bounds: Rectangle,
+        hw_width: f32,
+    ) -> Vec<PluginPortHit> {
+        Self::plugin_port_hits(data, bounds, hw_width)
+            .into_iter()
+            .filter(|hit| {
+                !matches!(
+                    hit.node,
+                    PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput
+                )
+            })
+            .collect()
+    }
+
+    fn closest_plugin_port_hit(
+        hits: &[PluginPortHit],
+        cursor: Point,
+        radius: f32,
+    ) -> Option<PluginPortHit> {
+        hits.iter()
+            .filter_map(|hit| {
+                let dist = cursor.distance(hit.pos);
+                (dist <= radius).then_some((dist, hit.clone()))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, hit)| hit)
+    }
+
+    fn plugin_graph_connection_actions(
+        data: &StateData,
+        from_node: PluginGraphNode,
+        from_port: usize,
+        to_node: PluginGraphNode,
+        to_port: usize,
+        kind: Kind,
+    ) -> Option<Action<Message>> {
+        if from_node == to_node && from_port == to_port {
+            return None;
+        }
+        let track_name = data
+            .plugin_graph_track
+            .clone()
+            .or_else(|| data.connections_folder.clone())?;
+        let track = data
+            .plugin_graph_track
+            .as_ref()
+            .and_then(|name| data.tracks.iter().find(|t| &t.name == name));
+
+        let parallel_count = if data.shift {
+            let from_count = match &from_node {
+                PluginGraphNode::TrackInput => track
+                    .map(|t| {
+                        if kind == Kind::Audio {
+                            t.primary_audio_ins()
+                        } else {
+                            t.midi.ins
+                        }
+                    })
+                    .unwrap_or(0),
+                PluginGraphNode::TrackOutput => 0,
+                node => PluginGraph::plugin_node_instance_id(node)
+                    .and_then(|id| {
+                        data.plugin_graph_plugins
+                            .iter()
+                            .find(|p| p.instance_id == id)
+                    })
+                    .map(|p| {
+                        if kind == Kind::Audio {
+                            p.main_audio_outputs
+                        } else {
+                            p.midi_outputs
+                        }
+                    })
+                    .unwrap_or(0),
+            };
+            let to_count = match &to_node {
+                PluginGraphNode::TrackOutput => track
+                    .map(|t| {
+                        if kind == Kind::Audio {
+                            t.primary_audio_outs()
+                        } else {
+                            t.midi.outs
+                        }
+                    })
+                    .unwrap_or(0),
+                PluginGraphNode::TrackInput => 0,
+                node => PluginGraph::plugin_node_instance_id(node)
+                    .and_then(|id| {
+                        data.plugin_graph_plugins
+                            .iter()
+                            .find(|p| p.instance_id == id)
+                    })
+                    .map(|p| {
+                        if kind == Kind::Audio {
+                            p.main_audio_inputs
+                        } else {
+                            p.midi_inputs
+                        }
+                    })
+                    .unwrap_or(0),
+            };
+            from_count
+                .saturating_sub(from_port)
+                .min(to_count.saturating_sub(to_port))
+                .max(1)
+        } else {
+            1
+        };
+
+        if data.plugin_graph_clip.is_some() {
+            let mut connections = Vec::with_capacity(parallel_count);
+            for offset in 0..parallel_count {
+                connections.push(maolan_engine::message::PluginGraphConnection {
+                    from_node: from_node.clone(),
+                    from_port: from_port + offset,
+                    to_node: to_node.clone(),
+                    to_port: to_port + offset,
+                    kind,
+                });
+            }
+            return Some(Action::publish(Message::ClipConnectPlugins(connections)));
+        }
+
+        let mut actions = Vec::with_capacity(parallel_count);
+        for offset in 0..parallel_count {
+            let action = if kind == Kind::Audio {
+                EngineAction::TrackConnectPluginAudio {
+                    track_name: track_name.clone(),
+                    from_node: from_node.clone(),
+                    from_port: from_port + offset,
+                    to_node: to_node.clone(),
+                    to_port: to_port + offset,
+                }
+            } else {
+                EngineAction::TrackConnectPluginMidi {
+                    track_name: track_name.clone(),
+                    from_node: from_node.clone(),
+                    from_port: from_port + offset,
+                    to_node: to_node.clone(),
+                    to_port: to_port + offset,
+                }
+            };
+            actions.push(action);
+        }
+        if actions.len() == 1 {
+            Some(Action::publish(Message::Request(
+                actions.into_iter().next().unwrap(),
+            )))
+        } else {
+            Some(Action::publish(Message::RequestBatch(actions)))
+        }
+    }
+
+    fn plugin_node_to_connectable_ref(node: &PluginGraphNode) -> Option<ConnectableRef> {
+        match node {
+            PluginGraphNode::TrackInput => Some(ConnectableRef::TrackInput),
+            PluginGraphNode::TrackOutput => Some(ConnectableRef::TrackOutput),
+            PluginGraphNode::ClapPluginInstance(id) => Some(ConnectableRef::ClapPlugin(*id)),
+            PluginGraphNode::Vst3PluginInstance(id) => Some(ConnectableRef::Vst3Plugin(*id)),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            PluginGraphNode::Lv2PluginInstance(id) => Some(ConnectableRef::Lv2Plugin(*id)),
+        }
+    }
+
+    fn connectable_port_count(
+        data: &StateData,
+        connectable: &ConnectableRef,
+        kind: Kind,
+        is_output: bool,
+    ) -> usize {
+        match connectable {
+            ConnectableRef::TrackInput | ConnectableRef::TrackOutput => {
+                let folder_name = data
+                    .plugin_graph_track
+                    .as_deref()
+                    .or(data.connections_folder.as_deref());
+                if let Some(folder) =
+                    folder_name.and_then(|name| data.tracks.iter().find(|t| t.name == name))
+                {
+                    if kind == Kind::Audio {
+                        if is_output {
+                            folder.primary_audio_outs()
+                        } else {
+                            folder.primary_audio_ins()
+                        }
+                    } else if is_output {
+                        folder.midi.outs
+                    } else {
+                        folder.midi.ins
+                    }
+                } else {
+                    0
+                }
+            }
+            ConnectableRef::ChildTrack(name) => data
+                .tracks
+                .iter()
+                .find(|t| t.name == *name)
+                .map(|track| {
+                    if kind == Kind::Audio {
+                        if is_output {
+                            track.primary_audio_outs()
+                        } else {
+                            track.primary_audio_ins()
+                        }
+                    } else if is_output {
+                        track.midi.outs
+                    } else {
+                        track.midi.ins
+                    }
+                })
+                .unwrap_or(0),
+            ConnectableRef::ClapPlugin(id)
+            | ConnectableRef::Vst3Plugin(id)
+            | ConnectableRef::Lv2Plugin(id) => data
+                .plugin_graph_plugins
+                .iter()
+                .find(|p| p.instance_id == *id)
+                .map(|plugin| {
+                    if kind == Kind::Audio {
+                        if is_output {
+                            plugin.main_audio_outputs
+                        } else {
+                            plugin.main_audio_inputs
+                        }
+                    } else if is_output {
+                        plugin.midi_outputs
+                    } else {
+                        plugin.midi_inputs
+                    }
+                })
+                .unwrap_or(0),
+        }
+    }
+
+    fn connectable_connection_actions(
+        data: &StateData,
+        from: ConnectableRef,
+        from_port: usize,
+        to: ConnectableRef,
+        to_port: usize,
+        kind: Kind,
+    ) -> Option<Action<Message>> {
+        if from == to && from_port == to_port {
+            return None;
+        }
+        let track_name = data
+            .plugin_graph_track
+            .clone()
+            .or_else(|| data.connections_folder.clone())?;
+
+        let parallel_count = if data.shift {
+            let from_count = Self::connectable_port_count(data, &from, kind, true);
+            let to_count = Self::connectable_port_count(data, &to, kind, false);
+            from_count
+                .saturating_sub(from_port)
+                .min(to_count.saturating_sub(to_port))
+                .max(1)
+        } else {
+            1
+        };
+
+        let mut actions = Vec::with_capacity(parallel_count);
+        for offset in 0..parallel_count {
+            let action = if kind == Kind::Audio {
+                EngineAction::TrackConnectAudio {
+                    track_name: track_name.clone(),
+                    from: from.clone(),
+                    from_port: from_port + offset,
+                    to: to.clone(),
+                    to_port: to_port + offset,
+                }
+            } else {
+                EngineAction::TrackConnectMidi {
+                    track_name: track_name.clone(),
+                    from: from.clone(),
+                    from_port: from_port + offset,
+                    to: to.clone(),
+                    to_port: to_port + offset,
+                }
+            };
+            actions.push(action);
+        }
+
+        if actions.len() == 1 {
+            Some(Action::publish(Message::Request(
+                actions.into_iter().next().unwrap(),
+            )))
+        } else {
+            Some(Action::publish(Message::RequestBatch(actions)))
+        }
     }
 
     fn draw_folder_side_panel(
@@ -412,20 +993,6 @@ impl Graph {
             Point::new(start.x + sx * dist, start.y + sy * dist),
             Point::new(end.x + ex * dist, end.y + ey * dist),
         )
-    }
-
-    fn draw_implicit_connection(frame: &mut canvas::Frame, start: Point, end: Point, color: Color) {
-        let (c1, c2) = Self::bezier_controls(start, TrackPortEdge::Right, end, TrackPortEdge::Left);
-        let path = Path::new(|p| {
-            p.move_to(start);
-            p.bezier_curve_to(c1, c2, end);
-        });
-        frame.stroke(
-            &path,
-            canvas::Stroke::default()
-                .with_color(Color::from_rgba(color.r, color.g, color.b, 0.55))
-                .with_width(1.5),
-        );
     }
 
     fn track_port_color(track: &crate::state::Track, flat_port: usize, is_input: bool) -> Color {
@@ -809,13 +1376,222 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
+                    if folder_view {
+                        for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate().rev() {
+                            let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
+                            let total_ins = plugin.audio_inputs + plugin.midi_inputs;
+                            for j in 0..total_ins {
+                                let Some(point) = Self::plugin_port_position(plugin, pos, j, true)
+                                else {
+                                    continue;
+                                };
+                                let radius =
+                                    if Self::plugin_port_kind(plugin, j, true) == Kind::Audio {
+                                        PORT_HIT_RADIUS
+                                    } else {
+                                        MIDI_HIT_RADIUS
+                                    };
+                                if cursor_position.distance(point) <= radius {
+                                    data.plugin_graph_connecting = Some(PluginConnecting {
+                                        from_node: plugin.node.clone(),
+                                        from_port: j,
+                                        kind: Self::plugin_port_kind(plugin, j, true),
+                                        point: cursor_position,
+                                        is_input: true,
+                                    });
+                                    return Some(Action::capture());
+                                }
+                            }
+                            let total_outs = plugin.audio_outputs + plugin.midi_outputs;
+                            for j in 0..total_outs {
+                                let Some(point) = Self::plugin_port_position(plugin, pos, j, false)
+                                else {
+                                    continue;
+                                };
+                                let radius =
+                                    if Self::plugin_port_kind(plugin, j, false) == Kind::Audio {
+                                        PORT_HIT_RADIUS
+                                    } else {
+                                        MIDI_HIT_RADIUS
+                                    };
+                                if cursor_position.distance(point) <= radius {
+                                    data.plugin_graph_connecting = Some(PluginConnecting {
+                                        from_node: plugin.node.clone(),
+                                        from_port: j,
+                                        kind: Self::plugin_port_kind(plugin, j, false),
+                                        point: cursor_position,
+                                        is_input: false,
+                                    });
+                                    return Some(Action::capture());
+                                }
+                            }
+                        }
+
+                        for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate().rev() {
+                            let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
+                            let size = Self::plugin_box_size(plugin);
+                            if Rectangle::new(pos, size).contains(cursor_position) {
+                                let instance_id = plugin.instance_id;
+                                let node = plugin.node.clone();
+                                let uri = plugin.uri.clone();
+                                select_plugin_indices(
+                                    &mut data.plugin_graph_selected_plugins,
+                                    instance_id,
+                                    ctrl,
+                                );
+                                data.plugin_graph_selected_connections.clear();
+                                data.connection_view_selection = ConnectionViewSelection::None;
+                                let now = Instant::now();
+                                let is_double_click = data
+                                    .plugin_graph_last_plugin_click
+                                    .as_ref()
+                                    .is_some_and(|(last_id, last_time)| {
+                                        *last_id == instance_id
+                                            && now.duration_since(*last_time) <= DOUBLE_CLICK
+                                    });
+                                if is_double_click {
+                                    data.plugin_graph_last_plugin_click = None;
+                                    let track_name = data
+                                        .plugin_graph_track
+                                        .clone()
+                                        .or_else(|| data.connections_folder.clone())
+                                        .unwrap_or_default();
+                                    let clip_idx = data
+                                        .plugin_graph_clip
+                                        .as_ref()
+                                        .map(|target| target.clip_idx);
+                                    return match &node {
+                                        #[cfg(all(unix, not(target_os = "macos")))]
+                                        PluginGraphNode::Lv2PluginInstance(_) => {
+                                            Some(Action::publish(Message::OpenLv2PluginUi {
+                                                track_name,
+                                                clip_idx,
+                                                instance_id,
+                                            }))
+                                        }
+                                        PluginGraphNode::ClapPluginInstance(_) => {
+                                            Some(Action::publish(Message::ShowClapPluginUi {
+                                                track_name,
+                                                clip_idx,
+                                                instance_id,
+                                                plugin_path: uri.clone(),
+                                            }))
+                                        }
+                                        PluginGraphNode::Vst3PluginInstance(_) => {
+                                            Some(Action::publish(Message::OpenVst3PluginUi {
+                                                track_name,
+                                                clip_idx,
+                                                instance_id,
+                                                plugin_path: uri.clone(),
+                                            }))
+                                        }
+                                        PluginGraphNode::TrackInput
+                                        | PluginGraphNode::TrackOutput => Some(Action::capture()),
+                                    };
+                                }
+                                data.plugin_graph_last_plugin_click = Some((instance_id, now));
+                                data.plugin_graph_moving_plugin = Some(MovingPlugin {
+                                    instance_id,
+                                    offset_x: cursor_position.x - pos.x,
+                                    offset_y: cursor_position.y - pos.y,
+                                });
+                                return Some(Action::capture());
+                            }
+                        }
+
+                        let mut clicked_plugin_connection = None;
+                        for (idx, conn) in data.plugin_graph_connections.iter().enumerate() {
+                            let start = Self::plugin_graph_node_port_position(
+                                &data,
+                                &conn.from_node,
+                                conn.from_port,
+                                false,
+                                bounds,
+                                hw_width,
+                            );
+                            let end = Self::plugin_graph_node_port_position(
+                                &data,
+                                &conn.to_node,
+                                conn.to_port,
+                                true,
+                                bounds,
+                                hw_width,
+                            );
+                            if let (Some(start), Some(end)) = (start, end)
+                                && is_bezier_hit(start, end, cursor_position, 100, 12.0)
+                            {
+                                clicked_plugin_connection = Some(idx);
+                                break;
+                            }
+                        }
+                        if let Some(idx) = clicked_plugin_connection {
+                            select_connection_indices(
+                                &mut data.plugin_graph_selected_connections,
+                                idx,
+                                ctrl,
+                            );
+                            data.plugin_graph_selected_plugins.clear();
+                            data.plugin_graph_selected_connectable_connections.clear();
+                            return Some(Action::request_redraw());
+                        }
+
+                        let mut clicked_connectable_connection = None;
+                        for (idx, conn) in data.connectable_connections.iter().enumerate() {
+                            let involves_child = matches!(conn.from, ConnectableRef::ChildTrack(_))
+                                || matches!(conn.to, ConnectableRef::ChildTrack(_));
+                            // Folder/track inputs cannot be used as audio/MIDI sources, so the
+                            // connection from folder input to child input is not selectable.
+                            let from_is_track_input =
+                                matches!(conn.from, ConnectableRef::TrackInput);
+                            if !involves_child || from_is_track_input {
+                                continue;
+                            }
+                            let start = Self::connectable_port_position(
+                                &data,
+                                &conn.from,
+                                conn.from_port,
+                                false,
+                                conn.kind,
+                                bounds,
+                                hw_width,
+                            );
+                            let end = Self::connectable_port_position(
+                                &data,
+                                &conn.to,
+                                conn.to_port,
+                                true,
+                                conn.kind,
+                                bounds,
+                                hw_width,
+                            );
+                            if let (Some(start), Some(end)) = (start, end)
+                                && is_bezier_hit(start, end, cursor_position, 100, 12.0)
+                            {
+                                clicked_connectable_connection = Some(idx);
+                                break;
+                            }
+                        }
+                        if let Some(idx) = clicked_connectable_connection {
+                            select_connection_indices(
+                                &mut data.plugin_graph_selected_connectable_connections,
+                                idx,
+                                ctrl,
+                            );
+                            data.plugin_graph_selected_connections.clear();
+                            data.plugin_graph_selected_plugins.clear();
+                            data.connection_view_selection = ConnectionViewSelection::None;
+                            return Some(Action::request_redraw());
+                        }
+                    }
+
                     let mut clicked_connection = None;
                     let folder_name_opt = data.connections_folder.as_ref();
                     for (idx, conn) in data.connections.iter().enumerate() {
+                        // In folder view, hide track-level connections that involve the folder
+                        // track itself; those are managed in the root connections view.
                         let from_visible = if data.connections_folder.is_some() {
                             Self::is_track_view_hw_node(&conn.from_track)
                                 || visible_names.contains(&conn.from_track)
-                                || folder_name_opt == Some(&conn.from_track)
                         } else {
                             Self::is_hw_node(&conn.from_track)
                                 || visible_names.contains(&conn.from_track)
@@ -823,7 +1599,6 @@ impl canvas::Program<Message> for Graph {
                         let to_visible = if data.connections_folder.is_some() {
                             Self::is_track_view_hw_node(&conn.to_track)
                                 || visible_names.contains(&conn.to_track)
-                                || folder_name_opt == Some(&conn.to_track)
                         } else {
                             Self::is_hw_node(&conn.to_track)
                                 || visible_names.contains(&conn.to_track)
@@ -939,6 +1714,9 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     if let Some(idx) = clicked_connection {
+                        data.plugin_graph_selected_connections.clear();
+                        data.plugin_graph_selected_connectable_connections.clear();
+                        data.plugin_graph_selected_plugins.clear();
                         return Some(Action::publish(Message::ConnectionViewSelectConnection(
                             idx,
                         )));
@@ -952,6 +1730,7 @@ impl canvas::Program<Message> for Graph {
                 }
 
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    data.plugin_graph_moving_plugin = None;
                     if let Some(conn) = data.connecting.take() {
                         let from_t = conn.from_track;
                         let from_p = conn.from_port;
@@ -1105,6 +1884,97 @@ impl canvas::Program<Message> for Graph {
                                         target_port =
                                             Some((format!("{MIDI_HW_OUT_ID}:{device}"), 0));
                                         break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if target_port.is_none()
+                            && data.connections_folder.is_some()
+                            && (from_t == HW_IN_ID
+                                || from_t == HW_OUT_ID
+                                || visible_names.contains(&from_t))
+                        {
+                            let plugin_hits = Self::plugin_only_port_hits(&data, bounds, hw_width);
+                            let radius = if kind == Kind::Audio {
+                                PORT_HIT_RADIUS
+                            } else {
+                                MIDI_HIT_RADIUS
+                            };
+                            let target = Self::closest_plugin_port_hit(
+                                &plugin_hits
+                                    .iter()
+                                    .filter(|p| {
+                                        p.is_input != is_input && can_connect_kinds(p.kind, kind)
+                                    })
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                                cursor_position,
+                                radius,
+                            );
+                            if let Some(target) = target {
+                                let target_ref =
+                                    Self::plugin_node_to_connectable_ref(&target.node)?;
+                                if from_t == HW_IN_ID || from_t == HW_OUT_ID {
+                                    let (from_node, from_port, to_node, to_port) = if is_input {
+                                        (
+                                            target.node,
+                                            target.port,
+                                            PluginGraphNode::TrackOutput,
+                                            from_p,
+                                        )
+                                    } else {
+                                        (
+                                            PluginGraphNode::TrackInput,
+                                            from_p,
+                                            target.node,
+                                            target.port,
+                                        )
+                                    };
+                                    if let Some(action) = Self::plugin_graph_connection_actions(
+                                        &data, from_node, from_port, to_node, to_port, kind,
+                                    ) {
+                                        return Some(action);
+                                    }
+                                } else {
+                                    let source_track =
+                                        data.tracks.iter().find(|t| t.name == from_t)?;
+                                    let source_ref =
+                                        ConnectableRef::ChildTrack(source_track.name.clone());
+                                    if is_input {
+                                        // Drag started on a child-track input; target is a plugin output.
+                                        // Signal flows plugin output -> child input.
+                                        let engine_port = Self::track_port_to_engine_index(
+                                            source_track,
+                                            from_p,
+                                            true,
+                                        )
+                                        .1;
+                                        return Self::connectable_connection_actions(
+                                            &data,
+                                            target_ref,
+                                            target.port,
+                                            source_ref,
+                                            engine_port,
+                                            kind,
+                                        );
+                                    } else {
+                                        // Drag started on a child-track output; target is a plugin input.
+                                        // Signal flows child output -> plugin input.
+                                        let engine_port = Self::track_port_to_engine_index(
+                                            source_track,
+                                            from_p,
+                                            false,
+                                        )
+                                        .1;
+                                        return Self::connectable_connection_actions(
+                                            &data,
+                                            source_ref,
+                                            engine_port,
+                                            target_ref,
+                                            target.port,
+                                            kind,
+                                        );
                                     }
                                 }
                             }
@@ -1272,6 +2142,130 @@ impl canvas::Program<Message> for Graph {
                                     )));
                                 } else {
                                     return Some(Action::publish(Message::RequestBatch(actions)));
+                                }
+                            }
+                        }
+                    }
+                    if let Some(connecting) = data.plugin_graph_connecting.take() {
+                        let hits = Self::plugin_port_hits(&data, bounds, hw_width);
+                        let radius = if connecting.kind == Kind::Audio {
+                            PORT_HIT_RADIUS
+                        } else {
+                            MIDI_HIT_RADIUS
+                        };
+                        let target = Self::closest_plugin_port_hit(
+                            &hits
+                                .iter()
+                                .filter(|p| {
+                                    p.is_input != connecting.is_input
+                                        && can_connect_kinds(p.kind, connecting.kind)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                            cursor_position,
+                            radius,
+                        );
+                        if let Some(target) = target {
+                            let from_node = connecting.from_node.clone();
+                            let (from_node, from_port, to_node, to_port) = if connecting.is_input {
+                                (target.node, target.port, from_node, connecting.from_port)
+                            } else {
+                                (from_node, connecting.from_port, target.node, target.port)
+                            };
+                            if let Some(action) = Self::plugin_graph_connection_actions(
+                                &data,
+                                from_node,
+                                from_port,
+                                to_node,
+                                to_port,
+                                connecting.kind,
+                            ) {
+                                return Some(action);
+                            }
+                        }
+
+                        // Allow dropping a plugin port onto a child-track port.
+                        if data.connections_folder.is_some() {
+                            let visible_names = Self::visible_track_names(&data);
+                            for track in data
+                                .tracks
+                                .iter()
+                                .filter(|t| visible_names.contains(&t.name))
+                            {
+                                let size = Self::track_box_size(track);
+                                if connecting.is_input {
+                                    let total_outs = track.primary_audio_outs()
+                                        + track.midi.outs
+                                        + track.send_count();
+                                    for j in 0..total_outs {
+                                        if Self::track_port_kind(track, j, false) != connecting.kind
+                                        {
+                                            continue;
+                                        }
+                                        let pos = Self::track_output_port_position(
+                                            track,
+                                            j,
+                                            track.position,
+                                            size,
+                                        );
+                                        if cursor_position.distance(pos) < radius {
+                                            let engine_port =
+                                                Self::track_port_to_engine_index(track, j, false).1;
+                                            let from =
+                                                ConnectableRef::ChildTrack(track.name.clone());
+                                            let to = Self::plugin_node_to_connectable_ref(
+                                                &connecting.from_node,
+                                            )?;
+                                            if let Some(action) =
+                                                Self::connectable_connection_actions(
+                                                    &data,
+                                                    from,
+                                                    engine_port,
+                                                    to,
+                                                    connecting.from_port,
+                                                    connecting.kind,
+                                                )
+                                            {
+                                                return Some(action);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let total_ins = track.primary_audio_ins()
+                                        + track.midi.ins
+                                        + track.return_count();
+                                    for j in 0..total_ins {
+                                        if Self::track_port_kind(track, j, true) != connecting.kind
+                                        {
+                                            continue;
+                                        }
+                                        let pos = Self::track_port_position(
+                                            track,
+                                            j,
+                                            track.position,
+                                            size,
+                                        );
+                                        if cursor_position.distance(pos) < radius {
+                                            let engine_port =
+                                                Self::track_port_to_engine_index(track, j, true).1;
+                                            let from = Self::plugin_node_to_connectable_ref(
+                                                &connecting.from_node,
+                                            )?;
+                                            let to = ConnectableRef::ChildTrack(track.name.clone());
+                                            if let Some(action) =
+                                                Self::connectable_connection_actions(
+                                                    &data,
+                                                    from,
+                                                    connecting.from_port,
+                                                    to,
+                                                    engine_port,
+                                                    connecting.kind,
+                                                )
+                                            {
+                                                return Some(action);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1457,6 +2451,69 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
+                    if new_h.is_none() && data.connections_folder.is_some() {
+                        for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate().rev() {
+                            let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
+                            let total_ins = plugin.audio_inputs + plugin.midi_inputs;
+                            for j in 0..total_ins {
+                                let Some(point) = Self::plugin_port_position(plugin, pos, j, true)
+                                else {
+                                    continue;
+                                };
+                                let radius =
+                                    if Self::plugin_port_kind(plugin, j, true) == Kind::Audio {
+                                        PORT_HIT_RADIUS
+                                    } else {
+                                        MIDI_HIT_RADIUS
+                                    };
+                                if cursor_position.distance(point) <= radius {
+                                    new_h = Some(Hovering::PluginPort {
+                                        instance_id: plugin.instance_id,
+                                        port_idx: j,
+                                        is_input: true,
+                                    });
+                                    break;
+                                }
+                            }
+                            if new_h.is_some() {
+                                break;
+                            }
+
+                            let total_outs = plugin.audio_outputs + plugin.midi_outputs;
+                            for j in 0..total_outs {
+                                let Some(point) = Self::plugin_port_position(plugin, pos, j, false)
+                                else {
+                                    continue;
+                                };
+                                let radius =
+                                    if Self::plugin_port_kind(plugin, j, false) == Kind::Audio {
+                                        PORT_HIT_RADIUS
+                                    } else {
+                                        MIDI_HIT_RADIUS
+                                    };
+                                if cursor_position.distance(point) <= radius {
+                                    new_h = Some(Hovering::PluginPort {
+                                        instance_id: plugin.instance_id,
+                                        port_idx: j,
+                                        is_input: false,
+                                    });
+                                    break;
+                                }
+                            }
+                            if new_h.is_some() {
+                                break;
+                            }
+
+                            let size = Self::plugin_box_size(plugin);
+                            if Rectangle::new(pos, size).contains(cursor_position) {
+                                new_h = Some(Hovering::Plugin {
+                                    instance_id: plugin.instance_id,
+                                });
+                                break;
+                            }
+                        }
+                    }
+
                     let mut redraw_needed = false;
 
                     if let Some(ref mut conn) = data.connecting {
@@ -1493,6 +2550,21 @@ impl canvas::Program<Message> for Graph {
                             );
                             redraw_needed = true;
                         }
+                    }
+
+                    if let Some(ref mut conn) = data.plugin_graph_connecting {
+                        conn.point = cursor_position;
+                        redraw_needed = true;
+                    }
+                    if let Some(mp) = data.plugin_graph_moving_plugin.clone() {
+                        data.plugin_graph_plugin_positions.insert(
+                            mp.instance_id,
+                            Point::new(
+                                cursor_position.x - mp.offset_x,
+                                cursor_position.y - mp.offset_y,
+                            ),
+                        );
+                        redraw_needed = true;
                     }
 
                     if data.hovering != new_h {
@@ -1637,16 +2709,16 @@ impl canvas::Program<Message> for Graph {
 
             let folder_name_opt = data.connections_folder.as_ref();
             for (idx, conn) in data.connections.iter().enumerate() {
+                // In folder view, hide track-level connections that involve the folder
+                // track itself; those are managed in the root connections view.
                 let from_visible = if data.connections_folder.is_some() {
                     Self::is_track_view_hw_node(&conn.from_track)
-                        || conn.from_track == *folder_name_opt.unwrap()
                         || visible_names.contains(&conn.from_track)
                 } else {
                     Self::is_hw_node(&conn.from_track) || visible_names.contains(&conn.from_track)
                 };
                 let to_visible = if data.connections_folder.is_some() {
                     Self::is_track_view_hw_node(&conn.to_track)
-                        || conn.to_track == *folder_name_opt.unwrap()
                         || visible_names.contains(&conn.to_track)
                 } else {
                     Self::is_hw_node(&conn.to_track) || visible_names.contains(&conn.to_track)
@@ -1798,77 +2870,109 @@ impl canvas::Program<Message> for Graph {
                 }
             }
 
-            // Draw implicit folder<->child wiring that the engine creates automatically
-            // when a track is parented to a folder with matching port counts.
-            if let Some(folder_name) = data.connections_folder.as_ref()
-                && let Some(folder) = data.tracks.iter().find(|t| &t.name == folder_name)
-            {
-                let child_tracks: Vec<&crate::state::Track> = data
-                    .tracks
-                    .iter()
-                    .filter(|t| t.parent_track.as_deref() == Some(folder_name.as_str()))
-                    .collect();
-                for child in child_tracks {
-                    let child_size = Self::track_box_size(child);
+            // Draw folder plugin graph connections in the same canvas.
+            if data.connections_folder.is_some() {
+                for (idx, conn) in data.plugin_graph_connections.iter().enumerate() {
+                    let start = Self::plugin_graph_node_port_position(
+                        &data,
+                        &conn.from_node,
+                        conn.from_port,
+                        false,
+                        bounds,
+                        hw_width,
+                    );
+                    let end = Self::plugin_graph_node_port_position(
+                        &data,
+                        &conn.to_node,
+                        conn.to_port,
+                        true,
+                        bounds,
+                        hw_width,
+                    );
+                    let Some(start) = start else { continue };
+                    let Some(end) = end else { continue };
 
-                    // Folder audio input -> child audio input.
-                    let audio_in_count = folder.primary_audio_ins().min(child.primary_audio_ins());
-                    for port in 0..audio_in_count {
-                        let start =
-                            Self::folder_input_port_position(folder, port, bounds, hw_width);
-                        let flat_port = Self::connection_port_index(child, Kind::Audio, port, true);
-                        let end =
-                            Self::track_port_position(child, flat_port, child.position, child_size);
-                        Self::draw_implicit_connection(&mut frame, start, end, conn_audio);
-                    }
+                    let start_edge = Self::plugin_graph_node_edge(&conn.from_node, false);
+                    let end_edge = Self::plugin_graph_node_edge(&conn.to_node, true);
+                    let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
+                    let path = Path::new(|p| {
+                        p.move_to(start);
+                        p.bezier_curve_to(c1, c2, end);
+                    });
 
-                    // Child audio output -> folder audio output.
-                    let audio_out_count =
-                        folder.primary_audio_outs().min(child.primary_audio_outs());
-                    for port in 0..audio_out_count {
-                        let flat_port =
-                            Self::connection_port_index(child, Kind::Audio, port, false);
-                        let start = Self::track_output_port_position(
-                            child,
-                            flat_port,
-                            child.position,
-                            child_size,
-                        );
-                        let end = Self::folder_output_port_position(folder, port, bounds, hw_width);
-                        Self::draw_implicit_connection(&mut frame, start, end, conn_audio);
-                    }
+                    let is_selected = data.plugin_graph_selected_connections.contains(&idx);
+                    let color = if is_selected {
+                        conn_selected
+                    } else {
+                        match conn.kind {
+                            Kind::Audio => conn_audio,
+                            Kind::MIDI => conn_midi,
+                        }
+                    };
+                    let width = if is_selected { 4.0 } else { 2.0 };
+                    frame.stroke(
+                        &path,
+                        canvas::Stroke::default()
+                            .with_color(color)
+                            .with_width(width),
+                    );
+                }
 
-                    // Folder MIDI input -> child MIDI input.
-                    let midi_in_count = folder.midi.ins.min(child.midi.ins);
-                    for port in 0..midi_in_count {
-                        let folder_port = folder.primary_audio_ins() + port;
-                        let start =
-                            Self::folder_input_port_position(folder, folder_port, bounds, hw_width);
-                        let flat_port = Self::connection_port_index(child, Kind::MIDI, port, true);
-                        let end =
-                            Self::track_port_position(child, flat_port, child.position, child_size);
-                        Self::draw_implicit_connection(&mut frame, start, end, conn_midi);
+                // Draw all connectable connections that involve a child track. This covers
+                // child↔folder I/O wiring as well as child↔plugin routing.
+                for (idx, conn) in data.connectable_connections.iter().enumerate() {
+                    let involves_child = matches!(conn.from, ConnectableRef::ChildTrack(_))
+                        || matches!(conn.to, ConnectableRef::ChildTrack(_));
+                    if !involves_child {
+                        continue;
                     }
-
-                    // Child MIDI output -> folder MIDI output.
-                    let midi_out_count = folder.midi.outs.min(child.midi.outs);
-                    for port in 0..midi_out_count {
-                        let flat_port = Self::connection_port_index(child, Kind::MIDI, port, false);
-                        let start = Self::track_output_port_position(
-                            child,
-                            flat_port,
-                            child.position,
-                            child_size,
-                        );
-                        let folder_port = folder.primary_audio_outs() + port;
-                        let end = Self::folder_output_port_position(
-                            folder,
-                            folder_port,
-                            bounds,
-                            hw_width,
-                        );
-                        Self::draw_implicit_connection(&mut frame, start, end, conn_midi);
-                    }
+                    let Some(start) = Self::connectable_port_position(
+                        &data,
+                        &conn.from,
+                        conn.from_port,
+                        false,
+                        conn.kind,
+                        bounds,
+                        hw_width,
+                    ) else {
+                        continue;
+                    };
+                    let Some(end) = Self::connectable_port_position(
+                        &data,
+                        &conn.to,
+                        conn.to_port,
+                        true,
+                        conn.kind,
+                        bounds,
+                        hw_width,
+                    ) else {
+                        continue;
+                    };
+                    let start_edge = Self::connectable_port_edge(&conn.from, false);
+                    let end_edge = Self::connectable_port_edge(&conn.to, true);
+                    let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
+                    let path = Path::new(|p| {
+                        p.move_to(start);
+                        p.bezier_curve_to(c1, c2, end);
+                    });
+                    let is_selected = data
+                        .plugin_graph_selected_connectable_connections
+                        .contains(&idx);
+                    let color = if is_selected {
+                        conn_selected
+                    } else {
+                        match conn.kind {
+                            Kind::Audio => conn_audio,
+                            Kind::MIDI => conn_midi,
+                        }
+                    };
+                    let width = if is_selected { 4.0 } else { 2.0 };
+                    frame.stroke(
+                        &path,
+                        canvas::Stroke::default()
+                            .with_color(color)
+                            .with_width(width),
+                    );
                 }
             }
 
@@ -2011,6 +3115,37 @@ impl canvas::Program<Message> for Graph {
                                 .with_width(2.0),
                         );
                     }
+                }
+            }
+
+            if let Some(connecting) = &data.plugin_graph_connecting {
+                let start = Self::plugin_graph_node_port_position(
+                    &data,
+                    &connecting.from_node,
+                    connecting.from_port,
+                    connecting.is_input,
+                    bounds,
+                    hw_width,
+                );
+                if let Some(start) = start {
+                    let end = connecting.point;
+                    let start_edge =
+                        Self::plugin_graph_node_edge(&connecting.from_node, connecting.is_input);
+                    let end_edge = if connecting.is_input {
+                        TrackPortEdge::Right
+                    } else {
+                        TrackPortEdge::Left
+                    };
+                    let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(start);
+                            p.bezier_curve_to(c1, c2, end);
+                        }),
+                        canvas::Stroke::default()
+                            .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
+                            .with_width(2.0),
+                    );
                 }
             }
 
@@ -2378,6 +3513,107 @@ impl canvas::Program<Message> for Graph {
                     ..Default::default()
                 });
             }
+
+            // Draw folder plugin nodes as equals in the same graph.
+            if data.connections_folder.is_some() {
+                for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate() {
+                    let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
+                    let size = Self::plugin_box_size(plugin);
+                    let path = Path::rectangle(pos, size);
+                    draw_true_gradient_box(&mut frame, pos, size, track_node_fill);
+
+                    let is_h = data.hovering
+                        == Some(Hovering::Plugin {
+                            instance_id: plugin.instance_id,
+                        });
+                    let is_s = data
+                        .plugin_graph_selected_plugins
+                        .contains(&plugin.instance_id);
+                    let (sc, sw) = if is_s {
+                        (node_selected, 2.5)
+                    } else if is_h {
+                        (node_hover, 1.4)
+                    } else {
+                        (node_border, 1.0)
+                    };
+                    frame.stroke(
+                        &path,
+                        canvas::Stroke::default().with_color(sc).with_width(sw),
+                    );
+
+                    let total_ins = plugin.audio_inputs + plugin.midi_inputs;
+                    for j in 0..total_ins {
+                        let Some(point) = Self::plugin_port_position(plugin, pos, j, true) else {
+                            continue;
+                        };
+                        let c = Self::plugin_port_color(plugin, j, true);
+                        let h_port = Hovering::PluginPort {
+                            instance_id: plugin.instance_id,
+                            port_idx: j,
+                            is_input: true,
+                        };
+                        let h = data.hovering == Some(h_port.clone());
+
+                        let can_highlight_port = should_highlight_port(
+                            h,
+                            data.plugin_graph_connecting
+                                .as_ref()
+                                .map(|c| c.kind)
+                                .or(data.connecting.as_ref().map(|c| c.kind)),
+                            Self::plugin_port_kind(plugin, j, true),
+                        );
+
+                        frame.fill(
+                            &Path::circle(point, hover_radius(4.0, can_highlight_port)),
+                            c,
+                        );
+                    }
+
+                    let total_outs = plugin.audio_outputs + plugin.midi_outputs;
+                    for j in 0..total_outs {
+                        let Some(point) = Self::plugin_port_position(plugin, pos, j, false) else {
+                            continue;
+                        };
+                        let c = Self::plugin_port_color(plugin, j, false);
+                        let h_port = Hovering::PluginPort {
+                            instance_id: plugin.instance_id,
+                            port_idx: j,
+                            is_input: false,
+                        };
+                        let h = data.hovering == Some(h_port.clone());
+
+                        let can_highlight_port = should_highlight_port(
+                            h,
+                            data.plugin_graph_connecting
+                                .as_ref()
+                                .map(|c| c.kind)
+                                .or(data.connecting.as_ref().map(|c| c.kind)),
+                            Self::plugin_port_kind(plugin, j, false),
+                        );
+
+                        frame.fill(
+                            &Path::circle(point, hover_radius(4.0, can_highlight_port)),
+                            c,
+                        );
+                    }
+
+                    frame.fill_text(Text {
+                        content: Self::trim_label_to_width(
+                            &format!("{} ({})", plugin.name, plugin.format),
+                            size.width,
+                        ),
+                        position: Point::new(
+                            pos.x + size.width / 2.0,
+                            pos.y + size.height / 2.0 - 8.0,
+                        ),
+                        color: Color::WHITE,
+                        size: 12.0.into(),
+                        align_x: Horizontal::Center.into(),
+                        align_y: Vertical::Center,
+                        ..Default::default()
+                    });
+                }
+            }
         }
         vec![frame.into_geometry()]
     }
@@ -2632,5 +3868,206 @@ mod tests {
             Some(Message::OpenHwPorts { input: false })
         ));
         assert_eq!(second_status, event::Status::Ignored);
+    }
+
+    fn test_plugin_graph_plugin(instance_id: usize) -> PluginGraphPlugin {
+        PluginGraphPlugin {
+            node: PluginGraphNode::Vst3PluginInstance(instance_id),
+            instance_id,
+            format: "vst3".into(),
+            uri: "/test/plugin.vst3".into(),
+            plugin_id: "test".into(),
+            name: "Test Plugin".into(),
+            main_audio_inputs: 2,
+            main_audio_outputs: 2,
+            audio_inputs: 2,
+            audio_outputs: 2,
+            midi_inputs: 0,
+            midi_outputs: 0,
+            state: None,
+            bypassed: false,
+        }
+    }
+
+    #[test]
+    fn update_clicking_plugin_port_starts_plugin_connecting() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        {
+            let mut data = state.blocking_write();
+            let folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 0, 2, 0);
+            data.tracks.push(folder);
+            data.connections_folder = Some("Folder".to_string());
+            data.plugin_graph_track = Some("Folder".to_string());
+            data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
+        }
+        let graph = Graph::new(state.clone());
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let port_pos = {
+            let data = state.blocking_read();
+            let plugin = &data.plugin_graph_plugins[0];
+            let pos = Graph::plugin_node_position(&data, plugin, 0, bounds);
+            Graph::plugin_port_position(plugin, pos, 0, true).unwrap()
+        };
+        let cursor = mouse::Cursor::Available(port_pos);
+
+        let action = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        assert!(message.is_none());
+        assert_eq!(status, event::Status::Captured);
+        let data = state.blocking_read();
+        let conn = data.plugin_graph_connecting.as_ref().expect("connecting");
+        assert_eq!(conn.from_node, PluginGraphNode::Vst3PluginInstance(7));
+        assert_eq!(conn.from_port, 0);
+        assert!(conn.is_input);
+        assert_eq!(conn.kind, Kind::Audio);
+    }
+
+    #[test]
+    fn update_clicking_plugin_body_selects_and_moves_plugin() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        {
+            let mut data = state.blocking_write();
+            let folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 0, 2, 0);
+            data.tracks.push(folder);
+            data.connections_folder = Some("Folder".to_string());
+            data.plugin_graph_track = Some("Folder".to_string());
+            data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
+        }
+        let graph = Graph::new(state.clone());
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let click = {
+            let data = state.blocking_read();
+            let plugin = &data.plugin_graph_plugins[0];
+            let pos = Graph::plugin_node_position(&data, plugin, 0, bounds);
+            Point::new(pos.x + 10.0, pos.y + 20.0)
+        };
+        let cursor = mouse::Cursor::Available(click);
+
+        let action = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        assert!(message.is_none());
+        assert_eq!(status, event::Status::Captured);
+        let data = state.blocking_read();
+        assert!(data.plugin_graph_selected_plugins.contains(&7));
+        assert_eq!(
+            data.plugin_graph_moving_plugin
+                .as_ref()
+                .map(|moving| moving.instance_id),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn plugin_graph_connection_actions_batches_shift_plugin_to_track_output() {
+        let mut data = crate::state::StateData::default();
+        let folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 2, 0, 0);
+        data.tracks.push(folder);
+        data.plugin_graph_track = Some("Folder".to_string());
+        data.connections_folder = Some("Folder".to_string());
+        data.shift = true;
+        data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
+
+        let action = Graph::plugin_graph_connection_actions(
+            &data,
+            PluginGraphNode::Vst3PluginInstance(7),
+            0,
+            PluginGraphNode::TrackOutput,
+            0,
+            Kind::Audio,
+        )
+        .expect("action");
+
+        let message = action_message(action).0.expect("message");
+        match message {
+            Message::RequestBatch(actions) => {
+                assert_eq!(actions.len(), 2);
+                assert!(
+                    actions
+                        .iter()
+                        .all(|a| matches!(a, EngineAction::TrackConnectPluginAudio { .. }))
+                );
+            }
+            other => panic!("expected RequestBatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connectable_connection_actions_batches_shift_plugin_to_track_output() {
+        let mut data = crate::state::StateData::default();
+        let folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 2, 0, 0);
+        data.tracks.push(folder);
+        data.plugin_graph_track = Some("Folder".to_string());
+        data.connections_folder = Some("Folder".to_string());
+        data.shift = true;
+        data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
+
+        let action = Graph::connectable_connection_actions(
+            &data,
+            ConnectableRef::Vst3Plugin(7),
+            0,
+            ConnectableRef::TrackOutput,
+            0,
+            Kind::Audio,
+        )
+        .expect("action");
+
+        let message = action_message(action).0.expect("message");
+        match message {
+            Message::RequestBatch(actions) => {
+                assert_eq!(actions.len(), 2);
+                assert!(
+                    actions
+                        .iter()
+                        .all(|a| matches!(a, EngineAction::TrackConnectAudio { .. }))
+                );
+            }
+            other => panic!("expected RequestBatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shift_plugin_connection_ignores_sidechain_outputs() {
+        let mut data = crate::state::StateData::default();
+        let folder = crate::state::Track::new("Folder".to_string(), 0.0, 4, 4, 0, 0);
+        data.tracks.push(folder);
+        data.plugin_graph_track = Some("Folder".to_string());
+        data.connections_folder = Some("Folder".to_string());
+        data.shift = true;
+        let mut plugin = test_plugin_graph_plugin(8);
+        plugin.main_audio_outputs = 2;
+        plugin.audio_outputs = 4;
+        data.plugin_graph_plugins.push(plugin);
+
+        let action = Graph::plugin_graph_connection_actions(
+            &data,
+            PluginGraphNode::Vst3PluginInstance(8),
+            0,
+            PluginGraphNode::TrackOutput,
+            0,
+            Kind::Audio,
+        )
+        .expect("action");
+
+        let message = action_message(action).0.expect("message");
+        match message {
+            Message::RequestBatch(actions) => assert_eq!(actions.len(), 2),
+            other => panic!("expected RequestBatch, got {other:?}"),
+        }
     }
 }

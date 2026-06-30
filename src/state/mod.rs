@@ -22,7 +22,8 @@ use iced::{Length, Point};
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{
-    PluginGraphConnection, PluginGraphNode, PluginGraphPlugin, PluginGraphSnapshot,
+    ConnectableConnection, PluginGraphConnection, PluginGraphNode, PluginGraphPlugin,
+    PluginGraphSnapshot,
 };
 use maolan_engine::{
     clap::{ClapPluginInfo, ClapPluginState},
@@ -587,6 +588,14 @@ pub enum Hovering {
         is_input: bool,
     },
     Track(String),
+    Plugin {
+        instance_id: usize,
+    },
+    PluginPort {
+        instance_id: usize,
+        port_idx: usize,
+        is_input: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -861,9 +870,12 @@ pub struct StateData {
     pub plugin_graph_clip: Option<PluginGraphClipTarget>,
     pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
     pub plugin_graph_connections: Vec<PluginGraphConnection>,
+    pub connectable_connections: Vec<ConnectableConnection>,
     pub plugin_graphs_by_track: HashMap<String, PluginGraphSnapshot>,
+    pub connectable_connections_by_track: HashMap<String, Vec<ConnectableConnection>>,
     pub plugin_parameters_by_track: HashMap<String, PluginParameterCache>,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
+    pub plugin_graph_selected_connectable_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugins: std::collections::HashSet<usize>,
     pub plugin_graph_plugin_positions: HashMap<usize, Point>,
     pub plugin_graph_connecting: Option<PluginConnecting>,
@@ -1042,9 +1054,12 @@ impl Default for StateData {
             plugin_graph_clip: None,
             plugin_graph_plugins: vec![],
             plugin_graph_connections: vec![],
+            connectable_connections: vec![],
             plugin_graphs_by_track: HashMap::new(),
+            connectable_connections_by_track: HashMap::new(),
             plugin_parameters_by_track: HashMap::new(),
             plugin_graph_selected_connections: HashSet::new(),
+            plugin_graph_selected_connectable_connections: HashSet::new(),
             plugin_graph_selected_plugins: std::collections::HashSet::new(),
             plugin_graph_plugin_positions: HashMap::new(),
             plugin_graph_connecting: None,

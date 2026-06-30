@@ -51,8 +51,8 @@ use iced::{
 use iced_aw::helpers::color_picker_with_change;
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{
-    Action, Message as EngineMessage, OfflineAutomationLane, OfflineAutomationPoint,
-    OfflineAutomationTarget,
+    Action, ConnectableConnection, ConnectableRef, Message as EngineMessage, OfflineAutomationLane,
+    OfflineAutomationPoint, OfflineAutomationTarget,
 };
 use maolan_widgets::numeric_input::{number_input, number_input_f32};
 use midly::{
@@ -5334,6 +5334,132 @@ impl Maolan {
         }
     }
 
+    fn connectable_ref_to_json(
+        ref_: &ConnectableRef,
+        id_to_index: &std::collections::HashMap<usize, usize>,
+    ) -> Option<Value> {
+        match ref_ {
+            ConnectableRef::TrackInput => Some(json!({"type": "track_input"})),
+            ConnectableRef::TrackOutput => Some(json!({"type": "track_output"})),
+            ConnectableRef::ChildTrack(name) => Some(json!({"type": "child_track", "name": name})),
+            ConnectableRef::ClapPlugin(id) => id_to_index.get(id).copied().map(|idx| {
+                json!({
+                    "type": "clap_plugin",
+                    "plugin_index": idx,
+                })
+            }),
+            ConnectableRef::Vst3Plugin(id) => id_to_index.get(id).copied().map(|idx| {
+                json!({
+                    "type": "vst3_plugin",
+                    "plugin_index": idx,
+                })
+            }),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            ConnectableRef::Lv2Plugin(id) => id_to_index.get(id).copied().map(|idx| {
+                json!({
+                    "type": "lv2_plugin",
+                    "plugin_index": idx,
+                })
+            }),
+        }
+    }
+
+    fn connectable_ref_from_json(
+        v: &Value,
+        index_to_id: &std::collections::HashMap<usize, usize>,
+    ) -> Option<ConnectableRef> {
+        let t = v["type"].as_str()?;
+        match t {
+            "track_input" => Some(ConnectableRef::TrackInput),
+            "track_output" => Some(ConnectableRef::TrackOutput),
+            "child_track" => Some(ConnectableRef::ChildTrack(v["name"].as_str()?.to_string())),
+            "clap_plugin" => {
+                let idx = v["plugin_index"].as_u64()? as usize;
+                index_to_id
+                    .get(&idx)
+                    .copied()
+                    .map(ConnectableRef::ClapPlugin)
+            }
+            "vst3_plugin" => {
+                let idx = v["plugin_index"].as_u64()? as usize;
+                index_to_id
+                    .get(&idx)
+                    .copied()
+                    .map(ConnectableRef::Vst3Plugin)
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            "lv2_plugin" => {
+                let idx = v["plugin_index"].as_u64()? as usize;
+                index_to_id
+                    .get(&idx)
+                    .copied()
+                    .map(ConnectableRef::Lv2Plugin)
+            }
+            _ => None,
+        }
+    }
+
+    fn connectable_connection_to_json(
+        conn: &ConnectableConnection,
+        id_to_index: &std::collections::HashMap<usize, usize>,
+    ) -> Option<Value> {
+        let from = Self::connectable_ref_to_json(&conn.from, id_to_index)?;
+        let to = Self::connectable_ref_to_json(&conn.to, id_to_index)?;
+        Some(json!({
+            "from": from,
+            "from_port": conn.from_port,
+            "to": to,
+            "to_port": conn.to_port,
+            "kind": Self::kind_to_json(conn.kind),
+        }))
+    }
+
+    fn connectable_connections_from_json(
+        arr: &serde_json::Value,
+        index_to_id: &std::collections::HashMap<usize, usize>,
+    ) -> Vec<ConnectableConnection> {
+        arr.as_array()
+            .map(|connections| {
+                connections
+                    .iter()
+                    .filter_map(|c| {
+                        let from = Self::connectable_ref_from_json(&c["from"], index_to_id)?;
+                        let to = Self::connectable_ref_from_json(&c["to"], index_to_id)?;
+                        let kind = Self::kind_from_json(&c["kind"])?;
+                        let from_port = c["from_port"].as_u64()? as usize;
+                        let to_port = c["to_port"].as_u64()? as usize;
+                        Some(ConnectableConnection {
+                            from,
+                            from_port,
+                            to,
+                            to_port,
+                            kind,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn is_user_connectable_connection(conn: &ConnectableConnection) -> bool {
+        let involves_child = matches!(conn.from, ConnectableRef::ChildTrack(_))
+            || matches!(conn.to, ConnectableRef::ChildTrack(_));
+        let mut involves_plugin = matches!(
+            conn.from,
+            ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
+        ) || matches!(
+            conn.to,
+            ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
+        );
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            involves_plugin = involves_plugin
+                || matches!(conn.from, ConnectableRef::Lv2Plugin(_))
+                || matches!(conn.to, ConnectableRef::Lv2Plugin(_));
+        }
+        involves_child && involves_plugin
+    }
+
     fn plugin_graph_snapshot_to_json(
         previous_graph: Option<&Value>,
         plugins: &[maolan_engine::message::PluginGraphPlugin],
@@ -9172,5 +9298,101 @@ mod tests {
         assert_eq!(rewritten, json!("data/external.wav"));
 
         let _ = fs::remove_dir_all(&session_root);
+    }
+
+    #[test]
+    fn connectable_ref_to_json_maps_plugin_ids_to_indices() {
+        let mut id_to_index = std::collections::HashMap::new();
+        id_to_index.insert(42usize, 2usize);
+
+        assert_eq!(
+            Maolan::connectable_ref_to_json(&ConnectableRef::TrackInput, &id_to_index),
+            Some(json!({"type": "track_input"}))
+        );
+        assert_eq!(
+            Maolan::connectable_ref_to_json(
+                &ConnectableRef::ChildTrack("Child".to_string()),
+                &id_to_index
+            ),
+            Some(json!({"type": "child_track", "name": "Child"}))
+        );
+        assert_eq!(
+            Maolan::connectable_ref_to_json(&ConnectableRef::ClapPlugin(42), &id_to_index),
+            Some(json!({"type": "clap_plugin", "plugin_index": 2}))
+        );
+        assert_eq!(
+            Maolan::connectable_ref_to_json(&ConnectableRef::ClapPlugin(99), &id_to_index),
+            None
+        );
+    }
+
+    #[test]
+    fn connectable_ref_from_json_resolves_plugin_indices_to_ids() {
+        let mut index_to_id = std::collections::HashMap::new();
+        index_to_id.insert(2usize, 42usize);
+
+        assert_eq!(
+            Maolan::connectable_ref_from_json(&json!({"type": "track_input"}), &index_to_id),
+            Some(ConnectableRef::TrackInput)
+        );
+        assert_eq!(
+            Maolan::connectable_ref_from_json(
+                &json!({"type": "child_track", "name": "Child"}),
+                &index_to_id
+            ),
+            Some(ConnectableRef::ChildTrack("Child".to_string()))
+        );
+        assert_eq!(
+            Maolan::connectable_ref_from_json(
+                &json!({"type": "clap_plugin", "plugin_index": 2}),
+                &index_to_id
+            ),
+            Some(ConnectableRef::ClapPlugin(42))
+        );
+        assert_eq!(
+            Maolan::connectable_ref_from_json(
+                &json!({"type": "clap_plugin", "plugin_index": 99}),
+                &index_to_id
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn connectable_connection_to_json_skips_unknown_plugin_ids() {
+        let id_to_index = std::collections::HashMap::new();
+        let child_plugin = ConnectableConnection {
+            from: ConnectableRef::ChildTrack("Child".to_string()),
+            from_port: 0,
+            to: ConnectableRef::ClapPlugin(7),
+            to_port: 1,
+            kind: Kind::Audio,
+        };
+
+        assert_eq!(
+            Maolan::connectable_connection_to_json(&child_plugin, &id_to_index),
+            None
+        );
+    }
+
+    #[test]
+    fn is_user_connectable_connection_detects_child_plugin_edges() {
+        let child_plugin = ConnectableConnection {
+            from: ConnectableRef::ChildTrack("Child".to_string()),
+            from_port: 0,
+            to: ConnectableRef::ClapPlugin(0),
+            to_port: 0,
+            kind: Kind::Audio,
+        };
+        let track_io = ConnectableConnection {
+            from: ConnectableRef::TrackInput,
+            from_port: 0,
+            to: ConnectableRef::TrackOutput,
+            to_port: 0,
+            kind: Kind::Audio,
+        };
+
+        assert!(Maolan::is_user_connectable_connection(&child_plugin));
+        assert!(!Maolan::is_user_connectable_connection(&track_io));
     }
 }

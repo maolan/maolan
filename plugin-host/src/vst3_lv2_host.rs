@@ -322,10 +322,10 @@ fn apply_vst3_param_ring(processor: &crate::vst3::Vst3Processor, ptr: *mut u8) {
     }
 }
 
-fn drain_midi_ring(ptr: *mut u8) -> Vec<crate::util::MidiEvent> {
+fn drain_midi_ring(ptr: *mut u8, port_idx: usize) -> Vec<crate::util::MidiEvent> {
     let ring = unsafe {
-        let buf = midi_ring_ptr(ptr);
-        let (w, r) = midi_indices(ptr);
+        let buf = midi_in_ring_ptr(ptr, port_idx);
+        let (w, r) = midi_in_indices(ptr, port_idx);
         RingBuffer::new(buf, w, r, RING_CAPACITY)
     };
     let mut events = Vec::new();
@@ -338,10 +338,10 @@ fn drain_midi_ring(ptr: *mut u8) -> Vec<crate::util::MidiEvent> {
     events
 }
 
-fn write_midi_out_ring(ptr: *mut u8, events: &[crate::util::MidiEvent]) {
+fn write_midi_out_ring(ptr: *mut u8, port_idx: usize, events: &[crate::util::MidiEvent]) {
     let ring = unsafe {
-        let buf = midi_out_ring_ptr(ptr);
-        let (w, r) = midi_out_indices(ptr);
+        let buf = midi_out_ring_ptr(ptr, port_idx);
+        let (w, r) = midi_out_indices(ptr, port_idx);
         RingBuffer::new(buf, w, r, RING_CAPACITY)
     };
     for ev in events {
@@ -582,20 +582,28 @@ pub fn run_vst3(args: Vst3RunArgs) {
         num_outputs,
     } = args;
 
+    let header = unsafe { header_ref(mapping.as_ptr()) };
+    let ptr = mapping.as_ptr();
+
     match plugin_path {
         "__test__" => {
             let scratch = unsafe { scratch_ptr(mapping.as_ptr()) };
             unsafe {
                 std::ptr::write_unaligned(scratch as *mut u32, 0xDEADBEEF);
             }
+            header.ready.store(1, Ordering::Release);
             return;
         }
         "__crash__" => {
+            header.ready.store(1, Ordering::Release);
             std::process::exit(1);
         }
-        "__hang__" => loop {
-            std::thread::sleep(Duration::from_secs(60));
-        },
+        "__hang__" => {
+            header.ready.store(1, Ordering::Release);
+            loop {
+                std::thread::sleep(Duration::from_secs(60));
+            }
+        }
         _ => {}
     }
 
@@ -621,8 +629,14 @@ pub fn run_vst3(args: Vst3RunArgs) {
         );
     }
 
-    let header = unsafe { header_ref(mapping.as_ptr()) };
-    let ptr = mapping.as_ptr();
+    header
+        .midi_in_port_count
+        .store(processor.midi_input_count() as u32, Ordering::Release);
+    header
+        .midi_out_port_count
+        .store(processor.midi_output_count() as u32, Ordering::Release);
+    header.ready.store(1, Ordering::Release);
+
     let mut vst3_param_cache = HashMap::new();
 
     #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
@@ -757,7 +771,11 @@ pub fn run_vst3(args: Vst3RunArgs) {
             *input.finished.lock() = true;
         }
 
-        let midi_input = drain_midi_ring(ptr);
+        let mut midi_input = Vec::new();
+        for port in 0..processor.midi_input_count() {
+            midi_input.extend(drain_midi_ring(ptr, port));
+        }
+        midi_input.sort_by_key(|ev| ev.frame);
 
         let _midi_output = if processor.midi_input_count() > 0 || processor.midi_output_count() > 0
         {
@@ -769,7 +787,9 @@ pub fn run_vst3(args: Vst3RunArgs) {
 
         write_vst3_echo_ring(&processor, ptr, &mut vst3_param_cache);
 
-        write_midi_out_ring(ptr, &_midi_output);
+        for port in 0..processor.midi_output_count().max(1) {
+            write_midi_out_ring(ptr, port, &_midi_output);
+        }
 
         let outputs = processor.audio_outputs();
         for (ch, output) in outputs.iter().enumerate().take(num_out) {
@@ -1038,20 +1058,28 @@ pub fn run_lv2(
     sample_rate: f64,
     buffer_size: usize,
 ) {
+    let header = unsafe { header_ref(mapping.as_ptr()) };
+    let ptr = mapping.as_ptr();
+
     match plugin_uri {
         "__test__" => {
             let scratch = unsafe { scratch_ptr(mapping.as_ptr()) };
             unsafe {
                 std::ptr::write_unaligned(scratch as *mut u32, 0xDEADBEEF);
             }
+            header.ready.store(1, Ordering::Release);
             return;
         }
         "__crash__" => {
+            header.ready.store(1, Ordering::Release);
             std::process::exit(1);
         }
-        "__hang__" => loop {
-            std::thread::sleep(Duration::from_secs(60));
-        },
+        "__hang__" => {
+            header.ready.store(1, Ordering::Release);
+            loop {
+                std::thread::sleep(Duration::from_secs(60));
+            }
+        }
         _ => {}
     }
 
@@ -1069,8 +1097,14 @@ pub fn run_lv2(
         );
     }
 
-    let header = unsafe { header_ref(mapping.as_ptr()) };
-    let ptr = mapping.as_ptr();
+    header
+        .midi_in_port_count
+        .store(processor.midi_input_count() as u32, Ordering::Release);
+    header
+        .midi_out_port_count
+        .store(processor.midi_output_count() as u32, Ordering::Release);
+    header.ready.store(1, Ordering::Release);
+
     let mut lv2_param_cache = HashMap::new();
 
     loop {
@@ -1161,9 +1195,10 @@ pub fn run_lv2(
             *input.finished.lock() = true;
         }
 
-        let midi_input = drain_midi_ring(ptr);
         let midi_per_port: Vec<Vec<crate::util::MidiEvent>> = if processor.midi_input_count() > 0 {
-            vec![midi_input]
+            (0..processor.midi_input_count())
+                .map(|port| drain_midi_ring(ptr, port))
+                .collect()
         } else {
             vec![]
         };
@@ -1172,11 +1207,9 @@ pub fn run_lv2(
 
         write_lv2_echo_ring(&processor, ptr, &mut lv2_param_cache);
 
-        let mut all_midi_out = Vec::new();
-        for port_events in midi_out {
-            all_midi_out.extend(port_events);
+        for (port, events) in midi_out.iter().enumerate() {
+            write_midi_out_ring(ptr, port, events);
         }
-        write_midi_out_ring(ptr, &all_midi_out);
 
         let outputs = processor.audio_outputs();
         for (ch, output) in outputs.iter().enumerate().take(num_out) {

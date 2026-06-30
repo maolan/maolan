@@ -1,5 +1,5 @@
 use crate::state::{ConnectionViewSelection, HW_IN_ID, HW_OUT_ID, StateData};
-use maolan_engine::message::{Action, PluginGraphConnection};
+use maolan_engine::message::{Action, ConnectableConnection, PluginGraphConnection};
 use std::collections::HashSet;
 
 pub fn is_bezier_hit(
@@ -111,6 +111,33 @@ pub fn plugin_disconnect_actions(
         .collect()
 }
 
+pub fn connectable_disconnect_actions(
+    track_name: &str,
+    connections: &[ConnectableConnection],
+    selected: &HashSet<usize>,
+) -> Vec<Action> {
+    selected
+        .iter()
+        .filter_map(|idx| connections.get(*idx))
+        .map(|conn| match conn.kind {
+            maolan_engine::kind::Kind::Audio => Action::TrackDisconnectAudio {
+                track_name: track_name.to_string(),
+                from: conn.from.clone(),
+                from_port: conn.from_port,
+                to: conn.to.clone(),
+                to_port: conn.to_port,
+            },
+            maolan_engine::kind::Kind::MIDI => Action::TrackDisconnectMidi {
+                track_name: track_name.to_string(),
+                from: conn.from.clone(),
+                from_port: conn.from_port,
+                to: conn.to.clone(),
+                to_port: conn.to_port,
+            },
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +191,66 @@ mod tests {
         select_connection_indices(&mut selected, 5, true);
         assert!(!selected.contains(&5));
         assert!(selected.contains(&1));
+    }
+
+    #[test]
+    fn connectable_disconnect_actions_maps_audio_and_midi_edges() {
+        let audio_conn = ConnectableConnection {
+            from: maolan_engine::message::ConnectableRef::ChildTrack("Child".to_string()),
+            from_port: 0,
+            to: maolan_engine::message::ConnectableRef::ClapPlugin(7),
+            to_port: 0,
+            kind: maolan_engine::kind::Kind::Audio,
+        };
+        let midi_conn = ConnectableConnection {
+            from: maolan_engine::message::ConnectableRef::ClapPlugin(7),
+            from_port: 1,
+            to: maolan_engine::message::ConnectableRef::ChildTrack("Child".to_string()),
+            to_port: 0,
+            kind: maolan_engine::kind::Kind::MIDI,
+        };
+        let connections = vec![audio_conn.clone(), midi_conn.clone()];
+        let selected: HashSet<usize> = [0, 1].into_iter().collect();
+
+        let actions = connectable_disconnect_actions("Folder", &connections, &selected);
+
+        assert_eq!(actions.len(), 2);
+        let mut saw_audio = false;
+        let mut saw_midi = false;
+        for action in &actions {
+            match action {
+                Action::TrackDisconnectAudio {
+                    track_name,
+                    from,
+                    from_port,
+                    to,
+                    to_port,
+                } if track_name == "Folder"
+                    && from == &audio_conn.from
+                    && *from_port == 0
+                    && to == &audio_conn.to
+                    && *to_port == 0 =>
+                {
+                    saw_audio = true;
+                }
+                Action::TrackDisconnectMidi {
+                    track_name,
+                    from,
+                    from_port,
+                    to,
+                    to_port,
+                } if track_name == "Folder"
+                    && from == &midi_conn.from
+                    && *from_port == 1
+                    && to == &midi_conn.to
+                    && *to_port == 0 =>
+                {
+                    saw_midi = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_audio);
+        assert!(saw_midi);
     }
 }

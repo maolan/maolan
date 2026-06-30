@@ -443,13 +443,6 @@ pub(super) fn track_context_menu_overlay(
         }
     }
 
-    if track.is_folder {
-        items.push(menu::menu_item(
-            "Folder Connections",
-            Message::OpenFolderConnections(track_name.clone()),
-        ));
-    }
-
     if !track.is_folder
         && !track.is_master
         && let Some(ref current_parent) = track.parent_track
