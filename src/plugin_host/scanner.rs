@@ -1,57 +1,8 @@
+use crate::plugin_blocklist::Blocklist;
 use maolan_plugin_host::scan::{ScanDiagnostic, ScanOutput, ScanResult};
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlocklistEntry {
-    pub path: String,
-    pub error: String,
-    pub timestamp: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Blocklist {
-    pub entries: Vec<BlocklistEntry>,
-}
-
-impl Blocklist {
-    fn path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("maolan")
-            .join("plugin-blocklist.json")
-    }
-
-    pub fn save(&self) -> Result<(), String> {
-        let path = Self::path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create config dir: {e}"))?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("failed to serialize blocklist: {e}"))?;
-        std::fs::write(&path, json).map_err(|e| format!("failed to write blocklist: {e}"))?;
-        Ok(())
-    }
-
-    pub fn contains(&self, path: &str) -> bool {
-        self.entries.iter().any(|e| e.path == path)
-    }
-
-    pub fn add(&mut self, path: String, error: String) {
-        if self.contains(&path) {
-            return;
-        }
-        let timestamp = chrono::Local::now().to_rfc3339();
-        self.entries.push(BlocklistEntry {
-            path,
-            error,
-            timestamp,
-        });
-    }
-}
 
 pub fn scan_plugin_file(
     host_bin: &Path,

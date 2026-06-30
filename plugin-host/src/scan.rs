@@ -107,6 +107,17 @@ fn clap_version_is_compatible(plugin_version: &crate::clap::ClapVersion) -> bool
 }
 
 pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
+    tracing::debug!("scanning CLAP plugin: {}", plugin_path);
+    let blocklist = crate::blocklist::Blocklist::load();
+    if blocklist.is_blocked(plugin_path) {
+        tracing::debug!("skipping blocklisted CLAP plugin: {}", plugin_path);
+        return ScanResult {
+            format: "clap".to_string(),
+            path: plugin_path.to_string(),
+            plugins: Vec::new(),
+            error: None,
+        };
+    }
     let path = Path::new(plugin_path);
     if !path.exists() {
         return ScanResult {
@@ -223,6 +234,7 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
         }
 
         let plugin_id = cstr_to_string(desc.id);
+        tracing::debug!("scanning CLAP plugin descriptor: {plugin_id}");
         let plugin_id_c = match CString::new(&*plugin_id) {
             Ok(s) => s,
             Err(_) => continue,
@@ -360,7 +372,7 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
         }
 
         plugins.push(PluginMetadata {
-            id: plugin_id,
+            id: plugin_id.clone(),
             name: cstr_to_string(desc.name),
             vendor: cstr_to_string(desc.vendor),
             version: cstr_to_string(desc.version),
@@ -369,6 +381,7 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
             audio_inputs,
             audio_outputs,
         });
+        tracing::debug!("finished scanning CLAP plugin descriptor: {plugin_id}");
 
         unsafe {
             if let Some(destroy) = (*plugin).destroy {
@@ -380,6 +393,12 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
     if let Some(deinit) = entry.deinit {
         unsafe { deinit() };
     }
+
+    tracing::debug!(
+        "finished scanning CLAP plugin: {} ({} plugin(s))",
+        plugin_path,
+        plugins.len()
+    );
 
     ScanResult {
         format: "clap".to_string(),
@@ -438,6 +457,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
     };
 
     let path_str = path.to_string_lossy().to_string();
+    tracing::debug!("scanning CLAP plugin bundle: {path_str}");
     let factory_id = c"clap.plugin-factory";
     let mut host = ClapHost {
         clap_version: CLAP_VERSION,
@@ -721,20 +741,31 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| path_str.clone()),
-            path: path_str,
+            path: path_str.clone(),
             capabilities: None,
         });
     }
 
+    tracing::debug!(
+        "finished scanning CLAP plugin bundle: {path_str} ({} plugin(s))",
+        out.len()
+    );
+
     out
 }
 
-fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>, scan_capabilities: bool) {
+fn collect_clap_plugins(
+    root: &Path,
+    out: &mut Vec<ClapPluginInfo>,
+    scan_capabilities: bool,
+    blocklist: &crate::blocklist::Blocklist,
+) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        let path_str = path.to_string_lossy().to_string();
         let Ok(ft) = entry.file_type() else {
             continue;
         };
@@ -751,20 +782,24 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>, scan_capabil
             {
                 continue;
             }
-            collect_clap_plugins(&path, out, scan_capabilities);
+            collect_clap_plugins(&path, out, scan_capabilities, blocklist);
             continue;
         }
 
         if is_supported_clap_binary(&path) {
+            if blocklist.is_blocked(&path_str) {
+                tracing::debug!("skipping blocklisted CLAP plugin bundle: {path_str}");
+                continue;
+            }
             let infos = scan_clap_bundle(&path, scan_capabilities);
             if infos.is_empty() {
                 let name = path
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                    .unwrap_or_else(|| path_str.clone());
                 out.push(ClapPluginInfo {
                     name,
-                    path: path.to_string_lossy().to_string(),
+                    path: path_str,
                     capabilities: None,
                 });
             } else {
@@ -775,6 +810,7 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>, scan_capabil
 }
 
 pub fn scan_clap_plugins(scan_capabilities: bool) -> Vec<ClapPluginInfo> {
+    let blocklist = crate::blocklist::Blocklist::load();
     let mut roots = default_clap_search_roots();
 
     if let Ok(extra) = std::env::var("CLAP_PATH") {
@@ -787,7 +823,7 @@ pub fn scan_clap_plugins(scan_capabilities: bool) -> Vec<ClapPluginInfo> {
 
     let mut out = Vec::new();
     for root in roots {
-        collect_clap_plugins(&root, &mut out, scan_capabilities);
+        collect_clap_plugins(&root, &mut out, scan_capabilities, &blocklist);
     }
 
     out.sort_by_key(|a| a.name.to_lowercase());
@@ -803,7 +839,18 @@ pub fn scan_vst3_plugins() -> Vec<crate::vst3::Vst3PluginInfo> {
 
 #[cfg(unix)]
 pub fn scan_lv2_plugins() -> Vec<crate::lv2::Lv2PluginInfo> {
-    crate::lv2::Lv2Host::new(48_000.0).list_plugins()
+    let blocklist = crate::blocklist::Blocklist::load();
+    crate::lv2::Lv2Host::new(48_000.0)
+        .list_plugins()
+        .into_iter()
+        .filter(|p| {
+            if blocklist.is_blocked(&p.bundle_uri) || blocklist.is_blocked(&p.uri) {
+                tracing::debug!("skipping blocklisted LV2 plugin: {}", p.uri);
+                return false;
+            }
+            true
+        })
+        .collect()
 }
 
 #[cfg(unix)]

@@ -1464,6 +1464,7 @@ impl Lv2Host {
             .filter(|plugin| plugin.verify())
             .filter_map(|plugin| {
                 let uri = plugin.uri().as_uri()?.to_string();
+                tracing::debug!("scanning LV2 plugin: {uri}");
                 let name = plugin.name().as_str().unwrap_or(&uri).to_string();
                 let class_label = plugin
                     .class()
@@ -1483,6 +1484,7 @@ impl Lv2Host {
                     &midi_event,
                 );
 
+                tracing::debug!("finished scanning LV2 plugin: {uri}");
                 Some(Lv2PluginInfo {
                     uri,
                     name,
