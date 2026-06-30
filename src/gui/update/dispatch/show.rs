@@ -129,7 +129,12 @@ impl Maolan {
                 Task::none()
             }
             Show::Preferences => {
-                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                #[cfg(any(
+                    target_os = "linux",
+                    target_os = "windows",
+                    target_os = "freebsd",
+                    target_os = "openbsd"
+                ))]
                 {
                     let prefs = super::super::super::load_preferences();
                     {
@@ -153,6 +158,13 @@ impl Maolan {
                                     crate::state::discover_windows_input_devices(),
                                 )
                             }
+                            #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+                            {
+                                (
+                                    crate::state::discover_output_audio_devices(),
+                                    crate::state::discover_input_audio_devices(),
+                                )
+                            }
                         },
                         |(output_devices, input_devices)| Message::PreferencesDevicesLoaded {
                             output_devices,
@@ -160,7 +172,12 @@ impl Maolan {
                         },
                     )
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                #[cfg(not(any(
+                    target_os = "linux",
+                    target_os = "windows",
+                    target_os = "freebsd",
+                    target_os = "openbsd"
+                )))]
                 {
                     self.modal = Some(Show::Preferences);
                     Task::none()

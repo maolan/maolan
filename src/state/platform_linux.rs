@@ -172,11 +172,17 @@ fn discover_alsa_devices(direction_marker: &str, direction: Direction) -> Vec<Au
                     rates
                 }
             };
-            devices.push(AudioDeviceOption::with_supported_caps(
+            let (supports_input, supports_output) = match direction {
+                Direction::Playback => (false, true),
+                Direction::Capture => (true, false),
+            };
+            devices.push(AudioDeviceOption::with_supported_direction_caps(
                 id,
                 label,
                 supported_bits,
                 supported_sample_rates,
+                supports_input,
+                supports_output,
             ));
         }
     }

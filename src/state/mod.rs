@@ -400,6 +400,8 @@ pub struct AudioDeviceOption {
     pub supported_sample_rates: Vec<i32>,
     pub max_channels: usize,
     pub max_buffer_bytes: usize,
+    pub supports_input: bool,
+    pub supports_output: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
@@ -435,7 +437,23 @@ impl AudioDeviceOption {
             supported_sample_rates,
             max_channels: 0,
             max_buffer_bytes: 0,
+            supports_input: true,
+            supports_output: true,
         }
+    }
+
+    pub fn with_supported_direction_caps(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        supported_bits: Vec<usize>,
+        supported_sample_rates: Vec<i32>,
+        supports_input: bool,
+        supports_output: bool,
+    ) -> Self {
+        let mut out = Self::with_supported_caps(id, label, supported_bits, supported_sample_rates);
+        out.supports_input = supports_input;
+        out.supports_output = supports_output;
+        out
     }
 
     pub fn with_oss_caps(
@@ -841,7 +859,12 @@ pub struct StateData {
     pub selected_backend: AudioBackendOption,
     pub available_hw: Vec<OutputAudioDevice>,
     pub selected_hw: Option<OutputAudioDevice>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    ))]
     pub available_input_hw: Vec<InputAudioDevice>,
     #[cfg(any(
         target_os = "freebsd",
@@ -1026,7 +1049,12 @@ impl Default for StateData {
             selected_backend: initial_hw.selected_backend,
             available_hw: initial_hw.available_hw,
             selected_hw: initial_hw.selected_hw,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "windows",
+                target_os = "freebsd",
+                target_os = "openbsd"
+            ))]
             available_input_hw: initial_hw.available_input_hw,
             #[cfg(any(
                 target_os = "freebsd",
@@ -1153,7 +1181,12 @@ struct InitialHwConfig {
     selected_backend: AudioBackendOption,
     available_hw: Vec<OutputAudioDevice>,
     selected_hw: Option<OutputAudioDevice>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    ))]
     available_input_hw: Vec<InputAudioDevice>,
     #[cfg(any(
         target_os = "linux",
@@ -1169,18 +1202,31 @@ fn initial_hw_config() -> InitialHwConfig {
     let selected_backend = default_audio_backend();
     let available_hw = initial_output_hw_devices();
     let selected_hw = initial_selected_output_hw(&available_hw);
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    ))]
     let available_input_hw = initial_input_hw_devices();
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    ))]
     let selected_input_hw = initial_selected_input_hw(&available_input_hw);
-    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-    let selected_input_hw = initial_selected_input_hw(&selected_hw);
     InitialHwConfig {
         available_backends,
         selected_backend,
         available_hw,
         selected_hw,
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "windows",
+            target_os = "freebsd",
+            target_os = "openbsd"
+        ))]
         available_input_hw,
         #[cfg(any(
             target_os = "linux",
@@ -1197,18 +1243,42 @@ pub(crate) fn discover_output_audio_devices() -> Vec<AudioDeviceOption> {
     #[cfg(target_os = "freebsd")]
     {
         discover_freebsd_audio_devices()
+            .into_iter()
+            .filter(|d| d.supports_output)
+            .collect()
     }
     #[cfg(target_os = "openbsd")]
     {
         discover_openbsd_audio_devices()
+            .into_iter()
+            .filter(|d| d.supports_output)
+            .collect()
+    }
+}
+
+#[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+pub(crate) fn discover_input_audio_devices() -> Vec<AudioDeviceOption> {
+    #[cfg(target_os = "freebsd")]
+    {
+        discover_freebsd_audio_devices()
+            .into_iter()
+            .filter(|d| d.supports_input)
+            .collect()
+    }
+    #[cfg(target_os = "openbsd")]
+    {
+        discover_openbsd_audio_devices()
+            .into_iter()
+            .filter(|d| d.supports_input)
+            .collect()
     }
 }
 
 fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
     #[cfg(target_os = "freebsd")]
-    let devices = discover_freebsd_audio_devices();
+    let devices = discover_output_audio_devices();
     #[cfg(target_os = "openbsd")]
-    let devices = discover_openbsd_audio_devices();
+    let devices = discover_output_audio_devices();
     #[cfg(target_os = "linux")]
     let devices = discover_alsa_output_devices();
     #[cfg(target_os = "windows")]
@@ -1248,23 +1318,40 @@ fn initial_selected_output_hw(_hw: &[OutputAudioDevice]) -> Option<OutputAudioDe
     None
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "windows",
+    target_os = "freebsd",
+    target_os = "openbsd"
+))]
 fn initial_input_hw_devices() -> Vec<InputAudioDevice> {
     #[cfg(target_os = "linux")]
     let devices = discover_alsa_input_devices();
     #[cfg(target_os = "windows")]
     let devices = discover_windows_input_devices();
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+    let devices = discover_input_audio_devices();
     devices
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "windows",
+    target_os = "freebsd",
+    target_os = "openbsd"
+))]
 fn initial_selected_input_hw(hw: &[InputAudioDevice]) -> Option<InputAudioDevice> {
     hw.first().cloned()
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-fn initial_selected_input_hw(selected_hw: &Option<OutputAudioDevice>) -> Option<InputAudioDevice> {
-    selected_hw.clone()
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "windows",
+    target_os = "freebsd",
+    target_os = "openbsd"
+)))]
+fn initial_selected_input_hw(_selected_hw: &Option<OutputAudioDevice>) -> Option<InputAudioDevice> {
+    None
 }
 
 pub type State = Arc<RwLock<StateData>>;

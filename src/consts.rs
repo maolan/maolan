@@ -211,7 +211,7 @@ pub mod state_platform_linux {
 
 #[cfg(target_os = "freebsd")]
 pub mod state_platform_freebsd_lists {
-    pub const DIRECT_KEYS: [&str; 7] = [
+    pub const DIRECT_KEYS: [&str; 9] = [
         "formats",
         "iformats",
         "oformats",
@@ -219,6 +219,8 @@ pub mod state_platform_freebsd_lists {
         "rformats",
         "playformats",
         "recformats",
+        "pfmts",
+        "rfmts",
     ];
     pub const RATE_KEYS: [&str; 8] = [
         "rates",

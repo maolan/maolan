@@ -6733,14 +6733,7 @@ impl Maolan {
     fn preferences_input_device_options(&self) -> Vec<PreferencesDeviceOption> {
         let mut options = vec![Self::preferences_auto_device_option()];
         let state = self.state.blocking_read();
-        #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-        {
-            options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
-                id: hw.id.clone(),
-                label: hw.label.clone(),
-            }));
-        }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "linux"))]
         {
             options.extend(
                 state
@@ -6793,16 +6786,7 @@ impl Maolan {
             }
         }
         if let Some(device_id) = prefs.default_input_device_id.as_deref() {
-            #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-            if let Some(selected) = state
-                .available_hw
-                .iter()
-                .find(|hw| hw.id == device_id)
-                .cloned()
-            {
-                state.selected_input_hw = Some(selected);
-            }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "linux"))]
             if let Some(selected) = state
                 .available_input_hw
                 .iter()

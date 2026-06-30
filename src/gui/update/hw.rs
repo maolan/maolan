@@ -17,12 +17,12 @@ impl Maolan {
     pub(super) fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
         let mut state = self.state.blocking_write();
         let selected = Self::select_refreshed_device(
-            &mut state.available_hw,
+            &mut state.available_input_hw,
             hw,
-            crate::state::discover_output_audio_devices,
+            crate::state::discover_input_audio_devices,
         );
-        state.selected_input_hw = Some(selected.clone());
-        Self::update_bits_from_selected_device(&mut state, &selected);
+        state.selected_input_hw = Some(selected);
+        Self::update_bits_from_selected_device(&mut state, hw);
     }
 
     #[cfg(target_os = "linux")]
@@ -126,7 +126,7 @@ impl Maolan {
         selected
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn select_first_backend_input_device(
         state: &mut crate::state::StateData,
         discover: fn() -> Vec<AudioDeviceOption>,
@@ -159,7 +159,10 @@ impl Maolan {
             state,
             crate::state::discover_output_audio_devices,
         );
-        state.selected_input_hw = state.selected_hw.clone();
+        state.selected_input_hw = Self::select_first_backend_input_device(
+            state,
+            crate::state::discover_input_audio_devices,
+        );
     }
 
     #[cfg(target_os = "linux")]

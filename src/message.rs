@@ -885,11 +885,16 @@ pub enum Message {
         operation: Option<String>,
     },
     TrackTemplatesLoaded(Vec<String>, Vec<String>),
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    ))]
     PreferencesDevicesLoaded {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         output_devices: Vec<AudioDeviceOption>,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         input_devices: Vec<AudioDeviceOption>,
         #[cfg(target_os = "windows")]
         output_devices: Vec<String>,
