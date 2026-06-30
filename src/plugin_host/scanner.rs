@@ -114,8 +114,8 @@ pub fn scan_plugin_file(
     let json =
         String::from_utf8(output).map_err(|e| format!("scanner output is not valid UTF-8: {e}"))?;
 
-    let output: ScanOutput<ScanResult> =
-        serde_json::from_str(&json).map_err(|e| format!("scanner output is not valid JSON: {e}"))?;
+    let output: ScanOutput<ScanResult> = serde_json::from_str(&json)
+        .map_err(|e| format!("scanner output is not valid JSON: {e}"))?;
 
     log_scan_diagnostics(&output.errors, tracing::Level::ERROR);
     log_scan_diagnostics(&output.warnings, tracing::Level::WARN);
