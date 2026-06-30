@@ -21,8 +21,6 @@ members = [".", "plugin-host"]
 
 [patch.crates-io]
 esaxx-rs = { git = "https://github.com/maolan/esaxx" }
-maolan-engine = { path = "../engine" }
-maolan-plugin-protocol = { path = "../plugin-protocol" }
 maolan-plugin-host = { path = "plugin-host" }
 
 [dependencies]

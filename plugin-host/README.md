@@ -62,6 +62,24 @@ Example:
 maolan-plugin-host --scan --format clap --path /usr/lib/clap --output clap-index.json
 ```
 
+The generated JSON has the following shape, with any stderr diagnostics from the
+scan captured as `errors` and `warnings`. Each diagnostic includes the original
+`message` and, when it can be determined, the affected `plugin_uri`,
+`plugin_name`, and/or `bundle_uri`:
+
+```json
+{
+  "errors": [
+    {
+      "message": "error: failed to open file /usr/lib/lv2/broken.lv2/manifest.ttl (No such file or directory)",
+      "bundle_uri": "file:///usr/lib/lv2/broken.lv2/"
+    }
+  ],
+  "warnings": [],
+  "data": []
+}
+```
+
 ## Library usage
 
 Add the crate to your `Cargo.toml`:
