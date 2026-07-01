@@ -492,6 +492,7 @@ pub struct Maolan {
     #[cfg(target_os = "macos")]
     pending_save_vst3_states: HashSet<(String, usize)>,
     pending_save_is_template: bool,
+    pending_save_track_name: Option<String>,
     pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
     pending_peak_rebuilds: HashSet<AudioClipKey>,
     pending_precomputed_peaks: HashMap<AudioClipKey, crate::state::ClipPeaks>,
@@ -803,6 +804,7 @@ impl Default for Maolan {
             #[cfg(target_os = "macos")]
             pending_save_vst3_states: HashSet::new(),
             pending_save_is_template: false,
+            pending_save_track_name: None,
             pending_peak_file_loads: HashMap::new(),
             pending_peak_rebuilds: HashSet::new(),
             pending_precomputed_peaks: HashMap::new(),

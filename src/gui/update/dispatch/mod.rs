@@ -4154,6 +4154,22 @@ impl Maolan {
                 ref track_name,
                 is_folder,
             } => {
+                if is_folder {
+                    let is_master = self
+                        .state
+                        .blocking_read()
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_name)
+                        .is_some_and(|t| t.is_master);
+                    if is_master {
+                        self.state.blocking_write().message = format!(
+                            "Track '{}' is the master track and cannot be made a folder",
+                            track_name
+                        );
+                        return Task::none();
+                    }
+                }
                 let mut child_tasks = vec![];
                 let mut clear_audio_indices = Vec::new();
                 let mut clear_midi_indices = Vec::new();

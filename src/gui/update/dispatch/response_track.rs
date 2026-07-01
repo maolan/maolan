@@ -82,7 +82,11 @@ impl Maolan {
                     .iter_mut()
                     .find(|t| t.name == *name)
                 {
-                    track.is_master = !track.is_master;
+                    // Folder tracks can never be master; ignore any engine echo
+                    // that would set the flag on a folder.
+                    if !track.is_folder {
+                        track.is_master = !track.is_master;
+                    }
                 }
                 true
             }

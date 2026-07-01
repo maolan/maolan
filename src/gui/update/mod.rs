@@ -762,7 +762,11 @@ impl Maolan {
                 self.menu.update_templates(templates);
             }
         } else if path.contains("/track_templates/") {
-            return Some(self.save_track_as_template(track_name, path));
+            let save_track_name = self
+                .pending_save_track_name
+                .take()
+                .unwrap_or_else(|| track_name.to_string());
+            return Some(self.save_track_as_template(&save_track_name, path));
         } else if let Err(e) = self.save(path.clone()) {
             self.pending_exit_after_save = false;
             self.state.blocking_write().message = format!("Failed to save session: {}", e);
@@ -3714,6 +3718,191 @@ mod tests {
             .collect();
         assert!(child_names.contains("Kick"));
         assert!(child_names.contains("Snare"));
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn save_nested_folder_track_template_writes_children_recursively() {
+        use std::{
+            fs,
+            sync::LazyLock,
+            sync::Mutex,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        static GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+        let _guard = GUARD.lock().expect("lock guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home =
+            std::env::temp_dir().join(format!("maolan_save_nested_folder_template_{unique}"));
+        let template_path = temp_home.join(".config/maolan/track_templates/Drums");
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            let mut drums = crate::state::Track::new("Drums".to_string(), 0.0, 2, 2, 0, 0);
+            drums.is_folder = true;
+            state.tracks.push(drums);
+            let mut perc = crate::state::Track::new("Perc".to_string(), 0.0, 2, 2, 0, 0);
+            perc.is_folder = true;
+            perc.parent_track = Some("Drums".to_string());
+            state.tracks.push(perc);
+            let mut kick = crate::state::Track::new("Kick".to_string(), 0.0, 1, 1, 0, 0);
+            kick.parent_track = Some("Perc".to_string());
+            state.tracks.push(kick);
+            state
+                .plugin_graphs_by_track
+                .insert("Drums".to_string(), (vec![], vec![]));
+            state
+                .plugin_graphs_by_track
+                .insert("Perc".to_string(), (vec![], vec![]));
+            state
+                .plugin_graphs_by_track
+                .insert("Kick".to_string(), (vec![], vec![]));
+        }
+
+        let _task =
+            app.save_track_as_template("Drums", template_path.to_string_lossy().to_string());
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        let track_json_path = template_path.join("track.json");
+        assert!(
+            track_json_path.exists(),
+            "nested folder template save should write track.json"
+        );
+        let saved: serde_json::Value = serde_json::from_reader(std::io::BufReader::new(
+            fs::File::open(&track_json_path).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(
+            saved["track"]["is_folder"].as_bool(),
+            Some(true),
+            "root track should be marked as folder"
+        );
+        let children = saved["children"]
+            .as_array()
+            .expect("children array expected");
+        assert_eq!(children.len(), 1);
+        let perc = &children[0];
+        assert_eq!(
+            perc["track"]["name"].as_str(),
+            Some("Perc"),
+            "nested folder child should be saved"
+        );
+        assert_eq!(
+            perc["track"]["is_folder"].as_bool(),
+            Some(true),
+            "nested folder child should keep is_folder flag"
+        );
+        let nested_children = perc["children"]
+            .as_array()
+            .expect("nested children array expected");
+        assert_eq!(nested_children.len(), 1);
+        assert_eq!(
+            nested_children[0]["track"]["name"].as_str(),
+            Some("Kick"),
+            "deeply nested track should be saved"
+        );
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn complete_pending_save_uses_original_folder_track_name() {
+        use std::{
+            fs,
+            sync::LazyLock,
+            sync::Mutex,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        static GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+        let _guard = GUARD.lock().expect("lock guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home =
+            std::env::temp_dir().join(format!("maolan_complete_pending_save_folder_{unique}"));
+        let template_path = temp_home.join(".config/maolan/track_templates/Drums");
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            let mut folder = crate::state::Track::new("Drums".to_string(), 0.0, 2, 2, 0, 0);
+            folder.is_folder = true;
+            state.tracks.push(folder);
+            let mut kick = crate::state::Track::new("Kick".to_string(), 0.0, 1, 1, 0, 0);
+            kick.parent_track = Some("Drums".to_string());
+            state.tracks.push(kick);
+            state
+                .plugin_graphs_by_track
+                .insert("Drums".to_string(), (vec![], vec![]));
+            state
+                .plugin_graphs_by_track
+                .insert("Kick".to_string(), (vec![], vec![]));
+        }
+
+        // Simulate the last pending response arriving for a child track.
+        app.pending_save_path = Some(template_path.to_string_lossy().to_string());
+        app.pending_save_track_name = Some("Drums".to_string());
+        app.pending_save_tracks.clear();
+        app.pending_save_clap_tracks.clear();
+        app.pending_save_clap_clips.clear();
+        app.pending_save_is_template = false;
+
+        let _task = app.complete_pending_save("Kick");
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        let track_json_path = template_path.join("track.json");
+        assert!(
+            track_json_path.exists(),
+            "folder template save should write track.json"
+        );
+        let saved: serde_json::Value = serde_json::from_reader(std::io::BufReader::new(
+            fs::File::open(&track_json_path).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(
+            saved["track"]["name"].as_str(),
+            Some("Drums"),
+            "saved template should be the original folder track, not the last child response"
+        );
+        assert_eq!(
+            saved["track"]["is_folder"].as_bool(),
+            Some(true),
+            "saved folder template should keep is_folder flag"
+        );
         let _ = fs::remove_dir_all(&temp_home);
     }
 }
