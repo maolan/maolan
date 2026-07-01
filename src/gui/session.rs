@@ -493,6 +493,7 @@ impl Maolan {
         path: String,
     ) -> Task<Message> {
         self.pending_save_path = Some(path.clone());
+        self.pending_save_track_name = Some(track_name.clone());
         let track_names: std::collections::HashSet<String> = self
             .collect_folder_member_names(&track_name)
             .into_iter()

@@ -408,7 +408,7 @@ pub(super) fn track_context_menu_overlay(
         items.extend(modulator_items);
     }
 
-    if track.primary_audio_outs() == 2 {
+    if track.primary_audio_outs() == 2 && !track.is_folder {
         items.push(menu::menu_item(
             if track.is_master {
                 "Unmaster"

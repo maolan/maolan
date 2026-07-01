@@ -167,6 +167,10 @@ impl Maolan {
             } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    // The master track can never be turned into a folder.
+                    if *is_folder && track.is_master {
+                        return true;
+                    }
                     track.is_folder = *is_folder;
                 }
                 true
