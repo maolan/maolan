@@ -8,7 +8,6 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use tracing::warn;
 
-#[cfg(unix)]
 pub fn load_session_graph_restore_actions(
     session: &Value,
     valid_track_names: &BTreeSet<String>,
@@ -26,7 +25,6 @@ pub fn load_session_graph_restore_actions(
     Ok(actions)
 }
 
-#[cfg(unix)]
 fn push_track_plugin_graph_restore_actions(
     actions: &mut Vec<Action>,
     graphs: Option<&Value>,
@@ -151,17 +149,6 @@ fn push_track_plugin_graph_restore_actions(
     Ok(())
 }
 
-#[cfg(not(unix))]
-pub fn load_session_graph_restore_actions(
-    _session: &Value,
-    _valid_track_names: &BTreeSet<String>,
-    _clap_plugins: &[ClapPluginInfo],
-    _vst3_plugins: &[Vst3PluginInfo],
-) -> Result<Vec<Action>, String> {
-    Ok(Vec::new())
-}
-
-#[cfg(unix)]
 fn parse_plugin_node_with_runtime_nodes(
     value: Option<&Value>,
     runtime_nodes: &[maolan_engine::message::PluginGraphNode],
@@ -191,7 +178,6 @@ fn parse_plugin_node_with_runtime_nodes(
     }
 }
 
-#[cfg(unix)]
 fn resolve_clap_plugin_path(stored: &str, clap_plugins: &[ClapPluginInfo]) -> Option<String> {
     if stored.contains("::") || stored.contains('/') {
         return Some(stored.to_string());
@@ -206,7 +192,6 @@ fn resolve_clap_plugin_path(stored: &str, clap_plugins: &[ClapPluginInfo]) -> Op
     None
 }
 
-#[cfg(unix)]
 fn resolve_vst3_plugin_path(stored: &str, vst3_plugins: &[Vst3PluginInfo]) -> Option<String> {
     if stored.contains('/') {
         return Some(stored.to_string());

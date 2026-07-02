@@ -1324,8 +1324,7 @@ impl Maolan {
     }
 
     fn supported_plugin_formats() -> Vec<PluginFormat> {
-        let mut formats = Vec::new();
-        formats.push(PluginFormat::Clap);
+        let mut formats = vec![PluginFormat::Clap];
         #[cfg(all(unix, not(target_os = "macos")))]
         if platform_caps::SUPPORTS_LV2 {
             formats.push(PluginFormat::Lv2);
@@ -5479,19 +5478,25 @@ impl Maolan {
     fn is_user_connectable_connection(conn: &ConnectableConnection) -> bool {
         let involves_child = matches!(conn.from, ConnectableRef::ChildTrack(_))
             || matches!(conn.to, ConnectableRef::ChildTrack(_));
-        let mut involves_plugin = matches!(
-            conn.from,
-            ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
-        ) || matches!(
-            conn.to,
-            ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
-        );
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            involves_plugin = involves_plugin
-                || matches!(conn.from, ConnectableRef::Lv2Plugin(_))
-                || matches!(conn.to, ConnectableRef::Lv2Plugin(_));
-        }
+        let involves_plugin = {
+            let plugin = matches!(
+                conn.from,
+                ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
+            ) || matches!(
+                conn.to,
+                ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
+            );
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                plugin
+                    || matches!(conn.from, ConnectableRef::Lv2Plugin(_))
+                    || matches!(conn.to, ConnectableRef::Lv2Plugin(_))
+            }
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            {
+                plugin
+            }
+        };
         involves_child && involves_plugin
     }
 

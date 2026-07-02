@@ -126,34 +126,38 @@ fn main() {
     let shm_name = args[3].clone();
     let instance_id = args[4].clone();
 
-    #[cfg(unix)]
-    let d2h_fd: i32 = args[5].parse().unwrap_or(-1);
-    #[cfg(unix)]
-    let h2d_fd: i32 = args[6].parse().unwrap_or(-1);
-
-    #[cfg(unix)]
     let sample_rate: f64 = if args.len() > 7 {
         args[7].parse().unwrap_or(48000.0)
     } else {
         48000.0
     };
-    #[cfg(unix)]
     let buffer_size: usize = if args.len() > 8 {
         args[8].parse().unwrap_or(256)
     } else {
         256
     };
-    #[cfg(unix)]
     let num_inputs: usize = if args.len() > 9 {
         args[9].parse().unwrap_or(2)
     } else {
         2
     };
-    #[cfg(unix)]
     let num_outputs: usize = if args.len() > 10 {
         args[10].parse().unwrap_or(2)
     } else {
         2
+    };
+
+    #[cfg(unix)]
+    let (d2h_fd, h2d_fd): (i32, i32) = if matches!(format.as_str(), "vst3" | "lv2") {
+        (
+            args.get(9).and_then(|a| a.parse().ok()).unwrap_or(-1),
+            args.get(10).and_then(|a| a.parse().ok()).unwrap_or(-1),
+        )
+    } else {
+        (
+            args.get(5).and_then(|a| a.parse().ok()).unwrap_or(-1),
+            args.get(6).and_then(|a| a.parse().ok()).unwrap_or(-1),
+        )
     };
 
     let (plugin_path, _plugin_id) = if format == "clap" {
@@ -181,6 +185,42 @@ fn main() {
             .init();
     }
 
+    fn handle_special_plugin(
+        spec: &str,
+        shm_name: &str,
+        events: maolan_plugin_protocol::events::EventPair,
+    ) -> Option<i32> {
+        let runtime = match maolan_plugin_host::host::HostRuntime::attach(
+            shm_name,
+            events,
+            String::new(),
+            spec.to_string(),
+            String::new(),
+        ) {
+            Ok(rt) => rt,
+            Err(_e) => return Some(2),
+        };
+        match spec {
+            "__test__" => {
+                runtime.write_test_magic();
+                Some(0)
+            }
+            "__crash__" => {
+                runtime.signal_ready();
+                std::process::abort();
+            }
+            "__hang__" => {
+                runtime.signal_ready();
+                loop {
+                    std::thread::sleep(Duration::from_secs(60));
+                }
+            }
+            _ => None,
+        }
+    }
+
+    let is_special_plugin = matches!(plugin_spec.as_str(), "__test__" | "__crash__" | "__hang__");
+
     match format.as_str() {
         "vst3" => {
             #[cfg(unix)]
@@ -188,8 +228,6 @@ fn main() {
                 if d2h_fd < 0 || h2d_fd < 0 {
                     std::process::exit(3);
                 }
-                let events =
-                    unsafe { maolan_plugin_protocol::events::EventPair::from_fds(d2h_fd, h2d_fd) };
                 let mapping = match maolan_plugin_protocol::shm::ShmMapping::open_existing(
                     &shm_name,
                     maolan_plugin_protocol::protocol::SHM_SIZE,
@@ -197,6 +235,64 @@ fn main() {
                     Ok(m) => m,
                     Err(_e) => {
                         std::process::exit(2);
+                    }
+                };
+                if is_special_plugin {
+                    let events = unsafe {
+                        maolan_plugin_protocol::events::EventPair::from_fds(d2h_fd, h2d_fd)
+                    };
+                    if let Some(code) = handle_special_plugin(&plugin_spec, &shm_name, events) {
+                        std::process::exit(code);
+                    }
+                    return;
+                }
+                let events =
+                    unsafe { maolan_plugin_protocol::events::EventPair::from_fds(d2h_fd, h2d_fd) };
+                maolan_plugin_host::vst3_lv2_host::run_vst3(
+                    maolan_plugin_host::vst3_lv2_host::Vst3RunArgs {
+                        plugin_path: &plugin_spec,
+                        mapping,
+                        events,
+                        instance_id: &instance_id,
+                        sample_rate,
+                        buffer_size,
+                        num_inputs,
+                        num_outputs,
+                    },
+                );
+                return;
+            }
+            #[cfg(windows)]
+            {
+                let mapping = match maolan_plugin_protocol::shm::ShmMapping::open_existing(
+                    &shm_name,
+                    maolan_plugin_protocol::protocol::SHM_SIZE,
+                ) {
+                    Ok(m) => m,
+                    Err(_e) => {
+                        std::process::exit(2);
+                    }
+                };
+                if is_special_plugin {
+                    let events = match maolan_plugin_protocol::events::EventPair::from_names(
+                        &args[9], &args[10],
+                    ) {
+                        Ok(e) => e,
+                        Err(_e) => {
+                            std::process::exit(3);
+                        }
+                    };
+                    if let Some(code) = handle_special_plugin(&plugin_spec, &shm_name, events) {
+                        std::process::exit(code);
+                    }
+                    return;
+                }
+                let events = match maolan_plugin_protocol::events::EventPair::from_names(
+                    &args[9], &args[10],
+                ) {
+                    Ok(e) => e,
+                    Err(_e) => {
+                        std::process::exit(3);
                     }
                 };
                 maolan_plugin_host::vst3_lv2_host::run_vst3(
@@ -213,7 +309,7 @@ fn main() {
                 );
                 return;
             }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             {
                 std::process::exit(4);
             }

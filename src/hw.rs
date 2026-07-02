@@ -292,12 +292,7 @@ impl HW {
         }
     }
 
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "windows"
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     fn selected_bits(selected_is_jack: bool, chosen_bits: usize) -> i32 {
         if selected_is_jack {
             32
@@ -306,12 +301,7 @@ impl HW {
         }
     }
 
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "windows"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
     fn selected_bits(_selected_is_jack: bool, _chosen_bits: usize) -> i32 {
         32
     }
