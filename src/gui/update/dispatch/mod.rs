@@ -2,7 +2,6 @@ use super::*;
 use crate::consts::state_track::{TRACK_MIN_HEIGHT, TRACK_SUBTRACK_MIN_HEIGHT};
 use crate::consts::widget_piano::PITCH_MAX;
 use crate::message::{ModulatorChange, SnapMode, TrackAutomationTarget};
-#[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::message::PluginGraphNode;
 mod core;
 mod plugins;

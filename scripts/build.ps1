@@ -205,7 +205,7 @@ function Ensure-Rust {
     if (-not (Test-Path $installer)) {
         Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile $installer
     }
-    & $installer -y --default-toolchain stable --target $target
+    & $installer -y --default-toolchain stable --target $target 2>&1 | ForEach-Object { Write-Host $_ }
     $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 }
 
@@ -218,7 +218,7 @@ function Ensure-NSIS {
     $zip = "$env:TEMP\nsis-3.10.zip"
     $curl = "$env:SystemRoot\System32\curl.exe"
     if (Test-Path $curl) {
-        & $curl -L -o $zip "https://prdownloads.sourceforge.net/nsis/nsis-3.10.zip"
+        & $curl -s -L -o $zip "https://prdownloads.sourceforge.net/nsis/nsis-3.10.zip"
     } else {
         Invoke-WebRequest -Uri "https://prdownloads.sourceforge.net/nsis/nsis-3.10.zip" -OutFile $zip -MaximumRedirection 5
     }
@@ -244,9 +244,9 @@ function Ensure-Vcpkg {
     }
     Write-Host "Bootstrapping vcpkg..."
     if (-not (Test-Path $vcpkgRoot)) {
-        & "$env:ProgramFiles\Git\cmd\git.exe" clone https://github.com/microsoft/vcpkg $vcpkgRoot
+        & "$env:ProgramFiles\Git\cmd\git.exe" clone https://github.com/microsoft/vcpkg $vcpkgRoot 2>&1 | ForEach-Object { Write-Host $_ }
     }
-    & "$vcpkgRoot\bootstrap-vcpkg.bat" | Out-Null
+    & "$vcpkgRoot\bootstrap-vcpkg.bat" 2>&1 | ForEach-Object { Write-Host $_ }
     if (-not (Test-Path $vcpkgExe)) {
         Write-Error "Failed to bootstrap vcpkg."
     }
@@ -262,7 +262,7 @@ function Ensure-FFmpegNuGet {
     Write-Host "Downloading FFmpeg.LGPL NuGet package..."
     $nupkg = "$env:TEMP\FFmpeg.LGPL.nupkg"
     $curl = "$env:SystemRoot\System32\curl.exe"
-    & $curl -L -o $nupkg "https://www.nuget.org/api/v2/package/FFmpeg.LGPL/20260504.1.0"
+    & $curl -s -L -o $nupkg "https://www.nuget.org/api/v2/package/FFmpeg.LGPL/20260504.1.0"
     if (-not (Test-Path $nupkg) -or (Get-Item $nupkg).Length -lt 1000000) {
         Write-Error "FFmpeg NuGet package download failed or too small."
     }
@@ -288,7 +288,7 @@ function Install-VcpkgPackage {
         return
     }
     Write-Host "Installing $Package via vcpkg (first run may take a long time)..."
-    & "$Root\vcpkg.exe" install $Package
+    & "$Root\vcpkg.exe" install $Package 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
         Write-Error "vcpkg install $Package failed"
     }
