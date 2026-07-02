@@ -339,13 +339,23 @@ impl TryFrom<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
             }),
             TrackAutomationTarget::Lv2Parameter {
                 instance_id, index, ..
-            } => Ok(Self::Lv2Parameter {
-                track_name: t.track_name,
-                instance_id,
-                index,
-                min: t.min,
-                max: t.max,
-            }),
+            } => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    Ok(Self::Lv2Parameter {
+                        track_name: t.track_name,
+                        instance_id,
+                        index,
+                        min: t.min,
+                        max: t.max,
+                    })
+                }
+                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                {
+                    let _ = (instance_id, index);
+                    Err(())
+                }
+            }
             TrackAutomationTarget::MidiCc { channel, cc } => Ok(Self::MidiCc {
                 track_name: t.track_name,
                 channel,

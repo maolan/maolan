@@ -725,9 +725,26 @@ impl Graph {
                     }
                 })
                 .unwrap_or(0),
-            ConnectableRef::ClapPlugin(id)
-            | ConnectableRef::Vst3Plugin(id)
-            | ConnectableRef::Lv2Plugin(id) => data
+            ConnectableRef::ClapPlugin(id) | ConnectableRef::Vst3Plugin(id) => data
+                .plugin_graph_plugins
+                .iter()
+                .find(|p| p.instance_id == *id)
+                .map(|plugin| {
+                    if kind == Kind::Audio {
+                        if is_output {
+                            plugin.main_audio_outputs
+                        } else {
+                            plugin.main_audio_inputs
+                        }
+                    } else if is_output {
+                        plugin.midi_outputs
+                    } else {
+                        plugin.midi_inputs
+                    }
+                })
+                .unwrap_or(0),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            ConnectableRef::Lv2Plugin(id) => data
                 .plugin_graph_plugins
                 .iter()
                 .find(|p| p.instance_id == *id)
