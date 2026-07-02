@@ -509,8 +509,9 @@ impl HostRuntime {
                                     .file_stem()
                                     .and_then(|s| s.to_str())
                                     .unwrap_or("Plugin");
-                                match create_container_window(std::ptr::null_mut(), title, 800, 600)
-                                {
+                                match unsafe {
+                                    create_container_window(std::ptr::null_mut(), title, 800, 600)
+                                } {
                                     Ok(window) => {
                                         let hwnd = window.hwnd;
                                         let result = plugin

@@ -8,6 +8,32 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+#[cfg(windows)]
+struct ComInitGuard {
+    initialized: bool,
+}
+
+#[cfg(windows)]
+impl ComInitGuard {
+    fn new() -> Self {
+        use windows_sys::Win32::Foundation::S_OK;
+        use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+        let hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+        Self {
+            initialized: hr == S_OK,
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ComInitGuard {
+    fn drop(&mut self) {
+        if self.initialized {
+            unsafe { windows_sys::Win32::System::Com::CoUninitialize() };
+        }
+    }
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11_ffi {
     use std::os::raw::{c_char, c_int, c_uint, c_ulong};
@@ -571,6 +597,9 @@ pub struct Vst3RunArgs<'a> {
 }
 
 pub fn run_vst3(args: Vst3RunArgs) {
+    #[cfg(windows)]
+    let _com = ComInitGuard::new();
+
     let Vst3RunArgs {
         plugin_path,
         mapping,

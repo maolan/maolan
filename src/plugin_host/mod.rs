@@ -318,6 +318,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn scanner_test_plugin() {
         let host_bin = find_plugin_host_binary().expect("maolan-plugin-host binary not found");
         let plugin_path = concat!(

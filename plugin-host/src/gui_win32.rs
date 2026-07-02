@@ -48,7 +48,11 @@ pub mod win32 {
         atom as u16
     }
 
-    pub fn create_container_window(
+    /// # Safety
+    ///
+    /// `parent` must be a valid Win32 `HWND` handle, or `NULL`. Passing a
+    /// dangling or otherwise invalid handle is undefined behavior.
+    pub unsafe fn create_container_window(
         parent: HWND,
         title: &str,
         width: i32,

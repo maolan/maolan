@@ -36,7 +36,7 @@ iced_aw = "0.14.1"
 iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 maolan-generate = "0.0.8"
-maolan-engine = "0.2.24"
+maolan-engine = "0.2.25"
 maolan-plugin-host = "0.0.4"
 maolan-widgets = "0.0.21"
 mixosc = "0.0.6"
