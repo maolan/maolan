@@ -418,6 +418,7 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                 });
             } else {
                 actions.push(Action::AddClip {
+                    clip_id: maolan_engine::message::generate_clip_id(),
                     name: clip
                         .get("name")
                         .and_then(Value::as_str)
@@ -502,6 +503,7 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                 });
             } else {
                 actions.push(Action::AddClip {
+                    clip_id: maolan_engine::message::generate_clip_id(),
                     name: clip
                         .get("name")
                         .and_then(Value::as_str)
@@ -720,6 +722,7 @@ fn parse_pitch_correction_points(clip: &Value) -> Vec<PitchCorrectionPointData> 
 
 fn parse_audio_clip_data(clip: &Value) -> Result<AudioClipData, String> {
     let mut data = AudioClipData {
+        id: maolan_engine::message::generate_clip_id(),
         name: clip
             .get("name")
             .and_then(Value::as_str)
@@ -793,6 +796,7 @@ fn parse_audio_clip_data(clip: &Value) -> Result<AudioClipData, String> {
 
 fn parse_midi_clip_data(clip: &Value) -> Result<MidiClipData, String> {
     let mut data = MidiClipData {
+        id: maolan_engine::message::generate_clip_id(),
         name: clip
             .get("name")
             .and_then(Value::as_str)

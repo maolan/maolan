@@ -141,6 +141,7 @@ impl Maolan {
                         }));
                     }
                     tasks.push(self.send(Action::AddClip {
+                        clip_id: maolan_engine::message::generate_clip_id(),
                         name: pending.rendered_clip_rel,
                         track_name: track_name.clone(),
                         start: 0,

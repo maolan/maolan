@@ -284,6 +284,55 @@ impl HostRuntime {
         }
     }
 
+    fn try_clap_native_floating(plugin: &mut PluginInstance) -> Result<(), String> {
+        if plugin.gui_created() {
+            plugin.gui_destroy();
+        }
+
+        // Prefer the plugin's preferred API if it already wants to float.
+        if let Some((ref api, true)) = plugin.gui_preferred_api() {
+            plugin
+                .gui_create(api, true)
+                .and_then(|_| plugin.gui_show())?;
+            return Ok(());
+        }
+
+        // Otherwise try each Unix API in floating mode.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            if plugin.gui_is_api_supported("wayland", true)
+                && plugin.gui_create("wayland", true).is_ok()
+            {
+                return plugin.gui_show();
+            }
+            if plugin.gui_is_api_supported("x11", true)
+                && plugin.gui_create("x11", true).is_ok()
+            {
+                return plugin.gui_show();
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            if plugin.gui_is_api_supported("win32", true)
+                && plugin.gui_create("win32", true).is_ok()
+            {
+                return plugin.gui_show();
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if plugin.gui_is_api_supported("cocoa", true)
+                && plugin.gui_create("cocoa", true).is_ok()
+            {
+                return plugin.gui_show();
+            }
+        }
+
+        Err("Plugin does not support native floating GUI".to_string())
+    }
+
     pub fn run_clap_plugin(&self) {
         let mut plugin = match PluginInstance::new(self.real_plugin_path(), self.plugin_id()) {
             Ok(p) => p,
@@ -500,24 +549,153 @@ impl HostRuntime {
                         } else {
                             #[cfg(windows)]
                             {
-                                if plugin.gui_created() {
-                                    plugin.gui_destroy();
-                                }
-                                clap_gui_window = None;
+                                let gui_mode = header.gui_mode();
 
-                                let title = std::path::Path::new(self.real_plugin_path())
-                                    .file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("Plugin");
-                                match unsafe {
-                                    create_container_window(std::ptr::null_mut(), title, 800, 600)
-                                } {
-                                    Ok(window) => {
-                                        let hwnd = window.hwnd;
-                                        let result = plugin
-                                            .gui_create("win32", false)
-                                            .inspect(|_| ())
-                                            .inspect_err(|_e| ())
+                                let native_floating = if gui_mode == GuiMode::Floating {
+                                    let native = Self::try_clap_native_floating(&mut plugin);
+                                    if native.is_ok() {
+                                        clap_gui_window = None;
+                                    }
+                                    native
+                                } else {
+                                    Err("GUI mode is embedded".to_string())
+                                };
+
+                                if native_floating.is_ok() {
+                                    native_floating
+                                } else {
+                                    if plugin.gui_created() {
+                                        plugin.gui_destroy();
+                                    }
+                                    clap_gui_window = None;
+
+                                    let title = std::path::Path::new(self.real_plugin_path())
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("Plugin");
+                                    let parent = if gui_mode == GuiMode::Embedded {
+                                        let p = header.parent_window_usize();
+                                        if p != 0 {
+                                            Some(p as windows_sys::Win32::Foundation::HWND)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    match unsafe {
+                                        create_container_window(
+                                            parent.unwrap_or(std::ptr::null_mut()),
+                                            title,
+                                            800,
+                                            600,
+                                        )
+                                    } {
+                                        Ok(window) => {
+                                            let hwnd = window.hwnd;
+                                            let result = plugin
+                                                .gui_create("win32", false)
+                                                .inspect(|_| ())
+                                                .inspect_err(|_e| ())
+                                                .and_then(|_| {
+                                                    plugin
+                                                        .gui_get_size()
+                                                        .inspect(|(_w, _h)| ())
+                                                        .inspect_err(|_e| ())
+                                                })
+                                                .and_then(|(w, h)| {
+                                                    if w > 0 && h > 0 {
+                                                        unsafe {
+                                                            SetWindowPos(
+                                                                hwnd,
+                                                                std::ptr::null_mut(),
+                                                                0,
+                                                                0,
+                                                                w as i32,
+                                                                h as i32,
+                                                                SWP_NOMOVE
+                                                                    | SWP_NOZORDER
+                                                                    | SWP_NOACTIVATE,
+                                                            );
+                                                        }
+                                                    }
+                                                    plugin
+                                                        .gui_set_parent(hwnd as u64)
+                                                        .inspect(|_| ())
+                                                        .inspect_err(|_e| ())
+                                                })
+                                                .and_then(|_| {
+                                                    unsafe {
+                                                        ShowWindow(hwnd, SW_SHOW);
+                                                    }
+                                                    plugin
+                                                        .gui_show()
+                                                        .inspect(|_| ())
+                                                        .inspect_err(|_e| ())
+                                                });
+                                            if result.is_ok() {
+                                                clap_gui_window = Some(window);
+                                            }
+                                            result
+                                        }
+                                        Err(e) => Err(e),
+                                    }
+                                }
+                            }
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            {
+                                let gui_mode = header.gui_mode();
+
+                                // If the DAW wants a floating UI and the plugin supports native
+                                // floating, let the plugin create its own top-level window.
+                                let native_floating = if gui_mode == GuiMode::Floating {
+                                    let native = Self::try_clap_native_floating(&mut plugin);
+                                    if native.is_ok() {
+                                        close_x11_gui_window(&mut clap_gui_window_x11);
+                                    }
+                                    native
+                                } else {
+                                    Err("GUI mode is embedded".to_string())
+                                };
+
+                                if native_floating.is_ok() {
+                                    native_floating
+                                } else {
+                                    let already_created = plugin.gui_created();
+                                    if plugin.gui_created() {
+                                        abandon_x11_gui_window(&mut clap_gui_window_x11);
+                                    } else {
+                                        close_x11_gui_window(&mut clap_gui_window_x11);
+                                    }
+
+                                    let title = std::path::Path::new(self.real_plugin_path())
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("Plugin");
+                                    let parent = if gui_mode == GuiMode::Embedded {
+                                        let p = header.parent_window_usize();
+                                        if p != 0 {
+                                            Some(p as crate::gui_x11::x11::Window)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    match crate::gui_x11::x11::create_container_window(
+                                        None, parent, title, 800, 600,
+                                    ) {
+                                        Ok(window) => {
+                                            let window_id = window.window();
+                                            window.map();
+                                            let result = if already_created {
+                                                Ok(())
+                                            } else {
+                                                plugin
+                                                    .gui_create("x11", false)
+                                                    .inspect(|_| ())
+                                                    .inspect_err(|_e| ())
+                                            }
                                             .and_then(|_| {
                                                 plugin
                                                     .gui_get_size()
@@ -526,99 +704,37 @@ impl HostRuntime {
                                             })
                                             .and_then(|(w, h)| {
                                                 if w > 0 && h > 0 {
-                                                    unsafe {
-                                                        SetWindowPos(
-                                                            hwnd,
-                                                            std::ptr::null_mut(),
-                                                            0,
-                                                            0,
-                                                            w as i32,
-                                                            h as i32,
-                                                            SWP_NOMOVE
-                                                                | SWP_NOZORDER
-                                                                | SWP_NOACTIVATE,
-                                                        );
-                                                    }
+                                                    window.resize(w, h);
                                                 }
                                                 plugin
-                                                    .gui_set_parent(hwnd as u64)
+                                                    .gui_set_parent(window_id)
                                                     .inspect(|_| ())
                                                     .inspect_err(|_e| ())
                                             })
                                             .and_then(|_| {
-                                                unsafe {
-                                                    ShowWindow(hwnd, SW_SHOW);
-                                                }
                                                 plugin
                                                     .gui_show()
                                                     .inspect(|_| ())
                                                     .inspect_err(|_e| ())
                                             });
-                                        if result.is_ok() {
-                                            clap_gui_window = Some(window);
-                                        }
-                                        result
-                                    }
-                                    Err(e) => Err(e),
-                                }
-                            }
-                            #[cfg(all(unix, not(target_os = "macos")))]
-                            {
-                                let already_created = plugin.gui_created();
-                                if plugin.gui_created() {
-                                    abandon_x11_gui_window(&mut clap_gui_window_x11);
-                                } else {
-                                    close_x11_gui_window(&mut clap_gui_window_x11);
-                                }
-
-                                let title = std::path::Path::new(self.real_plugin_path())
-                                    .file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("Plugin");
-                                match crate::gui_x11::x11::create_container_window(
-                                    None, None, title, 800, 600,
-                                ) {
-                                    Ok(window) => {
-                                        let window_id = window.window();
-                                        window.map();
-                                        let result = if already_created {
-                                            Ok(())
-                                        } else {
-                                            plugin
-                                                .gui_create("x11", false)
-                                                .inspect(|_| ())
-                                                .inspect_err(|_e| ())
-                                        }
-                                        .and_then(|_| {
-                                            plugin
-                                                .gui_get_size()
-                                                .inspect(|(_w, _h)| ())
-                                                .inspect_err(|_e| ())
-                                        })
-                                        .and_then(|(w, h)| {
-                                            if w > 0 && h > 0 {
-                                                window.resize(w, h);
+                                            if result.is_ok() {
+                                                clap_gui_window_x11 = Some(window);
                                             }
-                                            plugin
-                                                .gui_set_parent(window_id)
-                                                .inspect(|_| ())
-                                                .inspect_err(|_e| ())
-                                        })
-                                        .and_then(|_| {
-                                            plugin.gui_show().inspect(|_| ()).inspect_err(|_e| ())
-                                        });
-                                        if result.is_ok() {
-                                            clap_gui_window_x11 = Some(window);
+                                            result
                                         }
-                                        result
+                                        Err(e) => Err(e),
                                     }
-                                    Err(e) => Err(e),
                                 }
                             }
                             #[cfg(target_os = "macos")]
                             {
-                                let window_id = header.parent_window_usize() as u64;
-                                let is_floating = window_id == 0;
+                                let gui_mode = header.gui_mode();
+                                let is_floating = gui_mode == GuiMode::Floating;
+                                let window_id = if is_floating {
+                                    0
+                                } else {
+                                    header.parent_window_usize() as u64
+                                };
 
                                 if plugin.gui_created() {
                                     plugin.gui_destroy();

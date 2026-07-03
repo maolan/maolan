@@ -5124,9 +5124,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.25"
+version = "0.2.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "415a856cdb2b3fa9ffbdb176b487a6efc86f492f16e16f2a835f97e61a68a3d4"
+checksum = "c63e320df5de5ab6240f003cc62d4e6383cae607f456dcec044eaa6749b6f9dc"
 dependencies = [
  "alsa",
  "byteorder",
@@ -5145,6 +5145,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wide",
  "windows-sys 0.61.2",
 ]
@@ -5191,9 +5192,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-protocol"
-version = "0.0.9"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2f0dd0c7564bcdc89d08e88e8fef811672fecb6742e33cb0cc5d7b662d79122"
+checksum = "870ea862e4365dbf08833f4141285e0dbfb98895b127c1543e749505a77e7e66"
 dependencies = [
  "libc",
  "tracing",

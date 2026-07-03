@@ -860,6 +860,37 @@ impl PluginInstance {
         self.gui.is_some()
     }
 
+    pub fn gui_is_api_supported(&self, api: &str, is_floating: bool) -> bool {
+        let Some(gui) = self.gui else {
+            return false;
+        };
+        let Some(is_api_supported) = (unsafe { (*gui).is_api_supported }) else {
+            return false;
+        };
+        let Ok(api_c) = CString::new(api) else {
+            return false;
+        };
+        unsafe { is_api_supported(self.plugin, api_c.as_ptr(), is_floating) }
+    }
+
+    pub fn gui_preferred_api(&self) -> Option<(String, bool)> {
+        let gui = self.gui?;
+        let get_preferred_api = unsafe { (*gui).get_preferred_api }?;
+        let mut api_ptr = ptr::null();
+        let mut is_floating = false;
+        if unsafe { get_preferred_api(self.plugin, &mut api_ptr, &mut is_floating) }
+            && !api_ptr.is_null()
+        {
+            let api = unsafe { CStr::from_ptr(api_ptr) }
+                .to_str()
+                .unwrap_or("x11")
+                .to_string();
+            Some((api, is_floating))
+        } else {
+            None
+        }
+    }
+
     pub fn gui_create(&mut self, api: &str, is_floating: bool) -> Result<(), String> {
         let gui = self.gui.ok_or("GUI extension not available")?;
         let create = unsafe { (*gui).create }.ok_or("gui.create is null")?;
@@ -945,6 +976,50 @@ impl PluginInstance {
             Ok(())
         } else {
             Err("plugin.gui.set_parent() returned false".to_string())
+        }
+    }
+
+    pub fn gui_set_transient(&self, window_id: u64) -> Result<(), String> {
+        let gui = self.gui.ok_or("GUI extension not available")?;
+        let set_transient = unsafe { (*gui).set_transient }.ok_or("gui.set_transient is null")?;
+
+        #[cfg(windows)]
+        let window = {
+            let api = c"win32".as_ptr();
+            ClapWindow {
+                api,
+                clap_window__: ClapWindowUnion {
+                    win32: window_id as *mut c_void,
+                },
+            }
+        };
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let window = {
+            let api = c"x11".as_ptr();
+            ClapWindow {
+                api,
+                clap_window__: ClapWindowUnion {
+                    x11: window_id as c_ulong,
+                },
+            }
+        };
+
+        #[cfg(target_os = "macos")]
+        let window = {
+            let api = c"cocoa".as_ptr();
+            ClapWindow {
+                api,
+                clap_window__: ClapWindowUnion {
+                    cocoa: window_id as *mut c_void,
+                },
+            }
+        };
+
+        if unsafe { set_transient(self.plugin, &window) } {
+            Ok(())
+        } else {
+            Err("plugin.gui.set_transient() returned false".to_string())
         }
     }
 
