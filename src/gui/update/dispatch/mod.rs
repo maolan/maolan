@@ -2911,6 +2911,7 @@ impl Maolan {
                             }
                         }
                         Action::AddClip {
+                            clip_id: _,
                             name,
                             track_name,
                             start,
@@ -4414,6 +4415,7 @@ impl Maolan {
                     for clip in restore_audio {
                         tasks.push(
                             self.send(Action::AddClip {
+                                clip_id: maolan_engine::message::generate_clip_id(),
                                 name: clip.name,
                                 track_name: track_name.clone(),
                                 start: clip.start,
@@ -4452,6 +4454,7 @@ impl Maolan {
                     }
                     for clip in restore_midi {
                         tasks.push(self.send(Action::AddClip {
+                            clip_id: maolan_engine::message::generate_clip_id(),
                             name: clip.name,
                             track_name: track_name.clone(),
                             start: clip.start,
@@ -7782,6 +7785,8 @@ impl Maolan {
                                             }
                                             if let Err(e) = CLIENT
                                                 .send(EngineMessage::Request(Action::AddClip {
+                                                    clip_id:
+                                                        maolan_engine::message::generate_clip_id(),
                                                     name: clip_rel,
                                                     track_name,
                                                     start: 0,
@@ -7858,6 +7863,8 @@ impl Maolan {
                                             }
                                             if let Err(e) = CLIENT
                                                 .send(EngineMessage::Request(Action::AddClip {
+                                                    clip_id:
+                                                        maolan_engine::message::generate_clip_id(),
                                                     name: clip_rel,
                                                     track_name,
                                                     start: 0,
@@ -8224,6 +8231,7 @@ impl Maolan {
 
                         if let Err(err) = CLIENT
                             .send(EngineMessage::Request(Action::AddClip {
+                                clip_id: maolan_engine::message::generate_clip_id(),
                                 name: clip_rel,
                                 track_name: track_name.clone(),
                                 start: 0,

@@ -2641,6 +2641,7 @@ impl Maolan {
                         }
 
                         restore_actions.push(Action::AddClip {
+                            clip_id: maolan_engine::message::generate_clip_id(),
                             name: clip_name,
                             track_name: name.clone(),
                             start,
@@ -2772,6 +2773,7 @@ impl Maolan {
                         }
 
                         restore_actions.push(Action::AddClip {
+                            clip_id: maolan_engine::message::generate_clip_id(),
                             name: clip_name,
                             track_name: name.clone(),
                             start,

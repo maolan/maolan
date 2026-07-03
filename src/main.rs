@@ -42,9 +42,6 @@ use tracing_subscriber::{
 };
 
 pub fn main() -> iced::Result {
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
-    prefer_x11_backend();
-
     let log_level = parse_log_level_from_env();
     if let Some(level) = log_level {
         let layer = FmtLayer::new().with_writer(std::io::stderr.with_max_level(level));
@@ -73,14 +70,6 @@ fn parse_log_level_from_env() -> Option<tracing::Level> {
         }
     } else {
         None
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
-fn prefer_x11_backend() {
-    unsafe {
-        std::env::remove_var("WAYLAND_DISPLAY");
-        std::env::remove_var("WAYLAND_SOCKET");
     }
 }
 

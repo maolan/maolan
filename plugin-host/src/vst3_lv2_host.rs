@@ -113,11 +113,15 @@ fn create_vst3_gui(
 
     let parent_window = {
         let header = unsafe { header_ref(ptr) };
-        let parent = header.parent_window_usize();
-        if parent != 0 {
-            parent as x11_ffi::Window
-        } else {
+        if header.gui_mode() == GuiMode::Floating {
             root
+        } else {
+            let parent = header.parent_window_usize();
+            if parent != 0 {
+                parent as x11_ffi::Window
+            } else {
+                root
+            }
         }
     };
 
@@ -258,11 +262,15 @@ fn create_vst3_gui(
 
     let parent_hwnd: HWND = {
         let header = unsafe { header_ref(ptr) };
-        let parent = header.parent_window_usize();
-        if parent != 0 {
-            parent as HWND
-        } else {
+        if header.gui_mode() == GuiMode::Floating {
             std::ptr::null_mut()
+        } else {
+            let parent = header.parent_window_usize();
+            if parent != 0 {
+                parent as HWND
+            } else {
+                std::ptr::null_mut()
+            }
         }
     };
 

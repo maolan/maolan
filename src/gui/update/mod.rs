@@ -422,6 +422,7 @@ impl Maolan {
         clip: &crate::state::AudioClip,
     ) -> maolan_engine::message::AudioClipData {
         let mut data = maolan_engine::message::AudioClipData {
+            id: maolan_engine::message::generate_clip_id(),
             name: clip.name.clone(),
             start: clip.start,
             length: clip.length,
@@ -522,6 +523,7 @@ impl Maolan {
         clip: &crate::state::MIDIClip,
     ) -> maolan_engine::message::MidiClipData {
         maolan_engine::message::MidiClipData {
+            id: maolan_engine::message::generate_clip_id(),
             name: clip.name.clone(),
             start: clip.start,
             length: clip.length,
@@ -2521,6 +2523,7 @@ impl Maolan {
                     } else {
                         tasks.push(
                             self.send(Action::AddClip {
+                                clip_id: maolan_engine::message::generate_clip_id(),
                                 name: child.name,
                                 track_name: track_name.clone(),
                                 start: child.start,
@@ -2590,6 +2593,7 @@ impl Maolan {
                         }));
                     } else {
                         tasks.push(self.send(Action::AddClip {
+                            clip_id: maolan_engine::message::generate_clip_id(),
                             name: child.name,
                             track_name: track_name.clone(),
                             start: child.start,
@@ -2730,6 +2734,7 @@ impl Maolan {
                         clip_indices: vec![clip_idx],
                     },
                     Action::AddClip {
+                        clip_id: maolan_engine::message::generate_clip_id(),
                         name: clip.name.clone(),
                         track_name: track_name.clone(),
                         start: clip.start,
@@ -2755,6 +2760,7 @@ impl Maolan {
                         plugin_graph_json: clip.plugin_graph_json.clone(),
                     },
                     Action::AddClip {
+                        clip_id: maolan_engine::message::generate_clip_id(),
                         name: clip.name,
                         track_name,
                         start: split_sample,
@@ -2837,6 +2843,7 @@ impl Maolan {
                         clip_indices: vec![clip_idx],
                     },
                     Action::AddClip {
+                        clip_id: maolan_engine::message::generate_clip_id(),
                         name: clip.name.clone(),
                         track_name: track_name.clone(),
                         start: clip.start,
@@ -2860,6 +2867,7 @@ impl Maolan {
                         plugin_graph_json: None,
                     },
                     Action::AddClip {
+                        clip_id: maolan_engine::message::generate_clip_id(),
                         name: clip.name,
                         track_name,
                         start: split_sample,
@@ -2917,6 +2925,7 @@ impl Maolan {
         };
 
         self.send(Action::AddClip {
+            clip_id: maolan_engine::message::generate_clip_id(),
             name: clip_name,
             track_name,
             start: start_sample,
