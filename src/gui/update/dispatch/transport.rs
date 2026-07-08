@@ -1,9 +1,37 @@
 use super::*;
 
 impl Maolan {
+    pub(super) fn stop_workspace_playback(&mut self, session_mode: bool) -> Task<Message> {
+        tracing::info!("stop_workspace_playback session_mode={}", session_mode);
+        self.toolbar.update(&Message::TransportStop);
+        self.playing = false;
+        self.paused = false;
+        self.pending_transport_position = None;
+        self.last_playback_tick = None;
+        self.track_automation_runtime.clear();
+        self.touch_automation_overrides.clear();
+        self.touch_active_keys.clear();
+        self.latch_automation_overrides.clear();
+        self.stop_recording_preview();
+
+        let first = self.send(Action::SetClipPlaybackEnabled(true));
+        if session_mode {
+            first
+                .chain(self.send(Action::Stop))
+                .chain(self.send(Action::SessionPlay))
+        } else {
+            first.chain(self.send(Action::Stop))
+        }
+    }
+
     pub(super) fn handle_transport_message(&mut self, message: Message) -> Task<Message> {
+        let session_view_active =
+            matches!(self.state.blocking_read().view, crate::state::View::Session);
         match message {
             Message::TransportPlay => {
+                if session_view_active {
+                    return self.start_live_session_play();
+                }
                 self.toolbar.update(&message);
                 let was_playing = self.playing;
                 self.playing = true;
@@ -20,6 +48,12 @@ impl Maolan {
                 Task::batch(tasks)
             }
             Message::TransportPause => {
+                if session_view_active {
+                    if self.live_session_playing {
+                        return self.stop_live_session_play();
+                    }
+                    return Task::none();
+                }
                 self.toolbar.update(&message);
                 let was_playing = self.playing;
                 self.playing = true;
@@ -34,20 +68,10 @@ impl Maolan {
                 Task::batch(tasks)
             }
             Message::TransportStop => {
-                self.toolbar.update(&message);
-                self.playing = false;
-                self.paused = false;
-                self.pending_transport_position = None;
-                self.last_playback_tick = None;
-                self.track_automation_runtime.clear();
-                self.touch_automation_overrides.clear();
-                self.touch_active_keys.clear();
-                self.latch_automation_overrides.clear();
-
-                Task::batch(vec![
-                    self.send(Action::SetClipPlaybackEnabled(true)),
-                    self.send(Action::Stop),
-                ])
+                if session_view_active {
+                    return self.stop_live_session_play();
+                }
+                self.stop_workspace_playback(false)
             }
             Message::TransportPanic => {
                 self.toolbar.update(&message);

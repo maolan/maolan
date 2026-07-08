@@ -9,8 +9,7 @@ mod types;
 use self::types::{
     AutomationTrackView, MidiMappingsFile, MidiMappingsGlobalFile, MidiMappingsTrackFile,
 };
-#[cfg(target_os = "macos")]
-use crate::message::PluginFormat;
+
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 use crate::state::AudioDeviceOption;
 use crate::{
@@ -44,7 +43,8 @@ use maolan_engine::{
     kind::Kind,
     message::{
         Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage, OfflineAutomationLane,
-        OfflineAutomationPoint, OfflineAutomationTarget,
+        OfflineAutomationPoint, OfflineAutomationTarget, SessionAction,
+        SessionSlotState as EngineSessionSlotState,
     },
 };
 use rfd::AsyncFileDialog;
@@ -339,9 +339,79 @@ impl Maolan {
         state.plugin_graph_selected_connectable_connections.clear();
     }
 
+    fn load_track_connection_view(
+        &self,
+        state: &mut crate::state::StateData,
+        track_name: &str,
+    ) -> Task<Message> {
+        state.plugin_graph_track = Some(track_name.to_string());
+        state.plugin_graph_clip = None;
+        Self::reset_track_plugin_view_state(state);
+        if let Some((plugins, connections)) = state.plugin_graphs_by_track.get(track_name).cloned()
+        {
+            state.plugin_graph_plugins = plugins.clone();
+            state.plugin_graph_connections = connections;
+            let track_positions = state
+                .plugin_graph_plugin_positions
+                .entry(track_name.to_string())
+                .or_default();
+            for (idx, plugin) in plugins.iter().enumerate() {
+                let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
+                track_positions
+                    .entry(plugin.instance_id)
+                    .or_insert(fallback);
+            }
+        }
+
+        let node_size = 140.0_f32;
+        let spacing = 40.0_f32;
+        let start_x = 80.0_f32;
+        let folder_y = 80.0_f32;
+        let children_y = folder_y + node_size + spacing;
+        let canvas_w = self.size.width.max(600.0);
+        let default_position = Point::new(100.0, 100.0);
+
+        if let Some(track_idx) = state.tracks.iter().position(|t| t.name == track_name)
+            && state.tracks[track_idx].position == default_position
+        {
+            state.tracks[track_idx].position = Point::new(start_x, folder_y);
+
+            let child_names: Vec<String> = state
+                .tracks
+                .iter()
+                .filter(|t| t.parent_track.as_deref() == Some(track_name))
+                .map(|t| t.name.clone())
+                .collect();
+
+            if !child_names.is_empty() {
+                let cols = ((canvas_w - start_x * 2.0) / (node_size + spacing))
+                    .floor()
+                    .max(1.0) as usize;
+                let cols = cols.min(child_names.len());
+                for (i, name) in child_names.iter().enumerate() {
+                    let col = i % cols;
+                    let row = i / cols;
+                    let x = start_x + col as f32 * (node_size + spacing);
+                    let y = children_y + row as f32 * (node_size + spacing);
+                    if let Some(child) = state.tracks.iter_mut().find(|t| t.name == *name)
+                        && child.position == default_position
+                    {
+                        child.position = Point::new(x, y);
+                    }
+                }
+            }
+        }
+
+        self.send(Action::TrackGetPluginGraph {
+            track_name: track_name.to_string(),
+            include_state: false,
+        })
+    }
+
     fn open_track_plugins_followup(&self, _track_name: String) -> Task<Message> {
         self.send(Action::TrackGetPluginGraph {
             track_name: _track_name,
+            include_state: false,
         })
     }
 
@@ -349,6 +419,7 @@ impl Maolan {
         if self.track_has_open_plugin_graph(track_name) {
             Some(self.send(Action::TrackGetPluginGraph {
                 track_name: track_name.to_string(),
+                include_state: false,
             }))
         } else {
             None
@@ -422,7 +493,7 @@ impl Maolan {
         clip: &crate::state::AudioClip,
     ) -> maolan_engine::message::AudioClipData {
         let mut data = maolan_engine::message::AudioClipData {
-            id: maolan_engine::message::generate_clip_id(),
+            id: clip.id.clone(),
             name: clip.name.clone(),
             start: clip.start,
             length: clip.length,
@@ -472,6 +543,7 @@ impl Maolan {
         source_length_samples: usize,
     ) -> crate::state::AudioClip {
         let mut clip = crate::state::AudioClip {
+            id: data.id.clone(),
             name: data.name.clone(),
             start: data.start,
             length: data.length,
@@ -523,7 +595,7 @@ impl Maolan {
         clip: &crate::state::MIDIClip,
     ) -> maolan_engine::message::MidiClipData {
         maolan_engine::message::MidiClipData {
-            id: maolan_engine::message::generate_clip_id(),
+            id: clip.id.clone(),
             name: clip.name.clone(),
             start: clip.start,
             length: clip.length,
@@ -543,6 +615,7 @@ impl Maolan {
         max_length_samples: usize,
     ) -> crate::state::MIDIClip {
         let mut clip = crate::state::MIDIClip {
+            id: data.id.clone(),
             name: data.name.clone(),
             start: data.start,
             length: data.length,
@@ -609,17 +682,16 @@ impl Maolan {
         Self::reset_track_plugin_view_state(&mut state);
         state.plugin_graph_plugins = plugins.clone();
         state.plugin_graph_connections = connections;
-        let mut new_positions = std::collections::HashMap::new();
+        let track_positions = state
+            .plugin_graph_plugin_positions
+            .entry(target_track_name.clone())
+            .or_default();
         for (idx, plugin) in plugins.iter().enumerate() {
             let fallback = iced::Point::new(200.0 + idx as f32 * 180.0, 220.0);
-            let pos = state
-                .plugin_graph_plugin_positions
-                .get(&plugin.instance_id)
-                .copied()
-                .unwrap_or(fallback);
-            new_positions.insert(plugin.instance_id, pos);
+            track_positions
+                .entry(plugin.instance_id)
+                .or_insert(fallback);
         }
-        state.plugin_graph_plugin_positions = new_positions;
         if graph_json.is_none()
             && let Some(track) = state
                 .tracks
@@ -841,6 +913,26 @@ impl Maolan {
             if let Some(binding) = track.midi_learn_disk_monitor.as_ref() {
                 push_binding(format!("Track '{}'", track.name), "Disk Monitor", binding);
             }
+        }
+        for ((track_name, scene_index), binding) in &state.session_midi_learn_slots {
+            push_binding(
+                format!("Track '{}'", track_name),
+                &format!("Slot {}", scene_index + 1),
+                binding,
+            );
+        }
+        for (scene_index, binding) in &state.session_midi_learn_scenes {
+            push_binding(
+                "Session".to_string(),
+                &format!("Scene {}", scene_index + 1),
+                binding,
+            );
+        }
+        for (track_name, binding) in &state.session_midi_learn_stop_track {
+            push_binding(format!("Track '{}'", track_name), "Stop Track", binding);
+        }
+        if let Some(binding) = state.session_midi_learn_stop_all.as_ref() {
+            push_binding("Session".to_string(), "Stop All Clips", binding);
         }
 
         if lines.is_empty() {
@@ -1381,6 +1473,14 @@ impl Maolan {
                 },
             );
         }
+        let mut session_slots =
+            HashMap::<String, HashMap<usize, maolan_engine::message::MidiLearnBinding>>::new();
+        for ((track_name, scene_index), binding) in &state.session_midi_learn_slots {
+            session_slots
+                .entry(track_name.clone())
+                .or_default()
+                .insert(*scene_index, binding.clone());
+        }
         let file = MidiMappingsFile {
             global: MidiMappingsGlobalFile {
                 play_pause: state.global_midi_learn_play_pause.clone(),
@@ -1388,6 +1488,10 @@ impl Maolan {
                 record_toggle: state.global_midi_learn_record_toggle.clone(),
             },
             tracks,
+            session_slots,
+            session_scenes: state.session_midi_learn_scenes.clone(),
+            session_stop_track: state.session_midi_learn_stop_track.clone(),
+            session_stop_all: state.session_midi_learn_stop_all.clone(),
         };
         let f = std::fs::File::create(&path).map_err(|e| e.to_string())?;
         serde_json::to_writer_pretty(f, &file).map_err(|e| e.to_string())?;
@@ -1494,7 +1598,60 @@ impl Maolan {
                 mapping.disk_monitor,
             );
         }
+        for (track_name, slots) in file.session_slots {
+            if !state.tracks.iter().any(|t| t.name == track_name) {
+                continue;
+            }
+            for (scene_index, binding) in slots {
+                actions.push(Action::SetSessionMidiLearnBinding {
+                    target: maolan_engine::message::SessionMidiLearnTarget::Slot {
+                        track_name: track_name.clone(),
+                        scene_index,
+                    },
+                    binding: Some(binding),
+                });
+            }
+        }
+        for (scene_index, binding) in file.session_scenes {
+            actions.push(Action::SetSessionMidiLearnBinding {
+                target: maolan_engine::message::SessionMidiLearnTarget::Scene(scene_index),
+                binding: Some(binding),
+            });
+        }
+        for (track_name, binding) in file.session_stop_track {
+            if !state.tracks.iter().any(|t| t.name == track_name) {
+                continue;
+            }
+            actions.push(Action::SetSessionMidiLearnBinding {
+                target: maolan_engine::message::SessionMidiLearnTarget::StopTrack(track_name),
+                binding: Some(binding),
+            });
+        }
+        if let Some(binding) = file.session_stop_all {
+            actions.push(Action::SetSessionMidiLearnBinding {
+                target: maolan_engine::message::SessionMidiLearnTarget::StopAll,
+                binding: Some(binding),
+            });
+        }
         Ok(actions)
+    }
+
+    fn update_visible_controller_value(
+        &mut self,
+        track_name: &str,
+        instance_id: usize,
+        param_id: u32,
+        value: f32,
+    ) {
+        let mut state = self.state.blocking_write();
+        if let Some(controller) = state
+            .plugin_graph_visible_controllers
+            .get_mut(track_name)
+            .and_then(|m| m.get_mut(&instance_id))
+            .and_then(|cs| cs.iter_mut().find(|c| c.param_id == param_id))
+        {
+            controller.value = value;
+        }
     }
 
     fn maybe_record_automation_from_request(&mut self, action: &Action) {
@@ -1522,13 +1679,26 @@ impl Maolan {
                 if self.is_track_frozen(track_name) {
                     return;
                 }
+                let normalized = (*value).clamp(0.0, 1.0);
+                let (min, max) = {
+                    let state = self.state.blocking_read();
+                    state
+                        .plugin_parameters_by_track
+                        .get(track_name)
+                        .and_then(|p| p.get(instance_id))
+                        .and_then(|params| params.iter().find(|p| p.param_id == *param_id))
+                        .map(|p| (p.min as f32, p.max as f32))
+                        .unwrap_or((0.0, 1.0))
+                };
+                let actual = min + normalized * (max - min);
+                self.update_visible_controller_value(track_name, *instance_id, *param_id, actual);
                 self.record_automation_point(
                     track_name,
                     TrackAutomationTarget::Vst3Parameter {
                         instance_id: *instance_id,
                         param_id: *param_id,
                     },
-                    (*value).clamp(0.0, 1.0),
+                    normalized,
                 );
                 self.record_manual_override(
                     track_name,
@@ -1536,7 +1706,7 @@ impl Maolan {
                         instance_id: *instance_id,
                         param_id: *param_id,
                     },
-                    (*value).clamp(0.0, 1.0),
+                    normalized,
                 );
             }
             Action::TrackSetClapParameter {
@@ -1555,6 +1725,12 @@ impl Maolan {
                 if self.is_track_frozen(track_name) {
                     return;
                 }
+                self.update_visible_controller_value(
+                    track_name,
+                    *instance_id,
+                    *param_id,
+                    *value as f32,
+                );
                 if let Some(TrackAutomationTarget::ClapParameter { min, max, .. }) =
                     self.find_clap_target(track_name, *instance_id, *param_id)
                 {
@@ -1630,6 +1806,7 @@ impl Maolan {
                 if self.is_track_frozen(track_name) {
                     return;
                 }
+                self.update_visible_controller_value(track_name, *instance_id, *index, *value);
                 if let Some(TrackAutomationTarget::Lv2Parameter { min, max, .. }) =
                     self.find_lv2_target(track_name, *instance_id, *index)
                 {
@@ -2270,6 +2447,43 @@ impl Maolan {
         None
     }
 
+    fn clip_resize_handle_at_position(
+        &self,
+        position: Point,
+    ) -> Option<(String, usize, Kind, bool)> {
+        const HANDLE_WIDTH: f32 = 8.0;
+
+        let (track_name, kind, clip_index) = self.clip_at_position(position)?;
+        let pps = self.pixels_per_sample().max(1.0e-6);
+        let state = self.state.blocking_read();
+        let track = state.tracks.iter().find(|track| track.name == track_name)?;
+        let (start, length, locked) = match kind {
+            Kind::Audio => {
+                let clip = track.audio.clips.get(clip_index)?;
+                (clip.start, clip.length, clip.take_lane_locked)
+            }
+            Kind::MIDI => {
+                let clip = track.midi.clips.get(clip_index)?;
+                (clip.start, clip.length, clip.take_lane_locked)
+            }
+        };
+        if locked {
+            return None;
+        }
+
+        let left = start as f32 * pps;
+        let right = left + (length as f32 * pps).max(MIN_CLIP_WIDTH_PX);
+        let left_distance = (position.x - left).abs();
+        let right_distance = (position.x - right).abs();
+        let is_right_side = if left_distance <= HANDLE_WIDTH || right_distance <= HANDLE_WIDTH {
+            right_distance < left_distance
+        } else {
+            return None;
+        };
+
+        Some((track_name, clip_index, kind, is_right_side))
+    }
+
     fn update_cut_indicator(&mut self, position: Point) {
         let mut y_offset = 0.0f32;
         let mut indicator = None;
@@ -2384,6 +2598,7 @@ impl Maolan {
                         track_name: track_name.clone(),
                         kind,
                         audio_clip: Some(Self::audio_clip_to_data(&crate::state::AudioClip {
+                            id: crate::state::generate_clip_id(),
                             name: "Group".to_string(),
                             start: group_start,
                             length: group_end.saturating_sub(group_start).max(1),
@@ -2459,6 +2674,7 @@ impl Maolan {
                         kind,
                         audio_clip: None,
                         midi_clip: Some(Self::midi_clip_to_data(&crate::state::MIDIClip {
+                            id: crate::state::generate_clip_id(),
                             name: "Group".to_string(),
                             start: group_start,
                             length: group_end.saturating_sub(group_start).max(1),
@@ -2523,7 +2739,7 @@ impl Maolan {
                     } else {
                         tasks.push(
                             self.send(Action::AddClip {
-                                clip_id: maolan_engine::message::generate_clip_id(),
+                                clip_id: child.id,
                                 name: child.name,
                                 track_name: track_name.clone(),
                                 start: child.start,
@@ -2593,7 +2809,7 @@ impl Maolan {
                         }));
                     } else {
                         tasks.push(self.send(Action::AddClip {
-                            clip_id: maolan_engine::message::generate_clip_id(),
+                            clip_id: child.id,
                             name: child.name,
                             track_name: track_name.clone(),
                             start: child.start,
@@ -2628,6 +2844,58 @@ impl Maolan {
             state.message = "Ungrouped clip".to_string();
         }
         Task::batch(tasks)
+    }
+
+    fn assign_clip_to_session_slot(
+        &mut self,
+        track_name: String,
+        clip_idx: usize,
+        kind: Kind,
+    ) -> Task<Message> {
+        let (clip_id, scene_index) = {
+            let state = self.state.blocking_read();
+            let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
+                return Task::none();
+            };
+            let Some(clip_id) = (match kind {
+                Kind::Audio => track.audio.clips.get(clip_idx).map(|c| c.id.clone()),
+                Kind::MIDI => track.midi.clips.get(clip_idx).map(|c| c.id.clone()),
+            }) else {
+                return Task::none();
+            };
+            let Some(scene_index) = state
+                .selected_slots
+                .iter()
+                .find(|(name, _)| name == &track_name)
+                .map(|(_, scene_index)| *scene_index)
+            else {
+                return Task::none();
+            };
+            (clip_id, scene_index)
+        };
+
+        {
+            let mut state = self.state.blocking_write();
+            state.session.ensure_track_slots(&track_name);
+            let Some(slot) = state.session.slot_mut(&track_name, scene_index) else {
+                return Task::none();
+            };
+            slot.clip = Some(crate::state::SlotClipRef {
+                clip_id: clip_id.clone(),
+                launch_mode: crate::state::LaunchMode::Toggle,
+                launch_quantization: crate::state::LaunchQuantization::Bar,
+                loop_enabled: true,
+                loop_start_samples: 0,
+                loop_end_samples: 0,
+            });
+            state.message = "Assigned clip to session slot".to_string();
+        }
+
+        self.send(Action::TrackSetSessionSlot {
+            track_name,
+            scene_index,
+            clip_id: Some(clip_id),
+        })
     }
 
     fn split_clip_at_position(&mut self, position: Point) -> Task<Message> {
@@ -2734,7 +3002,7 @@ impl Maolan {
                         clip_indices: vec![clip_idx],
                     },
                     Action::AddClip {
-                        clip_id: maolan_engine::message::generate_clip_id(),
+                        clip_id: crate::state::generate_clip_id(),
                         name: clip.name.clone(),
                         track_name: track_name.clone(),
                         start: clip.start,
@@ -2760,7 +3028,7 @@ impl Maolan {
                         plugin_graph_json: clip.plugin_graph_json.clone(),
                     },
                     Action::AddClip {
-                        clip_id: maolan_engine::message::generate_clip_id(),
+                        clip_id: crate::state::generate_clip_id(),
                         name: clip.name,
                         track_name,
                         start: split_sample,
@@ -2843,7 +3111,7 @@ impl Maolan {
                         clip_indices: vec![clip_idx],
                     },
                     Action::AddClip {
-                        clip_id: maolan_engine::message::generate_clip_id(),
+                        clip_id: crate::state::generate_clip_id(),
                         name: clip.name.clone(),
                         track_name: track_name.clone(),
                         start: clip.start,
@@ -2867,7 +3135,7 @@ impl Maolan {
                         plugin_graph_json: None,
                     },
                     Action::AddClip {
-                        clip_id: maolan_engine::message::generate_clip_id(),
+                        clip_id: crate::state::generate_clip_id(),
                         name: clip.name,
                         track_name,
                         start: split_sample,
@@ -2925,7 +3193,7 @@ impl Maolan {
         };
 
         self.send(Action::AddClip {
-            clip_id: maolan_engine::message::generate_clip_id(),
+            clip_id: crate::state::generate_clip_id(),
             name: clip_name,
             track_name,
             start: start_sample,

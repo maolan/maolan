@@ -49,6 +49,17 @@ pub fn strip(selected: bool, color: Option<iced::Color>) -> container::Style {
     }
 }
 
+pub fn slot() -> container::Style {
+    container::Style {
+        border: Border {
+            color: rgb(39, 47, 63),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn bay() -> container::Style {
     container::Style {
         background: Some(Background::Color(rgb(20, 25, 37))),

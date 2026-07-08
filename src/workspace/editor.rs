@@ -1381,6 +1381,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     .into()
 }
 
+fn selected_session_slot_for_track(state: &StateData, track_name: &str) -> Option<usize> {
+    state
+        .selected_slots
+        .iter()
+        .find(|(name, _)| name == track_name)
+        .map(|(_, scene_index)| *scene_index)
+}
+
 pub(super) fn clip_context_menu_overlay(
     state: &StateData,
     transport_active: bool,
@@ -1484,10 +1492,20 @@ pub(super) fn clip_context_menu_overlay(
                         "Enable Fade"
                     },
                     Message::ClipToggleFade {
-                        track_idx,
+                        track_idx: track_idx.clone(),
                         clip_idx,
                         kind: Kind::Audio,
                     },
+                ),
+                crate::menu::menu_item_maybe(
+                    "Assign to session slot",
+                    selected_session_slot_for_track(state, &track_idx).map(|_| {
+                        Message::ClipAssignToSessionSlot {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                            kind: Kind::Audio,
+                        }
+                    }),
                 ),
             ]
             .spacing(2)
@@ -1528,6 +1546,16 @@ pub(super) fn clip_context_menu_overlay(
                         kind: Kind::MIDI,
                         muted: !muted,
                     },
+                ),
+                crate::menu::menu_item_maybe(
+                    "Assign to session slot",
+                    selected_session_slot_for_track(state, &track_idx).map(|_| {
+                        Message::ClipAssignToSessionSlot {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                            kind: Kind::MIDI,
+                        }
+                    }),
                 ),
             ]
             .spacing(2)
@@ -1905,21 +1933,33 @@ impl Editor {
                 .into(),
             );
         }
-        container(
-            mouse_area(
-                Stack::from_vec(layers)
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-            .on_move(Message::EditorMouseMoved)
-            .on_press(Message::DeselectClips)
-            .on_enter(Message::ShortcutsHint(Some("Marquee select".to_string())))
-            .on_exit(Message::ShortcutsHint(None)),
+        let hovered_resize_handle = state.hovered_clip_resize_handle.clone();
+        let editor_surface = mouse_area(
+            Stack::from_vec(layers)
+                .width(Length::Fill)
+                .height(Length::Fill),
         )
-        .style(|_theme| crate::style::app_background())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .on_move(Message::EditorMouseMoved)
+        .on_press(
+            hovered_resize_handle
+                .as_ref()
+                .map(|(track_name, clip_index, kind, is_right_side)| {
+                    Message::ClipResizeStart(*kind, track_name.clone(), *clip_index, *is_right_side)
+                })
+                .unwrap_or(Message::DeselectClips),
+        )
+        .on_enter(Message::ShortcutsHint(Some("Marquee select".to_string())))
+        .on_exit(Message::ShortcutsHint(None));
+        let editor_surface = if hovered_resize_handle.is_some() {
+            editor_surface.interaction(mouse::Interaction::Pointer)
+        } else {
+            editor_surface
+        };
+        container(editor_surface)
+            .style(|_theme| crate::style::app_background())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 }
 

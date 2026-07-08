@@ -4,6 +4,7 @@ use crate::consts::widget_piano::PITCH_MAX;
 use crate::message::{ModulatorChange, SnapMode, TrackAutomationTarget};
 use maolan_engine::message::PluginGraphNode;
 mod core;
+mod live_session;
 mod plugins;
 mod response_freeze_meter;
 mod response_session_state;
@@ -34,6 +35,110 @@ impl Maolan {
     fn active_workspace_cursor(&self) -> Point {
         let state = self.state.blocking_read();
         state.editor_cursor.unwrap_or(state.cursor)
+    }
+
+    /// Removes selected plugins/connections from the currently open track plugin graph,
+    /// returning `Some(task)` if anything was selected.
+    fn remove_selected_track_plugin_graph_items(&self) -> Option<Task<Message>> {
+        let (
+            track_name,
+            selected_plugins,
+            selected_indices,
+            connections,
+            selected_connectable,
+            connectable_connections,
+        ) = {
+            let state = self.state.blocking_read();
+            (
+                state.plugin_graph_track.clone(),
+                state.plugin_graph_selected_plugins.clone(),
+                state.plugin_graph_selected_connections.clone(),
+                state.plugin_graph_connections.clone(),
+                state.plugin_graph_selected_connectable_connections.clone(),
+                state.connectable_connections.clone(),
+            )
+        };
+        let track_name = track_name?;
+        if !selected_plugins.is_empty() {
+            let mut tasks = Vec::new();
+            let mut state = self.state.blocking_write();
+            let plugins_to_remove: Vec<usize> = selected_plugins.iter().copied().collect();
+            for instance_id in plugins_to_remove {
+                let selected_node = state
+                    .plugin_graph_plugins
+                    .iter()
+                    .find(|p| p.instance_id == instance_id)
+                    .map(|p| p.node.clone());
+                if let Some(node) = selected_node {
+                    let task = match node {
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        PluginGraphNode::Lv2PluginInstance(_) => {
+                            self.send(Action::TrackUnloadLv2PluginInstance {
+                                track_name: track_name.clone(),
+                                instance_id,
+                            })
+                        }
+                        PluginGraphNode::Vst3PluginInstance(_) => {
+                            self.send(Action::TrackUnloadVst3PluginInstance {
+                                track_name: track_name.clone(),
+                                instance_id,
+                            })
+                        }
+                        PluginGraphNode::ClapPluginInstance(_) => {
+                            let plugin_path = state
+                                .plugin_graph_plugins
+                                .iter()
+                                .find(|p| p.instance_id == instance_id)
+                                .map(|p| p.uri.clone())
+                                .unwrap_or_default();
+                            self.send(Action::TrackUnloadClapPlugin {
+                                track_name: track_name.clone(),
+                                plugin_path,
+                            })
+                        }
+                        PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => Task::none(),
+                    };
+                    tasks.push(task);
+                }
+            }
+            state.plugin_graph_selected_plugins.clear();
+            state.plugin_graph_selected_connections.clear();
+            state.plugin_graph_selected_connectable_connections.clear();
+            return Some(Task::batch(tasks));
+        }
+        if !selected_indices.is_empty() {
+            let actions = connections::selection::plugin_disconnect_actions(
+                &track_name,
+                &connections,
+                &selected_indices,
+            );
+            let tasks = actions
+                .into_iter()
+                .map(|a| self.send(a))
+                .collect::<Vec<_>>();
+            let mut state = self.state.blocking_write();
+            state.plugin_graph_selected_connections.clear();
+            state.plugin_graph_selected_plugins.clear();
+            state.plugin_graph_selected_connectable_connections.clear();
+            return Some(Task::batch(tasks));
+        }
+        if !selected_connectable.is_empty() {
+            let actions = connections::selection::connectable_disconnect_actions(
+                &track_name,
+                &connectable_connections,
+                &selected_connectable,
+            );
+            let tasks = actions
+                .into_iter()
+                .map(|a| self.send(a))
+                .collect::<Vec<_>>();
+            let mut state = self.state.blocking_write();
+            state.plugin_graph_selected_connectable_connections.clear();
+            state.plugin_graph_selected_connections.clear();
+            state.plugin_graph_selected_plugins.clear();
+            return Some(Task::batch(tasks));
+        }
+        None
     }
 
     fn clip_edge_snap_threshold_samples(&self) -> f32 {
@@ -295,6 +400,9 @@ impl Maolan {
         if let Some(task) = self.handle_session_io_message(message.clone()) {
             return task;
         }
+        if let Some(task) = self.handle_live_session_message(message.clone()) {
+            return task;
+        }
         if let Some(task) = self.handle_track_selection_message(message.clone()) {
             return task;
         }
@@ -306,6 +414,7 @@ impl Maolan {
             Message::ClipRenameShow { .. }
                 | Message::ClipToggleFade { .. }
                 | Message::ClipSetMuted { .. }
+                | Message::ClipAssignToSessionSlot { .. }
                 | Message::ClipOpenPitchCorrection { .. }
                 | Message::UngroupClip { .. }
                 | Message::GroupSelectedClips
@@ -331,6 +440,32 @@ impl Maolan {
                 | Message::Show(_)
         ) {
             self.state.blocking_write().track_context_menu = None;
+        }
+        if matches!(
+            message,
+            Message::SessionSlotPressed { .. }
+                | Message::SessionSlotSetPlayStopIcon { .. }
+                | Message::SessionScenePressed(_)
+                | Message::SessionStopTrackPressed(_)
+                | Message::SessionStopAllPressed
+                | Message::SessionSlotDoubleClick { .. }
+                | Message::SessionSlotClearRef { .. }
+                | Message::SessionSlotDuplicate { .. }
+                | Message::SessionSlotDragStart { .. }
+                | Message::SessionSlotDropped { .. }
+                | Message::SessionSlotRecord { .. }
+                | Message::SessionMidiLearnArm { .. }
+                | Message::SessionMidiLearnClear { .. }
+                | Message::SessionSceneRenameShow(_)
+                | Message::SessionSceneRemove(_)
+                | Message::SessionSceneSetColor { .. }
+                | Message::SessionSceneClearColor(_)
+                | Message::SessionSceneSetTempo { .. }
+                | Message::SessionSceneSetLaunchQuantization { .. }
+        ) {
+            let mut state = self.state.blocking_write();
+            state.session_slot_context_menu = None;
+            state.session_scene_context_menu = None;
         }
         match message {
             Message::Show(ref show) => return self.handle_show_message(show),
@@ -500,6 +635,13 @@ impl Maolan {
                     self.state.blocking_write().apply_template_dialog = None;
                 } else if self.state.blocking_read().marker_dialog.is_some() {
                     self.state.blocking_write().marker_dialog = None;
+                } else if self
+                    .state
+                    .blocking_read()
+                    .session_slot_context_menu
+                    .is_some()
+                {
+                    self.state.blocking_write().session_slot_context_menu = None;
                 }
             }
             Message::Cancel => {
@@ -2493,6 +2635,15 @@ impl Maolan {
             Message::TracksResizeHover(hovered) => {
                 self.tracks_resize_hovered = hovered;
             }
+            Message::LiveViewTracksResizeHover(hovered) => {
+                self.live_view_tracks_resize_hovered = hovered;
+            }
+            Message::LiveViewLeftSplitResizeHover(hovered) => {
+                self.live_view_left_split_resize_hovered = hovered;
+            }
+            Message::LiveViewLeftTabSelect(ref tab) => {
+                self.state.blocking_write().live_view_left_tab = tab.clone();
+            }
             Message::MixerResizeHover(hovered) => {
                 self.mixer_resize_hovered = hovered;
             }
@@ -2501,6 +2652,7 @@ impl Maolan {
                 if self.record_armed {
                     self.record_armed = false;
                     self.pending_record_after_save = false;
+                    self.session_slot_record_target = None;
                     self.stop_recording_preview();
                     return self.send(Action::SetRecordEnabled(false));
                 }
@@ -2553,6 +2705,26 @@ impl Maolan {
                 {
                     return self.handle_step_record_note(*channel, *pitch, *velocity);
                 }
+                if let Action::SessionMidiLearnTriggered { target } = a {
+                    match target {
+                        maolan_engine::message::SessionMidiLearnTarget::Slot {
+                            track_name,
+                            scene_index,
+                        } => {
+                            self.toggle_session_slot(track_name, *scene_index);
+                        }
+                        maolan_engine::message::SessionMidiLearnTarget::Scene(scene_index) => {
+                            let _task = self.launch_session_scene(*scene_index, false);
+                        }
+                        maolan_engine::message::SessionMidiLearnTarget::StopTrack(track_name) => {
+                            self.stop_session_track(track_name);
+                        }
+                        maolan_engine::message::SessionMidiLearnTarget::StopAll => {
+                            self.stop_all_session_clips();
+                        }
+                    }
+                    return Task::none();
+                }
                 match a {
                     Action::TrackClapFileReferences {
                         track_name,
@@ -2596,6 +2768,10 @@ impl Maolan {
                 let handled_response_track = self.handle_response_track_action(a);
                 let handled_response_timing = self.handle_response_timing_state_action(a);
                 if matches!(a, Action::EndSessionRestore) {
+                    let sync_actions = self.cleanup_session_slot_references();
+                    for action in sync_actions {
+                        let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+                    }
                     let open_track = {
                         let state = self.state.blocking_read();
                         state
@@ -2692,7 +2868,12 @@ impl Maolan {
                                 *midi_outs,
                             );
                             track.is_folder = *folder;
-                            if let Some(index) = state.undo_track_indices.remove(name) {
+
+                            if let Some(pos) = state.tracks.iter().position(|t| t.name == *name) {
+                                let existing_height = state.tracks[pos].height;
+                                track.height = existing_height;
+                                state.tracks[pos] = track;
+                            } else if let Some(index) = state.undo_track_indices.remove(name) {
                                 let insert_index = index.min(state.tracks.len());
                                 state.tracks.insert(insert_index, track);
                             } else {
@@ -2911,7 +3092,7 @@ impl Maolan {
                             }
                         }
                         Action::AddClip {
-                            clip_id: _,
+                            clip_id,
                             name,
                             track_name,
                             start,
@@ -2990,6 +3171,7 @@ impl Maolan {
                                 match kind {
                                     Kind::Audio => {
                                         track.audio.clips.push(crate::state::AudioClip {
+                                            id: clip_id.clone(),
                                             name: name.clone(),
                                             start: *start,
                                             length: *length,
@@ -3032,6 +3214,7 @@ impl Maolan {
                                     }
                                     Kind::MIDI => {
                                         track.midi.clips.push(crate::state::MIDIClip {
+                                            id: clip_id.clone(),
                                             name: name.clone(),
                                             start: *start,
                                             length: *length,
@@ -3047,7 +3230,33 @@ impl Maolan {
                                     }
                                 }
                             }
-                            drop(state);
+                            let session_record_target = self.session_slot_record_target.clone();
+                            if let Some((target_track, target_scene)) = session_record_target
+                                && target_track == *track_name
+                            {
+                                if let Some(slot) =
+                                    state.session.slot_mut(&target_track, target_scene)
+                                {
+                                    slot.clip = Some(crate::state::SlotClipRef {
+                                        clip_id: clip_id.clone(),
+                                        launch_mode: crate::state::LaunchMode::Toggle,
+                                        launch_quantization: crate::state::LaunchQuantization::Bar,
+                                        loop_enabled: true,
+                                        loop_start_samples: 0,
+                                        loop_end_samples: 0,
+                                    });
+                                }
+                                drop(state);
+                                let _ = CLIENT.sender.try_send(EngineMessage::Request(
+                                    Action::TrackSetSessionSlot {
+                                        track_name: target_track,
+                                        scene_index: target_scene,
+                                        clip_id: Some(clip_id.clone()),
+                                    },
+                                ));
+                            } else {
+                                drop(state);
+                            }
                             if *kind == Kind::Audio
                                 && precomputed_peaks.is_none()
                                 && loaded_bins < 32_768
@@ -3333,6 +3542,7 @@ impl Maolan {
                         } => {
                             let mut undo_peaks = Vec::new();
                             let mut undo_source_lengths = Vec::new();
+                            let mut removed_clip_ids = std::collections::HashSet::new();
                             let mut state = self.state.blocking_write();
                             if let Some(track) =
                                 state.tracks.iter_mut().find(|t| &t.name == track_name)
@@ -3344,6 +3554,7 @@ impl Maolan {
                                         indices.dedup();
                                         for &idx in &indices {
                                             if let Some(clip) = track.audio.clips.get(idx) {
+                                                removed_clip_ids.insert(clip.id.clone());
                                                 let key = Self::audio_clip_key(
                                                     track_name,
                                                     &clip.name,
@@ -3371,6 +3582,11 @@ impl Maolan {
                                         let mut indices = clip_indices.clone();
                                         indices.sort_unstable();
                                         indices.dedup();
+                                        for &idx in &indices {
+                                            if let Some(clip) = track.midi.clips.get(idx) {
+                                                removed_clip_ids.insert(clip.id.clone());
+                                            }
+                                        }
                                         for idx in indices.into_iter().rev() {
                                             if idx < track.midi.clips.len() {
                                                 track.midi.clips.remove(idx);
@@ -3389,6 +3605,13 @@ impl Maolan {
                                 refresh_midi_clip_previews = true;
                             }
                             drop(state);
+                            if !removed_clip_ids.is_empty() {
+                                let sync_actions =
+                                    self.clear_session_slots_for_clip_ids(&removed_clip_ids);
+                                for action in sync_actions {
+                                    let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+                                }
+                            }
                             for (key, peaks) in undo_peaks {
                                 self.undo_peaks_cache.insert(key, peaks);
                             }
@@ -3830,6 +4053,71 @@ impl Maolan {
                                 }
                             }
                         }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        Action::TrackLv2PluginControls {
+                            track_name,
+                            instance_id,
+                            controls,
+                            instance_access_handle: _,
+                        } => {
+                            let pending = self
+                                .pending_add_lv2_automation_instances
+                                .remove(&(track_name.clone(), *instance_id));
+                            {
+                                let mut state = self.state.blocking_write();
+                                let cached = state
+                                    .plugin_parameters_by_track
+                                    .entry(track_name.clone())
+                                    .or_default();
+                                cached.insert(
+                                    *instance_id,
+                                    controls
+                                        .iter()
+                                        .map(|p| crate::state::PluginParameterInfo {
+                                            param_id: p.index,
+                                            name: p.name.clone(),
+                                            min: p.min as f64,
+                                            max: p.max as f64,
+                                        })
+                                        .collect(),
+                                );
+                                if pending
+                                    && let Some(track) =
+                                        state.tracks.iter_mut().find(|t| t.name == *track_name)
+                                {
+                                    for param in controls {
+                                        let target = TrackAutomationTarget::Lv2Parameter {
+                                            instance_id: *instance_id,
+                                            index: param.index,
+                                            min: param.min,
+                                            max: param.max,
+                                        };
+                                        if let Some(existing) = track
+                                            .automation_lanes
+                                            .iter_mut()
+                                            .find(|lane| lane.target == target)
+                                        {
+                                            existing.visible = true;
+                                        } else {
+                                            track.automation_lanes.push(
+                                                crate::state::TrackAutomationLane {
+                                                    target,
+                                                    visible: true,
+                                                    points: vec![],
+                                                },
+                                            );
+                                        }
+                                    }
+                                    track.height =
+                                        track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+                                    state.message = format!(
+                                        "Added {} LV2 automation lanes on '{}'",
+                                        controls.len(),
+                                        track_name
+                                    );
+                                }
+                            }
+                        }
                         Action::TrackSnapshotAllClapStates { track_name: _ } => {}
                         Action::TrackSnapshotAllClapStatesDone { track_name }
                             if self.pending_save_path.is_some() =>
@@ -3983,6 +4271,14 @@ impl Maolan {
                             connections,
                             connectable_connections,
                         } => {
+                            tracing::info!(
+                                %track_name,
+                                plugins = plugins.len(),
+                                connections = connections.len(),
+                                connectable = connectable_connections.len(),
+                                restore_in_progress = self.session_restore_in_progress,
+                                "received TrackPluginGraph"
+                            );
                             let mut state = self.state.blocking_write();
                             let keep_restore_cache = self.session_restore_in_progress
                                 && plugins.is_empty()
@@ -4011,17 +4307,16 @@ impl Maolan {
                                 state
                                     .plugin_graph_selected_plugins
                                     .retain(|id| plugins.iter().any(|p| p.instance_id == *id));
-                                let mut new_positions = std::collections::HashMap::new();
+                                let track_positions = state
+                                    .plugin_graph_plugin_positions
+                                    .entry(track_name.clone())
+                                    .or_default();
                                 for (idx, plugin) in plugins.iter().enumerate() {
                                     let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
-                                    let pos = state
-                                        .plugin_graph_plugin_positions
-                                        .get(&plugin.instance_id)
-                                        .copied()
-                                        .unwrap_or(fallback);
-                                    new_positions.insert(plugin.instance_id, pos);
+                                    track_positions
+                                        .entry(plugin.instance_id)
+                                        .or_insert(fallback);
                                 }
-                                state.plugin_graph_plugin_positions = new_positions;
                             }
                             drop(state);
 
@@ -4350,6 +4645,19 @@ impl Maolan {
                     binding: None,
                 });
             }
+            Message::SessionMidiLearnArm { target } => {
+                self.state.blocking_write().message = format!(
+                    "Session MIDI learn armed for {:?}. Move a hardware MIDI CC control.",
+                    target
+                );
+                return self.send(Action::SessionArmMidiLearn { target });
+            }
+            Message::SessionMidiLearnClear { target } => {
+                return self.send(Action::SetSessionMidiLearnBinding {
+                    target,
+                    binding: None,
+                });
+            }
             Message::TrackFreezeToggle { ref track_name } => {
                 if self.freeze_in_progress {
                     if self.freeze_track_name.as_deref() == Some(track_name.as_str()) {
@@ -4415,7 +4723,7 @@ impl Maolan {
                     for clip in restore_audio {
                         tasks.push(
                             self.send(Action::AddClip {
-                                clip_id: maolan_engine::message::generate_clip_id(),
+                                clip_id: clip.id,
                                 name: clip.name,
                                 track_name: track_name.clone(),
                                 start: clip.start,
@@ -4454,7 +4762,7 @@ impl Maolan {
                     }
                     for clip in restore_midi {
                         tasks.push(self.send(Action::AddClip {
-                            clip_id: maolan_engine::message::generate_clip_id(),
+                            clip_id: clip.id,
                             name: clip.name,
                             track_name: track_name.clone(),
                             start: clip.start,
@@ -4982,6 +5290,7 @@ impl Maolan {
                 }
                 return self.send(Action::TrackGetPluginGraph {
                     track_name: track_name.clone(),
+                    include_state: false,
                 });
             }
             Message::TrackAutomationLaneHover {
@@ -5080,26 +5389,151 @@ impl Maolan {
             Message::ConnectionViewSelectTrack(ref idx) => {
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
-                state.last_selected_track = Some(idx.clone());
 
                 match &mut state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) if ctrl => {
                         if set.contains(idx.as_str()) {
                             set.remove(idx.as_str());
-                            state.selected.remove(idx.as_str());
                         } else {
                             set.insert(idx.clone());
-                            state.selected.insert(idx.clone());
                         }
                     }
                     _ => {
                         let mut set = std::collections::HashSet::new();
                         set.insert(idx.clone());
                         state.connection_view_selection = ConnectionViewSelection::Tracks(set);
-                        state.selected.clear();
-                        state.selected.insert(idx.clone());
                     }
                 }
+            }
+            Message::ConnectionViewDeselectAll => {
+                let mut state = self.state.blocking_write();
+                state.connection_view_selection = ConnectionViewSelection::None;
+                state.plugin_graph_selected_connections.clear();
+                state.plugin_graph_selected_connectable_connections.clear();
+                state.plugin_graph_selected_plugins.clear();
+            }
+            Message::ConnectionPositionsChanged => {
+                self.has_unsaved_changes = true;
+            }
+            Message::PluginGraphControllerMenuOpen {
+                track_name,
+                instance_id,
+                position,
+            } => {
+                let mut state = self.state.blocking_write();
+                state.plugin_graph_controller_menu =
+                    Some(crate::state::PluginControllerMenuState {
+                        track_name,
+                        instance_id,
+                        anchor: position,
+                        hovered: None,
+                    });
+                {
+                    let track_name = state
+                        .plugin_graph_controller_menu
+                        .as_ref()
+                        .map(|m| m.track_name.clone())
+                        .unwrap_or_default();
+                    let instance_id = state
+                        .plugin_graph_controller_menu
+                        .as_ref()
+                        .map(|m| m.instance_id)
+                        .unwrap_or(0);
+                    let cached = state
+                        .plugin_parameters_by_track
+                        .get(&track_name)
+                        .and_then(|cache| cache.get(&instance_id))
+                        .is_some();
+                    if !cached {
+                        let plugin = state
+                            .plugin_graph_plugins
+                            .iter()
+                            .find(|p| p.instance_id == instance_id)
+                            .cloned();
+                        if let Some(plugin) = plugin {
+                            drop(state);
+                            if plugin.format.eq_ignore_ascii_case("CLAP") {
+                                return self.send(Action::TrackGetClapParameters {
+                                    track_name,
+                                    instance_id,
+                                });
+                            } else if plugin.format.eq_ignore_ascii_case("VST3") {
+                                return self.send(Action::TrackGetVst3Parameters {
+                                    track_name,
+                                    instance_id,
+                                });
+                            }
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            if plugin.format.eq_ignore_ascii_case("LV2") {
+                                return self.send(Action::TrackGetLv2PluginControls {
+                                    track_name,
+                                    instance_id,
+                                });
+                            }
+                        }
+                    }
+                }
+                return Task::none();
+            }
+            Message::PluginGraphControllerMenuClose => {
+                self.state.blocking_write().plugin_graph_controller_menu = None;
+            }
+            Message::PluginGraphControllerMenuHover(hovered) => {
+                if let Some(menu) = self
+                    .state
+                    .blocking_write()
+                    .plugin_graph_controller_menu
+                    .as_mut()
+                {
+                    menu.hovered = hovered;
+                }
+            }
+            Message::PluginGraphShowController {
+                track_name,
+                instance_id,
+                param_id,
+                name,
+                value,
+                min,
+                max,
+            } => {
+                self.has_unsaved_changes = true;
+                let mut state = self.state.blocking_write();
+                state.plugin_graph_controller_menu = None;
+                let controllers = state
+                    .plugin_graph_visible_controllers
+                    .entry(track_name)
+                    .or_default()
+                    .entry(instance_id)
+                    .or_default();
+                if let Some(pos) = controllers.iter().position(|c| c.param_id == param_id) {
+                    controllers.remove(pos);
+                } else {
+                    controllers.push(crate::state::ShownPluginController {
+                        param_id,
+                        name,
+                        value,
+                        min,
+                        max,
+                    });
+                }
+                return Task::none();
+            }
+            Message::PluginGraphHideController {
+                track_name,
+                instance_id,
+                param_id,
+            } => {
+                self.has_unsaved_changes = true;
+                let mut state = self.state.blocking_write();
+                if let Some(controllers) = state
+                    .plugin_graph_visible_controllers
+                    .get_mut(&track_name)
+                    .and_then(|map| map.get_mut(&instance_id))
+                {
+                    controllers.retain(|c| c.param_id != param_id);
+                }
+                return Task::none();
             }
             Message::MarkerLaneCreate { sample } => {
                 self.state.blocking_write().marker_dialog = Some(crate::state::MarkerDialog {
@@ -5385,6 +5819,13 @@ impl Maolan {
                     kind,
                     muted,
                 });
+            }
+            Message::ClipAssignToSessionSlot {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                return self.assign_clip_to_session_slot(track_idx.clone(), clip_idx, kind);
             }
             Message::GroupSelectedClips => {
                 return self.group_selected_clips();
@@ -5914,265 +6355,77 @@ impl Maolan {
                 let view = self.state.blocking_read().view.clone();
                 match view {
                     crate::state::View::Connections => {
-                        let (
-                            track_name,
-                            selected_plugins,
-                            selected_indices,
-                            connections,
-                            selected_connectable,
-                            connectable_connections,
-                        ) = {
-                            let state = self.state.blocking_read();
-                            if state.connections_folder.is_none() {
-                                drop(state);
-                                return self.update(Message::RemoveSelected);
-                            }
-                            let data = (
-                                state.plugin_graph_track.clone(),
-                                state.plugin_graph_selected_plugins.clone(),
-                                state.plugin_graph_selected_connections.clone(),
-                                state.plugin_graph_connections.clone(),
-                                state.plugin_graph_selected_connectable_connections.clone(),
-                                state.connectable_connections.clone(),
-                            );
-                            drop(state);
-                            data
-                        };
-                        if let Some(track_name) = track_name {
-                            if !selected_plugins.is_empty() {
-                                let mut tasks = Vec::new();
-                                let mut state = self.state.blocking_write();
-                                let plugins_to_remove: Vec<usize> =
-                                    selected_plugins.iter().copied().collect();
-                                for instance_id in plugins_to_remove {
-                                    let selected_node = state
-                                        .plugin_graph_plugins
-                                        .iter()
-                                        .find(|p| p.instance_id == instance_id)
-                                        .map(|p| p.node.clone());
-                                    if let Some(node) = selected_node {
-                                        let task = match node {
-                                            #[cfg(all(unix, not(target_os = "macos")))]
-                                            PluginGraphNode::Lv2PluginInstance(_) => {
-                                                self.send(Action::TrackUnloadLv2PluginInstance {
-                                                    track_name: track_name.clone(),
-                                                    instance_id,
-                                                })
-                                            }
-                                            PluginGraphNode::Vst3PluginInstance(_) => {
-                                                self.send(Action::TrackUnloadVst3PluginInstance {
-                                                    track_name: track_name.clone(),
-                                                    instance_id,
-                                                })
-                                            }
-                                            PluginGraphNode::ClapPluginInstance(_) => {
-                                                let plugin_path = state
-                                                    .plugin_graph_plugins
-                                                    .iter()
-                                                    .find(|p| p.instance_id == instance_id)
-                                                    .map(|p| p.uri.clone())
-                                                    .unwrap_or_default();
-                                                self.send(Action::TrackUnloadClapPlugin {
-                                                    track_name: track_name.clone(),
-                                                    plugin_path,
-                                                })
-                                            }
-                                            PluginGraphNode::TrackInput
-                                            | PluginGraphNode::TrackOutput => Task::none(),
-                                        };
-                                        tasks.push(task);
-                                    }
-                                }
-                                state.plugin_graph_selected_plugins.clear();
-                                state.plugin_graph_selected_connections.clear();
-                                state.plugin_graph_selected_connectable_connections.clear();
-                                return Task::batch(tasks);
-                            }
-                            if !selected_indices.is_empty() {
-                                let actions = connections::selection::plugin_disconnect_actions(
-                                    &track_name,
-                                    &connections,
-                                    &selected_indices,
-                                );
-                                let tasks = actions
-                                    .into_iter()
-                                    .map(|a| self.send(a))
-                                    .collect::<Vec<_>>();
-                                let mut state = self.state.blocking_write();
-                                state.plugin_graph_selected_connections.clear();
-                                state.plugin_graph_selected_plugins.clear();
-                                state.plugin_graph_selected_connectable_connections.clear();
-                                return Task::batch(tasks);
-                            }
-                            if !selected_connectable.is_empty() {
-                                let actions =
-                                    connections::selection::connectable_disconnect_actions(
-                                        &track_name,
-                                        &connectable_connections,
-                                        &selected_connectable,
-                                    );
-                                let tasks = actions
-                                    .into_iter()
-                                    .map(|a| self.send(a))
-                                    .collect::<Vec<_>>();
-                                let mut state = self.state.blocking_write();
-                                state.plugin_graph_selected_connectable_connections.clear();
-                                state.plugin_graph_selected_connections.clear();
-                                state.plugin_graph_selected_plugins.clear();
-                                return Task::batch(tasks);
-                            }
+                        let state = self.state.blocking_read();
+                        let has_folder_or_graph = state.connections_folder.is_some()
+                            || state.plugin_graph_track.is_some();
+                        drop(state);
+                        if !has_folder_or_graph {
+                            return self.update(Message::RemoveSelected);
                         }
-                        return self.update(Message::RemoveSelected);
+                        if let Some(task) = self.remove_selected_track_plugin_graph_items() {
+                            return task;
+                        }
+                        return Task::none();
                     }
                     crate::state::View::Workspace => {
+                        if let Some(task) = self.remove_selected_track_plugin_graph_items() {
+                            return task;
+                        }
                         return self.update(Message::RemoveSelectedTracks);
                     }
                     crate::state::View::TrackPlugins => {
                         #[cfg(all(unix, not(target_os = "macos")))]
                         {
-                            let (
-                                track_name,
-                                selected_plugins,
-                                selected_indices,
-                                connections,
-                                selected_connectable,
-                                connectable_connections,
-                            ) = {
+                            let (selected_plugins, selected_indices) = {
                                 let state = self.state.blocking_read();
                                 (
-                                    state.plugin_graph_track.clone(),
                                     state.plugin_graph_selected_plugins.clone(),
                                     state.plugin_graph_selected_connections.clone(),
-                                    state.plugin_graph_connections.clone(),
-                                    state.plugin_graph_selected_connectable_connections.clone(),
-                                    state.connectable_connections.clone(),
                                 )
                             };
-                            if let Some(track_name) = track_name {
-                                let clip_target =
-                                    self.state.blocking_read().plugin_graph_clip.clone();
-                                if clip_target.is_some() {
-                                    let mut state = self.state.blocking_write();
-                                    if let Some(&instance_id) = selected_plugins.iter().next() {
-                                        let Some(selected_node) = state
-                                            .plugin_graph_plugins
-                                            .iter()
-                                            .find(|p| p.instance_id == instance_id)
-                                            .map(|p| p.node.clone())
-                                        else {
-                                            return Task::none();
-                                        };
-                                        state
-                                            .plugin_graph_plugins
-                                            .retain(|plugin| plugin.instance_id != instance_id);
-                                        state.plugin_graph_connections.retain(|connection| {
-                                            connection.from_node != selected_node
-                                                && connection.to_node != selected_node
-                                        });
-                                        state.plugin_graph_selected_plugins.clear();
-                                        state.plugin_graph_selected_connections.clear();
-                                        state.plugin_graph_selected_connectable_connections.clear();
-                                        let sync = Self::save_open_clip_plugin_graph(&mut state);
-                                        return sync
-                                            .map_or_else(Task::none, |action| self.send(action));
-                                    }
-                                    let selected = selected_indices.clone();
-                                    let existing = state.plugin_graph_connections.clone();
-                                    state.plugin_graph_connections = existing
-                                        .into_iter()
-                                        .enumerate()
-                                        .filter_map(|(idx, connection)| {
-                                            (!selected.contains(&idx)).then_some(connection)
-                                        })
-                                        .collect();
-                                    state.plugin_graph_selected_connections.clear();
+                            let clip_target = self.state.blocking_read().plugin_graph_clip.clone();
+                            if clip_target.is_some() {
+                                let mut state = self.state.blocking_write();
+                                if let Some(&instance_id) = selected_plugins.iter().next() {
+                                    let Some(selected_node) = state
+                                        .plugin_graph_plugins
+                                        .iter()
+                                        .find(|p| p.instance_id == instance_id)
+                                        .map(|p| p.node.clone())
+                                    else {
+                                        return Task::none();
+                                    };
+                                    state
+                                        .plugin_graph_plugins
+                                        .retain(|plugin| plugin.instance_id != instance_id);
+                                    state.plugin_graph_connections.retain(|connection| {
+                                        connection.from_node != selected_node
+                                            && connection.to_node != selected_node
+                                    });
                                     state.plugin_graph_selected_plugins.clear();
+                                    state.plugin_graph_selected_connections.clear();
                                     state.plugin_graph_selected_connectable_connections.clear();
                                     let sync = Self::save_open_clip_plugin_graph(&mut state);
                                     return sync
                                         .map_or_else(Task::none, |action| self.send(action));
                                 }
-                                if !selected_plugins.is_empty() {
-                                    let mut tasks = Vec::new();
-                                    let mut state = self.state.blocking_write();
-                                    let plugins_to_remove: Vec<usize> =
-                                        selected_plugins.iter().copied().collect();
-                                    for instance_id in plugins_to_remove {
-                                        let selected_node = state
-                                            .plugin_graph_plugins
-                                            .iter()
-                                            .find(|p| p.instance_id == instance_id)
-                                            .map(|p| p.node.clone());
-                                        if let Some(node) = selected_node {
-                                            let task = match node {
-                                                #[cfg(all(unix, not(target_os = "macos")))]
-                                                PluginGraphNode::Lv2PluginInstance(_) => self.send(
-                                                    Action::TrackUnloadLv2PluginInstance {
-                                                        track_name: track_name.clone(),
-                                                        instance_id,
-                                                    },
-                                                ),
-                                                PluginGraphNode::Vst3PluginInstance(_) => self
-                                                    .send(Action::TrackUnloadVst3PluginInstance {
-                                                        track_name: track_name.clone(),
-                                                        instance_id,
-                                                    }),
-                                                PluginGraphNode::ClapPluginInstance(_) => {
-                                                    let plugin_path = state
-                                                        .plugin_graph_plugins
-                                                        .iter()
-                                                        .find(|p| p.instance_id == instance_id)
-                                                        .map(|p| p.uri.clone())
-                                                        .unwrap_or_default();
-                                                    self.send(Action::TrackUnloadClapPlugin {
-                                                        track_name: track_name.clone(),
-                                                        plugin_path,
-                                                    })
-                                                }
-                                                PluginGraphNode::TrackInput
-                                                | PluginGraphNode::TrackOutput => Task::none(),
-                                            };
-                                            tasks.push(task);
-                                        }
-                                    }
-                                    state.plugin_graph_selected_plugins.clear();
-                                    state.plugin_graph_selected_connections.clear();
-                                    state.plugin_graph_selected_connectable_connections.clear();
-                                    return Task::batch(tasks);
-                                }
-                                if !selected_indices.is_empty() {
-                                    let actions = connections::selection::plugin_disconnect_actions(
-                                        &track_name,
-                                        &connections,
-                                        &selected_indices,
-                                    );
-                                    let tasks = actions
-                                        .into_iter()
-                                        .map(|a| self.send(a))
-                                        .collect::<Vec<_>>();
-                                    let mut state = self.state.blocking_write();
-                                    state.plugin_graph_selected_connections.clear();
-                                    state.plugin_graph_selected_plugins.clear();
-                                    state.plugin_graph_selected_connectable_connections.clear();
-                                    return Task::batch(tasks);
-                                }
-                                if !selected_connectable.is_empty() {
-                                    let actions =
-                                        connections::selection::connectable_disconnect_actions(
-                                            &track_name,
-                                            &connectable_connections,
-                                            &selected_connectable,
-                                        );
-                                    let tasks = actions
-                                        .into_iter()
-                                        .map(|a| self.send(a))
-                                        .collect::<Vec<_>>();
-                                    let mut state = self.state.blocking_write();
-                                    state.plugin_graph_selected_connectable_connections.clear();
-                                    state.plugin_graph_selected_connections.clear();
-                                    state.plugin_graph_selected_plugins.clear();
-                                    return Task::batch(tasks);
-                                }
+                                let selected = selected_indices.clone();
+                                let existing = state.plugin_graph_connections.clone();
+                                state.plugin_graph_connections = existing
+                                    .into_iter()
+                                    .enumerate()
+                                    .filter_map(|(idx, connection)| {
+                                        (!selected.contains(&idx)).then_some(connection)
+                                    })
+                                    .collect();
+                                state.plugin_graph_selected_connections.clear();
+                                state.plugin_graph_selected_plugins.clear();
+                                state.plugin_graph_selected_connectable_connections.clear();
+                                let sync = Self::save_open_clip_plugin_graph(&mut state);
+                                return sync.map_or_else(Task::none, |action| self.send(action));
+                            }
+                            if let Some(task) = self.remove_selected_track_plugin_graph_items() {
+                                return task;
                             }
                         }
                     }
@@ -6182,7 +6435,9 @@ impl Maolan {
                     crate::state::View::HwInputPorts | crate::state::View::HwOutputPorts => {
                         return Task::none();
                     }
-                    crate::state::View::PitchCorrection | crate::state::View::X32 => {
+                    crate::state::View::PitchCorrection
+                    | crate::state::View::X32
+                    | crate::state::View::Session => {
                         return Task::none();
                     }
                 }
@@ -6208,27 +6463,16 @@ impl Maolan {
                 state.shortcuts_hint = hint.clone();
             }
             Message::ClipResizeHandleHover {
-                ref kind,
+                kind,
                 ref track_idx,
                 clip_idx,
                 is_right_side,
-                hovered,
+                hovered: true,
             } => {
-                let mut state = self.state.blocking_write();
-                if hovered {
-                    state.hovered_clip_resize_handle =
-                        Some((track_idx.clone(), clip_idx, *kind, is_right_side));
-                } else if state.hovered_clip_resize_handle.as_ref().is_some_and(
-                    |(active_track, active_clip, active_kind, active_right)| {
-                        active_track == track_idx
-                            && *active_clip == clip_idx
-                            && *active_kind == *kind
-                            && *active_right == is_right_side
-                    },
-                ) {
-                    state.hovered_clip_resize_handle = None;
-                }
+                self.state.blocking_write().hovered_clip_resize_handle =
+                    Some((track_idx.clone(), clip_idx, kind, is_right_side));
             }
+            Message::ClipResizeHandleHover { hovered: false, .. } => {}
             Message::TracksResizeStart => {
                 let (initial_width, initial_mouse_x) = {
                     let state = self.state.blocking_read();
@@ -6240,6 +6484,33 @@ impl Maolan {
                 };
                 self.state.blocking_write().resizing =
                     Some(Resizing::Tracks(initial_width, initial_mouse_x));
+            }
+            Message::LiveViewTracksResizeStart => {
+                let (initial_width, initial_mouse_x) = {
+                    let state = self.state.blocking_read();
+                    let width = match state.live_view_tracks_width {
+                        Length::Fixed(v) => v,
+                        _ => 200.0,
+                    };
+                    (width, state.cursor.x)
+                };
+                self.state.blocking_write().resizing =
+                    Some(Resizing::LiveViewTracks(initial_width, initial_mouse_x));
+            }
+            Message::LiveViewLeftSplitResizeStart => {
+                let (initial_split, initial_mouse_x) = {
+                    let state = self.state.blocking_read();
+                    let width = match state.live_view_tracks_width {
+                        Length::Fixed(v) => v,
+                        _ => 200.0,
+                    };
+                    (
+                        state.live_view_left_split,
+                        width * state.live_view_left_split,
+                    )
+                };
+                self.state.blocking_write().resizing =
+                    Some(Resizing::LiveViewLeftSplit(initial_split, initial_mouse_x));
             }
             Message::MixerResizeStart => {
                 let (initial_height, initial_mouse_y) = {
@@ -6666,6 +6937,22 @@ impl Maolan {
                         self.state.blocking_write().tracks_width =
                             Length::Fixed((initial_width + delta).max(80.0));
                     }
+                    Some(Resizing::LiveViewTracks(initial_width, initial_mouse_x)) => {
+                        let delta = position.x - initial_mouse_x;
+                        self.state.blocking_write().live_view_tracks_width =
+                            Length::Fixed((initial_width + delta).max(80.0));
+                    }
+                    Some(Resizing::LiveViewLeftSplit(initial_split, initial_mouse_x)) => {
+                        let total_width = match self.state.blocking_read().live_view_tracks_width {
+                            Length::Fixed(v) => v,
+                            _ => 200.0,
+                        };
+                        let delta = position.x - initial_mouse_x;
+                        let new_split_px = (initial_split * total_width + delta)
+                            .clamp(total_width * 0.1, total_width * 0.9);
+                        self.state.blocking_write().live_view_left_split =
+                            new_split_px / total_width;
+                    }
                     Some(Resizing::Mixer(initial_height, initial_mouse_y)) => {
                         let delta = position.y - initial_mouse_y;
                         self.state.blocking_write().mixer_height =
@@ -6807,9 +7094,11 @@ impl Maolan {
             Message::EditorMouseMoved(position) => {
                 let resizing = self.state.blocking_read().resizing.clone();
                 let can_start_midi_drag = self.midi_lane_at_position(position).is_some();
+                let hovered_resize_handle = self.clip_resize_handle_at_position(position);
                 let cut_preview_active = self.state.blocking_read().cut_preview_active;
                 let mut state = self.state.blocking_write();
                 state.editor_cursor = Some(position);
+                state.hovered_clip_resize_handle = hovered_resize_handle;
                 if state.mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))
                     && self.clip.is_none()
@@ -6873,6 +7162,7 @@ impl Maolan {
                     state.mouse_left_down = false;
                     state.mouse_right_down = false;
                     state.clip_click_consumed = false;
+                    state.session_slot_context_menu = None;
                     let resizing = state.resizing.clone();
                     let marquee_start = state.clip_marquee_start.take();
                     let marquee_end = state.clip_marquee_end.take();
@@ -7490,10 +7780,16 @@ impl Maolan {
                         return Task::none();
                     }
 
-                    let target_zone = zones
-                        .iter()
-                        .find(|(zone_id, _)| *zone_id != dragged_id)
-                        .or_else(|| zones.first());
+                    let target_zone = {
+                        let state = self.state.blocking_read();
+                        zones.iter().find(|(zone_id, _)| {
+                            *zone_id != dragged_id
+                                && state
+                                    .tracks
+                                    .iter()
+                                    .any(|track| Id::from(track.name.clone()) == *zone_id)
+                        })
+                    };
                     if let Some((track_id, _)) = target_zone {
                         let mut state = self.state.blocking_write();
                         if let Some(dragged_index) =
@@ -7601,6 +7897,25 @@ impl Maolan {
                                         });
                                     }
                                 }
+                            }
+                        }
+                    } else if !zones.iter().any(|(zone_id, _)| *zone_id == dragged_id) {
+                        // The workspace drop zone was hit without a track beneath the pointer.
+                        let mut state = self.state.blocking_write();
+                        if let Some(dragged_index) =
+                            state.tracks.iter().position(|t| t.name == *dragged_name)
+                        {
+                            let mut moved_track = state.tracks.remove(dragged_index);
+                            let had_parent = moved_track.parent_track.is_some();
+                            moved_track.parent_track = None;
+                            state.tracks.push(moved_track);
+                            drop(state);
+                            self.track = None;
+                            if had_parent {
+                                return self.send(Action::TrackSetParent {
+                                    track_name: dragged_name.clone(),
+                                    parent_name: None,
+                                });
                             }
                         }
                     }
@@ -7785,8 +8100,7 @@ impl Maolan {
                                             }
                                             if let Err(e) = CLIENT
                                                 .send(EngineMessage::Request(Action::AddClip {
-                                                    clip_id:
-                                                        maolan_engine::message::generate_clip_id(),
+                                                    clip_id: crate::state::generate_clip_id(),
                                                     name: clip_rel,
                                                     track_name,
                                                     start: 0,
@@ -7863,8 +8177,7 @@ impl Maolan {
                                             }
                                             if let Err(e) = CLIENT
                                                 .send(EngineMessage::Request(Action::AddClip {
-                                                    clip_id:
-                                                        maolan_engine::message::generate_clip_id(),
+                                                    clip_id: crate::state::generate_clip_id(),
                                                     name: clip_rel,
                                                     track_name,
                                                     start: 0,
@@ -8231,7 +8544,7 @@ impl Maolan {
 
                         if let Err(err) = CLIENT
                             .send(EngineMessage::Request(Action::AddClip {
-                                clip_id: maolan_engine::message::generate_clip_id(),
+                                clip_id: crate::state::generate_clip_id(),
                                 name: clip_rel,
                                 track_name: track_name.clone(),
                                 start: 0,
@@ -8937,6 +9250,11 @@ impl Maolan {
                 }
             }
             Message::Workspace => {
+                let stop_task = if self.live_session_playing {
+                    self.stop_live_session_play()
+                } else {
+                    Task::none()
+                };
                 let mut state = self.state.blocking_write();
                 state.view = View::Workspace;
                 state.pitch_correction = None;
@@ -8944,7 +9262,8 @@ impl Maolan {
                 state.pitch_correction_dragging_points = None;
                 state.pitch_correction_selecting_rect = None;
                 drop(state);
-                return self.queue_midi_clip_preview_loads();
+                let view_task = self.queue_midi_clip_preview_loads();
+                return Task::batch(vec![stop_task, view_task]);
             }
             Message::ToggleMixerVisibility => {
                 self.mixer_visible = !self.mixer_visible;
@@ -8968,6 +9287,16 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.view = crate::state::View::X32;
             }
+            Message::Session => {
+                let mut state = self.state.blocking_write();
+                state.view = crate::state::View::Session;
+                let track_names: Vec<String> =
+                    state.tracks.iter().map(|t| t.name.clone()).collect();
+                for track_name in track_names {
+                    state.session.ensure_track_slots(&track_name);
+                }
+                state.session.backfill_play_stop_icons();
+            }
             Message::HwMixer(msg) => {
                 return mixosc::app::update(&mut self.hw_mixer, msg).map(Message::HwMixer);
             }
@@ -8979,33 +9308,63 @@ impl Maolan {
             }
             Message::ToggleModulatorsPane => {
                 self.modulators_pane_visible = !self.modulators_pane_visible;
+                if !self.modulators_pane_visible {
+                    self.selected_modulator_id = None;
+                    self.state.blocking_write().selected_modulator_id = None;
+                }
             }
             Message::ModulatorAdd => {
                 let id = self.modulators.iter().map(|m| m.id).max().unwrap_or(0) + 1;
                 self.modulators.push(crate::state::Modulator::new(id));
                 self.selected_modulator_id = Some(id);
+                self.state.blocking_write().selected_modulator_id = Some(id);
+                self.has_unsaved_changes = true;
                 return self.send_modulators_to_engine();
             }
             Message::ModulatorRemove(id) => {
                 self.modulators.retain(|m| m.id != id);
                 if self.selected_modulator_id == Some(id) {
                     self.selected_modulator_id = None;
+                    self.state.blocking_write().selected_modulator_id = None;
                 }
+                self.has_unsaved_changes = true;
                 return self.send_modulators_to_engine();
             }
             Message::ModulatorSelect(id) => {
                 self.selected_modulator_id = id;
+                self.state.blocking_write().selected_modulator_id = id;
             }
             Message::ModulatorToggleTarget { id, ref target } => {
                 if let Some(m) = self.modulators.iter_mut().find(|m| m.id == id) {
-                    let pos = m.targets.iter().position(|t| t == target);
+                    let pos = m
+                        .targets
+                        .iter()
+                        .position(|t| t.matches_target(&target.track_name, &target.target));
                     if let Some(pos) = pos {
                         m.targets.remove(pos);
                     } else {
                         m.targets.push(target.clone());
                     }
                 }
+                self.has_unsaved_changes = true;
                 return self.send_modulators_to_engine();
+            }
+            Message::ModulatorToggleSelectedTarget { ref target } => {
+                if let Some(id) = self.selected_modulator_id {
+                    if let Some(m) = self.modulators.iter_mut().find(|m| m.id == id) {
+                        let pos = m
+                            .targets
+                            .iter()
+                            .position(|t| t.matches_target(&target.track_name, &target.target));
+                        if let Some(pos) = pos {
+                            m.targets.remove(pos);
+                        } else {
+                            m.targets.push(target.clone());
+                        }
+                    }
+                    self.has_unsaved_changes = true;
+                    return self.send_modulators_to_engine();
+                }
             }
             Message::ModulatorUpdate { id, ref change } => {
                 if let Some(m) = self.modulators.iter_mut().find(|m| m.id == id) {
@@ -9018,6 +9377,7 @@ impl Maolan {
                         ModulatorChange::Targets(v) => m.targets = v.clone(),
                     }
                 }
+                self.has_unsaved_changes = true;
                 return self.send_modulators_to_engine();
             }
             Message::ModulatorTargetShow {
@@ -9033,7 +9393,7 @@ impl Maolan {
                     .and_then(|m| {
                         m.targets
                             .iter()
-                            .find(|t| t.track_name == *track_name && t.target == target)
+                            .find(|t| t.matches_target(track_name, &target))
                     });
                 let existing_bool = existing.is_some();
                 let (min_input, max_input) = existing
@@ -9076,7 +9436,7 @@ impl Maolan {
                     if let Some(target) = m
                         .targets
                         .iter_mut()
-                        .find(|t| t.track_name == dialog.track_name && t.target == dialog.target)
+                        .find(|t| t.matches_target(&dialog.track_name, &dialog.target))
                     {
                         target.min = min;
                         target.max = max;
@@ -9090,6 +9450,7 @@ impl Maolan {
                     }
                 }
                 self.state.blocking_write().modulator_target_dialog = None;
+                self.has_unsaved_changes = true;
                 return self.send_modulators_to_engine();
             }
             Message::ModulatorTargetCancel => {
@@ -9101,10 +9462,10 @@ impl Maolan {
                 target,
             } => {
                 if let Some(m) = self.modulators.iter_mut().find(|m| m.id == modulator_id) {
-                    m.targets
-                        .retain(|t| !(t.track_name == *track_name && t.target == target));
+                    m.targets.retain(|t| !t.matches_target(track_name, &target));
                 }
                 self.state.blocking_write().modulator_target_dialog = None;
+                self.has_unsaved_changes = true;
                 return self.send_modulators_to_engine();
             }
             Message::ToggleCutIndicator => {
@@ -9267,17 +9628,16 @@ impl Maolan {
                     {
                         state.plugin_graph_plugins = plugins.clone();
                         state.plugin_graph_connections = connections;
-                        let mut new_positions = std::collections::HashMap::new();
+                        let track_positions = state
+                            .plugin_graph_plugin_positions
+                            .entry(track_name.clone())
+                            .or_default();
                         for (idx, plugin) in plugins.iter().enumerate() {
                             let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
-                            let pos = state
-                                .plugin_graph_plugin_positions
-                                .get(&plugin.instance_id)
-                                .copied()
-                                .unwrap_or(fallback);
-                            new_positions.insert(plugin.instance_id, pos);
+                            track_positions
+                                .entry(plugin.instance_id)
+                                .or_insert(fallback);
                         }
-                        state.plugin_graph_plugin_positions = new_positions;
                     }
                 }
                 return self.open_track_plugins_followup(track_name.clone());
@@ -9296,17 +9656,16 @@ impl Maolan {
                 {
                     state.plugin_graph_plugins = plugins.clone();
                     state.plugin_graph_connections = connections;
-                    let mut new_positions = std::collections::HashMap::new();
+                    let track_positions = state
+                        .plugin_graph_plugin_positions
+                        .entry(folder_name.clone())
+                        .or_default();
                     for (idx, plugin) in plugins.iter().enumerate() {
                         let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
-                        let pos = state
-                            .plugin_graph_plugin_positions
-                            .get(&plugin.instance_id)
-                            .copied()
-                            .unwrap_or(fallback);
-                        new_positions.insert(plugin.instance_id, pos);
+                        track_positions
+                            .entry(plugin.instance_id)
+                            .or_insert(fallback);
                     }
-                    state.plugin_graph_plugin_positions = new_positions;
                 }
 
                 let node_size = 140.0_f32;
@@ -9315,8 +9674,11 @@ impl Maolan {
                 let folder_y = 80.0_f32;
                 let children_y = folder_y + node_size + spacing;
                 let canvas_w = self.size.width.max(600.0);
+                let default_position = Point::new(100.0, 100.0);
 
-                if let Some(folder_idx) = state.tracks.iter().position(|t| t.name == *folder_name) {
+                if let Some(folder_idx) = state.tracks.iter().position(|t| t.name == *folder_name)
+                    && state.tracks[folder_idx].position == default_position
+                {
                     state.tracks[folder_idx].position = Point::new(start_x, folder_y);
 
                     let child_names: Vec<String> = state
@@ -9336,7 +9698,9 @@ impl Maolan {
                             let row = i / cols;
                             let x = start_x + col as f32 * (node_size + spacing);
                             let y = children_y + row as f32 * (node_size + spacing);
-                            if let Some(child) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                            if let Some(child) = state.tracks.iter_mut().find(|t| t.name == *name)
+                                && child.position == default_position
+                            {
                                 child.position = Point::new(x, y);
                             }
                         }
@@ -9344,7 +9708,32 @@ impl Maolan {
                 }
                 return self.send(Action::TrackGetPluginGraph {
                     track_name: folder_name.clone(),
+                    include_state: false,
                 });
+            }
+            Message::SessionViewConnectionsOpen(ref track_name) => {
+                let mut state = self.state.blocking_write();
+                state.session_view_connections = Some(track_name.clone());
+                state.connection_view_selection = ConnectionViewSelection::None;
+                state.message = format!("Opened live view connections: {}", track_name);
+                return self.load_track_connection_view(&mut state, track_name);
+            }
+            Message::SessionViewConnectionsClose => {
+                let mut state = self.state.blocking_write();
+                state.session_view_connections = None;
+                state.plugin_graph_track = None;
+            }
+            Message::EditorConnectionsOpen(ref track_name) => {
+                let mut state = self.state.blocking_write();
+                state.editor_connections = Some(track_name.clone());
+                state.connection_view_selection = ConnectionViewSelection::None;
+                state.message = format!("Opened editor connections: {}", track_name);
+                return self.load_track_connection_view(&mut state, track_name);
+            }
+            Message::EditorConnectionsClose => {
+                let mut state = self.state.blocking_write();
+                state.editor_connections = None;
+                state.plugin_graph_track = None;
             }
             Message::OpenHwPorts { input } => {
                 let mut state = self.state.blocking_write();

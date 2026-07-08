@@ -305,9 +305,7 @@ impl HostRuntime {
             {
                 return plugin.gui_show();
             }
-            if plugin.gui_is_api_supported("x11", true)
-                && plugin.gui_create("x11", true).is_ok()
-            {
+            if plugin.gui_is_api_supported("x11", true) && plugin.gui_create("x11", true).is_ok() {
                 return plugin.gui_show();
             }
         }
@@ -331,6 +329,96 @@ impl HostRuntime {
         }
 
         Err("Plugin does not support native floating GUI".to_string())
+    }
+
+    fn serialize_clap_parameters(
+        scratch: *mut u8,
+        params: &[crate::clap::ParamInfo],
+    ) -> Result<usize, String> {
+        let max_len = SCRATCH_SIZE;
+        let mut offset = 0usize;
+
+        if offset + 4 > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::write_unaligned(scratch.add(offset) as *mut u32, params.len() as u32);
+        }
+        offset += 4;
+
+        for param in params {
+            if offset + 4 > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::write_unaligned(scratch.add(offset) as *mut u32, param.id);
+            }
+            offset += 4;
+
+            let name_bytes = param.name.as_bytes();
+            if offset + 4 > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::write_unaligned(scratch.add(offset) as *mut u32, name_bytes.len() as u32);
+            }
+            offset += 4;
+            if offset + name_bytes.len() > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    name_bytes.as_ptr(),
+                    scratch.add(offset),
+                    name_bytes.len(),
+                );
+            }
+            offset += name_bytes.len();
+
+            let module_bytes = param.module.as_bytes();
+            if offset + 4 > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::write_unaligned(
+                    scratch.add(offset) as *mut u32,
+                    module_bytes.len() as u32,
+                );
+            }
+            offset += 4;
+            if offset + module_bytes.len() > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    module_bytes.as_ptr(),
+                    scratch.add(offset),
+                    module_bytes.len(),
+                );
+            }
+            offset += module_bytes.len();
+
+            if offset + 24 > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::write_unaligned(
+                    scratch.add(offset) as *mut u64,
+                    param.min_value.to_bits(),
+                );
+                std::ptr::write_unaligned(
+                    scratch.add(offset + 8) as *mut u64,
+                    param.max_value.to_bits(),
+                );
+                std::ptr::write_unaligned(
+                    scratch.add(offset + 16) as *mut u64,
+                    param.default_value.to_bits(),
+                );
+            }
+            offset += 24;
+        }
+
+        Ok(offset)
     }
 
     pub fn run_clap_plugin(&self) {
@@ -803,12 +891,27 @@ impl HostRuntime {
                             Err("Invalid file-reference update in scratch".to_string())
                         }
                     }
+                    maolan_plugin_protocol::protocol::REQUEST_CLAP_PARAMETERS => {
+                        tracing::info!("CLAP host: received parameter request");
+                        let params = plugin.parameter_infos();
+                        tracing::info!(count = params.len(), "CLAP host: got parameter infos");
+                        match Self::serialize_clap_parameters(scratch, &params) {
+                            Ok(size) => {
+                                header.scratch_size.store(size as u32, Ordering::Release);
+                                Ok(())
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
                     _ => Err(format!("Unknown request type: {req}")),
                 };
                 header
                     .request_status
                     .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
-                if matches!(req, 1 | 2 | 5 | 6 | 7) {
+                if matches!(
+                    req,
+                    1 | 2 | 5 | 6 | 7 | maolan_plugin_protocol::protocol::REQUEST_CLAP_PARAMETERS
+                ) {
                     let _ = self.events.signal_daw();
                 }
                 header.request_type.store(0, Ordering::Release);

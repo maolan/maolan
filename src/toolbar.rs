@@ -9,7 +9,7 @@ use iced::{
     widget::{Space, button, container, mouse_area, pick_list, row, text, text_input},
 };
 use iced_fonts::lucide::{
-    audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind,
+    audio_lines, brackets, cable, circle, fast_forward, pause, play, radio, repeat, rewind,
     sliders_vertical, square, volume_x,
 };
 use maolan_engine::message::GlobalMidiLearnTarget;
@@ -20,6 +20,7 @@ pub struct Toolbar;
 pub struct ToolbarViewState {
     pub playing: bool,
     pub paused: bool,
+    pub live_session_playing: bool,
     pub recording: bool,
     pub metronome_enabled: bool,
     pub has_session_end: bool,
@@ -75,7 +76,8 @@ impl Toolbar {
     }
 
     pub fn view(&self, view_state: ToolbarViewState) -> iced::Element<'_, Message> {
-        let play_active = view_state.playing && !view_state.paused;
+        let play_active =
+            (view_state.playing && !view_state.paused) || view_state.live_session_playing;
         let pause_active = view_state.playing && view_state.paused;
         let stop_active = !view_state.playing && !view_state.paused;
         let rec_active = view_state.recording;
@@ -317,6 +319,9 @@ impl Toolbar {
             button(sliders_vertical())
                 .style(Self::button_style(true, false, Color::TRANSPARENT))
                 .on_press(Message::X32),
+            button(radio())
+                .style(Self::button_style(true, false, Color::TRANSPARENT))
+                .on_press(Message::Session),
         ]
         .align_y(Alignment::Center)
         .into()

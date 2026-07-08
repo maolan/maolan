@@ -18,6 +18,7 @@ mod modulators_pane;
 mod platform_caps;
 mod plugin_blocklist;
 mod plugin_host;
+mod session_view;
 mod shortcuts_pane;
 mod state;
 mod style;
@@ -83,7 +84,7 @@ fn run_app() -> iced::Result {
         ..Default::default()
     };
 
-    iced::application(Maolan::default, Maolan::update, Maolan::view)
+    iced::application(Maolan::new, Maolan::update, Maolan::view)
         .title(Maolan::title)
         .settings(settings)
         .theme(Theme::Dark)

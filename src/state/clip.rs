@@ -8,6 +8,8 @@ pub type ClipPeaks = Arc<ClipPeaksData>;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AudioClip {
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub start: usize,
     pub length: usize,
@@ -71,6 +73,8 @@ fn default_take_lane_flag() -> bool {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct MIDIClip {
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub start: usize,
     pub length: usize,
@@ -91,6 +95,10 @@ pub struct MIDIClip {
     pub grouped_clips: Vec<MIDIClip>,
 }
 
+pub fn generate_clip_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 impl AudioClip {
     pub fn is_group(&self) -> bool {
         !self.grouped_clips.is_empty()
@@ -104,6 +112,15 @@ impl AudioClip {
             child.normalize_group_children();
         }
     }
+
+    pub fn ensure_id(&mut self) {
+        if self.id.is_empty() {
+            self.id = generate_clip_id();
+        }
+        for child in &mut self.grouped_clips {
+            child.ensure_id();
+        }
+    }
 }
 
 impl MIDIClip {
@@ -114,6 +131,15 @@ impl MIDIClip {
     pub fn normalize_group_children(&mut self) {
         for child in &mut self.grouped_clips {
             child.normalize_group_children();
+        }
+    }
+
+    pub fn ensure_id(&mut self) {
+        if self.id.is_empty() {
+            self.id = generate_clip_id();
+        }
+        for child in &mut self.grouped_clips {
+            child.ensure_id();
         }
     }
 }

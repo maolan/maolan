@@ -5,7 +5,7 @@ mod update;
 mod view;
 
 use crate::{
-    add_track, clip_rename, config, connections,
+    add_track, clip_rename, config,
     consts::audio_defaults,
     consts::gui as gui_consts,
     consts::gui_mod::{
@@ -21,7 +21,7 @@ use crate::{
     hw, menu,
     message::{
         BurnBackendOption, DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode,
-        ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message, PluginFormat,
+        ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message,
         PreferencesDeviceOption, Show, SnapMode, TrackAutomationTarget,
     },
     platform_caps,
@@ -461,27 +461,22 @@ pub struct Maolan {
     toolbar: toolbar::Toolbar,
     track: Option<String>,
     workspace: workspace::Workspace,
-    connections: connections::canvas_host::CanvasHost<connections::tracks::Graph>,
-    track_plugins: connections::canvas_host::CanvasHost<connections::plugins::Graph>,
     hw: hw::HW,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
     apply_template: crate::apply_template::ApplyTemplateView,
     clip_rename: clip_rename::ClipRenameView,
     track_rename: track_rename::TrackRenameView,
+    scene_rename: crate::session_view::rename::SceneRenameView,
     track_marker: track_marker::MarkerView,
     modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView,
     track_template_save: track_template_save::TrackTemplateSaveView,
     template_save: template_save::TemplateSaveView,
     #[cfg(all(unix, not(target_os = "macos")))]
-    plugin_filter: String,
-    #[cfg(all(unix, not(target_os = "macos")))]
     selected_lv2_plugins: BTreeSet<String>,
-    vst3_plugin_filter: String,
     selected_vst3_plugins: BTreeSet<String>,
-    clap_plugin_filter: String,
     selected_clap_plugins: BTreeSet<String>,
-    plugin_format: PluginFormat,
+    plugin_list_filter: String,
     session_dir: Option<PathBuf>,
     session_branch: String,
     collect_to_session_operation: Option<CollectToSessionOperation>,
@@ -525,6 +520,7 @@ pub struct Maolan {
     freeze_cancel_requested: bool,
     playing: bool,
     paused: bool,
+    live_session_playing: bool,
     metronome_enabled: bool,
     transport_samples: f64,
     last_playback_tick: Option<Instant>,
@@ -544,6 +540,8 @@ pub struct Maolan {
     editor_scroll_y: f32,
     mixer_scroll_x: f32,
     tracks_resize_hovered: bool,
+    live_view_tracks_resize_hovered: bool,
+    live_view_left_split_resize_hovered: bool,
     mixer_resize_hovered: bool,
     tracks_visible: bool,
     editor_visible: bool,
@@ -554,7 +552,7 @@ pub struct Maolan {
     modulators_pane_visible: bool,
     pub modulators: Vec<crate::state::Modulator>,
     pub selected_modulator_id: Option<usize>,
-    hw_mixer: mixosc::app::StatusApp,
+    hw_mixer: mixosc::app::MixOscApp,
     mixer_level_edit_track: Option<String>,
     mixer_level_edit_input: String,
     record_armed: bool,
@@ -636,6 +634,9 @@ pub struct Maolan {
     pending_autosave_recovery: Option<PendingAutosaveRecovery>,
     pending_open_session_dir: Option<PathBuf>,
     pending_branch_input: String,
+    dragging_session_slot: Option<(String, usize)>,
+    dragging_session_clip: Option<crate::state::DraggedSessionClip>,
+    session_slot_record_target: Option<(String, usize)>,
     prefs_osc_enabled: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
@@ -767,18 +768,13 @@ impl Default for Maolan {
             toolbar: toolbar::Toolbar::new(),
             track: None,
             workspace: workspace::Workspace::new(state.clone()),
-            connections: connections::canvas_host::CanvasHost::new(
-                connections::tracks::Graph::new(state.clone()),
-            ),
-            track_plugins: connections::canvas_host::CanvasHost::new(
-                connections::plugins::Graph::new(state.clone()),
-            ),
             hw: hw::HW::new(state.clone()),
             modal: None,
             add_track: add_track::AddTrackView::default(),
             apply_template: crate::apply_template::ApplyTemplateView::new(state.clone()),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             track_rename: track_rename::TrackRenameView::new(state.clone()),
+            scene_rename: crate::session_view::rename::SceneRenameView::new(state.clone()),
             track_marker: track_marker::MarkerView::new(state.clone()),
             modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView::new(
                 state.clone(),
@@ -786,14 +782,11 @@ impl Default for Maolan {
             track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
             template_save: template_save::TemplateSaveView::new(state.clone()),
             #[cfg(all(unix, not(target_os = "macos")))]
-            plugin_filter: String::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             selected_lv2_plugins: BTreeSet::new(),
-            vst3_plugin_filter: String::new(),
             selected_vst3_plugins: BTreeSet::new(),
-            clap_plugin_filter: String::new(),
             selected_clap_plugins: BTreeSet::new(),
-            plugin_format: Self::default_plugin_format(),
+            plugin_list_filter: String::new(),
             session_dir: None,
             session_branch: "main".to_string(),
             collect_to_session_operation: None,
@@ -836,6 +829,7 @@ impl Default for Maolan {
             freeze_cancel_requested: false,
             playing: false,
             paused: false,
+            live_session_playing: false,
             metronome_enabled: false,
             transport_samples: 0.0,
             last_playback_tick: None,
@@ -855,6 +849,8 @@ impl Default for Maolan {
             editor_scroll_y: 0.0,
             mixer_scroll_x: 0.0,
             tracks_resize_hovered: false,
+            live_view_tracks_resize_hovered: false,
+            live_view_left_split_resize_hovered: false,
             mixer_resize_hovered: false,
             tracks_visible: true,
             editor_visible: true,
@@ -865,7 +861,7 @@ impl Default for Maolan {
             modulators_pane_visible: false,
             modulators: vec![],
             selected_modulator_id: None,
-            hw_mixer: mixosc::app::StatusApp::default(),
+            hw_mixer: mixosc::app::MixOscApp::default(),
             mixer_level_edit_track: None,
             mixer_level_edit_input: String::new(),
             record_armed: false,
@@ -949,6 +945,9 @@ impl Default for Maolan {
             pending_autosave_recovery: None,
             pending_open_session_dir: None,
             pending_branch_input: String::new(),
+            dragging_session_slot: None,
+            dragging_session_clip: None,
+            session_slot_record_target: None,
             prefs_osc_enabled: prefs.osc_enabled,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
@@ -961,6 +960,13 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    pub fn new() -> (Self, iced::Task<Message>) {
+        let mut app = Self::default();
+        let (hw_mixer, hw_task) = mixosc::app::new();
+        app.hw_mixer = hw_mixer;
+        (app, hw_task.map(Message::HwMixer))
+    }
+
     fn is_dirty(&self) -> bool {
         self.has_unsaved_changes || self.engine_dirty || self.pitch_correction_dirty
     }
@@ -1317,20 +1323,6 @@ impl Maolan {
         cfg.recent_session_paths = recent.clone();
         if let Err(_err) = cfg.save() {}
         self.menu.update_recent_sessions(recent);
-    }
-
-    fn default_plugin_format() -> PluginFormat {
-        PluginFormat::Clap
-    }
-
-    fn supported_plugin_formats() -> Vec<PluginFormat> {
-        let mut formats = vec![PluginFormat::Clap];
-        #[cfg(all(unix, not(target_os = "macos")))]
-        if platform_caps::SUPPORTS_LV2 {
-            formats.push(PluginFormat::Lv2);
-        }
-        formats.push(PluginFormat::Vst3);
-        formats
     }
 
     fn session_display_name_from_path(path: &Path) -> Option<String> {
@@ -5497,7 +5489,7 @@ impl Maolan {
                 plugin
             }
         };
-        involves_child && involves_plugin
+        involves_child || involves_plugin
     }
 
     fn plugin_graph_snapshot_to_json(
@@ -5959,7 +5951,7 @@ impl Maolan {
         let title = Self::plugin_graph_title(&state);
 
         let mut lv2_items = Vec::new();
-        let filter = self.plugin_filter.trim().to_lowercase();
+        let filter = self.plugin_list_filter.trim().to_lowercase();
         for plugin in &state.lv2_plugins {
             if !filter.is_empty() {
                 let name = plugin.name.to_lowercase();
@@ -6000,7 +5992,7 @@ impl Maolan {
         let lv2_list = column(lv2_items);
 
         let mut clap_items = Vec::new();
-        let clap_filter = self.clap_plugin_filter.trim().to_lowercase();
+        let clap_filter = filter.clone();
         for plugin in &state.clap_plugins {
             if !clap_filter.is_empty() {
                 let name = plugin.name.to_lowercase();
@@ -6047,7 +6039,7 @@ impl Maolan {
         let clap_list = column(clap_items);
 
         let mut vst3_items = Vec::new();
-        let vst3_filter = self.vst3_plugin_filter.trim().to_lowercase();
+        let vst3_filter = filter.clone();
         for plugin in &state.vst3_plugins {
             if !vst3_filter.is_empty() {
                 let name = plugin.name.to_lowercase();
@@ -6078,146 +6070,84 @@ impl Maolan {
         }
         let vst3_list = column(vst3_items);
 
-        let plugin_controls = match self.plugin_format {
-            PluginFormat::Lv2 => {
-                let load = if self.selected_lv2_plugins.is_empty() {
-                    button("Load")
-                } else {
-                    button(text(format!("Load ({})", self.selected_lv2_plugins.len())))
-                        .on_press(Message::LoadSelectedLv2Plugins)
-                };
-                if state.lv2_plugins_unavailable {
-                    column![
-                        text("LV2 plugin scan is unavailable.").size(14),
-                        text(
-                            "Check the status message for details, or select another format below."
-                        )
-                        .size(12),
-                        row![
-                            load,
-                            pick_list(
-                                Self::supported_plugin_formats(),
-                                Some(self.plugin_format),
-                                Message::PluginFormatSelected,
-                            ),
-                        ]
-                        .spacing(10),
-                    ]
-                    .spacing(10)
-                } else {
-                    column![
-                        text_input("Filter LV2 plugins...", &self.plugin_filter)
-                            .on_input(Message::FilterLv2Plugins)
-                            .width(Length::Fill),
-                        scrollable(lv2_list).height(Length::Fill),
-                        row![
-                            load,
-                            pick_list(
-                                Self::supported_plugin_formats(),
-                                Some(self.plugin_format),
-                                Message::PluginFormatSelected,
-                            ),
-                        ]
-                        .spacing(10),
-                    ]
-                    .spacing(10)
-                }
-            }
-            PluginFormat::Vst3 => {
-                let load = if self.selected_vst3_plugins.is_empty() {
-                    button("Load")
-                } else {
-                    button(text(format!("Load ({})", self.selected_vst3_plugins.len())))
-                        .on_press(Message::LoadSelectedVst3Plugins)
-                };
-                if state.vst3_plugins_unavailable {
-                    column![
-                        text("VST3 plugin scan is unavailable.").size(14),
-                        text(
-                            "Check the status message for details, or select another format below."
-                        )
-                        .size(12),
-                        row![
-                            load,
-                            pick_list(
-                                Self::supported_plugin_formats(),
-                                Some(self.plugin_format),
-                                Message::PluginFormatSelected,
-                            ),
-                        ]
-                        .spacing(10),
-                    ]
-                    .spacing(10)
-                } else {
-                    column![
-                        text_input("Filter VST3 plugins...", &self.vst3_plugin_filter)
-                            .on_input(Message::FilterVst3Plugins)
-                            .width(Length::Fill),
-                        scrollable(vst3_list).height(Length::Fill),
-                        row![
-                            load,
-                            pick_list(
-                                Self::supported_plugin_formats(),
-                                Some(self.plugin_format),
-                                Message::PluginFormatSelected,
-                            ),
-                        ]
-                        .spacing(10),
-                    ]
-                    .spacing(10)
-                }
-            }
-            PluginFormat::Clap => {
-                let load = if self.selected_clap_plugins.is_empty() {
-                    button("Load")
-                } else {
-                    button(text(format!("Load ({})", self.selected_clap_plugins.len())))
-                        .on_press(Message::LoadSelectedClapPlugins)
-                };
-                if state.clap_plugins_unavailable {
-                    column![
-                        text("CLAP plugin scan is unavailable.").size(14),
-                        text(
-                            "Check the status message for details, or select another format below."
-                        )
-                        .size(12),
-                        row![
-                            load,
-                            pick_list(
-                                Self::supported_plugin_formats(),
-                                Some(self.plugin_format),
-                                Message::PluginFormatSelected,
-                            ),
-                        ]
-                        .spacing(10),
-                    ]
-                    .spacing(10)
-                } else {
-                    column![
-                        text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
-                            .on_input(Message::FilterClapPlugin)
-                            .width(Length::Fill),
-                        scrollable(clap_list).height(Length::Fill),
-                        row![
-                            load,
-                            pick_list(
-                                Self::supported_plugin_formats(),
-                                Some(self.plugin_format),
-                                Message::PluginFormatSelected,
-                            ),
-                        ]
-                        .spacing(10),
-                    ]
-                    .spacing(10)
-                }
-            }
+        let lv2_column: iced::Element<'_, Message> = if state.lv2_plugins_unavailable {
+            column![
+                text("LV2").size(14),
+                text("LV2 plugin scan is unavailable.").size(12),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        } else {
+            column![
+                text("LV2").size(14),
+                scrollable(lv2_list).height(Length::Fill),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
         };
+
+        let clap_column: iced::Element<'_, Message> = if state.clap_plugins_unavailable {
+            column![
+                text("CLAP").size(14),
+                text("CLAP plugin scan is unavailable.").size(12),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        } else {
+            column![
+                text("CLAP").size(14),
+                scrollable(clap_list).height(Length::Fill),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        };
+
+        let vst3_column: iced::Element<'_, Message> = if state.vst3_plugins_unavailable {
+            column![
+                text("VST3").size(14),
+                text("VST3 plugin scan is unavailable.").size(12),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        } else {
+            column![
+                text("VST3").size(14),
+                scrollable(vst3_list).height(Length::Fill),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        };
+
+        let selected_count = self.selected_lv2_plugins.len()
+            + self.selected_clap_plugins.len()
+            + self.selected_vst3_plugins.len();
+        let load = if selected_count == 0 {
+            button("Load")
+        } else {
+            button(text(format!("Load ({})", selected_count)))
+                .on_press(Message::LoadSelectedPlugins)
+        };
+
+        let plugin_columns = row![lv2_column, clap_column, vst3_column]
+            .spacing(10)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         container(
             column![
                 text(title),
-                plugin_controls,
+                text_input("Filter plugins...", &self.plugin_list_filter)
+                    .on_input(Message::FilterPluginList)
+                    .width(Length::Fill),
+                plugin_columns,
                 row![
+                    load,
                     button("Close")
                         .on_press(Message::Cancel)
                         .style(button::secondary),
@@ -6237,8 +6167,8 @@ impl Maolan {
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = Self::plugin_graph_title(&state);
+        let filter = self.plugin_list_filter.trim().to_lowercase();
         let mut vst3_items = Vec::new();
-        let filter = self.vst3_plugin_filter.trim().to_lowercase();
         for plugin in &state.vst3_plugins {
             if !filter.is_empty() {
                 let name = plugin.name.to_lowercase();
@@ -6270,7 +6200,7 @@ impl Maolan {
         let vst3_list = column(vst3_items);
 
         let mut clap_items = Vec::new();
-        let clap_filter = self.clap_plugin_filter.trim().to_lowercase();
+        let clap_filter = filter.clone();
         for plugin in &state.clap_plugins {
             if !clap_filter.is_empty() {
                 let name = plugin.name.to_lowercase();
@@ -6316,95 +6246,64 @@ impl Maolan {
         }
         let clap_list = column(clap_items);
 
-        let plugin_controls = if self.plugin_format == PluginFormat::Clap {
-            let load = if self.selected_clap_plugins.is_empty() {
-                button("Load")
-            } else {
-                button(text(format!("Load ({})", self.selected_clap_plugins.len())))
-                    .on_press(Message::LoadSelectedClapPlugins)
-            };
-            if state.clap_plugins_unavailable {
-                column![
-                    text("CLAP plugin scan is unavailable.").size(14),
-                    text("Check the status message for details, or select another format below.")
-                        .size(12),
-                    row![
-                        load,
-                        pick_list(
-                            Self::supported_plugin_formats(),
-                            Some(self.plugin_format),
-                            Message::PluginFormatSelected,
-                        ),
-                    ]
-                    .spacing(10),
-                ]
-                .spacing(10)
-            } else {
-                column![
-                    text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
-                        .on_input(Message::FilterClapPlugin)
-                        .width(Length::Fill),
-                    scrollable(clap_list).height(Length::Fill),
-                    row![
-                        load,
-                        pick_list(
-                            Self::supported_plugin_formats(),
-                            Some(self.plugin_format),
-                            Message::PluginFormatSelected,
-                        ),
-                    ]
-                    .spacing(10),
-                ]
-                .spacing(10)
-            }
+        let clap_column: iced::Element<'_, Message> = if state.clap_plugins_unavailable {
+            column![
+                text("CLAP").size(14),
+                text("CLAP plugin scan is unavailable.").size(12),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
         } else {
-            let load = if self.selected_vst3_plugins.is_empty() {
-                button("Load")
-            } else {
-                button(text(format!("Load ({})", self.selected_vst3_plugins.len())))
-                    .on_press(Message::LoadSelectedVst3Plugins)
-            };
-            if state.vst3_plugins_unavailable {
-                column![
-                    text("VST3 plugin scan is unavailable.").size(14),
-                    text("Check the status message for details, or select another format below.")
-                        .size(12),
-                    row![
-                        load,
-                        pick_list(
-                            Self::supported_plugin_formats(),
-                            Some(self.plugin_format),
-                            Message::PluginFormatSelected,
-                        ),
-                    ]
-                    .spacing(10),
-                ]
-                .spacing(10)
-            } else {
-                column![
-                    text_input("Filter VST3 plugins...", &self.vst3_plugin_filter)
-                        .on_input(Message::FilterVst3Plugins)
-                        .width(Length::Fill),
-                    scrollable(vst3_list).height(Length::Fill),
-                    row![
-                        load,
-                        pick_list(
-                            Self::supported_plugin_formats(),
-                            Some(self.plugin_format),
-                            Message::PluginFormatSelected,
-                        ),
-                    ]
-                    .spacing(10),
-                ]
-                .spacing(10)
-            }
+            column![
+                text("CLAP").size(14),
+                scrollable(clap_list).height(Length::Fill),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
         };
+
+        let vst3_column: iced::Element<'_, Message> = if state.vst3_plugins_unavailable {
+            column![
+                text("VST3").size(14),
+                text("VST3 plugin scan is unavailable.").size(12),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        } else {
+            column![
+                text("VST3").size(14),
+                scrollable(vst3_list).height(Length::Fill),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        };
+
+        let selected_count = self.selected_clap_plugins.len() + self.selected_vst3_plugins.len();
+        let load = if selected_count == 0 {
+            button("Load")
+        } else {
+            button(text(format!("Load ({})", selected_count)))
+                .on_press(Message::LoadSelectedPlugins)
+        };
+
+        let plugin_columns = row![clap_column, vst3_column]
+            .spacing(10)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         container(
             column![
                 text(title),
-                plugin_controls,
+                text_input("Filter plugins...", &self.plugin_list_filter)
+                    .on_input(Message::FilterPluginList)
+                    .width(Length::Fill),
+                plugin_columns,
                 row![
+                    load,
                     button("Close")
                         .on_press(Message::Cancel)
                         .style(button::secondary),
@@ -6413,6 +6312,7 @@ impl Maolan {
             ]
             .spacing(10),
         )
+        .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -7499,13 +7399,11 @@ impl Maolan {
         self.menu.update(message);
         self.toolbar.update(message);
         self.workspace.update(message);
-        self.connections.update(message);
-        #[cfg(all(unix, not(target_os = "macos")))]
-        self.track_plugins.update(message);
         self.add_track.update(message);
         self.apply_template.update(message);
         self.clip_rename.update(message);
         self.track_rename.update(message);
+        self.scene_rename.update(message);
         self.track_marker.update(message);
     }
 }
@@ -7717,6 +7615,177 @@ mod tests {
             .expect("load session");
 
         assert!((restored.zoom_visible_bars - 6.5).abs() < f32::EPSILON);
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_save_and_load_roundtrip_preserves_track_positions() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_track_pos_session_{unique}"));
+
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.tracks.push(crate::state::Track::new(
+                "Drums".to_string(),
+                0.0,
+                2,
+                2,
+                0,
+                0,
+            ));
+            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == "Drums") {
+                track.position = iced::Point::new(123.0, 456.0);
+            }
+        }
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("main.json");
+        let session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        let track = session["tracks"]
+            .as_array()
+            .expect("tracks array")
+            .iter()
+            .find(|t| t["name"].as_str() == Some("Drums"))
+            .expect("Drums track");
+        assert!((track["position"]["x"].as_f64().unwrap_or(0.0) - 123.0).abs() < f64::EPSILON);
+        assert!((track["position"]["y"].as_f64().unwrap_or(0.0) - 456.0).abs() < f64::EPSILON);
+
+        let mut restored = Maolan::default();
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+        {
+            let state = restored.state.blocking_read();
+            let pending = state
+                .pending_track_positions
+                .get("Drums")
+                .copied()
+                .expect("pending position for Drums");
+            assert!((pending.x - 123.0).abs() < f32::EPSILON);
+            assert!((pending.y - 456.0).abs() < f32::EPSILON);
+        }
+
+        let _ = restored.update(Message::Response(Ok(
+            maolan_engine::message::Action::AddTrack {
+                name: "Drums".to_string(),
+                audio_ins: 2,
+                audio_outs: 2,
+                midi_ins: 0,
+                midi_outs: 0,
+                folder: false,
+            },
+        )));
+        {
+            let state = restored.state.blocking_read();
+            let track = state
+                .tracks
+                .iter()
+                .find(|t| t.name == "Drums")
+                .expect("Drums track after response");
+            assert!((track.position.x - 123.0).abs() < f32::EPSILON);
+            assert!((track.position.y - 456.0).abs() < f32::EPSILON);
+        }
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_save_and_load_roundtrip_preserves_plugin_positions() {
+        use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_plugin_pos_session_{unique}"));
+
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state
+                .clap_plugins
+                .push(maolan_engine::clap::ClapPluginInfo {
+                    name: "Test Plugin".to_string(),
+                    path: "/fake/path/test.clap::test.plugin".to_string(),
+                    capabilities: None,
+                });
+        }
+        let track_name = "Synth".to_string();
+        let plugin = PluginGraphPlugin {
+            node: PluginGraphNode::ClapPluginInstance(0),
+            instance_id: 0,
+            format: "CLAP".to_string(),
+            uri: "test.clap".to_string(),
+            plugin_id: "test.plugin".to_string(),
+            name: "Test Plugin".to_string(),
+            main_audio_inputs: 2,
+            main_audio_outputs: 2,
+            audio_inputs: 2,
+            audio_outputs: 2,
+            midi_inputs: 0,
+            midi_outputs: 0,
+            state: None,
+            bypassed: false,
+        };
+        {
+            let mut state = app.state.blocking_write();
+            state
+                .plugin_graphs_by_track
+                .insert(track_name.clone(), (vec![plugin.clone()], vec![]));
+            state
+                .plugin_graph_plugin_positions
+                .entry(track_name.clone())
+                .or_default()
+                .insert(plugin.instance_id, iced::Point::new(242.0, 410.0));
+        }
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("main.json");
+        let session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        let pos = session["graphs"][&track_name]["plugin_positions"]["0"]
+            .as_object()
+            .expect("plugin position");
+        assert!((pos["x"].as_f64().unwrap_or(0.0) - 242.0).abs() < f64::EPSILON);
+        assert!((pos["y"].as_f64().unwrap_or(0.0) - 410.0).abs() < f64::EPSILON);
+
+        let mut restored = Maolan::default();
+        {
+            let mut state = restored.state.blocking_write();
+            state
+                .clap_plugins
+                .push(maolan_engine::clap::ClapPluginInfo {
+                    name: "Test Plugin".to_string(),
+                    path: "/fake/path/test.clap::test.plugin".to_string(),
+                    capabilities: None,
+                });
+        }
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+        {
+            let state = restored.state.blocking_read();
+            let positions = state
+                .plugin_graph_plugin_positions
+                .get(&track_name)
+                .expect("track plugin positions");
+            let loaded = positions
+                .get(&plugin.instance_id)
+                .copied()
+                .expect("plugin position");
+            assert!((loaded.x - 242.0).abs() < f32::EPSILON);
+            assert!((loaded.y - 410.0).abs() < f32::EPSILON);
+        }
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
@@ -8529,6 +8598,16 @@ mod tests {
     }
 
     #[test]
+    fn transport_play_in_session_view_starts_even_when_scene_is_empty() {
+        let mut app = Maolan::default();
+        app.state.blocking_write().view = crate::state::View::Session;
+
+        let _ = app.update(Message::TransportPlay);
+
+        assert!(app.live_session_playing);
+    }
+
+    #[test]
     fn core_toggle_loop_and_punch_require_ranges() {
         let mut app = Maolan::default();
 
@@ -8850,6 +8929,65 @@ mod tests {
     }
 
     #[test]
+    fn live_view_add_track_submit_ensures_session_slots() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::Show(Show::AddTrack));
+        assert!(matches!(app.modal, Some(Show::AddTrack)));
+        app.add_track
+            .update(&Message::AddTrack(crate::message::AddTrack::Name(
+                "Live Track".to_string(),
+            )));
+
+        let _ = app.update(Message::AddTrack(crate::message::AddTrack::Submit));
+
+        assert!(app.modal.is_none());
+        assert!(
+            app.state
+                .blocking_read()
+                .session
+                .slots
+                .contains_key("Live Track"),
+            "expected session slots to be created for the new track"
+        );
+    }
+
+    #[test]
+    fn live_view_add_track_rejects_duplicate_name() {
+        let mut app = Maolan::default();
+        app.state
+            .blocking_write()
+            .tracks
+            .push(crate::state::Track::new(
+                "Live Track".to_string(),
+                0.0,
+                1,
+                1,
+                0,
+                0,
+            ));
+
+        let _ = app.update(Message::Show(Show::AddTrack));
+        app.add_track
+            .update(&Message::AddTrack(crate::message::AddTrack::Name(
+                "Live Track".to_string(),
+            )));
+
+        let _ = app.update(Message::AddTrack(crate::message::AddTrack::Submit));
+
+        assert_eq!(app.state.blocking_read().tracks.len(), 1);
+        assert!(
+            app.state
+                .blocking_read()
+                .message
+                .contains("Track 'Live Track' already exists"),
+            "expected error message, got: {}",
+            app.state.blocking_read().message
+        );
+        assert!(app.modal.is_some());
+    }
+
+    #[test]
     fn set_snap_mode_updates_state() {
         let mut app = Maolan::default();
 
@@ -9094,6 +9232,24 @@ mod tests {
         let mut app = Maolan::default();
         let _ = app.update(Message::GenerateAudioCfgScaleInput("6.1".to_string()));
         assert_eq!(app.generate_audio_cfg_scale_input, "6.1");
+    }
+
+    #[test]
+    fn session_message_switches_view_to_session() {
+        let mut app = Maolan::default();
+        let _ = app.update(Message::Session);
+        assert_eq!(app.state.blocking_read().view, crate::state::View::Session);
+    }
+
+    #[test]
+    fn workspace_message_switches_view_back_from_session() {
+        let mut app = Maolan::default();
+        let _ = app.update(Message::Session);
+        let _ = app.update(Message::Workspace);
+        assert_eq!(
+            app.state.blocking_read().view,
+            crate::state::View::Workspace
+        );
     }
 
     #[test]
@@ -9604,8 +9760,32 @@ mod tests {
             to_port: 0,
             kind: Kind::Audio,
         };
+        let track_to_plugin = ConnectableConnection {
+            from: ConnectableRef::TrackInput,
+            from_port: 0,
+            to: ConnectableRef::ClapPlugin(0),
+            to_port: 0,
+            kind: Kind::Audio,
+        };
+        let plugin_to_track = ConnectableConnection {
+            from: ConnectableRef::ClapPlugin(0),
+            from_port: 0,
+            to: ConnectableRef::TrackOutput,
+            to_port: 0,
+            kind: Kind::Audio,
+        };
+        let plugin_to_plugin = ConnectableConnection {
+            from: ConnectableRef::ClapPlugin(0),
+            from_port: 0,
+            to: ConnectableRef::Vst3Plugin(1),
+            to_port: 0,
+            kind: Kind::Audio,
+        };
 
         assert!(Maolan::is_user_connectable_connection(&child_plugin));
         assert!(!Maolan::is_user_connectable_connection(&track_io));
+        assert!(Maolan::is_user_connectable_connection(&track_to_plugin));
+        assert!(Maolan::is_user_connectable_connection(&plugin_to_track));
+        assert!(Maolan::is_user_connectable_connection(&plugin_to_plugin));
     }
 }

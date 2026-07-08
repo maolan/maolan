@@ -81,23 +81,6 @@ impl fmt::Display for GenerateAudioModelOption {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginFormat {
-    Lv2,
-    Clap,
-    Vst3,
-}
-
-impl fmt::Display for PluginFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Lv2 => write!(f, "LV2"),
-            Self::Clap => write!(f, "CLAP"),
-            Self::Vst3 => write!(f, "VST3"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum SnapMode {
     #[default]
@@ -163,6 +146,22 @@ impl SnapMode {
             ((sample.max(0.0) / interval).floor() * interval).max(0.0)
         } else {
             ((sample.max(0.0) / interval).ceil() * interval).max(0.0)
+        }
+    }
+
+    /// Returns the engine launch quantization that matches this snap mode.
+    ///
+    /// `NoSnap` and `Clips` fall back to `Bar` because the live session grid
+    /// always has a defined cycle length.
+    pub fn launch_quantization(self) -> maolan_engine::message::LaunchQuantization {
+        use maolan_engine::message::LaunchQuantization;
+        match self {
+            SnapMode::NoSnap | SnapMode::Clips | SnapMode::Bar => LaunchQuantization::Bar,
+            SnapMode::Beat => LaunchQuantization::Beat,
+            SnapMode::Eighth => LaunchQuantization::Eighth,
+            SnapMode::Sixteenth => LaunchQuantization::Sixteenth,
+            SnapMode::ThirtySecond => LaunchQuantization::ThirtySecond,
+            SnapMode::SixtyFourth => LaunchQuantization::SixtyFourth,
         }
     }
 }
@@ -276,6 +275,56 @@ impl TrackAutomationTarget {
             Self::Vst3Parameter { .. } => (0.0, 1.0),
             Self::ClapParameter { min, max, .. } => (min as f32, max as f32),
             Self::Lv2Parameter { min, max, .. } => (min, max),
+        }
+    }
+
+    /// Returns true if both targets refer to the same controllable parameter.
+    ///
+    /// Plugin parameter targets are compared by identity (track/plugin/param),
+    /// ignoring their stored min/max ranges. This avoids mismatches caused by
+    /// converting between f32 and f64 precision in different parts of the UI.
+    pub fn same_as(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Volume, Self::Volume) => true,
+            (Self::Balance, Self::Balance) => true,
+            (Self::MidiCc { channel: a, cc: b }, Self::MidiCc { channel: c, cc: d }) => {
+                a == c && b == d
+            }
+            (
+                Self::Vst3Parameter {
+                    instance_id: a,
+                    param_id: b,
+                },
+                Self::Vst3Parameter {
+                    instance_id: c,
+                    param_id: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::ClapParameter {
+                    instance_id: a,
+                    param_id: b,
+                    ..
+                },
+                Self::ClapParameter {
+                    instance_id: c,
+                    param_id: d,
+                    ..
+                },
+            ) => a == c && b == d,
+            (
+                Self::Lv2Parameter {
+                    instance_id: a,
+                    index: b,
+                    ..
+                },
+                Self::Lv2Parameter {
+                    instance_id: c,
+                    index: d,
+                    ..
+                },
+            ) => a == c && b == d,
+            _ => false,
         }
     }
 }
@@ -664,6 +713,12 @@ pub enum Message {
     GlobalMidiLearnClear {
         target: maolan_engine::message::GlobalMidiLearnTarget,
     },
+    SessionMidiLearnArm {
+        target: maolan_engine::message::SessionMidiLearnTarget,
+    },
+    SessionMidiLearnClear {
+        target: maolan_engine::message::SessionMidiLearnTarget,
+    },
     TrackAutomationCycleMode {
         track_name: String,
     },
@@ -709,6 +764,8 @@ pub enum Message {
 
     ConnectionViewSelectTrack(String),
     ConnectionViewSelectConnection(usize),
+    ConnectionViewDeselectAll,
+    ConnectionPositionsChanged,
 
     SaveFolderSelected(Option<PathBuf>),
     OpenFolderSelected(Option<PathBuf>),
@@ -789,6 +846,8 @@ pub enum Message {
         hovered: bool,
     },
     TracksResizeStart,
+    LiveViewTracksResizeStart,
+    LiveViewLeftSplitResizeStart,
     MixerResizeStart,
     MixerLevelEditStart(String),
     MixerLevelEditInput(String),
@@ -854,7 +913,10 @@ pub enum Message {
     PianoScrollYChanged(f32),
     PianoSysExScrollYChanged(f32),
     TracksResizeHover(bool),
+    LiveViewTracksResizeHover(bool),
+    LiveViewLeftSplitResizeHover(bool),
     MixerResizeHover(bool),
+    LiveViewLeftTabSelect(crate::state::LiveViewLeftTab),
 
     OpenFileImporter,
     DeleteUnusedSessionMediaFiles,
@@ -965,6 +1027,7 @@ pub enum Message {
     Workspace,
     Connections,
     X32,
+    Session,
     ToggleMixerVisibility,
     ToggleTracksVisibility,
     ToggleEditorVisibility,
@@ -977,6 +1040,9 @@ pub enum Message {
     ModulatorSelect(Option<usize>),
     ModulatorToggleTarget {
         id: usize,
+        target: crate::state::ModulatorTarget,
+    },
+    ModulatorToggleSelectedTarget {
         target: crate::state::ModulatorTarget,
     },
     ModulatorUpdate {
@@ -1002,6 +1068,10 @@ pub enum Message {
     LogViewAction(text_editor::Action),
     OpenTrackPlugins(String),
     OpenFolderConnections(String),
+    SessionViewConnectionsOpen(String),
+    SessionViewConnectionsClose,
+    EditorConnectionsOpen(String),
+    EditorConnectionsClose,
     OpenHwPorts {
         input: bool,
     },
@@ -1169,11 +1239,7 @@ pub enum Message {
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,
     #[cfg(all(unix, not(target_os = "macos")))]
-    FilterLv2Plugins(String),
-    #[cfg(all(unix, not(target_os = "macos")))]
     SelectLv2Plugin(String),
-    #[cfg(all(unix, not(target_os = "macos")))]
-    LoadSelectedLv2Plugins,
     #[cfg(all(unix, not(target_os = "macos")))]
     OpenLv2PluginUi {
         track_name: String,
@@ -1181,14 +1247,32 @@ pub enum Message {
         instance_id: usize,
     },
     RefreshVst3Plugins,
-    FilterVst3Plugins(String),
     SelectVst3Plugin(String),
-    LoadSelectedVst3Plugins,
     RefreshClapPlugins,
-    FilterClapPlugin(String),
     SelectClapPlugin(String),
-    LoadSelectedClapPlugins,
-    PluginFormatSelected(PluginFormat),
+    FilterPluginList(String),
+    LoadSelectedPlugins,
+    PluginGraphControllerMenuOpen {
+        track_name: String,
+        instance_id: usize,
+        position: iced::Point,
+    },
+    PluginGraphControllerMenuClose,
+    PluginGraphControllerMenuHover(Option<usize>),
+    PluginGraphShowController {
+        track_name: String,
+        instance_id: usize,
+        param_id: u32,
+        name: String,
+        value: f32,
+        min: f32,
+        max: f32,
+    },
+    PluginGraphHideController {
+        track_name: String,
+        instance_id: usize,
+        param_id: u32,
+    },
     RequestBatch(Vec<maolan_engine::message::Action>),
     ShowClapPluginUi {
         track_name: String,
@@ -1239,6 +1323,11 @@ pub enum Message {
         clip_idx: usize,
         kind: Kind,
         muted: bool,
+    },
+    ClipAssignToSessionSlot {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
     },
     GroupSelectedClips,
     UngroupClip {
@@ -1313,6 +1402,126 @@ pub enum Message {
         color: Option<iced::Color>,
     },
     TrackColorClear(String),
+
+    SessionSlotPressed {
+        track_name: String,
+        scene_index: usize,
+    },
+    SessionSlotReleased {
+        track_name: String,
+        scene_index: usize,
+    },
+    SessionSlotSetPlayStopIcon {
+        track_name: String,
+        scene_index: usize,
+        icon: Option<bool>,
+    },
+    SessionSlotRightClick {
+        track_name: String,
+        scene_index: usize,
+        point: Point,
+    },
+    SessionSlotContextMenuHover {
+        track_name: String,
+        scene_index: usize,
+        position: Point,
+    },
+    SessionScenePressed(usize),
+    SessionSceneReleased(usize),
+    SessionSceneRightClick {
+        scene_index: usize,
+        point: Point,
+    },
+    SessionSceneContextMenuHover {
+        scene_index: usize,
+        position: Point,
+    },
+    SessionSceneContextMenuHide,
+    SessionSceneRenameShow(usize),
+    SessionSceneRenameInput(String),
+    SessionSceneRenameConfirm,
+    SessionSceneRenameCancel,
+    SessionSceneRemove(usize),
+    SessionSceneSetColor {
+        scene_index: usize,
+        color: iced::Color,
+    },
+    SessionSceneClearColor(usize),
+    SessionSceneSetTempo {
+        scene_index: usize,
+        bpm: Option<f32>,
+    },
+    SessionSceneSetLaunchQuantization {
+        scene_index: usize,
+        quantization: crate::state::LaunchQuantization,
+    },
+    SessionSceneAdd,
+    SessionStopTrackPressed(String),
+    SessionStopAllPressed,
+    SessionSlotDrag {
+        from: (String, usize),
+        to: (String, usize),
+    },
+    SessionSlotDragStart {
+        track_name: String,
+        scene_index: usize,
+        position: Point,
+    },
+    SessionClipDragStart {
+        source_track_name: String,
+        clip_id: String,
+        kind: maolan_engine::kind::Kind,
+    },
+    SessionClipDropped {
+        point: Point,
+    },
+    SessionClipHandleZones(Vec<(Id, Rectangle)>),
+    SessionSlotDropped {
+        track_name: String,
+        scene_index: usize,
+        point: Point,
+        rect: Rectangle,
+    },
+    SessionSlotHandleZones(Vec<(Id, Rectangle)>),
+    SessionSlotDoubleClick {
+        track_name: String,
+        scene_index: usize,
+    },
+    SessionSlotClearRef {
+        track_name: String,
+        scene_index: usize,
+    },
+    SessionSlotDuplicate {
+        track_name: String,
+        scene_index: usize,
+    },
+    SessionSlotCopyToArrangement {
+        track_name: String,
+        scene_index: usize,
+    },
+    SessionSlotRecord {
+        track_name: String,
+        scene_index: usize,
+    },
+    SessionViewScrollChanged {
+        x: f32,
+        y: f32,
+    },
+    SessionSlotSelect {
+        track_name: String,
+        scene_index: usize,
+        additive: bool,
+    },
+    SessionSceneSelect(usize),
+    SessionNavMove {
+        delta_x: i32,
+        delta_y: i32,
+    },
+    SessionNavLaunch,
+    SessionNavStopAll,
+    SessionImportArrangement,
+    SessionRecordToArrangement,
+    WorkspaceSessionSlotDropped,
 }
 
 #[derive(Debug, Clone)]
@@ -1433,13 +1642,6 @@ mod tests {
     fn burn_backend_option_as_ipc_str() {
         assert_eq!(BurnBackendOption::Cpu.as_ipc_str(), "cpu");
         assert_eq!(BurnBackendOption::Vulkan.as_ipc_str(), "vulkan");
-    }
-
-    #[test]
-    fn plugin_format_display() {
-        assert_eq!(format!("{}", PluginFormat::Lv2), "LV2");
-        assert_eq!(format!("{}", PluginFormat::Clap), "CLAP");
-        assert_eq!(format!("{}", PluginFormat::Vst3), "VST3");
     }
 
     #[test]

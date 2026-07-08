@@ -91,16 +91,22 @@ impl Graph {
         idx: usize,
         bounds: Rectangle,
     ) -> Point {
+        let Some(track_name) = data.plugin_graph_track.as_ref() else {
+            return Self::fallback_plugin_pos(plugin, idx, bounds);
+        };
         data.plugin_graph_plugin_positions
-            .get(&plugin.instance_id)
+            .get(track_name)
+            .and_then(|positions| positions.get(&plugin.instance_id))
             .copied()
-            .unwrap_or_else(|| {
-                let plugin_h = Self::plugin_height(plugin);
-                let start_x = TRACK_IO_MARGIN_X + TRACK_IO_W + 60.0;
-                let max_x = (bounds.width - TRACK_IO_MARGIN_X - TRACK_IO_W - PLUGIN_W).max(start_x);
-                let x = (start_x + idx as f32 * (PLUGIN_W + 24.0)).min(max_x);
-                Point::new(x, bounds.height / 2.0 - plugin_h / 2.0)
-            })
+            .unwrap_or_else(|| Self::fallback_plugin_pos(plugin, idx, bounds))
+    }
+
+    fn fallback_plugin_pos(plugin: &PluginGraphPlugin, idx: usize, bounds: Rectangle) -> Point {
+        let plugin_h = Self::plugin_height(plugin);
+        let start_x = TRACK_IO_MARGIN_X + TRACK_IO_W + 60.0;
+        let max_x = (bounds.width - TRACK_IO_MARGIN_X - TRACK_IO_W - PLUGIN_W).max(start_x);
+        let x = (start_x + idx as f32 * (PLUGIN_W + 24.0)).min(max_x);
+        Point::new(x, bounds.height / 2.0 - plugin_h / 2.0)
     }
 
     fn track_input_rect(bounds: Rectangle) -> Rectangle {
@@ -604,6 +610,7 @@ impl canvas::Program<Message> for Graph {
                             instance_id,
                             offset_x: cursor_position.x - pos.x,
                             offset_y: cursor_position.y - pos.y,
+                            start_position: pos,
                         });
                         return Some(Action::capture());
                     }
@@ -655,13 +662,17 @@ impl canvas::Program<Message> for Graph {
                         redraw = true;
                     }
                     if let Some(moving) = data.plugin_graph_moving_plugin.clone() {
-                        data.plugin_graph_plugin_positions.insert(
-                            moving.instance_id,
-                            Point::new(
-                                cursor_position.x - moving.offset_x,
-                                cursor_position.y - moving.offset_y,
-                            ),
-                        );
+                        let track_name = data.plugin_graph_track.clone().unwrap_or_default();
+                        data.plugin_graph_plugin_positions
+                            .entry(track_name)
+                            .or_default()
+                            .insert(
+                                moving.instance_id,
+                                Point::new(
+                                    cursor_position.x - moving.offset_x,
+                                    cursor_position.y - moving.offset_y,
+                                ),
+                            );
                         redraw = true;
                     }
                     if redraw {
@@ -669,7 +680,21 @@ impl canvas::Program<Message> for Graph {
                     }
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    data.plugin_graph_moving_plugin = None;
+                    let mut positions_changed = false;
+
+                    if let Some(mp) = data.plugin_graph_moving_plugin.take() {
+                        let track_name = data.plugin_graph_track.clone().unwrap_or_default();
+                        let current_pos = data
+                            .plugin_graph_plugin_positions
+                            .get(&track_name)
+                            .and_then(|positions| positions.get(&mp.instance_id))
+                            .copied()
+                            .unwrap_or(mp.start_position);
+                        if current_pos != mp.start_position {
+                            positions_changed = true;
+                        }
+                    }
+
                     if let Some(connecting) = data.plugin_graph_connecting.take() {
                         let opposite_ports: Vec<PortHit> = audio_ports
                             .iter()
@@ -827,6 +852,9 @@ impl canvas::Program<Message> for Graph {
                             }
                         }
                         return Some(Action::request_redraw());
+                    }
+                    if positions_changed {
+                        return Some(Action::publish(Message::ConnectionPositionsChanged));
                     }
                 }
                 _ => {}

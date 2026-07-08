@@ -16,6 +16,7 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, BufWriter},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 impl Maolan {
@@ -171,6 +172,71 @@ impl Maolan {
         }
     }
 
+    fn visible_controllers_to_json(
+        visible_controllers: &std::collections::HashMap<
+            String,
+            std::collections::HashMap<usize, Vec<crate::state::ShownPluginController>>,
+        >,
+        track_name: &str,
+        id_to_index: &std::collections::HashMap<usize, usize>,
+    ) -> Value {
+        let mut result = serde_json::Map::new();
+        if let Some(controllers) = visible_controllers.get(track_name) {
+            for (instance_id, controllers) in controllers {
+                if let Some(&idx) = id_to_index.get(instance_id) {
+                    let arr: Vec<Value> = controllers
+                        .iter()
+                        .map(|c| {
+                            json!({
+                                "param_id": c.param_id,
+                                "name": c.name,
+                                "value": c.value,
+                                "min": c.min,
+                                "max": c.max,
+                            })
+                        })
+                        .collect();
+                    if !arr.is_empty() {
+                        result.insert(idx.to_string(), Value::Array(arr));
+                    }
+                }
+            }
+        }
+        Value::Object(result)
+    }
+
+    fn visible_controllers_from_json(
+        value: &Value,
+        index_to_id: &std::collections::HashMap<usize, usize>,
+    ) -> std::collections::HashMap<usize, Vec<crate::state::ShownPluginController>> {
+        let mut result = std::collections::HashMap::new();
+        if let Some(obj) = value.as_object() {
+            for (idx_str, controllers_v) in obj {
+                if let (Some(idx), Some(controllers_arr)) =
+                    (idx_str.parse::<usize>().ok(), controllers_v.as_array())
+                    && let Some(&instance_id) = index_to_id.get(&idx)
+                {
+                    let controllers: Vec<crate::state::ShownPluginController> = controllers_arr
+                        .iter()
+                        .filter_map(|c| {
+                            Some(crate::state::ShownPluginController {
+                                param_id: c.get("param_id").and_then(Value::as_u64)? as u32,
+                                name: c.get("name").and_then(Value::as_str)?.to_string(),
+                                value: c.get("value").and_then(Value::as_f64)? as f32,
+                                min: c.get("min").and_then(Value::as_f64)? as f32,
+                                max: c.get("max").and_then(Value::as_f64)? as f32,
+                            })
+                        })
+                        .collect();
+                    if !controllers.is_empty() {
+                        result.insert(instance_id, controllers);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Returns the default child->folder output connections that are currently
     /// missing. These are persisted so that disabling a child's feed to the
     /// folder output survives a session reload.
@@ -308,6 +374,11 @@ impl Maolan {
             Length::Fixed(v) => v,
             _ => 200.0,
         };
+        let live_view_tracks_width = match state.live_view_tracks_width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
+        };
+        let live_view_left_split = state.live_view_left_split;
         let mixer_height = match state.mixer_height {
             Length::Fixed(v) => v,
             _ => 300.0,
@@ -391,6 +462,26 @@ impl Maolan {
                             })
                     })
                     .unwrap_or_default();
+                let plugin_positions: serde_json::Map<String, Value> = state
+                    .plugin_graph_plugin_positions
+                    .get(track_name)
+                    .map(|positions| {
+                        plugins
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(idx, p)| {
+                                positions
+                                    .get(&p.instance_id)
+                                    .map(|pos| (idx.to_string(), json!({ "x": pos.x, "y": pos.y })))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let visible_controllers = Self::visible_controllers_to_json(
+                    &state.plugin_graph_visible_controllers,
+                    track_name,
+                    &id_to_index,
+                );
                 graphs.insert(
                     track_name.clone(),
                     json!({
@@ -398,6 +489,8 @@ impl Maolan {
                         "connections": conns_json,
                         "connectable_connections": connectable_conns_json,
                         "disabled_default_connections": disabled_defaults_json,
+                        "plugin_positions": plugin_positions,
+                        "visible_controllers": visible_controllers,
                     }),
                 );
             }
@@ -449,6 +542,8 @@ impl Maolan {
             },
             "ui": {
                 "tracks_width": tracks_width,
+                "live_view_tracks_width": live_view_tracks_width,
+                "live_view_left_split": live_view_left_split,
                 "mixer_height": mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
                 "snap_mode": self.snap_mode,
@@ -481,10 +576,52 @@ impl Maolan {
                 "play_pause": state.global_midi_learn_play_pause,
                 "stop": state.global_midi_learn_stop,
                 "record_toggle": state.global_midi_learn_record_toggle,
-            }
+            },
+            "midi_learn_session": Self::session_midi_learn_json(&state)
         });
         serde_json::to_writer_pretty(file, &result)?;
         Ok(())
+    }
+
+    fn session_midi_learn_json(
+        state: &crate::state::StateData,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        use serde_json::{Map, Value};
+        let mut slots = Map::new();
+        for ((track_name, scene_index), binding) in &state.session_midi_learn_slots {
+            let entry = slots
+                .entry(track_name.clone())
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let Value::Object(map) = entry {
+                map.insert(
+                    scene_index.to_string(),
+                    serde_json::to_value(binding).unwrap_or(Value::Null),
+                );
+            }
+        }
+        let mut scenes = Map::new();
+        for (scene_index, binding) in &state.session_midi_learn_scenes {
+            scenes.insert(
+                scene_index.to_string(),
+                serde_json::to_value(binding).unwrap_or(Value::Null),
+            );
+        }
+        let mut stop_track = Map::new();
+        for (track_name, binding) in &state.session_midi_learn_stop_track {
+            stop_track.insert(
+                track_name.clone(),
+                serde_json::to_value(binding).unwrap_or(Value::Null),
+            );
+        }
+        let mut map = Map::new();
+        map.insert("slots".to_string(), Value::Object(slots));
+        map.insert("scenes".to_string(), Value::Object(scenes));
+        map.insert("stop_track".to_string(), Value::Object(stop_track));
+        map.insert(
+            "stop_all".to_string(),
+            serde_json::to_value(&state.session_midi_learn_stop_all).unwrap_or(Value::Null),
+        );
+        map
     }
 
     pub(super) fn refresh_graph_then_save_track_template(
@@ -509,6 +646,7 @@ impl Maolan {
                 vec![
                     self.send(Action::TrackGetPluginGraph {
                         track_name: name.clone(),
+                        include_state: true,
                     }),
                     self.send(Action::TrackSnapshotAllClapStates { track_name: name }),
                 ]
@@ -583,10 +721,7 @@ impl Maolan {
         };
         if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
             let mut runtime_nodes = Vec::new();
-            #[cfg(all(unix, not(target_os = "macos")))]
-            let mut next_lv2_instance_id = 0usize;
-            let mut next_vst3_instance_id = 0usize;
-            let mut next_clap_instance_id = 0usize;
+            let mut next_instance_id = 0usize;
 
             if let Some(plugins) = graph.get("plugins").and_then(|p| p.as_array()) {
                 for plugin in plugins {
@@ -594,8 +729,8 @@ impl Maolan {
                         match plugin.get("format").and_then(Value::as_str) {
                             #[cfg(all(unix, not(target_os = "macos")))]
                             Some("LV2") => {
-                                let instance_id = next_lv2_instance_id;
-                                next_lv2_instance_id += 1;
+                                let instance_id = next_instance_id;
+                                next_instance_id += 1;
                                 runtime_nodes.push(
                                     maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
                                         instance_id,
@@ -617,8 +752,8 @@ impl Maolan {
                                 }
                             }
                             Some("VST3") => {
-                                let instance_id = next_vst3_instance_id;
-                                next_vst3_instance_id += 1;
+                                let instance_id = next_instance_id;
+                                next_instance_id += 1;
                                 runtime_nodes.push(
                                     maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
                                         instance_id,
@@ -635,8 +770,8 @@ impl Maolan {
                                 }
                             }
                             Some("CLAP") => {
-                                let instance_id = next_clap_instance_id;
-                                next_clap_instance_id += 1;
+                                let instance_id = next_instance_id;
+                                next_instance_id += 1;
                                 runtime_nodes.push(
                                     maolan_engine::message::PluginGraphNode::ClapPluginInstance(
                                         instance_id,
@@ -704,6 +839,66 @@ impl Maolan {
                             to_port,
                         },
                     });
+                }
+            }
+
+            if let Some(positions) = graph.get("plugin_positions").and_then(Value::as_object) {
+                let index_to_id: std::collections::HashMap<usize, usize> = runtime_nodes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, node)| match node {
+                        maolan_engine::message::PluginGraphNode::ClapPluginInstance(id)
+                        | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
+                            Some((idx, *id))
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
+                            Some((idx, *id))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for (idx_str, pos_v) in positions {
+                    if let (Some(idx), Some(x), Some(y)) = (
+                        idx_str.parse::<usize>().ok(),
+                        pos_v["x"].as_f64(),
+                        pos_v["y"].as_f64(),
+                    ) && let Some(&instance_id) = index_to_id.get(&idx)
+                    {
+                        self.state
+                            .blocking_write()
+                            .plugin_graph_plugin_positions
+                            .entry(track_name.to_string())
+                            .or_default()
+                            .insert(instance_id, Point::new(x as f32, y as f32));
+                    }
+                }
+            }
+
+            if let Some(controllers_v) = graph.get("visible_controllers") {
+                let index_to_id: std::collections::HashMap<usize, usize> = runtime_nodes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, node)| match node {
+                        maolan_engine::message::PluginGraphNode::ClapPluginInstance(id)
+                        | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
+                            Some((idx, *id))
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
+                            Some((idx, *id))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let controllers = Self::visible_controllers_from_json(controllers_v, &index_to_id);
+                if !controllers.is_empty() {
+                    self.state
+                        .blocking_write()
+                        .plugin_graph_visible_controllers
+                        .entry(track_name.to_string())
+                        .or_default()
+                        .extend(controllers);
                 }
             }
 
@@ -1209,11 +1404,17 @@ impl Maolan {
                             })
                     })
                     .unwrap_or_default();
+                let visible_controllers = Self::visible_controllers_to_json(
+                    &state.plugin_graph_visible_controllers,
+                    track_name,
+                    &id_to_index,
+                );
                 json!({
                     "plugins": plugins_json,
                     "connections": conns_json,
                     "connectable_connections": connectable_conns_json,
                     "disabled_default_connections": disabled_defaults_json,
+                    "visible_controllers": visible_controllers,
                 })
             } else {
                 Value::Null
@@ -1336,12 +1537,28 @@ impl Maolan {
         fs::create_dir_all(session_root.join("midi"))?;
         fs::create_dir_all(session_root.join("peaks"))?;
         fs::create_dir_all(session_root.join("pitch"))?;
+        {
+            let mut state = self.state.blocking_write();
+            for track in &mut state.tracks {
+                for clip in &mut track.audio.clips {
+                    clip.ensure_id();
+                }
+                for clip in &mut track.midi.clips {
+                    clip.ensure_id();
+                }
+            }
+        }
         let file = File::create(&p)?;
         let state = self.state.blocking_read();
         let tracks_width = match state.tracks_width {
             Length::Fixed(v) => v,
             _ => 200.0,
         };
+        let live_view_tracks_width = match state.live_view_tracks_width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
+        };
+        let live_view_left_split = state.live_view_left_split;
         let mixer_height = match state.mixer_height {
             Length::Fixed(v) => v,
             _ => 300.0,
@@ -1487,6 +1704,26 @@ impl Maolan {
                             })
                     })
                     .unwrap_or_default();
+                let plugin_positions: serde_json::Map<String, Value> = state
+                    .plugin_graph_plugin_positions
+                    .get(track_name)
+                    .map(|positions| {
+                        plugins
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(idx, p)| {
+                                positions
+                                    .get(&p.instance_id)
+                                    .map(|pos| (idx.to_string(), json!({ "x": pos.x, "y": pos.y })))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let visible_controllers = Self::visible_controllers_to_json(
+                    &state.plugin_graph_visible_controllers,
+                    track_name,
+                    &id_to_index,
+                );
                 graphs.insert(
                     track_name.clone(),
                     json!({
@@ -1494,6 +1731,8 @@ impl Maolan {
                         "connections": conns_json,
                         "connectable_connections": connectable_conns_json,
                         "disabled_default_connections": disabled_defaults_json,
+                        "plugin_positions": plugin_positions,
+                        "visible_controllers": visible_controllers,
                     }),
                 );
             }
@@ -1543,6 +1782,8 @@ impl Maolan {
             },
             "ui": {
                 "tracks_width": tracks_width,
+                "live_view_tracks_width": live_view_tracks_width,
+                "live_view_left_split": live_view_left_split,
                 "mixer_height": mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
                 "snap_mode": self.snap_mode,
@@ -1574,9 +1815,23 @@ impl Maolan {
                 "play_pause": state.global_midi_learn_play_pause,
                 "stop": state.global_midi_learn_stop,
                 "record_toggle": state.global_midi_learn_record_toggle,
-            }
+            },
+            "midi_learn_session": Self::session_midi_learn_json(&state)
         });
         serde_json::to_writer_pretty(file, &result)?;
+        let session_json_path = session_root.join("session.json");
+        let session_file = File::create(&session_json_path)?;
+        let session_matrix = {
+            let state = self.state.blocking_read();
+            state.session.clone()
+        };
+        serde_json::to_writer_pretty(
+            session_file,
+            &json!({
+                "version": 1,
+                "matrix": session_matrix,
+            }),
+        )?;
         let commit_dir = session_root
             .join(".maolan_commits")
             .join(&self.session_branch);
@@ -1588,6 +1843,7 @@ impl Maolan {
     }
 
     pub(super) fn load(&mut self, path: String) -> std::io::Result<Task<Message>> {
+        let load_start = Instant::now();
         let mut restore_actions: Vec<Action> = vec![
             Action::BeginSessionRestore,
             Action::SetSessionPath(path.clone()),
@@ -1651,6 +1907,47 @@ impl Maolan {
         let file = File::open(&p)?;
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
+        {
+            let session_json_path = session_root.join("session.json");
+            let mut state = self.state.blocking_write();
+            state.session = if session_json_path.exists() {
+                match File::open(&session_json_path) {
+                    Ok(file) => {
+                        let reader = BufReader::new(file);
+                        match serde_json::from_reader::<_, serde_json::Value>(reader) {
+                            Ok(value) => value
+                                .get("matrix")
+                                .and_then(|matrix| {
+                                    serde_json::from_value::<crate::state::SessionMatrix>(
+                                        matrix.clone(),
+                                    )
+                                    .ok()
+                                })
+                                .unwrap_or_default(),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to parse session.json at {}: {}",
+                                    session_json_path.display(),
+                                    e
+                                );
+                                crate::state::SessionMatrix::default()
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to open session.json at {}: {}",
+                            session_json_path.display(),
+                            e
+                        );
+                        crate::state::SessionMatrix::default()
+                    }
+                }
+            } else {
+                crate::state::SessionMatrix::default()
+            };
+            state.session.backfill_play_stop_icons();
+        }
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
             let (lv2_plugins, vst3_plugins, clap_plugins) = {
@@ -1703,6 +2000,15 @@ impl Maolan {
                         .connectable_connections_by_track
                         .insert(track_name.clone(), conns);
                 }
+                let controllers = Self::visible_controllers_from_json(
+                    &graph["visible_controllers"],
+                    &index_to_id,
+                );
+                if !controllers.is_empty() {
+                    connectable
+                        .plugin_graph_visible_controllers
+                        .insert(track_name.clone(), controllers);
+                }
             }
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
@@ -1751,6 +2057,15 @@ impl Maolan {
                         .connectable_connections_by_track
                         .insert(track_name.clone(), conns);
                 }
+                let controllers = Self::visible_controllers_from_json(
+                    &graph["visible_controllers"],
+                    &index_to_id,
+                );
+                if !controllers.is_empty() {
+                    connectable
+                        .plugin_graph_visible_controllers
+                        .insert(track_name.clone(), controllers);
+                }
             }
         }
         if let Some(global_ml) = session.get("midi_learn_global").and_then(Value::as_object) {
@@ -1787,6 +2102,71 @@ impl Maolan {
                 restore_actions.push(Action::SetGlobalMidiLearnBinding {
                     target: GlobalMidiLearnTarget::RecordToggle,
                     binding,
+                });
+            }
+        }
+        if let Some(session_ml) = session.get("midi_learn_session").and_then(Value::as_object) {
+            if let Some(slots) = session_ml.get("slots").and_then(Value::as_object) {
+                for (track_name, scenes) in slots {
+                    if let Some(scenes) = scenes.as_object() {
+                        for (scene_index, binding) in scenes {
+                            if let Ok(scene_index) = scene_index.parse::<usize>()
+                                && let Ok(Some(binding)) =
+                                    serde_json::from_value::<
+                                        Option<maolan_engine::message::MidiLearnBinding>,
+                                    >(binding.clone())
+                            {
+                                restore_actions.push(Action::SetSessionMidiLearnBinding {
+                                    target: maolan_engine::message::SessionMidiLearnTarget::Slot {
+                                        track_name: track_name.clone(),
+                                        scene_index,
+                                    },
+                                    binding: Some(binding),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(scenes) = session_ml.get("scenes").and_then(Value::as_object) {
+                for (scene_index, binding) in scenes {
+                    if let Ok(scene_index) = scene_index.parse::<usize>()
+                        && let Ok(Some(binding)) = serde_json::from_value::<
+                            Option<maolan_engine::message::MidiLearnBinding>,
+                        >(binding.clone())
+                    {
+                        restore_actions.push(Action::SetSessionMidiLearnBinding {
+                            target: maolan_engine::message::SessionMidiLearnTarget::Scene(
+                                scene_index,
+                            ),
+                            binding: Some(binding),
+                        });
+                    }
+                }
+            }
+            if let Some(stop_track) = session_ml.get("stop_track").and_then(Value::as_object) {
+                for (track_name, binding) in stop_track {
+                    if let Ok(Some(binding)) = serde_json::from_value::<
+                        Option<maolan_engine::message::MidiLearnBinding>,
+                    >(binding.clone())
+                    {
+                        restore_actions.push(Action::SetSessionMidiLearnBinding {
+                            target: maolan_engine::message::SessionMidiLearnTarget::StopTrack(
+                                track_name.clone(),
+                            ),
+                            binding: Some(binding),
+                        });
+                    }
+                }
+            }
+            if let Some(binding) = session_ml.get("stop_all").cloned()
+                && let Ok(Some(binding)) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(binding)
+            {
+                restore_actions.push(Action::SetSessionMidiLearnBinding {
+                    target: maolan_engine::message::SessionMidiLearnTarget::StopAll,
+                    binding: Some(binding),
                 });
             }
         }
@@ -2146,6 +2526,12 @@ impl Maolan {
                     "No 'ui.tracks_width' in session",
                 )
             })?;
+            let live_view_tracks_width = session["ui"]["live_view_tracks_width"]
+                .as_f64()
+                .unwrap_or(tracks_width);
+            let live_view_left_split = session["ui"]["live_view_left_split"]
+                .as_f64()
+                .unwrap_or(0.5) as f32;
             let mixer_height = session["ui"]["mixer_height"].as_f64().ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -2153,6 +2539,8 @@ impl Maolan {
                 )
             })?;
             state.tracks_width = Length::Fixed(tracks_width as f32);
+            state.live_view_tracks_width = Length::Fixed(live_view_tracks_width as f32);
+            state.live_view_left_split = live_view_left_split;
             state.mixer_height = Length::Fixed(mixer_height as f32);
         }
         self.zoom_visible_bars = session["ui"]["zoom_visible_bars"]
@@ -2628,9 +3016,10 @@ impl Maolan {
                             .get("grouped_clips")
                             .and_then(serde_json::Value::as_array)
                             .is_some_and(|children| !children.is_empty())
-                            && let Ok(grouped_clip) =
+                            && let Ok(mut grouped_clip) =
                                 serde_json::from_value::<crate::state::AudioClip>(clip.clone())
                         {
+                            grouped_clip.ensure_id();
                             restore_actions.push(Action::AddGroupedClip {
                                 track_name: name.clone(),
                                 kind: Kind::Audio,
@@ -2640,8 +3029,13 @@ impl Maolan {
                             continue;
                         }
 
+                        let clip_id = clip["id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(crate::state::generate_clip_id);
                         restore_actions.push(Action::AddClip {
-                            clip_id: maolan_engine::message::generate_clip_id(),
+                            clip_id,
                             name: clip_name,
                             track_name: name.clone(),
                             start,
@@ -2760,9 +3154,10 @@ impl Maolan {
                             .get("grouped_clips")
                             .and_then(serde_json::Value::as_array)
                             .is_some_and(|children| !children.is_empty())
-                            && let Ok(grouped_clip) =
+                            && let Ok(mut grouped_clip) =
                                 serde_json::from_value::<crate::state::MIDIClip>(clip.clone())
                         {
+                            grouped_clip.ensure_id();
                             restore_actions.push(Action::AddGroupedClip {
                                 track_name: name.clone(),
                                 kind: Kind::MIDI,
@@ -2772,8 +3167,13 @@ impl Maolan {
                             continue;
                         }
 
+                        let clip_id = clip["id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(crate::state::generate_clip_id);
                         restore_actions.push(Action::AddClip {
-                            clip_id: maolan_engine::message::generate_clip_id(),
+                            clip_id,
                             name: clip_name,
                             track_name: name.clone(),
                             start,
@@ -2838,10 +3238,7 @@ impl Maolan {
                         continue;
                     };
                     let mut runtime_nodes = Vec::new();
-                    #[cfg(all(unix, not(target_os = "macos")))]
-                    let mut next_lv2_instance_id = 0usize;
-                    let mut next_vst3_instance_id = 0usize;
-                    let mut next_clap_instance_id = 0usize;
+                    let mut next_instance_id = 0usize;
                     for p in plugins_arr {
                         let Some(uri) = p["uri"].as_str() else {
                             continue;
@@ -2850,8 +3247,8 @@ impl Maolan {
                             Some("LV2") => {
                                 #[cfg(all(unix, not(target_os = "macos")))]
                                 {
-                                    let instance_id = next_lv2_instance_id;
-                                    next_lv2_instance_id += 1;
+                                    let instance_id = next_instance_id;
+                                    next_instance_id += 1;
                                     runtime_nodes.push(
                                         maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
                                             instance_id,
@@ -2872,8 +3269,8 @@ impl Maolan {
                                 }
                             }
                             Some("VST3") => {
-                                let instance_id = next_vst3_instance_id;
-                                next_vst3_instance_id += 1;
+                                let instance_id = next_instance_id;
+                                next_instance_id += 1;
                                 runtime_nodes.push(
                                     maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
                                         instance_id,
@@ -2895,8 +3292,8 @@ impl Maolan {
                                 }
                             }
                             Some("CLAP") => {
-                                let instance_id = next_clap_instance_id;
-                                next_clap_instance_id += 1;
+                                let instance_id = next_instance_id;
+                                next_instance_id += 1;
                                 runtime_nodes.push(
                                     maolan_engine::message::PluginGraphNode::ClapPluginInstance(
                                         instance_id,
@@ -2975,6 +3372,42 @@ impl Maolan {
                         }
                     }
 
+                    if let Some(positions) = graph_v["plugin_positions"].as_object() {
+                        let index_to_id: std::collections::HashMap<usize, usize> =
+                            runtime_nodes
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, node)| match node {
+                                    maolan_engine::message::PluginGraphNode::ClapPluginInstance(
+                                        id,
+                                    )
+                                    | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
+                                        id,
+                                    ) => Some((idx, *id)),
+                                    #[cfg(all(unix, not(target_os = "macos")))]
+                                    maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
+                                        id,
+                                    ) => Some((idx, *id)),
+                                    _ => None,
+                                })
+                                .collect();
+                        for (idx_str, pos_v) in positions {
+                            if let (Some(idx), Some(x), Some(y)) = (
+                                idx_str.parse::<usize>().ok(),
+                                pos_v["x"].as_f64(),
+                                pos_v["y"].as_f64(),
+                            ) && let Some(&instance_id) = index_to_id.get(&idx)
+                            {
+                                self.state
+                                    .blocking_write()
+                                    .plugin_graph_plugin_positions
+                                    .entry(track_name.clone())
+                                    .or_default()
+                                    .insert(instance_id, Point::new(x as f32, y as f32));
+                            }
+                        }
+                    }
+
                     if let Some(connectable_arr) = graph_v["connectable_connections"].as_array() {
                         let index_to_id: std::collections::HashMap<usize, usize> =
                             runtime_nodes
@@ -3025,6 +3458,35 @@ impl Maolan {
                 }
             }
         }
+        {
+            let mut state = self.state.blocking_write();
+            state.selected_slots.clear();
+            state.selected_scene = None;
+            state.slot_runtimes.clear();
+            let track_names: Vec<String> = state.tracks.iter().map(|t| t.name.clone()).collect();
+            for track_name in track_names {
+                state.session.ensure_track_slots(&track_name);
+            }
+        }
+        {
+            let state = self.state.blocking_read();
+            for (track_name, slots) in &state.session.slots {
+                for (scene_index, slot) in slots.iter().enumerate() {
+                    if let Some(clip_ref) = slot.clip.as_ref() {
+                        restore_actions.push(Action::TrackSetSessionSlot {
+                            track_name: track_name.clone(),
+                            scene_index,
+                            clip_id: Some(clip_ref.clip_id.clone()),
+                        });
+                        restore_actions.push(Action::TrackSetSessionSlotPlayEnabled {
+                            track_name: track_name.clone(),
+                            scene_index,
+                            enabled: slot.is_play_enabled(),
+                        });
+                    }
+                }
+            }
+        }
         if warnings.is_empty() {
             self.state.blocking_write().message = "Session loaded".to_string();
         } else {
@@ -3049,6 +3511,12 @@ impl Maolan {
             self.modulators.iter().map(Into::into).collect();
         restore_actions.push(Action::SetModulators(engine_modulators));
         restore_actions.push(Action::EndSessionRestore);
+        tracing::info!(
+            path = %path,
+            elapsed_ms = load_start.elapsed().as_millis(),
+            actions = restore_actions.len(),
+            "session load prepared restore actions"
+        );
         Ok(Self::restore_actions_task(restore_actions))
     }
 
@@ -3083,6 +3551,7 @@ impl Maolan {
                 vec![
                     self.send(Action::TrackGetPluginGraph {
                         track_name: track_name.clone(),
+                        include_state: true,
                     }),
                     self.send(Action::TrackSnapshotAllClapStates { track_name }),
                 ]
@@ -3139,6 +3608,7 @@ impl Maolan {
                 vec![
                     self.send(Action::TrackGetPluginGraph {
                         track_name: track_name.clone(),
+                        include_state: true,
                     }),
                     self.send(Action::TrackSnapshotAllClapStates { track_name }),
                 ]

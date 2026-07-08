@@ -24,9 +24,16 @@ Last updated: 2026-05-21
 
 ### Transport
 - `Space`: Toggle play/stop
-- `Shift+Space`: Pause
+- `Shift+Space`: Pause (arrangement); stop all session clips when Session view is focused
 - `Home`: Rewind to start
 - `End`: Rewind to end
+
+### Session View
+- `Tab`: Toggle between Workspace and Session view
+- `↑` / `↓` / `←` / `→`: Navigate selected clip slot
+- `Return`: Launch or stop the selected slot
+- `Shift+Space`: Stop all session clips
+- `Rec to Arr` button: Start recording playing session clips into the arrangement
 
 ### Piano Tools
 - `Q`: Quantize selected notes

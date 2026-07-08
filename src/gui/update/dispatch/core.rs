@@ -26,6 +26,12 @@ impl Maolan {
                 if !self.state.blocking_read().hw_loaded {
                     return Some(Task::none());
                 }
+                if matches!(self.state.blocking_read().view, crate::state::View::Session) {
+                    if self.live_session_playing {
+                        return Some(self.stop_live_session_play());
+                    }
+                    return Some(self.start_live_session_play());
+                }
                 if self.playing && !self.paused {
                     self.toolbar.update(message);
                     self.playing = false;

@@ -71,6 +71,11 @@ impl Maolan {
                     && now.duration_since(*last_time) <= DOUBLE_CLICK.saturating_mul(2)
                 {
                     state.connections_last_track_click = None;
+                    if state.view == View::Workspace {
+                        return Some(Task::perform(async {}, move |_| {
+                            Message::EditorConnectionsOpen(track_name)
+                        }));
+                    }
                     let is_folder = state
                         .tracks
                         .iter()
@@ -139,6 +144,11 @@ impl Maolan {
                     set.insert(name.clone());
                     state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                 }
+
+                if state.view == View::Workspace && state.editor_connections.is_some() {
+                    state.editor_connections = Some(name.clone());
+                    return Some(self.load_track_connection_view(&mut state, name));
+                }
                 None
             }
             Message::SelectTrackFromMixer(ref name) => {
@@ -198,6 +208,15 @@ impl Maolan {
                     let mut set = std::collections::HashSet::new();
                     set.insert(name.clone());
                     state.connection_view_selection = ConnectionViewSelection::Tracks(set);
+                }
+
+                if state.view == View::Workspace && state.editor_connections.is_some() {
+                    state.editor_connections = Some(name.clone());
+                    return Some(self.load_track_connection_view(&mut state, name));
+                }
+                if state.view == View::Session && state.session_view_connections.is_some() {
+                    state.session_view_connections = Some(name.clone());
+                    return Some(self.load_track_connection_view(&mut state, name));
                 }
                 None
             }

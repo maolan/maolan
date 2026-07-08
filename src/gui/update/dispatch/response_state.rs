@@ -1,4 +1,5 @@
 use super::*;
+use crate::state::SlotPlayState;
 
 impl Maolan {
     pub(super) fn handle_response_engine_state_action(&mut self, action: &Action) -> bool {
@@ -149,6 +150,10 @@ impl Maolan {
                 state.global_midi_learn_play_pause = None;
                 state.global_midi_learn_stop = None;
                 state.global_midi_learn_record_toggle = None;
+                state.session_midi_learn_slots.clear();
+                state.session_midi_learn_scenes.clear();
+                state.session_midi_learn_stop_track.clear();
+                state.session_midi_learn_stop_all = None;
                 for track in &mut state.tracks {
                     track.midi_learn_volume = None;
                     track.midi_learn_balance = None;
@@ -190,6 +195,28 @@ impl Maolan {
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     track.folder_open = !track.folder_open;
                 }
+                true
+            }
+            Action::SessionRuntimeReport {
+                track_name,
+                scene_index,
+                state: engine_state,
+                play_position_samples,
+                elapsed_samples,
+            } => {
+                let mut state = self.state.blocking_write();
+                let runtime = state
+                    .slot_runtimes
+                    .entry((track_name.clone(), *scene_index))
+                    .or_default();
+                runtime.state = match engine_state {
+                    EngineSessionSlotState::Stopped => SlotPlayState::Stopped,
+                    EngineSessionSlotState::Queued => SlotPlayState::Queued,
+                    EngineSessionSlotState::Playing => SlotPlayState::Playing,
+                    EngineSessionSlotState::Stopping => SlotPlayState::Stopping,
+                };
+                runtime.play_position_samples = *play_position_samples;
+                runtime.elapsed_samples = *elapsed_samples;
                 true
             }
             _ => false,

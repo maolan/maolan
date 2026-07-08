@@ -82,6 +82,7 @@ If the file does not exist, Maolan creates it on startup with defaults.
 A saved session is a directory containing:
 
 - `<branch>.json`: main project state for the current branch (default: `main.json`)
+- `session.json`: Live Session View scene and slot data
 - `audio/`: imported or rendered audio stored in-session
 - `midi/`: copied MIDI files used by clips
 - `peaks/`: cached waveform peak data written on save
@@ -102,6 +103,28 @@ The session JSON persists:
 - export dialog settings
 - global MIDI learn bindings
 - selected UI sizing values
+
+## Live Session View
+
+The Session View (switch to it with the `Live` toolbar button or `Tab`) is a clip-launch grid modeled after Ableton Live. Each row is a track and each column is a scene. Slots reference arrangement clips by their stable clip ID, so edits to the arrangement clip are reflected in the session.
+
+Session data is stored in `session.json` inside the session directory and includes the scene list and slot references. The arrangement (`<branch>.json`) is the source of truth for clip content; deleting an arrangement clip that a slot references leaves a dangling reference that is cleared on the next launch attempt.
+
+Commands:
+
+- **Launch/Stop slot**: click a slot, or press `Return` on the selected slot.
+- **Launch scene**: click a scene header. If the scene has a per-scene tempo set, the global tempo changes when the scene launches.
+- **Stop all clips**: press `Shift+Space`, click the **Stop All** button in the master column, or use the slot context menu.
+- **Stop track clips**: click the stop square in the master column for that track row.
+- **Move slot reference**: drag a slot that references a clip onto another slot in the grid. This moves the clip reference; the arrangement clip itself is not affected.
+- **Duplicate slot**: right-click a slot that references a clip and choose **Duplicate**. This copies the clip reference to the next empty slot on the same track.
+- **Copy to arrangement**: right-click a slot that references a clip and choose **Copy to arrangement**, or drag the slot onto the Workspace timeline. This creates a new arrangement clip at the current transport position with the same content as the referenced clip.
+- **Assign clip to session slot**: in the workspace, select a session slot on the target track (in Session view), then right-click an arrangement clip on that track and choose **Assign to session slot**. The selected slot will reference that clip.
+- **Import arrangement to session**: available from the View menu; creates a scene and fills each track's slots with references to its arrangement clips.
+- **Record session to arrangement**: click the `Rec to Arr` button in the top-left of the session grid. This arms tracks that have session slots, starts playback if needed, enables recording, and writes new arrangement clips through the existing record path.
+- **Record into slot**: right-click a slot and choose **Record into slot**. This arms the track, starts playback and recording if needed, and assigns the newly recorded clip to that slot when the clip is created.
+- **Scene options**: right-click a scene header to rename it, set its color, set a per-scene tempo, or change its launch quantization.
+- **Track strip**: the left column shows each track's name plus compact mute, solo, arm, volume, and pan controls.
 
 ## Templates
 

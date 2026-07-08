@@ -175,6 +175,11 @@ impl Menu {
             }),
             (menu_dropdown("View", Message::None), {
                 menu_tpl(menu_items!(
+                    (menu_item("Session", Message::Session)),
+                    (menu_item(
+                        "Import arrangement to session",
+                        Message::SessionImportArrangement
+                    )),
                     (menu_checkbox_item(
                         "Tracks",
                         state.tracks_visible,
