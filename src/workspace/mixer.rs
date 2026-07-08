@@ -285,7 +285,7 @@ impl Mixer {
         let assigned = selected_modulator.is_some_and(|m| {
             m.targets
                 .iter()
-                .any(|t| t.track_name == track_name && t.target == target)
+                .any(|t| t.matches_target(track_name, &target))
         });
         ModulatorAssignment {
             assignable,
@@ -397,7 +397,7 @@ impl Mixer {
         .into()
     }
 
-    fn strip_width_for_channels(channels: usize) -> f32 {
+    pub fn strip_width_for_channels(channels: usize) -> f32 {
         (FADER_WIDTH
             + SCALE_WIDTH
             + 3.0

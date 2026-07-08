@@ -35,13 +35,14 @@ impl Maolan {
         mixer_visible: bool,
         playing: bool,
         paused: bool,
+        live_session_playing: bool,
         hw_out_meter_db: &[f32],
         track_meter_dbs: impl IntoIterator<Item = impl AsRef<[f32]>>,
     ) -> bool {
         if !mixer_visible {
             return false;
         }
-        if playing || paused {
+        if playing || paused || live_session_playing {
             return true;
         }
         hw_out_meter_db.iter().any(|level| *level > -90.0)
@@ -142,7 +143,10 @@ impl Maolan {
         }
         let engine_sub = Subscription::run(listener);
 
-        let keyboard_sub = keyboard::listen().map(Self::keyboard_message);
+        let current_view = self.state.blocking_read().view.clone();
+        let keyboard_sub = keyboard::listen()
+            .with(current_view)
+            .map(|(current_view, event)| Self::keyboard_message(event, current_view));
 
         let event_sub = event::listen().map(|event| match event {
             event::Event::Mouse(mouse_event) => match mouse_event {
@@ -188,6 +192,7 @@ impl Maolan {
                 self.mixer_visible,
                 self.playing,
                 self.paused,
+                self.live_session_playing,
                 &state.hw_out_meter_db,
                 state
                     .tracks
@@ -252,7 +257,7 @@ impl Maolan {
         ])
     }
 
-    fn keyboard_message(event: KeyEvent) -> Message {
+    fn keyboard_message(event: KeyEvent, current_view: crate::state::View) -> Message {
         match event {
             KeyEvent::KeyPressed { key, modifiers, .. } => {
                 if modifiers.control()
@@ -318,12 +323,60 @@ impl Maolan {
                             Message::None
                         }
                     }
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                        if matches!(current_view, crate::state::View::Session) {
+                            Message::Workspace
+                        } else {
+                            Message::Session
+                        }
+                    }
                     keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {
-                        Message::TransportPause
+                        if matches!(current_view, crate::state::View::Session) {
+                            Message::SessionNavStopAll
+                        } else {
+                            Message::TransportPause
+                        }
                     }
                     keyboard::Key::Named(keyboard::key::Named::Space) => Message::ToggleTransport,
                     keyboard::Key::Named(keyboard::key::Named::Home) => Message::JumpToStart,
                     keyboard::Key::Named(keyboard::key::Named::End) => Message::JumpToEnd,
+                    keyboard::Key::Named(keyboard::key::Named::ArrowUp)
+                        if matches!(current_view, crate::state::View::Session) =>
+                    {
+                        Message::SessionNavMove {
+                            delta_x: 0,
+                            delta_y: -1,
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowDown)
+                        if matches!(current_view, crate::state::View::Session) =>
+                    {
+                        Message::SessionNavMove {
+                            delta_x: 0,
+                            delta_y: 1,
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowLeft)
+                        if matches!(current_view, crate::state::View::Session) =>
+                    {
+                        Message::SessionNavMove {
+                            delta_x: -1,
+                            delta_y: 0,
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowRight)
+                        if matches!(current_view, crate::state::View::Session) =>
+                    {
+                        Message::SessionNavMove {
+                            delta_x: 1,
+                            delta_y: 0,
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Enter)
+                        if matches!(current_view, crate::state::View::Session) =>
+                    {
+                        Message::SessionNavLaunch
+                    }
                     keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                     keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
                     keyboard::Key::Named(keyboard::key::Named::Delete)
@@ -345,7 +398,7 @@ impl Maolan {
 #[cfg(test)]
 mod tests {
     use super::Maolan;
-    use crate::message::Message;
+    use crate::message::{Message, Show};
     use iced::keyboard::{self, Event as KeyEvent, Key, Modifiers, key::Named};
 
     #[test]
@@ -353,6 +406,7 @@ mod tests {
         assert!(Maolan::should_poll_meters(
             true,
             true,
+            false,
             false,
             &[-90.0],
             [&[-90.0][..]]
@@ -363,6 +417,19 @@ mod tests {
     fn polls_meters_while_paused() {
         assert!(Maolan::should_poll_meters(
             true,
+            false,
+            true,
+            false,
+            &[-90.0],
+            [&[-90.0][..]]
+        ));
+    }
+
+    #[test]
+    fn polls_meters_during_live_session_play() {
+        assert!(Maolan::should_poll_meters(
+            true,
+            false,
             false,
             true,
             &[-90.0],
@@ -376,6 +443,7 @@ mod tests {
             true,
             false,
             false,
+            false,
             &[-24.0],
             [&[-90.0][..]]
         ));
@@ -385,6 +453,7 @@ mod tests {
     fn polls_meters_after_stop_when_track_is_still_active() {
         assert!(Maolan::should_poll_meters(
             true,
+            false,
             false,
             false,
             &[-90.0],
@@ -398,6 +467,7 @@ mod tests {
             true,
             false,
             false,
+            false,
             &[-90.0, -90.0],
             [&[-90.0, -90.0][..], &[-90.0][..]],
         ));
@@ -409,6 +479,7 @@ mod tests {
             false,
             true,
             false,
+            false,
             &[0.0],
             [&[0.0][..]],
         ));
@@ -416,56 +487,109 @@ mod tests {
 
     #[test]
     fn keyboard_shortcuts_map_to_transport_actions() {
+        let view = crate::state::View::Workspace;
         assert!(matches!(
-            Maolan::keyboard_message(KeyEvent::KeyPressed {
-                key: Key::Character("r".into()),
-                modified_key: Key::Character("r".into()),
-                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyR),
-                location: keyboard::Location::Standard,
-                modifiers: Modifiers::CTRL,
-                text: Some("r".into()),
-                repeat: false,
-            }),
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("r".into()),
+                    modified_key: Key::Character("r".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyR),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::CTRL,
+                    text: Some("r".into()),
+                    repeat: false,
+                },
+                view.clone()
+            ),
             Message::TransportRecordToggle
         ));
 
         assert!(matches!(
-            Maolan::keyboard_message(KeyEvent::KeyPressed {
-                key: Key::Character("l".into()),
-                modified_key: Key::Character("l".into()),
-                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyL),
-                location: keyboard::Location::Standard,
-                modifiers: Modifiers::CTRL,
-                text: Some("l".into()),
-                repeat: false,
-            }),
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("l".into()),
+                    modified_key: Key::Character("l".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyL),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::CTRL,
+                    text: Some("l".into()),
+                    repeat: false,
+                },
+                view.clone()
+            ),
             Message::TransportPanic
         ));
 
         assert!(matches!(
-            Maolan::keyboard_message(KeyEvent::KeyPressed {
-                key: Key::Named(Named::Home),
-                modified_key: Key::Named(Named::Home),
-                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Home),
-                location: keyboard::Location::Standard,
-                modifiers: Modifiers::default(),
-                text: None,
-                repeat: false,
-            }),
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Named(Named::Home),
+                    modified_key: Key::Named(Named::Home),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Home),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: None,
+                    repeat: false,
+                },
+                view.clone()
+            ),
             Message::JumpToStart
         ));
 
         assert!(matches!(
-            Maolan::keyboard_message(KeyEvent::KeyPressed {
-                key: Key::Named(Named::End),
-                modified_key: Key::Named(Named::End),
-                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::End),
-                location: keyboard::Location::Standard,
-                modifiers: Modifiers::default(),
-                text: None,
-                repeat: false,
-            }),
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Named(Named::End),
+                    modified_key: Key::Named(Named::End),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::End),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: None,
+                    repeat: false,
+                },
+                view
+            ),
             Message::JumpToEnd
+        ));
+    }
+
+    #[test]
+    fn ctrl_t_in_workspace_opens_add_track_modal() {
+        let view = crate::state::View::Workspace;
+        assert!(matches!(
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("t".into()),
+                    modified_key: Key::Character("t".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyT),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::CTRL,
+                    text: Some("t".into()),
+                    repeat: false,
+                },
+                view
+            ),
+            Message::Show(crate::message::Show::AddTrack)
+        ));
+    }
+
+    #[test]
+    fn ctrl_t_in_session_opens_add_track_modal() {
+        let view = crate::state::View::Session;
+        assert!(matches!(
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("t".into()),
+                    modified_key: Key::Character("t".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyT),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::CTRL,
+                    text: Some("t".into()),
+                    repeat: false,
+                },
+                view
+            ),
+            Message::Show(Show::AddTrack)
         ));
     }
 }

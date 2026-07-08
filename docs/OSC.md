@@ -44,6 +44,13 @@ The engine also accepts these compatibility addresses:
 - `/transport/start_of_session`
 - `/transport/end_of_session`
 
+### Session View Commands
+
+- `/maolan/session/launch <track_name> <scene_index>` — launch the clip in the given track and scene
+- `/maolan/session/stop <track_name> <scene_index>` — stop the clip in the given track and scene
+- `/maolan/session/scene <scene_index>` — launch every clip in the given scene
+- `/maolan/session/stopall` — stop all currently playing session clips
+
 ## `maolan-osc` Helper
 
 The repository includes a small helper binary:

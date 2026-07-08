@@ -141,7 +141,7 @@ impl Maolan {
                         }));
                     }
                     tasks.push(self.send(Action::AddClip {
-                        clip_id: maolan_engine::message::generate_clip_id(),
+                        clip_id: crate::state::generate_clip_id(),
                         name: pending.rendered_clip_rel,
                         track_name: track_name.clone(),
                         start: 0,
@@ -233,7 +233,9 @@ impl Maolan {
                     track.input_monitor.iter().any(|&m| m)
                         || track.midi_input_monitor.iter().any(|&m| m)
                 });
-                let allow_live_hw_out = self.playing && (!self.paused || has_input_monitor);
+                let allow_live_hw_out = (self.playing && !self.paused)
+                    || self.live_session_playing
+                    || has_input_monitor;
                 if (!allow_live_hw_out || hw_out_db.is_empty()) && !state.hw_out_meter_db.is_empty()
                 {
                     let silence = vec![-90.0; state.hw_out_meter_db.len()];
@@ -248,10 +250,10 @@ impl Maolan {
                     {
                         continue;
                     }
-                    let allow_live_track_out = self.playing
-                        && (!self.paused
-                            || track.input_monitor.iter().any(|&m| m)
-                            || track.midi_input_monitor.iter().any(|&m| m));
+                    let allow_live_track_out = (self.playing && !self.paused)
+                        || self.live_session_playing
+                        || track.input_monitor.iter().any(|&m| m)
+                        || track.midi_input_monitor.iter().any(|&m| m);
                     if !allow_live_track_out || track_meters.is_empty() {
                         let silence = vec![-90.0; track.meter_out_db.len()];
                         Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
@@ -265,6 +267,7 @@ impl Maolan {
                         Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
                     }
                 }
+
                 Some(Task::none())
             }
             _ => None,

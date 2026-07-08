@@ -130,7 +130,7 @@ fn automation_lane_header_control(
     let assigned = m
         .targets
         .iter()
-        .any(|t| t.track_name == track_name && t.target == target);
+        .any(|t| t.matches_target(&track_name, &target));
     let show_message = Message::ModulatorTargetShow {
         modulator_id: m.id,
         track_name,
@@ -362,7 +362,7 @@ pub(super) fn track_context_menu_overlay(
             let is_assigned = modulator
                 .targets
                 .iter()
-                .any(|t| t.track_name == track_name && t.target == target);
+                .any(|t| t.matches_target(&track_name, &target));
             modulator_items.push(menu::menu_item(
                 format!(
                     "Modulator {} {} {}",
@@ -390,7 +390,7 @@ pub(super) fn track_context_menu_overlay(
             let is_assigned = modulator
                 .targets
                 .iter()
-                .any(|t| t.track_name == track_name && t.target == lane.target);
+                .any(|t| t.matches_target(&track_name, &lane.target));
             modulator_items.push(menu::menu_item(
                 format!(
                     "Modulator {} {} {}",
@@ -761,7 +761,7 @@ impl Tracks {
                 let assigned = m
                     .targets
                     .iter()
-                    .any(|t| t.track_name == track.name && t.target == lane.target);
+                    .any(|t| t.matches_target(&track.name, &lane.target));
                 assigned.hash(&mut hasher);
             }
         }

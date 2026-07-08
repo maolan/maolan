@@ -1,19 +1,22 @@
 use super::Maolan;
 use crate::{
+    connections,
     consts::state_ids::METRONOME_TRACK_ID,
     menu::MenuViewState,
     message::{Message, Show},
+    session_view::{SessionMidiLearnBindings, SessionView},
     state::View,
     toolbar::ToolbarViewState,
     workspace::WorkspaceViewArgs,
 };
 use iced::{
-    Border, Color, Length,
+    Alignment, Border, Color, Length, Theme,
     widget::{
-        Stack, button, column, container, pick_list, progress_bar, row, scrollable, text,
-        text_editor, text_input,
+        Column, Space, Stack, button, column, container, mouse_area, pick_list, progress_bar, row,
+        scrollable, text, text_editor, text_input,
     },
 };
+use iced_drop::droppable;
 
 impl Maolan {
     fn log_window(&self) -> iced::Element<'_, Message> {
@@ -162,6 +165,9 @@ impl Maolan {
             if state.track_rename_dialog.is_some() {
                 return self.wrap_with_log_window(self.track_rename.view());
             }
+            if state.scene_rename_dialog.is_some() {
+                return self.wrap_with_log_window(self.scene_rename.view());
+            }
             if state.track_template_save_dialog.is_some() {
                 return self.wrap_with_log_window(self.track_template_save.view());
             }
@@ -267,6 +273,7 @@ impl Maolan {
                             window_height: self.size.height,
                             editor_scroll_y: self.editor_scroll_y,
                             track_drag_active: self.track.is_some(),
+                            session_slot_drag_active: self.dragging_session_slot.is_some(),
                             tracks_resize_hovered: self.tracks_resize_hovered,
                             mixer_resize_hovered: self.mixer_resize_hovered,
                             tracks_visible: self.tracks_visible,
@@ -301,11 +308,350 @@ impl Maolan {
                                 .selected_modulator_id
                                 .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
                         }),
-                        View::Connections => self.connections.view(),
+                        View::Connections => {
+                            let selected_modulator = self.selected_modulator_id.and_then(|id| {
+                                self.modulators.iter().find(|m| m.id == id).cloned()
+                            });
+                            connections::canvas_host::tracks(
+                                self.state.clone(),
+                                None,
+                                selected_modulator,
+                            )
+                        }
                         View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
+                        View::Session => {
+                            let (tracks_width, left_split, left_tab, session_view_connections) = {
+                                let state = self.state.blocking_read();
+                                (
+                                    state.live_view_tracks_width,
+                                    state.live_view_left_split,
+                                    state.live_view_left_tab.clone(),
+                                    state.session_view_connections.clone(),
+                                )
+                            };
+                            let tracks_width_px = match tracks_width {
+                                Length::Fixed(v) => v,
+                                _ => 200.0,
+                            };
+                            let left_panel_width = tracks_width_px * left_split;
+                            let session_view: iced::Element<'_, Message> =
+                                if let Some(ref track_name) = session_view_connections {
+                                    let selected_modulator =
+                                        self.selected_modulator_id.and_then(|id| {
+                                            self.modulators.iter().find(|m| m.id == id).cloned()
+                                        });
+                                    let connections_view = connections::canvas_host::tracks(
+                                        self.state.clone(),
+                                        Some(track_name.clone()),
+                                        selected_modulator,
+                                    );
+                                    let header = container(
+                                        row![
+                                            text(format!("Connections: {}", track_name))
+                                                .size(12)
+                                                .color(Color::WHITE),
+                                            Space::new().width(Length::Fill),
+                                            button("Plugin List")
+                                                .on_press(Message::Show(Show::TrackPluginList)),
+                                            button(text("×").size(12).color(Color::WHITE))
+                                                .width(Length::Fixed(22.0))
+                                                .height(Length::Fixed(22.0))
+                                                .padding(0)
+                                                .style(|theme: &Theme, _status| button::Style {
+                                                    background: None,
+                                                    text_color: theme.palette().text,
+                                                    ..button::Style::default()
+                                                })
+                                                .on_press(Message::SessionViewConnectionsClose),
+                                        ]
+                                        .spacing(8)
+                                        .align_y(Alignment::Center)
+                                        .width(Length::Fill)
+                                        .height(Length::Fill),
+                                    )
+                                    .width(Length::Fill)
+                                    .height(Length::Fixed(32.0))
+                                    .padding([0, 8])
+                                    .style(|_theme| container::Style {
+                                        background: Some(iced::Background::Color(Color::from_rgb(
+                                            0.12, 0.12, 0.14,
+                                        ))),
+                                        ..Default::default()
+                                    });
+                                    column![header, connections_view]
+                                        .width(Length::Fill)
+                                        .height(Length::Fill)
+                                        .into()
+                                } else {
+                                    let state = self.state.blocking_read();
+                                    let hw_out_channels = state
+                                        .hw_out
+                                        .as_ref()
+                                        .map(|hw| hw.channels)
+                                        .unwrap_or(0)
+                                        .max(1);
+                                    let mut master_track = crate::state::Track::new(
+                                        "Master".to_string(),
+                                        state.hw_out_level,
+                                        0,
+                                        hw_out_channels,
+                                        0,
+                                        0,
+                                    );
+                                    master_track.balance = state.hw_out_balance;
+                                    master_track.meter_out_db = state.hw_out_meter_db.clone();
+                                    master_track.is_master = true;
+                                    let midi_learn = SessionMidiLearnBindings {
+                                        slots: state.session_midi_learn_slots.clone(),
+                                        scenes: state.session_midi_learn_scenes.clone(),
+                                    };
+                                    SessionView::view(crate::session_view::SessionViewInput {
+                                        tracks: state.tracks.clone(),
+                                        session: state.session.clone(),
+                                        slot_runtimes: state.slot_runtimes.clone(),
+                                        selected_slots: state.selected_slots.clone(),
+                                        selected: state.selected.clone(),
+                                        selected_scene: state.selected_scene,
+                                        midi_learn,
+                                        master_track: Some(master_track),
+                                        session_scene_context_menu: state
+                                            .session_scene_context_menu
+                                            .clone(),
+                                    })
+                                };
+                            let mixer_view = self.workspace.mixer_view(
+                                self.mixer_level_edit_track.as_deref(),
+                                &self.mixer_level_edit_input,
+                                self.size.width,
+                                self.mixer_scroll_x,
+                                self.modulators_pane_visible,
+                                self.selected_modulator_id
+                                    .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
+                            );
+                            let tracks_resize_hovered = self.live_view_tracks_resize_hovered;
+                            let tracks_splitter = mouse_area(
+                                container("")
+                                    .width(Length::Fixed(3.0))
+                                    .height(Length::Fill)
+                                    .style(move |_theme| container::Style {
+                                        background: Some(iced::Background::Color(Color {
+                                            r: 0.7,
+                                            g: 0.7,
+                                            b: 0.7,
+                                            a: if tracks_resize_hovered { 0.95 } else { 0.6 },
+                                        })),
+                                        ..Default::default()
+                                    }),
+                            )
+                            .on_enter(Message::LiveViewTracksResizeHover(true))
+                            .on_exit(Message::LiveViewTracksResizeHover(false))
+                            .on_press(Message::LiveViewTracksResizeStart);
+
+                            let left_panel_style = |_theme: &iced::Theme| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.1, 0.1, 0.1,
+                                ))),
+                                ..Default::default()
+                            };
+                            let left_panel_1 = container({
+                                let item_style = |selected: bool| {
+                                    move |_theme: &iced::Theme, _status: button::Status| {
+                                        button::Style {
+                                            background: Some(iced::Background::Color(
+                                                if selected {
+                                                    Color::from_rgb(0.2, 0.25, 0.35)
+                                                } else {
+                                                    Color::TRANSPARENT
+                                                },
+                                            )),
+                                            text_color: Color::WHITE,
+                                            ..button::Style::default()
+                                        }
+                                    }
+                                };
+                                column![
+                                    button(text("Favorites").size(12))
+                                        .style(item_style(matches!(
+                                            left_tab,
+                                            crate::state::LiveViewLeftTab::Favorites
+                                        )))
+                                        .padding([4, 8])
+                                        .width(Length::Fill)
+                                        .on_press(Message::LiveViewLeftTabSelect(
+                                            crate::state::LiveViewLeftTab::Favorites,
+                                        )),
+                                    button(text("Clips").size(12))
+                                        .style(item_style(matches!(
+                                            left_tab,
+                                            crate::state::LiveViewLeftTab::Clips
+                                        )))
+                                        .padding([4, 8])
+                                        .width(Length::Fill)
+                                        .on_press(Message::LiveViewLeftTabSelect(
+                                            crate::state::LiveViewLeftTab::Clips,
+                                        )),
+                                ]
+                                .spacing(8)
+                                .padding(8)
+                            })
+                            .width(Length::Fixed(left_panel_width))
+                            .height(Length::Fill)
+                            .style(left_panel_style);
+
+                            let left_panel_2_content: iced::Element<'static, Message> =
+                                match left_tab {
+                                    crate::state::LiveViewLeftTab::Clips => {
+                                        let clips = {
+                                            let state = self.state.blocking_read();
+                                            let mut clips: Vec<(
+                                                String,
+                                                String,
+                                                String,
+                                                maolan_engine::kind::Kind,
+                                            )> = Vec::new();
+                                            for track in &state.tracks {
+                                                for clip in &track.audio.clips {
+                                                    clips.push((
+                                                        track.name.clone(),
+                                                        clip.id.clone(),
+                                                        clip.name.clone(),
+                                                        maolan_engine::kind::Kind::Audio,
+                                                    ));
+                                                }
+                                                for clip in &track.midi.clips {
+                                                    clips.push((
+                                                        track.name.clone(),
+                                                        clip.id.clone(),
+                                                        clip.name.clone(),
+                                                        maolan_engine::kind::Kind::MIDI,
+                                                    ));
+                                                }
+                                            }
+                                            clips
+                                        };
+                                        let mut clip_items = Column::new().spacing(2).padding(8);
+                                        for (track_name, clip_id, clip_name, kind) in clips {
+                                            let display_name = {
+                                                let mut name = clip_name
+                                                    .strip_prefix("audio/")
+                                                    .or_else(|| clip_name.strip_prefix("midi/"))
+                                                    .unwrap_or(&clip_name)
+                                                    .to_string();
+                                                for suffix in [".wav", ".midi", ".mid"] {
+                                                    if let Some(stripped) =
+                                                        name.strip_suffix(suffix)
+                                                    {
+                                                        name = stripped.to_string();
+                                                        break;
+                                                    }
+                                                }
+                                                name
+                                            };
+                                            let clip_item: iced::Element<'static, Message> =
+                                                container(
+                                                    text(display_name).size(11).color(Color::WHITE),
+                                                )
+                                                .width(Length::Fill)
+                                                .height(Length::Fixed(22.0))
+                                                .padding([2, 4])
+                                                .style(|_theme: &iced::Theme| container::Style {
+                                                    background: Some(iced::Background::Color(
+                                                        Color::TRANSPARENT,
+                                                    )),
+                                                    ..Default::default()
+                                                })
+                                                .into();
+                                            let draggable = droppable(clip_item)
+                                                .on_drag(move |_point, _rect| {
+                                                    Message::SessionClipDragStart {
+                                                        source_track_name: track_name.clone(),
+                                                        clip_id: clip_id.clone(),
+                                                        kind,
+                                                    }
+                                                })
+                                                .on_drop(move |point, _rect| {
+                                                    Message::SessionClipDropped { point }
+                                                });
+                                            clip_items = clip_items.push(draggable);
+                                        }
+                                        scrollable(clip_items)
+                                            .width(Length::Fill)
+                                            .height(Length::Fill)
+                                            .into()
+                                    }
+                                    crate::state::LiveViewLeftTab::Favorites => {
+                                        Space::new().width(Length::Fixed(0.0)).into()
+                                    }
+                                };
+                            let left_panel_2 = container(left_panel_2_content)
+                                .width(Length::Fixed((tracks_width_px - left_panel_width).max(1.0)))
+                                .height(Length::Fill)
+                                .style(left_panel_style);
+
+                            let left_split_resize_hovered =
+                                self.live_view_left_split_resize_hovered;
+                            let left_splitter = mouse_area(
+                                container("")
+                                    .width(Length::Fixed(3.0))
+                                    .height(Length::Fill)
+                                    .style(move |_theme| container::Style {
+                                        background: Some(iced::Background::Color(Color {
+                                            r: 0.7,
+                                            g: 0.7,
+                                            b: 0.7,
+                                            a: if left_split_resize_hovered { 0.95 } else { 0.6 },
+                                        })),
+                                        ..Default::default()
+                                    }),
+                            )
+                            .on_enter(Message::LiveViewLeftSplitResizeHover(true))
+                            .on_exit(Message::LiveViewLeftSplitResizeHover(false))
+                            .on_press(Message::LiveViewLeftSplitResizeStart);
+
+                            let left_panel = row![left_panel_1, left_splitter, left_panel_2]
+                                .width(tracks_width)
+                                .height(Length::Fill);
+
+                            let mixer_resize_hovered = self.mixer_resize_hovered;
+                            let mixer_resize_handle = mouse_area(
+                                container("")
+                                    .width(Length::Fill)
+                                    .height(Length::Fixed(3.0))
+                                    .style(move |_theme| container::Style {
+                                        background: Some(iced::Background::Color(Color {
+                                            r: 0.7,
+                                            g: 0.7,
+                                            b: 0.7,
+                                            a: if mixer_resize_hovered { 0.95 } else { 0.6 },
+                                        })),
+                                        ..Default::default()
+                                    }),
+                            )
+                            .on_enter(Message::MixerResizeHover(true))
+                            .on_exit(Message::MixerResizeHover(false))
+                            .on_press(Message::MixerResizeStart);
+
+                            container(
+                                row![
+                                    left_panel,
+                                    tracks_splitter,
+                                    column![session_view, mixer_resize_handle, mixer_view]
+                                        .width(Length::Fill)
+                                        .height(Length::Fill)
+                                ]
+                                .width(Length::Fill)
+                                .height(Length::Fill),
+                            )
+                            .style(|_theme| crate::style::app_background())
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into()
+                        }
                         View::HwInputPorts => self.hw.jack_ports_view(true),
                         View::HwOutputPorts => self.hw.jack_ports_view(false),
-                        View::TrackPlugins => self.track_plugins.view(),
+                        View::TrackPlugins => {
+                            connections::canvas_host::plugin_graph(self.state.clone())
+                        }
                         View::Piano => self.workspace.piano_view(WorkspaceViewArgs {
                             session_root: None,
                             playhead_samples: Some(self.transport_samples),
@@ -324,6 +670,7 @@ impl Maolan {
                             window_height: self.size.height,
                             editor_scroll_y: self.editor_scroll_y,
                             track_drag_active: false,
+                            session_slot_drag_active: false,
                             tracks_resize_hovered: false,
                             mixer_resize_hovered: false,
                             tracks_visible: false,
@@ -377,6 +724,7 @@ impl Maolan {
                                 window_height: self.size.height,
                                 editor_scroll_y: self.editor_scroll_y,
                                 track_drag_active: false,
+                                session_slot_drag_active: false,
                                 tracks_resize_hovered: false,
                                 mixer_resize_hovered: false,
                                 tracks_visible: false,
@@ -427,6 +775,8 @@ impl Maolan {
                         content = content.push(self.toolbar.view(ToolbarViewState {
                             playing: self.playing,
                             paused: self.paused,
+                            live_session_playing: matches!(view_kind, View::Session)
+                                && self.live_session_playing,
                             recording: self.record_armed,
                             metronome_enabled: self.metronome_enabled,
                             has_session_end,

@@ -1,3 +1,4 @@
+mod cursor_override;
 mod editor;
 mod mixer;
 mod ruler;
@@ -5,6 +6,7 @@ mod tempo;
 mod tracks;
 
 use crate::{
+    connections,
     consts::{
         state_ids::METRONOME_TRACK_ID,
         widget_piano::{
@@ -13,15 +15,21 @@ use crate::{
         workspace::{MIN_TIMELINE_BARS, PLAYHEAD_WIDTH_PX, TIMELINE_LEFT_INSET_PX},
     },
     gui::visible_bars_to_zoom_slider,
-    message::{DraggedClip, Message, SnapMode},
+    message::{DraggedClip, Message, Show, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
     widget::{midi_edit, pitch_correction},
 };
+use cursor_override::CursorOverride;
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use iced::{
-    Background, Color, Element, Length, Point,
-    widget::{Id, Space, Stack, column, container, lazy, mouse_area, pin, row, scrollable, slider},
+    Alignment, Background, Color, Element, Length, Point, Theme,
+    advanced::mouse,
+    widget::{
+        Id, Space, Stack, button, column, container, lazy, mouse_area, pin, row, scrollable,
+        slider, text,
+    },
 };
+use iced_drop::droppable;
 use maolan_widgets::{
     horizontal_scrollbar::HorizontalScrollbar, vertical_scrollbar::VerticalScrollbar,
 };
@@ -152,6 +160,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub window_height: f32,
     pub editor_scroll_y: f32,
     pub track_drag_active: bool,
+    pub session_slot_drag_active: bool,
     pub tracks_resize_hovered: bool,
     pub mixer_resize_hovered: bool,
     pub tracks_visible: bool,
@@ -281,6 +290,7 @@ impl Workspace {
             window_height,
             editor_scroll_y,
             track_drag_active,
+            session_slot_drag_active,
             tracks_resize_hovered,
             mixer_resize_hovered,
             tracks_visible,
@@ -317,6 +327,7 @@ impl Workspace {
             time_signature_points,
             mixer_height_px,
             markers,
+            editor_connections,
         ) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
@@ -382,6 +393,7 @@ impl Workspace {
                     _ => 300.0,
                 },
                 markers,
+                state.editor_connections.clone(),
             )
         };
         const TOP_CHROME_ESTIMATE_PX: f32 = 72.0;
@@ -595,10 +607,54 @@ impl Workspace {
         .height(Length::Fixed(self.ruler.height()))
         .into();
 
+        let editor_body: Element<'_, Message> = if let Some(ref track_name) = editor_connections {
+            let connections_view = connections::canvas_host::tracks(
+                self.state.clone(),
+                Some(track_name.clone()),
+                selected_modulator.cloned(),
+            );
+            let header = container(
+                row![
+                    text(format!("Connections: {}", track_name))
+                        .size(12)
+                        .color(Color::WHITE),
+                    Space::new().width(Length::Fill),
+                    button("Plugin List").on_press(Message::Show(Show::TrackPluginList)),
+                    button(text("×").size(12).color(Color::WHITE))
+                        .width(Length::Fixed(22.0))
+                        .height(Length::Fixed(22.0))
+                        .padding(0)
+                        .style(|theme: &Theme, _status| button::Style {
+                            background: None,
+                            text_color: theme.palette().text,
+                            ..button::Style::default()
+                        })
+                        .on_press(Message::EditorConnectionsClose),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .height(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(32.0))
+            .padding([0, 8])
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb(0.12, 0.12, 0.14))),
+                ..Default::default()
+            });
+            column![header, connections_view]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            editor_with_zoom
+        };
+
         let right_panel = column![
             tempo_scrolled,
             ruler_scrolled,
-            container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
+            container(editor_body).height(Length::Fill),
         ]
         .width(Length::Fill);
 
@@ -784,11 +840,54 @@ impl Workspace {
         } else {
             column![workspace_with_footer].width(Length::Fill).into()
         };
-        container(workspace_body)
+        let workspace_drop_zone = container(workspace_body)
+            .id(Id::from("workspace-drop-zone"))
             .style(|_theme| crate::style::app_background())
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+        let workspace: Element<'_, Message> = if track_drag_active {
+            droppable(workspace_drop_zone)
+                .on_drop(Message::TrackDropped)
+                .into()
+        } else if session_slot_drag_active {
+            droppable(workspace_drop_zone)
+                .on_drop(|_point, _rect| Message::WorkspaceSessionSlotDropped)
+                .into()
+        } else {
+            workspace_drop_zone.into()
+        };
+        CursorOverride::new(
+            workspace,
+            self.state
+                .blocking_read()
+                .hovered_clip_resize_handle
+                .is_some()
+                .then_some(mouse::Interaction::Pointer),
+        )
+        .into()
+    }
+
+    pub fn mixer_view<'a>(
+        &'a self,
+        editing_track: Option<&'a str>,
+        editing_input: &'a str,
+        viewport_width: f32,
+        scroll_x: f32,
+        modulators_pane_visible: bool,
+        selected_modulator: Option<&'a crate::state::Modulator>,
+    ) -> Element<'a, Message> {
+        self.mixer.view(
+            editing_track,
+            editing_input,
+            viewport_width,
+            scroll_x,
+            modulators_pane_visible,
+            selected_modulator,
+        )
+    }
+
+    pub fn mixer_strip_width(channels: usize) -> f32 {
+        mixer::Mixer::strip_width_for_channels(channels)
     }
 
     pub fn piano_view<'a>(&'a self, args: WorkspaceViewArgs<'a>) -> Element<'a, Message> {

@@ -503,6 +503,16 @@ pub struct HostData {
 
 use libloading::Library;
 
+#[derive(Clone, Debug)]
+pub struct ParamInfo {
+    pub id: u32,
+    pub name: String,
+    pub module: String,
+    pub min_value: f64,
+    pub max_value: f64,
+    pub default_value: f64,
+}
+
 pub struct PluginInstance {
     _library: Library,
     entry: *const ClapPluginEntry,
@@ -854,6 +864,53 @@ impl PluginInstance {
 
     pub fn param_count(&self) -> u32 {
         self.param_count
+    }
+
+    pub fn parameter_infos(&self) -> Vec<ParamInfo> {
+        let mut infos = Vec::new();
+        unsafe {
+            let ext = (*self.plugin)
+                .get_extension
+                .map(|f| f(self.plugin, CLAP_EXT_PARAMS.as_ptr()));
+            let Some(ptr) = ext.filter(|p| !p.is_null()) else {
+                return infos;
+            };
+            let params = &*(ptr as *const ClapPluginParams);
+            let count = params.count.map(|f| f(self.plugin)).unwrap_or(0);
+            for pi in 0..count {
+                let mut info = ClapParamInfo {
+                    id: 0,
+                    flags: 0,
+                    cookie: ptr::null_mut(),
+                    name: [0; 256],
+                    module: [0; 1024],
+                    min_value: 0.0,
+                    max_value: 0.0,
+                    default_value: 0.0,
+                };
+                if params
+                    .get_info
+                    .map(|f| f(self.plugin, pi, &mut info))
+                    .unwrap_or(false)
+                {
+                    let name = CStr::from_ptr(info.name.as_ptr())
+                        .to_string_lossy()
+                        .into_owned();
+                    let module = CStr::from_ptr(info.module.as_ptr())
+                        .to_string_lossy()
+                        .into_owned();
+                    infos.push(ParamInfo {
+                        id: info.id,
+                        name,
+                        module,
+                        min_value: info.min_value,
+                        max_value: info.max_value,
+                        default_value: info.default_value,
+                    });
+                }
+            }
+        }
+        infos
     }
 
     pub fn gui_is_supported(&self) -> bool {

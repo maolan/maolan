@@ -7,17 +7,8 @@ impl Maolan {
             Message::RefreshLv2Plugins => Some(self.send(Action::ListLv2Plugins)),
             Message::RefreshVst3Plugins => Some(self.send(Action::ListVst3Plugins)),
             Message::RefreshClapPlugins => Some(self.send(Action::ListClapPlugins)),
-            #[cfg(all(unix, not(target_os = "macos")))]
-            Message::FilterLv2Plugins(ref query) => {
-                self.plugin_filter = query.clone();
-                None
-            }
-            Message::FilterVst3Plugins(ref query) => {
-                self.vst3_plugin_filter = query.clone();
-                None
-            }
-            Message::FilterClapPlugin(ref query) => {
-                self.clap_plugin_filter = query.clone();
+            Message::FilterPluginList(ref query) => {
+                self.plugin_list_filter = query.clone();
                 None
             }
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -46,19 +37,41 @@ impl Maolan {
                 None
             }
             #[cfg(all(unix, not(target_os = "macos")))]
-            Message::LoadSelectedLv2Plugins => {
-                let clip_target = {
+            Message::LoadSelectedPlugins => {
+                let (clip_target, track_name) = {
                     let state = self.state.blocking_read();
-                    state.plugin_graph_clip.clone()
+                    (
+                        state.plugin_graph_clip.clone(),
+                        state
+                            .plugin_graph_track
+                            .clone()
+                            .or_else(|| state.selected.iter().next().cloned()),
+                    )
                 };
+
                 if clip_target.is_some() {
-                    let selected = self
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    let lv2_selected = self
                         .selected_lv2_plugins
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>();
+                    let clap_selected = self
+                        .selected_clap_plugins
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let vst3_selected = self
+                        .selected_vst3_plugins
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     self.selected_lv2_plugins.clear();
+                    self.selected_clap_plugins.clear();
+                    self.selected_vst3_plugins.clear();
                     self.modal = None;
+
                     let mut state = self.state.blocking_write();
                     let mut next_id = state
                         .plugin_graph_plugins
@@ -67,12 +80,16 @@ impl Maolan {
                         .max()
                         .map(|id| id.saturating_add(1))
                         .unwrap_or(0);
-                    let plugin_infos = state.lv2_plugins.clone();
-                    for plugin_uri in selected {
-                        if let Some(info) = plugin_infos.iter().find(|info| info.uri == plugin_uri)
-                        {
-                            state.plugin_graph_plugins.push(
-                                maolan_engine::message::PluginGraphPlugin {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        let plugin_infos = state.lv2_plugins.clone();
+                        for plugin_uri in lv2_selected {
+                            if let Some(info) =
+                                plugin_infos.iter().find(|info| info.uri == plugin_uri)
+                            {
+                                state
+                                    .plugin_graph_plugins
+                                    .push(maolan_engine::message::PluginGraphPlugin {
                                     node:
                                         maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
                                             next_id,
@@ -90,162 +107,19 @@ impl Maolan {
                                     midi_outputs: info.midi_outputs,
                                     state: None,
                                     bypassed: false,
-                                },
-                            );
-                            next_id = next_id.saturating_add(1);
-                        }
-                    }
-                    let sync = Self::save_open_clip_plugin_graph(&mut state);
-                    return Some(sync.map_or_else(Task::none, |action| self.send(action)));
-                }
-                let track_name = {
-                    let state = self.state.blocking_read();
-                    state
-                        .plugin_graph_track
-                        .clone()
-                        .or_else(|| state.selected.iter().next().cloned())
-                };
-                if let Some(track_name) = track_name {
-                    let tasks: Vec<Task<Message>> = self
-                        .selected_lv2_plugins
-                        .iter()
-                        .cloned()
-                        .map(|plugin_uri| {
-                            self.send(Action::TrackLoadLv2Plugin {
-                                track_name: track_name.clone(),
-                                plugin_uri,
-                                instance_id: None,
-                            })
-                        })
-                        .collect();
-                    self.selected_lv2_plugins.clear();
-                    self.modal = None;
-                    return Some(Task::batch(tasks));
-                }
-                self.state.blocking_write().message =
-                    "Select a track before loading LV2 plugin".to_string();
-                None
-            }
-            Message::LoadSelectedVst3Plugins => {
-                let clip_target = {
-                    let state = self.state.blocking_read();
-                    state.plugin_graph_clip.clone()
-                };
-                if clip_target.is_some() {
-                    let selected = self
-                        .selected_vst3_plugins
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    self.selected_vst3_plugins.clear();
-                    self.modal = None;
-                    #[cfg(all(unix, not(target_os = "macos")))]
-                    {
-                        let mut state = self.state.blocking_write();
-                        let mut next_id = state
-                            .plugin_graph_plugins
-                            .iter()
-                            .map(|plugin| plugin.instance_id)
-                            .max()
-                            .map(|id| id.saturating_add(1))
-                            .unwrap_or(0);
-                        let plugin_infos = state.vst3_plugins.clone();
-                        for plugin_path in selected {
-                            if let Some(info) =
-                                plugin_infos.iter().find(|info| info.path == plugin_path)
-                            {
-                                state
-                                    .plugin_graph_plugins
-                                    .push(maolan_engine::message::PluginGraphPlugin {
-                                    node:
-                                        maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
-                                            next_id,
-                                        ),
-                                    instance_id: next_id,
-                                    format: "VST3".to_string(),
-                                    uri: info.path.clone(),
-                                    plugin_id: info.id.clone(),
-                                    name: info.name.clone(),
-                                    main_audio_inputs: info.audio_inputs,
-                                    main_audio_outputs: info.audio_outputs,
-                                    audio_inputs: info.audio_inputs,
-                                    audio_outputs: info.audio_outputs,
-                                    midi_inputs: usize::from(info.has_midi_input),
-                                    midi_outputs: usize::from(info.has_midi_output),
-                                    state: None,
-                                    bypassed: false,
                                 });
                                 next_id = next_id.saturating_add(1);
                             }
                         }
-                        let sync = Self::save_open_clip_plugin_graph(&mut state);
-                        return Some(sync.map_or_else(Task::none, |action| self.send(action)));
                     }
-                    #[cfg(not(all(unix, not(target_os = "macos"))))]
-                    {
-                        let _ = selected;
-                    }
-                }
-                let track_name = {
-                    let state = self.state.blocking_read();
-                    state
-                        .plugin_graph_track
-                        .clone()
-                        .or_else(|| state.selected.iter().next().cloned())
-                };
-                if let Some(track_name) = track_name {
-                    let tasks: Vec<Task<Message>> = self
-                        .selected_vst3_plugins
-                        .iter()
-                        .cloned()
-                        .map(|plugin_path| {
-                            self.send(Action::TrackLoadVst3Plugin {
-                                track_name: track_name.clone(),
-                                plugin_path,
-                                instance_id: None,
-                            })
-                        })
-                        .collect();
-                    self.selected_vst3_plugins.clear();
-                    self.modal = None;
-                    return Some(Task::batch(tasks));
-                }
-                self.state.blocking_write().message =
-                    "Select a track before loading VST3 plugin".to_string();
-                None
-            }
-            Message::LoadSelectedClapPlugins => {
-                let clip_target = {
-                    let state = self.state.blocking_read();
-                    state.plugin_graph_clip.clone()
-                };
-                if clip_target.is_some() {
-                    let selected = self
-                        .selected_clap_plugins
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    self.selected_clap_plugins.clear();
-                    self.modal = None;
-                    #[cfg(all(unix, not(target_os = "macos")))]
-                    {
-                        let mut state = self.state.blocking_write();
-                        let mut next_id = state
-                            .plugin_graph_plugins
-                            .iter()
-                            .map(|plugin| plugin.instance_id)
-                            .max()
-                            .map(|id| id.saturating_add(1))
-                            .unwrap_or(0);
-                        let plugin_infos = state.clap_plugins.clone();
-                        for plugin_path in selected {
-                            if let Some(info) =
-                                plugin_infos.iter().find(|info| info.path == plugin_path)
-                            {
-                                let caps = info.capabilities.as_ref();
-                                state
-                                    .plugin_graph_plugins
-                                    .push(maolan_engine::message::PluginGraphPlugin {
+                    let plugin_infos = state.clap_plugins.clone();
+                    for plugin_path in clap_selected {
+                        if let Some(info) =
+                            plugin_infos.iter().find(|info| info.path == plugin_path)
+                        {
+                            let caps = info.capabilities.as_ref();
+                            state.plugin_graph_plugins.push(
+                                maolan_engine::message::PluginGraphPlugin {
                                     node:
                                         maolan_engine::message::PluginGraphNode::ClapPluginInstance(
                                             next_id,
@@ -271,56 +145,92 @@ impl Maolan {
                                     midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
                                     state: None,
                                     bypassed: false,
-                                });
-                                next_id = next_id.saturating_add(1);
-                            }
+                                },
+                            );
+                            next_id = next_id.saturating_add(1);
                         }
-                        let sync = Self::save_open_clip_plugin_graph(&mut state);
-                        return Some(sync.map_or_else(Task::none, |action| self.send(action)));
                     }
-                    #[cfg(not(all(unix, not(target_os = "macos"))))]
-                    {
-                        let _ = selected;
+                    let plugin_infos = state.vst3_plugins.clone();
+                    for plugin_path in vst3_selected {
+                        if let Some(info) =
+                            plugin_infos.iter().find(|info| info.path == plugin_path)
+                        {
+                            state.plugin_graph_plugins.push(
+                                maolan_engine::message::PluginGraphPlugin {
+                                    node:
+                                        maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
+                                            next_id,
+                                        ),
+                                    instance_id: next_id,
+                                    format: "VST3".to_string(),
+                                    uri: info.path.clone(),
+                                    plugin_id: info.id.clone(),
+                                    name: info.name.clone(),
+                                    main_audio_inputs: info.audio_inputs,
+                                    main_audio_outputs: info.audio_outputs,
+                                    audio_inputs: info.audio_inputs,
+                                    audio_outputs: info.audio_outputs,
+                                    midi_inputs: usize::from(info.has_midi_input),
+                                    midi_outputs: usize::from(info.has_midi_output),
+                                    state: None,
+                                    bypassed: false,
+                                },
+                            );
+                            next_id = next_id.saturating_add(1);
+                        }
                     }
+                    let sync = Self::save_open_clip_plugin_graph(&mut state);
+                    return Some(sync.map_or_else(Task::none, |action| self.send(action)));
                 }
-                let track_name = {
-                    let state = self.state.blocking_read();
-                    state
-                        .plugin_graph_track
-                        .clone()
-                        .or_else(|| state.selected.iter().next().cloned())
-                };
+
                 if let Some(track_name) = track_name {
-                    let tasks: Vec<Task<Message>> = self
-                        .selected_clap_plugins
-                        .iter()
-                        .cloned()
-                        .map(|plugin_path| {
-                            self.send(Action::TrackLoadClapPlugin {
+                    let mut tasks: Vec<Task<Message>> = Vec::new();
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        tasks.extend(self.selected_lv2_plugins.iter().cloned().map(|plugin_uri| {
+                            self.send(Action::TrackLoadLv2Plugin {
                                 track_name: track_name.clone(),
-                                plugin_path,
+                                plugin_uri,
                                 instance_id: None,
                             })
-                        })
-                        .collect();
+                        }));
+                        self.selected_lv2_plugins.clear();
+                    }
+                    tasks.extend(
+                        self.selected_clap_plugins
+                            .iter()
+                            .cloned()
+                            .map(|plugin_path| {
+                                self.send(Action::TrackLoadClapPlugin {
+                                    track_name: track_name.clone(),
+                                    plugin_path,
+                                    instance_id: None,
+                                })
+                            }),
+                    );
+                    tasks.extend(
+                        self.selected_vst3_plugins
+                            .iter()
+                            .cloned()
+                            .map(|plugin_path| {
+                                self.send(Action::TrackLoadVst3Plugin {
+                                    track_name: track_name.clone(),
+                                    plugin_path,
+                                    instance_id: None,
+                                })
+                            }),
+                    );
                     self.selected_clap_plugins.clear();
+                    self.selected_vst3_plugins.clear();
                     self.modal = None;
                     return Some(Task::batch(tasks));
                 }
+
                 self.state.blocking_write().message =
-                    "Select a track before loading CLAP plugin".to_string();
+                    "Select a track before loading plugins".to_string();
                 None
             }
-            Message::PluginFormatSelected(format) => {
-                #[cfg(target_os = "macos")]
-                let format = if format == PluginFormat::Lv2 {
-                    PluginFormat::Vst3
-                } else {
-                    format
-                };
-                self.plugin_format = format;
-                None
-            }
+
             Message::ShowClapPluginUi {
                 ref track_name,
                 clip_idx: _,

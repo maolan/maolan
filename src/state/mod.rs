@@ -8,6 +8,7 @@ mod platform_freebsd;
 mod platform_linux;
 #[cfg(target_os = "openbsd")]
 mod platform_openbsd;
+mod session;
 mod track;
 
 use crate::config;
@@ -16,7 +17,7 @@ use crate::message::{
     PianoVelocityKind, TrackAutomationTarget,
 };
 
-pub use clip::{AudioClip, ClipPeaks, MIDIClip};
+pub use clip::{AudioClip, ClipPeaks, MIDIClip, generate_clip_id};
 pub use connection::Connection;
 use iced::{Length, Point};
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -42,6 +43,10 @@ pub(crate) use platform_freebsd::discover_freebsd_audio_devices;
 pub(crate) use platform_linux::{discover_alsa_input_devices, discover_alsa_output_devices};
 #[cfg(target_os = "openbsd")]
 pub(crate) use platform_openbsd::discover_openbsd_audio_devices;
+pub use session::{
+    LaunchMode, LaunchQuantization, Scene, SelectedSlots, SessionMatrix, SlotClipRef,
+    SlotPlayState, SlotRuntimes,
+};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -86,6 +91,10 @@ pub struct ModulatorTarget {
 impl ModulatorTarget {
     fn is_modulatable(&self) -> bool {
         self.target.is_modulatable()
+    }
+
+    pub fn matches_target(&self, track_name: &str, target: &TrackAutomationTarget) -> bool {
+        self.track_name == track_name && self.target.same_as(target)
     }
 }
 
@@ -556,6 +565,19 @@ pub struct TrackContextMenuState {
 }
 
 #[derive(Debug, Clone)]
+pub struct SessionSlotContextMenuState {
+    pub track_name: String,
+    pub scene_index: usize,
+    pub anchor: Point,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionSceneContextMenuState {
+    pub scene_index: usize,
+    pub anchor: Point,
+}
+
+#[derive(Debug, Clone)]
 pub struct PluginParameterInfo {
     pub param_id: u32,
     pub name: String,
@@ -564,6 +586,42 @@ pub struct PluginParameterInfo {
 }
 
 pub type PluginParameterCache = HashMap<usize, Vec<PluginParameterInfo>>;
+
+#[derive(Debug, Clone)]
+pub struct PluginControllerMenuState {
+    pub track_name: String,
+    pub instance_id: usize,
+    pub anchor: Point,
+    pub hovered: Option<usize>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShownPluginController {
+    pub param_id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub value: f32,
+    #[serde(default)]
+    pub min: f32,
+    #[serde(default)]
+    pub max: f32,
+}
+
+pub type PluginControllerMap = HashMap<usize, Vec<ShownPluginController>>;
+
+#[derive(Debug, Clone, Default)]
+pub enum LiveViewLeftTab {
+    #[default]
+    Favorites,
+    Clips,
+}
+
+#[derive(Debug, Clone)]
+pub struct DraggedSessionClip {
+    pub source_track_name: String,
+    pub clip_id: String,
+    pub kind: Kind,
+}
 
 #[derive(Debug, Clone)]
 pub enum Resizing {
@@ -590,6 +648,8 @@ pub enum Resizing {
     Mixer(f32, f32),
     Track(String, f32, f32),
     Tracks(f32, f32),
+    LiveViewTracks(f32, f32),
+    LiveViewLeftSplit(f32, f32),
 }
 
 #[derive(Debug, Clone)]
@@ -606,6 +666,7 @@ pub struct MovingTrack {
     pub track_idx: String,
     pub offset_x: f32,
     pub offset_y: f32,
+    pub start_position: Point,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -633,11 +694,12 @@ pub enum ConnectionViewSelection {
     None,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum View {
     Workspace,
     Connections,
     X32,
+    Session,
     HwInputPorts,
     HwOutputPorts,
     TrackPlugins,
@@ -664,6 +726,7 @@ pub struct MovingPlugin {
     pub instance_id: usize,
     pub offset_x: f32,
     pub offset_y: f32,
+    pub start_position: Point,
 }
 
 #[derive(Debug, Clone)]
@@ -678,6 +741,12 @@ pub struct ClipRenameDialog {
 pub struct TrackRenameDialog {
     pub old_name: String,
     pub new_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SceneRenameDialog {
+    pub scene_index: usize,
+    pub name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -832,6 +901,10 @@ pub struct StateData {
     pub selected_clips: HashSet<ClipId>,
     pub clip_context_menu: Option<ClipContextMenuState>,
     pub track_context_menu: Option<TrackContextMenuState>,
+    pub session_slot_context_menu: Option<SessionSlotContextMenuState>,
+    pub session_scene_context_menu: Option<SessionSceneContextMenuState>,
+    pub session_slot_context_hover: Option<((String, usize), Point)>,
+    pub session_scene_context_hover: Option<(usize, Point)>,
     pub track_context_hover: Option<(String, Point)>,
     pub clip_click_consumed: bool,
     pub message: String,
@@ -854,6 +927,9 @@ pub struct StateData {
     pub automation_lane_hover: Option<(String, TrackAutomationTarget, Point)>,
     pub mixer_height: Length,
     pub tracks_width: Length,
+    pub live_view_tracks_width: Length,
+    pub live_view_left_split: f32,
+    pub live_view_left_tab: LiveViewLeftTab,
     pub view: View,
     pub connections_folder: Option<String>,
     pub metronome_enabled: bool,
@@ -895,6 +971,11 @@ pub struct StateData {
     pub global_midi_learn_play_pause: Option<maolan_engine::message::MidiLearnBinding>,
     pub global_midi_learn_stop: Option<maolan_engine::message::MidiLearnBinding>,
     pub global_midi_learn_record_toggle: Option<maolan_engine::message::MidiLearnBinding>,
+    pub session_midi_learn_slots:
+        HashMap<(String, usize), maolan_engine::message::MidiLearnBinding>,
+    pub session_midi_learn_scenes: HashMap<usize, maolan_engine::message::MidiLearnBinding>,
+    pub session_midi_learn_stop_track: HashMap<String, maolan_engine::message::MidiLearnBinding>,
+    pub session_midi_learn_stop_all: Option<maolan_engine::message::MidiLearnBinding>,
     pub midi_hw_labels: HashMap<String, String>,
     pub midi_hw_in_positions: HashMap<String, Point>,
     pub midi_hw_out_positions: HashMap<String, Point>,
@@ -930,14 +1011,18 @@ pub struct StateData {
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_connectable_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugins: std::collections::HashSet<usize>,
-    pub plugin_graph_plugin_positions: HashMap<usize, Point>,
+    pub plugin_graph_plugin_positions: HashMap<String, HashMap<usize, Point>>,
+    pub plugin_graph_controller_menu: Option<PluginControllerMenuState>,
+    pub plugin_graph_visible_controllers: HashMap<String, PluginControllerMap>,
     pub plugin_graph_connecting: Option<PluginConnecting>,
     pub plugin_graph_moving_plugin: Option<MovingPlugin>,
     pub plugin_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
     pub last_selected_track: Option<String>,
+    pub selected_modulator_id: Option<usize>,
     pub clip_rename_dialog: Option<ClipRenameDialog>,
     pub track_rename_dialog: Option<TrackRenameDialog>,
+    pub scene_rename_dialog: Option<SceneRenameDialog>,
     pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
     pub marker_dialog: Option<MarkerDialog>,
     pub modulator_target_dialog: Option<ModulatorTargetDialog>,
@@ -989,6 +1074,14 @@ pub struct StateData {
     pub session_track_number: String,
     pub session_genre: String,
     pub available_templates: Vec<String>,
+    pub session: SessionMatrix,
+    pub session_view_scroll_x: f32,
+    pub session_view_scroll_y: f32,
+    pub selected_slots: SelectedSlots,
+    pub selected_scene: Option<usize>,
+    pub slot_runtimes: SlotRuntimes,
+    pub session_view_connections: Option<String>,
+    pub editor_connections: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1023,6 +1116,10 @@ impl Default for StateData {
             selected_clips: HashSet::new(),
             clip_context_menu: None,
             track_context_menu: None,
+            session_slot_context_menu: None,
+            session_scene_context_menu: None,
+            session_slot_context_hover: None,
+            session_scene_context_hover: None,
             track_context_hover: None,
             clip_click_consumed: false,
             message: initial_message.clone(),
@@ -1048,6 +1145,7 @@ impl Default for StateData {
             automation_lane_hover: None,
             mixer_height: Length::Fixed(cfg.mixer_height),
             tracks_width: Length::Fixed(cfg.track_width),
+            live_view_tracks_width: Length::Fixed(cfg.track_width),
             view: View::Workspace,
             connections_folder: None,
             metronome_enabled: false,
@@ -1089,6 +1187,10 @@ impl Default for StateData {
             global_midi_learn_play_pause: None,
             global_midi_learn_stop: None,
             global_midi_learn_record_toggle: None,
+            session_midi_learn_slots: HashMap::new(),
+            session_midi_learn_scenes: HashMap::new(),
+            session_midi_learn_stop_track: HashMap::new(),
+            session_midi_learn_stop_all: None,
             midi_hw_labels: HashMap::new(),
             midi_hw_in_positions: HashMap::new(),
             midi_hw_out_positions: HashMap::new(),
@@ -1125,13 +1227,17 @@ impl Default for StateData {
             plugin_graph_selected_connectable_connections: HashSet::new(),
             plugin_graph_selected_plugins: std::collections::HashSet::new(),
             plugin_graph_plugin_positions: HashMap::new(),
+            plugin_graph_controller_menu: None,
+            plugin_graph_visible_controllers: HashMap::new(),
             plugin_graph_connecting: None,
             plugin_graph_moving_plugin: None,
             plugin_graph_last_plugin_click: None,
             connections_last_track_click: None,
             last_selected_track: None,
+            selected_modulator_id: None,
             clip_rename_dialog: None,
             track_rename_dialog: None,
+            scene_rename_dialog: None,
             track_template_save_dialog: None,
             marker_dialog: None,
             modulator_target_dialog: None,
@@ -1190,6 +1296,16 @@ impl Default for StateData {
             session_track_number: String::new(),
             session_genre: String::new(),
             available_templates: vec![],
+            session: SessionMatrix::default(),
+            session_view_scroll_x: 0.0,
+            session_view_scroll_y: 0.0,
+            selected_slots: HashSet::new(),
+            selected_scene: None,
+            slot_runtimes: HashMap::new(),
+            session_view_connections: None,
+            editor_connections: None,
+            live_view_left_split: 0.5,
+            live_view_left_tab: LiveViewLeftTab::default(),
         }
     }
 }

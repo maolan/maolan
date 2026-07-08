@@ -51,8 +51,7 @@ fn push_track_plugin_graph_restore_actions(
         });
 
         let mut runtime_nodes: Vec<PluginGraphNode> = Vec::new();
-        let mut next_clap_instance_id = 0usize;
-        let mut next_vst3_instance_id = 0usize;
+        let mut next_instance_id = 0usize;
 
         if let Some(plugins) = graph.get("plugins").and_then(Value::as_array) {
             for plugin in plugins {
@@ -61,8 +60,8 @@ fn push_track_plugin_graph_restore_actions(
                 };
                 match plugin.get("format").and_then(Value::as_str) {
                     Some("CLAP") => {
-                        let instance_id = next_clap_instance_id;
-                        next_clap_instance_id += 1;
+                        let instance_id = next_instance_id;
+                        next_instance_id += 1;
                         runtime_nodes.push(PluginGraphNode::ClapPluginInstance(instance_id));
                         if let Some(plugin_path) = resolve_clap_plugin_path(uri, clap_plugins) {
                             actions.push(Action::TrackLoadClapPlugin {
@@ -80,8 +79,8 @@ fn push_track_plugin_graph_restore_actions(
                         }
                     }
                     Some("VST3") => {
-                        let instance_id = next_vst3_instance_id;
-                        next_vst3_instance_id += 1;
+                        let instance_id = next_instance_id;
+                        next_instance_id += 1;
                         runtime_nodes.push(PluginGraphNode::Vst3PluginInstance(instance_id));
                         if let Some(plugin_path) = resolve_vst3_plugin_path(uri, vst3_plugins) {
                             actions.push(Action::TrackLoadVst3Plugin {

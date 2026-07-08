@@ -1087,6 +1087,127 @@ fn deserialize_lv2_state(scratch: *const u8, size: usize) -> Result<Lv2PluginSta
 }
 
 #[cfg(unix)]
+fn serialize_lv2_control_ports(
+    scratch: *mut u8,
+    ports: &[crate::lv2::Lv2ControlPortInfo],
+) -> Result<usize, String> {
+    let max_len = SCRATCH_SIZE;
+    let mut offset = 0usize;
+
+    if offset + 4 > max_len {
+        return Err("scratch overflow".to_string());
+    }
+    unsafe {
+        std::ptr::write_unaligned(scratch.add(offset) as *mut u32, ports.len() as u32);
+    }
+    offset += 4;
+
+    for port in ports {
+        if offset + 4 > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::write_unaligned(scratch.add(offset) as *mut u32, port.index);
+        }
+        offset += 4;
+
+        let name_bytes = port.name.as_bytes();
+        if offset + 4 > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::write_unaligned(scratch.add(offset) as *mut u32, name_bytes.len() as u32);
+        }
+        offset += 4;
+        if offset + name_bytes.len() > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                name_bytes.as_ptr(),
+                scratch.add(offset),
+                name_bytes.len(),
+            );
+        }
+        offset += name_bytes.len();
+
+        if offset + 12 > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::write_unaligned(scratch.add(offset) as *mut u32, port.min.to_bits());
+            std::ptr::write_unaligned(scratch.add(offset + 4) as *mut u32, port.max.to_bits());
+            std::ptr::write_unaligned(scratch.add(offset + 8) as *mut u32, port.value.to_bits());
+        }
+        offset += 12;
+    }
+
+    Ok(offset)
+}
+
+#[cfg(all(unix, test))]
+fn deserialize_lv2_control_ports(
+    scratch: *const u8,
+    size: usize,
+) -> Result<Vec<crate::lv2::Lv2ControlPortInfo>, String> {
+    if size < 4 {
+        return Err("scratch too small for LV2 control ports".to_string());
+    }
+    let mut offset = 0usize;
+
+    let count = unsafe { std::ptr::read_unaligned(scratch.add(offset) as *const u32) } as usize;
+    offset += 4;
+
+    let mut ports = Vec::with_capacity(count);
+    for _ in 0..count {
+        if offset + 4 > size {
+            return Err("scratch underflow".to_string());
+        }
+        let index = unsafe { std::ptr::read_unaligned(scratch.add(offset) as *const u32) };
+        offset += 4;
+
+        if offset + 4 > size {
+            return Err("scratch underflow".to_string());
+        }
+        let name_len =
+            unsafe { std::ptr::read_unaligned(scratch.add(offset) as *const u32) } as usize;
+        offset += 4;
+        if offset + name_len > size {
+            return Err("scratch underflow".to_string());
+        }
+        let mut name_bytes = vec![0u8; name_len];
+        unsafe {
+            std::ptr::copy_nonoverlapping(scratch.add(offset), name_bytes.as_mut_ptr(), name_len);
+        }
+        offset += name_len;
+        let name = String::from_utf8(name_bytes).map_err(|e| e.to_string())?;
+
+        if offset + 12 > size {
+            return Err("scratch underflow".to_string());
+        }
+        let min =
+            f32::from_bits(unsafe { std::ptr::read_unaligned(scratch.add(offset) as *const u32) });
+        let max = f32::from_bits(unsafe {
+            std::ptr::read_unaligned(scratch.add(offset + 4) as *const u32)
+        });
+        let value = f32::from_bits(unsafe {
+            std::ptr::read_unaligned(scratch.add(offset + 8) as *const u32)
+        });
+        offset += 12;
+
+        ports.push(crate::lv2::Lv2ControlPortInfo {
+            index,
+            name,
+            min,
+            max,
+            value,
+        });
+    }
+
+    Ok(ports)
+}
+
+#[cfg(unix)]
 pub fn run_lv2(
     plugin_uri: &str,
     mapping: ShmMapping,
@@ -1154,6 +1275,7 @@ pub fn run_lv2(
             let scratch = unsafe { scratch_ptr(ptr) };
             let result = match req {
                 1 => {
+                    tracing::info!("LV2 host: received state save request");
                     let state = processor.snapshot_state();
                     match serialize_lv2_state(scratch, &state) {
                         Ok(size) => {
@@ -1183,13 +1305,28 @@ pub fn run_lv2(
                         None => Err("Invalid resource directory in scratch".to_string()),
                     }
                 }
+                maolan_plugin_protocol::protocol::REQUEST_LV2_CONTROL_PORTS => {
+                    tracing::info!("LV2 host: received control port request");
+                    let ports = processor.control_ports_with_values();
+                    tracing::info!(count = ports.len(), "LV2 host: got control ports");
+                    match serialize_lv2_control_ports(scratch, &ports) {
+                        Ok(size) => {
+                            header.scratch_size.store(size as u32, Ordering::Release);
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
                 _ => Err(format!("Unknown request type: {}", req)),
             };
             header
                 .request_status
                 .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
 
-            if matches!(req, 1 | 2 | 5) {
+            if matches!(
+                req,
+                1 | 2 | 5 | maolan_plugin_protocol::protocol::REQUEST_LV2_CONTROL_PORTS
+            ) {
                 let _ = events.signal_daw();
             }
             header.request_type.store(0, Ordering::Release);
@@ -1306,5 +1443,45 @@ mod tests {
         assert_eq!(decoded.properties[0].type_uri, state.properties[0].type_uri);
         assert_eq!(decoded.properties[0].flags, state.properties[0].flags);
         assert_eq!(decoded.properties[0].value, state.properties[0].value);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn lv2_control_ports_serialization_roundtrip() {
+        let ports = vec![
+            crate::lv2::Lv2ControlPortInfo {
+                index: 0,
+                name: "Gain".to_string(),
+                min: 0.0,
+                max: 1.0,
+                value: 0.75,
+            },
+            crate::lv2::Lv2ControlPortInfo {
+                index: 1,
+                name: "Frequency".to_string(),
+                min: 20.0,
+                max: 20000.0,
+                value: 1000.0,
+            },
+        ];
+        let mut scratch = vec![0u8; SCRATCH_SIZE];
+        let size = serialize_lv2_control_ports(scratch.as_mut_ptr(), &ports)
+            .expect("serialize should succeed");
+        assert!(size > 0);
+        assert!(size < SCRATCH_SIZE);
+
+        let decoded = deserialize_lv2_control_ports(scratch.as_ptr(), size)
+            .expect("deserialize should succeed");
+        assert_eq!(decoded.len(), ports.len());
+        assert_eq!(decoded[0].index, ports[0].index);
+        assert_eq!(decoded[0].name, ports[0].name);
+        assert_eq!(decoded[0].min, ports[0].min);
+        assert_eq!(decoded[0].max, ports[0].max);
+        assert_eq!(decoded[0].value, ports[0].value);
+        assert_eq!(decoded[1].index, ports[1].index);
+        assert_eq!(decoded[1].name, ports[1].name);
+        assert_eq!(decoded[1].min, ports[1].min);
+        assert_eq!(decoded[1].max, ports[1].max);
+        assert_eq!(decoded[1].value, ports[1].value);
     }
 }

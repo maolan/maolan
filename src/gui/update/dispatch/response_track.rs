@@ -41,6 +41,58 @@ impl Maolan {
                 }
                 true
             }
+            Action::TrackSetVst3Parameter {
+                track_name,
+                instance_id,
+                param_id,
+                value,
+            } => {
+                let normalized = (*value).clamp(0.0, 1.0);
+                let (min, max) = {
+                    let state = self.state.blocking_read();
+                    state
+                        .plugin_parameters_by_track
+                        .get(track_name)
+                        .and_then(|p| p.get(instance_id))
+                        .and_then(|params| params.iter().find(|p| p.param_id == *param_id))
+                        .map(|p| (p.min as f32, p.max as f32))
+                        .unwrap_or((0.0, 1.0))
+                };
+                let actual = min + normalized * (max - min);
+                self.update_visible_controller_value(track_name, *instance_id, *param_id, actual);
+                true
+            }
+            Action::TrackSetClapParameter {
+                track_name,
+                instance_id,
+                param_id,
+                value,
+            }
+            | Action::TrackSetClapParameterAt {
+                track_name,
+                instance_id,
+                param_id,
+                value,
+                ..
+            } => {
+                self.update_visible_controller_value(
+                    track_name,
+                    *instance_id,
+                    *param_id,
+                    *value as f32,
+                );
+                true
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::TrackSetLv2ControlValue {
+                track_name,
+                instance_id,
+                index,
+                value,
+            } => {
+                self.update_visible_controller_value(track_name, *instance_id, *index, *value);
+                true
+            }
             Action::TrackToggleMute(name) => {
                 let mut state = self.state.blocking_write();
                 if name == "hw:out" {
@@ -338,6 +390,62 @@ impl Maolan {
                     )
                 } else {
                     format!("Global MIDI learn cleared for {:?}", target)
+                };
+                if self.midi_mappings_panel_open {
+                    self.rebuild_midi_mappings_report_lines_from_state();
+                }
+                true
+            }
+            Action::SetSessionMidiLearnBinding { target, binding } => {
+                {
+                    let mut state = self.state.blocking_write();
+                    match target {
+                        maolan_engine::message::SessionMidiLearnTarget::Slot {
+                            track_name,
+                            scene_index,
+                        } => {
+                            if let Some(binding) = binding.clone() {
+                                state
+                                    .session_midi_learn_slots
+                                    .insert((track_name.clone(), *scene_index), binding);
+                            } else {
+                                state
+                                    .session_midi_learn_slots
+                                    .remove(&(track_name.clone(), *scene_index));
+                            }
+                        }
+                        maolan_engine::message::SessionMidiLearnTarget::Scene(scene_index) => {
+                            if let Some(binding) = binding.clone() {
+                                state
+                                    .session_midi_learn_scenes
+                                    .insert(*scene_index, binding);
+                            } else {
+                                state.session_midi_learn_scenes.remove(scene_index);
+                            }
+                        }
+                        maolan_engine::message::SessionMidiLearnTarget::StopTrack(track_name) => {
+                            if let Some(binding) = binding.clone() {
+                                state
+                                    .session_midi_learn_stop_track
+                                    .insert(track_name.clone(), binding);
+                            } else {
+                                state.session_midi_learn_stop_track.remove(track_name);
+                            }
+                        }
+                        maolan_engine::message::SessionMidiLearnTarget::StopAll => {
+                            state.session_midi_learn_stop_all = binding.clone();
+                        }
+                    }
+                }
+                self.state.blocking_write().message = if let Some(binding) = binding {
+                    format!(
+                        "Session MIDI learn mapped {:?} to CH{} CC{}",
+                        target,
+                        binding.channel + 1,
+                        binding.cc
+                    )
+                } else {
+                    format!("Session MIDI learn cleared for {:?}", target)
                 };
                 if self.midi_mappings_panel_open {
                     self.rebuild_midi_mappings_report_lines_from_state();

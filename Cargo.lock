@@ -5101,7 +5101,7 @@ dependencies = [
  "maolan-engine",
  "maolan-generate",
  "maolan-plugin-host",
- "maolan-widgets",
+ "maolan-widgets 0.0.22",
  "midly",
  "mixosc",
  "nix 0.31.3",
@@ -5116,6 +5116,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wide",
  "windows-sys 0.61.2",
  "winresource",
@@ -5124,9 +5125,7 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c63e320df5de5ab6240f003cc62d4e6383cae607f456dcec044eaa6749b6f9dc"
+version = "0.2.27"
 dependencies = [
  "alsa",
  "byteorder",
@@ -5192,9 +5191,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-protocol"
-version = "0.0.10"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "870ea862e4365dbf08833f4141285e0dbfb98895b127c1543e749505a77e7e66"
+checksum = "547798c6df3ec3f01f11616fcb9ad15da402723b28b3d77c361f7d286c8a65b7"
 dependencies = [
  "libc",
  "tracing",
@@ -5206,6 +5205,17 @@ name = "maolan-widgets"
 version = "0.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "951f6f5d409e1849e6ef0973bb1e43f74d111be833187e6c1557b3cea6a5ab09"
+dependencies = [
+ "iced",
+ "iced_fonts",
+ "wavers",
+]
+
+[[package]]
+name = "maolan-widgets"
+version = "0.0.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c86e2cc14b9e8e1945993321e76e9491d923619d8a8050aa2e370d4fd10f626c"
 dependencies = [
  "iced",
  "iced_fonts",
@@ -5363,13 +5373,13 @@ dependencies = [
 
 [[package]]
 name = "mixosc"
-version = "0.0.6"
+version = "0.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d448f2bd923042a277637e4745130d1d29c1b969448b81a327572d3b5a5e703"
+checksum = "321d2730a4ddf8fbb0bb062bbd27f8384c6d52e17bf1281fbcf040aa1e0dd271"
 dependencies = [
  "iced",
  "iced_fonts",
- "maolan-widgets",
+ "maolan-widgets 0.0.21",
  "tokio",
 ]
 

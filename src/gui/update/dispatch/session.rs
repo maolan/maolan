@@ -12,6 +12,7 @@ impl Maolan {
                     .map(|t| t.name.clone())
                     .collect();
                 let messages = self.add_track.create_messages();
+                let mut new_names = Vec::new();
                 for message in &messages {
                     let name = match message {
                         Message::Request(maolan_engine::message::Action::AddTrack {
@@ -20,11 +21,18 @@ impl Maolan {
                         Message::AddTrackFromTemplate { name, .. } => Some(name.as_str()),
                         _ => None,
                     };
-                    if let Some(name) = name
-                        && existing_names.contains(name)
-                    {
-                        self.error(format!("Track '{}' already exists", name));
-                        return Task::none();
+                    if let Some(name) = name {
+                        if existing_names.contains(name) {
+                            self.error(format!("Track '{}' already exists", name));
+                            return Task::none();
+                        }
+                        new_names.push(name.to_string());
+                    }
+                }
+                {
+                    let mut state = self.state.blocking_write();
+                    for name in &new_names {
+                        state.session.ensure_track_slots(name);
                     }
                 }
                 let tasks: Vec<_> = messages
@@ -143,17 +151,15 @@ impl Maolan {
                 self.pending_peak_rebuilds.clear();
                 self.midi_clip_previews.clear();
                 self.pending_midi_clip_previews.clear();
+                self.session_slot_record_target = None;
                 self.session_dir = None;
                 self.session_branch = "main".to_string();
                 self.stop_recording_preview();
 
-                let existing_tracks: Vec<String> = self
-                    .state
-                    .blocking_read()
-                    .tracks
-                    .iter()
-                    .map(|t| t.name.clone())
-                    .collect();
+                let existing_tracks: Vec<String> = {
+                    let state = self.state.blocking_read();
+                    state.tracks.iter().map(|t| t.name.clone()).collect()
+                };
                 let mut tasks = vec![
                     self.send(Action::BeginSessionRestore),
                     self.send(Action::Stop),
@@ -204,6 +210,7 @@ impl Maolan {
                     state.session_genre.clear();
                     state.message = "New session".to_string();
                     state.piano = None;
+                    state.selected_modulator_id = None;
                 }
                 self.pending_track_freeze_restore.clear();
                 self.pending_track_midi_editor_view_mode.clear();

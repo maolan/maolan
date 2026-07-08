@@ -23,6 +23,15 @@ pub(super) struct MidiMappingsTrackFile {
 pub(super) struct MidiMappingsFile {
     pub(super) global: MidiMappingsGlobalFile,
     pub(super) tracks: HashMap<String, MidiMappingsTrackFile>,
+    #[serde(default)]
+    pub(super) session_slots:
+        HashMap<String, HashMap<usize, maolan_engine::message::MidiLearnBinding>>,
+    #[serde(default)]
+    pub(super) session_scenes: HashMap<usize, maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
+    pub(super) session_stop_track: HashMap<String, maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
+    pub(super) session_stop_all: Option<maolan_engine::message::MidiLearnBinding>,
 }
 
 #[derive(Clone)]

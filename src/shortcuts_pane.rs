@@ -13,6 +13,7 @@ impl ShortcutsPane {
             View::Connections | View::TrackPlugins => connections_shortcuts(hint),
             View::Piano => piano_shortcuts(hint),
             View::PitchCorrection => pitch_correction_shortcuts(hint),
+            View::Session => session_shortcuts(hint),
             View::X32 => column![].into(),
             _ => workspace_shortcuts(hint),
         };
@@ -158,6 +159,34 @@ fn pitch_correction_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
                 "Left drag empty: Box-select",
                 "Shift+Left drag empty: Add to selection",
                 "Double click: Snap to nearest semitone",
+            ],
+            hint
+        ),
+    ]
+    .spacing(16)
+    .into()
+}
+
+fn session_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
+    column![
+        section(
+            "Keyboard",
+            &[
+                "Tab: Toggle Workspace/Session view",
+                "Return: Launch/stop selected slot",
+                "Shift+Space: Stop all session clips",
+                "Arrow keys: Navigate slots",
+                "Space: Play/stop arrangement transport",
+            ],
+            hint
+        ),
+        section(
+            "Mouse",
+            &[
+                "Click slot: Launch/stop clip",
+                "Click scene: Launch all clips in scene",
+                "Right click slot: Context menu",
+                "Double click slot: Open referenced clip",
             ],
             hint
         ),

@@ -148,17 +148,10 @@ fn main() {
     };
 
     #[cfg(unix)]
-    let (d2h_fd, h2d_fd): (i32, i32) = if matches!(format.as_str(), "vst3" | "lv2") {
-        (
-            args.get(9).and_then(|a| a.parse().ok()).unwrap_or(-1),
-            args.get(10).and_then(|a| a.parse().ok()).unwrap_or(-1),
-        )
-    } else {
-        (
-            args.get(5).and_then(|a| a.parse().ok()).unwrap_or(-1),
-            args.get(6).and_then(|a| a.parse().ok()).unwrap_or(-1),
-        )
-    };
+    let (d2h_fd, h2d_fd): (i32, i32) = (
+        args.get(5).and_then(|a| a.parse().ok()).unwrap_or(-1),
+        args.get(6).and_then(|a| a.parse().ok()).unwrap_or(-1),
+    );
 
     let (plugin_path, _plugin_id) = if format == "clap" {
         if let Some(pos) = plugin_spec.rfind("::") {

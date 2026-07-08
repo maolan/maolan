@@ -7,10 +7,11 @@ use crate::{
     consts::connections_plugins::{
         MIDI_HIT_RADIUS, PLUGIN_W, PORT_HIT_RADIUS, TRACK_IO_MARGIN_X, TRACK_IO_W,
     },
-    message::Message,
+    message::{Message, TrackAutomationTarget},
     state::{
         Connecting, ConnectionViewSelection, HW_IN_ID, HW_OUT_ID, Hovering, MIDI_HW_IN_ID,
-        MIDI_HW_OUT_ID, MovingPlugin, MovingTrack, PluginConnecting, State, StateData,
+        MIDI_HW_OUT_ID, Modulator, ModulatorTarget, MovingPlugin, MovingTrack, PluginConnecting,
+        PluginControllerMenuState, PluginParameterInfo, ShownPluginController, State, StateData,
     },
     ui_timing::DOUBLE_CLICK,
 };
@@ -33,7 +34,42 @@ use std::time::Instant;
 
 pub struct Graph {
     state: State,
+    focus: Option<String>,
+    selected_modulator: Option<Modulator>,
 }
+
+#[derive(Debug, Default)]
+pub struct GraphState {
+    controller_drag: Option<ControllerDrag>,
+}
+
+#[derive(Debug, Clone)]
+struct ControllerDrag {
+    track_name: String,
+    instance_id: usize,
+    param_id: u32,
+    rect: Rectangle,
+    min: f32,
+    max: f32,
+}
+
+struct VisibleController<'a> {
+    rect: Rectangle,
+    plugin: &'a PluginGraphPlugin,
+    controller: &'a ShownPluginController,
+    param: Option<&'a PluginParameterInfo>,
+}
+
+#[derive(Clone, Copy)]
+struct FolderPanelStyle {
+    fill: Color,
+    border: Color,
+}
+
+const FOLDER_HW_WIDTH: f32 = 70.0;
+const CONTROLLER_MENU_ITEM_HEIGHT: f32 = 22.0;
+const CONTROLLER_MENU_WIDTH: f32 = 220.0;
+const CONTROLLER_BAR_HEIGHT: f32 = 12.0;
 
 #[derive(Clone, Copy)]
 enum TrackPortEdge {
@@ -53,11 +89,37 @@ struct PluginPortHit {
 }
 
 impl Graph {
-    pub fn new(state: State) -> Self {
-        Self { state }
+    pub fn new_with_focus(
+        state: State,
+        focus: Option<String>,
+        selected_modulator: Option<Modulator>,
+    ) -> Self {
+        Self {
+            state,
+            focus,
+            selected_modulator,
+        }
     }
 
-    fn get_port_kind(data: &StateData, hovering_port: &Hovering) -> Option<Kind> {
+    fn effective_folder(&self, data: &StateData) -> Option<String> {
+        if let Some(name) = self.focus.as_ref() {
+            Some(name.clone())
+        } else {
+            data.connections_folder.clone()
+        }
+    }
+
+    fn effective_track_root(&self, data: &StateData) -> Option<String> {
+        if let Some(name) = data.plugin_graph_track.as_ref() {
+            Some(name.clone())
+        } else if let Some(name) = self.focus.as_ref() {
+            Some(name.clone())
+        } else {
+            data.connections_folder.clone()
+        }
+    }
+
+    fn get_port_kind(&self, data: &StateData, hovering_port: &Hovering) -> Option<Kind> {
         match hovering_port {
             Hovering::Port {
                 track_idx,
@@ -65,7 +127,7 @@ impl Graph {
                 is_input,
             } => {
                 if track_idx == HW_IN_ID || track_idx == HW_OUT_ID {
-                    if let Some(folder) = Self::folder_track(data) {
+                    if let Some(folder) = self.folder_track(data) {
                         let is_input = track_idx == HW_IN_ID;
                         Some(Self::track_port_kind(folder, *port_idx, is_input))
                     } else {
@@ -169,8 +231,10 @@ impl Graph {
         idx: usize,
         bounds: Rectangle,
     ) -> Point {
+        let track_name = data.plugin_graph_track.clone().unwrap_or_default();
         data.plugin_graph_plugin_positions
-            .get(&plugin.instance_id)
+            .get(&track_name)
+            .and_then(|positions| positions.get(&plugin.instance_id))
             .copied()
             .unwrap_or_else(|| {
                 let plugin_h = PluginGraph::plugin_height(plugin);
@@ -231,6 +295,223 @@ impl Graph {
         }
     }
 
+    fn controller_menu_params<'a>(
+        data: &'a StateData,
+        track_name: &str,
+        instance_id: usize,
+    ) -> Option<&'a Vec<PluginParameterInfo>> {
+        data.plugin_parameters_by_track
+            .get(track_name)
+            .and_then(|cache| cache.get(&instance_id))
+    }
+
+    fn controller_menu_rect(
+        menu: &PluginControllerMenuState,
+        param_count: usize,
+        bounds: Rectangle,
+    ) -> Rectangle {
+        let item_count = param_count.max(1);
+        let height = item_count as f32 * CONTROLLER_MENU_ITEM_HEIGHT;
+        let x = menu
+            .anchor
+            .x
+            .clamp(4.0, (bounds.width - CONTROLLER_MENU_WIDTH - 4.0).max(4.0));
+        let y = menu
+            .anchor
+            .y
+            .clamp(4.0, (bounds.height - height - 4.0).max(4.0));
+        Rectangle::new(
+            Point::new(x, y),
+            iced::Size::new(CONTROLLER_MENU_WIDTH, height),
+        )
+    }
+
+    fn controller_menu_item_index(
+        menu: &PluginControllerMenuState,
+        param_count: usize,
+        cursor: Point,
+        bounds: Rectangle,
+    ) -> Option<usize> {
+        let rect = Self::controller_menu_rect(menu, param_count, bounds);
+        if !rect.contains(cursor) {
+            return None;
+        }
+        let rel_y = cursor.y - rect.y;
+        let idx = (rel_y / CONTROLLER_MENU_ITEM_HEIGHT) as usize;
+        if idx < param_count { Some(idx) } else { None }
+    }
+
+    fn controller_range(
+        param: Option<&PluginParameterInfo>,
+        controller: &ShownPluginController,
+    ) -> (f32, f32) {
+        param
+            .map(|p| (p.min as f32, p.max as f32))
+            .filter(|(min, max)| min < max)
+            .unwrap_or(if controller.min < controller.max {
+                (controller.min, controller.max)
+            } else {
+                (0.0, 1.0)
+            })
+    }
+
+    fn set_controller_value_message(
+        plugin: &PluginGraphPlugin,
+        track_name: &str,
+        param_id: u32,
+        value: f32,
+    ) -> Option<Message> {
+        let instance_id = plugin.instance_id;
+        match &plugin.node {
+            #[cfg(all(unix, not(target_os = "macos")))]
+            PluginGraphNode::Lv2PluginInstance(_) => {
+                Some(Message::Request(EngineAction::TrackSetLv2ControlValue {
+                    track_name: track_name.to_string(),
+                    instance_id,
+                    index: param_id,
+                    value,
+                }))
+            }
+            PluginGraphNode::ClapPluginInstance(_) => {
+                Some(Message::Request(EngineAction::TrackSetClapParameter {
+                    track_name: track_name.to_string(),
+                    instance_id,
+                    param_id,
+                    value: value as f64,
+                }))
+            }
+            PluginGraphNode::Vst3PluginInstance(_) => {
+                Some(Message::Request(EngineAction::TrackSetVst3Parameter {
+                    track_name: track_name.to_string(),
+                    instance_id,
+                    param_id,
+                    value,
+                }))
+            }
+            _ => None,
+        }
+    }
+
+    fn visible_controller_rects<'a>(
+        data: &'a StateData,
+        track_name: &str,
+        plugin: &'a PluginGraphPlugin,
+        pos: Point,
+    ) -> Vec<VisibleController<'a>> {
+        let mut result = Vec::new();
+        let Some(controller_map) = data.plugin_graph_visible_controllers.get(track_name) else {
+            return result;
+        };
+        let Some(controllers) = controller_map.get(&plugin.instance_id) else {
+            return result;
+        };
+        let params = Self::controller_menu_params(data, track_name, plugin.instance_id);
+        let bar_w = PLUGIN_W;
+        let gap = 4.0;
+        let start_y = pos.y + Self::plugin_box_size(plugin).height + gap;
+        for (i, controller) in controllers.iter().enumerate() {
+            let y = start_y + i as f32 * (CONTROLLER_BAR_HEIGHT + gap);
+            let rect = Rectangle::new(
+                Point::new(pos.x, y),
+                iced::Size::new(bar_w, CONTROLLER_BAR_HEIGHT),
+            );
+            let param = params.and_then(|p| p.iter().find(|p| p.param_id == controller.param_id));
+            result.push(VisibleController {
+                rect,
+                plugin,
+                controller,
+                param,
+            });
+        }
+        result
+    }
+
+    fn controller_at<'a>(
+        &self,
+        data: &'a StateData,
+        track_name: &str,
+        cursor: Point,
+        bounds: Rectangle,
+    ) -> Option<VisibleController<'a>> {
+        self.effective_folder(data)?;
+        for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate().rev() {
+            let pos = Self::plugin_node_position(data, plugin, idx, bounds);
+            for hit in Self::visible_controller_rects(data, track_name, plugin, pos) {
+                if hit.rect.contains(cursor) {
+                    return Some(hit);
+                }
+            }
+        }
+        None
+    }
+
+    fn plugin_parameter_target(
+        plugin: &PluginGraphPlugin,
+        param_id: u32,
+        min: f32,
+        max: f32,
+    ) -> Option<TrackAutomationTarget> {
+        let instance_id = plugin.instance_id;
+        match &plugin.node {
+            #[cfg(all(unix, not(target_os = "macos")))]
+            PluginGraphNode::Lv2PluginInstance(_) => Some(TrackAutomationTarget::Lv2Parameter {
+                instance_id,
+                index: param_id,
+                min,
+                max,
+            }),
+            PluginGraphNode::ClapPluginInstance(_) => Some(TrackAutomationTarget::ClapParameter {
+                instance_id,
+                param_id,
+                min: min as f64,
+                max: max as f64,
+            }),
+            PluginGraphNode::Vst3PluginInstance(_) => Some(TrackAutomationTarget::Vst3Parameter {
+                instance_id,
+                param_id,
+            }),
+            _ => None,
+        }
+    }
+
+    fn controller_bar_target_at(
+        &self,
+        data: &StateData,
+        track_name: &str,
+        cursor: Point,
+        bounds: Rectangle,
+    ) -> Option<ModulatorTarget> {
+        let hit = self.controller_at(data, track_name, cursor, bounds)?;
+        let (min, max) = Self::controller_range(hit.param, hit.controller);
+        let target = Self::plugin_parameter_target(hit.plugin, hit.controller.param_id, min, max)?;
+        Some(ModulatorTarget {
+            track_name: track_name.to_string(),
+            target,
+            min,
+            max,
+        })
+    }
+
+    fn is_controller_assigned(
+        &self,
+        track_name: &str,
+        plugin: &PluginGraphPlugin,
+        controller: &ShownPluginController,
+        min: f32,
+        max: f32,
+    ) -> bool {
+        let Some(m) = self.selected_modulator.as_ref() else {
+            return false;
+        };
+        let Some(target) = Self::plugin_parameter_target(plugin, controller.param_id, min, max)
+        else {
+            return false;
+        };
+        m.targets
+            .iter()
+            .any(|t| t.matches_target(track_name, &target))
+    }
+
     fn is_hw_node(name: &str) -> bool {
         name == HW_IN_ID
             || name == HW_OUT_ID
@@ -242,12 +523,12 @@ impl Graph {
         name == HW_IN_ID || name == HW_OUT_ID
     }
 
-    fn visible_track_names(data: &StateData) -> std::collections::HashSet<String> {
-        match &data.connections_folder {
+    fn visible_track_names(&self, data: &StateData) -> std::collections::HashSet<String> {
+        match self.effective_folder(data) {
             Some(folder) => {
                 let mut names = std::collections::HashSet::new();
                 for track in &data.tracks {
-                    if track.parent_track.as_deref() == Some(folder) {
+                    if track.parent_track.as_deref() == Some(&folder) {
                         names.insert(track.name.clone());
                     }
                 }
@@ -262,9 +543,8 @@ impl Graph {
         }
     }
 
-    fn folder_track(data: &StateData) -> Option<&crate::state::Track> {
-        data.connections_folder
-            .as_ref()
+    fn folder_track<'a>(&self, data: &'a StateData) -> Option<&'a crate::state::Track> {
+        self.effective_folder(data)
             .and_then(|name| data.tracks.iter().find(|t| t.name == *name))
     }
 
@@ -314,6 +594,7 @@ impl Graph {
     }
 
     fn plugin_graph_node_port_position(
+        &self,
         data: &StateData,
         node: &PluginGraphNode,
         port: usize,
@@ -322,9 +603,11 @@ impl Graph {
         hw_width: f32,
     ) -> Option<Point> {
         match node {
-            PluginGraphNode::TrackInput => Self::folder_track(data)
+            PluginGraphNode::TrackInput => self
+                .folder_track(data)
                 .map(|t| Self::folder_input_port_position(t, port, bounds, hw_width)),
-            PluginGraphNode::TrackOutput => Self::folder_track(data)
+            PluginGraphNode::TrackOutput => self
+                .folder_track(data)
                 .map(|t| Self::folder_output_port_position(t, port, bounds, hw_width)),
             _ => {
                 let id = PluginGraph::plugin_node_instance_id(node)?;
@@ -369,17 +652,22 @@ impl Graph {
     }
 
     fn connectable_port_position(
+        &self,
         data: &StateData,
         ref_: &ConnectableRef,
         port: usize,
         is_input: bool,
         kind: Kind,
         bounds: Rectangle,
-        hw_width: f32,
     ) -> Option<Point> {
         if let Some(node) = Self::connectable_ref_to_plugin_node(ref_) {
-            return Self::plugin_graph_node_port_position(
-                data, &node, port, is_input, bounds, hw_width,
+            return self.plugin_graph_node_port_position(
+                data,
+                &node,
+                port,
+                is_input,
+                bounds,
+                FOLDER_HW_WIDTH,
             );
         }
         let ConnectableRef::ChildTrack(name) = ref_ else {
@@ -426,12 +714,13 @@ impl Graph {
     }
 
     fn folder_plugin_port_hits(
+        &self,
         data: &StateData,
         bounds: Rectangle,
         hw_width: f32,
     ) -> Vec<PluginPortHit> {
         let mut hits = Vec::new();
-        let Some(folder) = Self::folder_track(data) else {
+        let Some(folder) = self.folder_track(data) else {
             return hits;
         };
         let in_count = Self::folder_input_count(folder);
@@ -457,8 +746,13 @@ impl Graph {
         hits
     }
 
-    fn plugin_port_hits(data: &StateData, bounds: Rectangle, hw_width: f32) -> Vec<PluginPortHit> {
-        let mut hits = Self::folder_plugin_port_hits(data, bounds, hw_width);
+    fn plugin_port_hits(
+        &self,
+        data: &StateData,
+        bounds: Rectangle,
+        hw_width: f32,
+    ) -> Vec<PluginPortHit> {
+        let mut hits = self.folder_plugin_port_hits(data, bounds, hw_width);
         for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate() {
             let pos = Self::plugin_node_position(data, plugin, idx, bounds);
             for port in 0..plugin.audio_inputs {
@@ -512,11 +806,12 @@ impl Graph {
     }
 
     fn plugin_only_port_hits(
+        &self,
         data: &StateData,
         bounds: Rectangle,
         hw_width: f32,
     ) -> Vec<PluginPortHit> {
-        Self::plugin_port_hits(data, bounds, hw_width)
+        self.plugin_port_hits(data, bounds, hw_width)
             .into_iter()
             .filter(|hit| {
                 !matches!(
@@ -542,6 +837,7 @@ impl Graph {
     }
 
     fn plugin_graph_connection_actions(
+        &self,
         data: &StateData,
         from_node: PluginGraphNode,
         from_port: usize,
@@ -552,13 +848,11 @@ impl Graph {
         if from_node == to_node && from_port == to_port {
             return None;
         }
-        let track_name = data
-            .plugin_graph_track
-            .clone()
-            .or_else(|| data.connections_folder.clone())?;
+        let track_name = self.effective_track_root(data)?;
         let track = data
             .plugin_graph_track
             .as_ref()
+            .or(self.effective_folder(data).as_ref())
             .and_then(|name| data.tracks.iter().find(|t| &t.name == name));
 
         let parallel_count = if data.shift {
@@ -678,6 +972,7 @@ impl Graph {
     }
 
     fn connectable_port_count(
+        &self,
         data: &StateData,
         connectable: &ConnectableRef,
         kind: Kind,
@@ -685,13 +980,14 @@ impl Graph {
     ) -> usize {
         match connectable {
             ConnectableRef::TrackInput | ConnectableRef::TrackOutput => {
-                let folder_name = data
-                    .plugin_graph_track
-                    .as_deref()
-                    .or(data.connections_folder.as_deref());
-                if let Some(folder) =
-                    folder_name.and_then(|name| data.tracks.iter().find(|t| t.name == name))
-                {
+                let folder = if let Some(name) = data.plugin_graph_track.as_deref() {
+                    data.tracks.iter().find(|t| t.name == name)
+                } else if let Some(name) = self.effective_folder(data) {
+                    data.tracks.iter().find(|t| t.name == name)
+                } else {
+                    None
+                };
+                if let Some(folder) = folder {
                     if kind == Kind::Audio {
                         if is_output {
                             folder.primary_audio_outs()
@@ -766,6 +1062,7 @@ impl Graph {
     }
 
     fn connectable_connection_actions(
+        &self,
         data: &StateData,
         from: ConnectableRef,
         from_port: usize,
@@ -776,14 +1073,11 @@ impl Graph {
         if from == to && from_port == to_port {
             return None;
         }
-        let track_name = data
-            .plugin_graph_track
-            .clone()
-            .or_else(|| data.connections_folder.clone())?;
+        let track_name = self.effective_track_root(data)?;
 
         let parallel_count = if data.shift {
-            let from_count = Self::connectable_port_count(data, &from, kind, true);
-            let to_count = Self::connectable_port_count(data, &to, kind, false);
+            let from_count = self.connectable_port_count(data, &from, kind, true);
+            let to_count = self.connectable_port_count(data, &to, kind, false);
             from_count
                 .saturating_sub(from_port)
                 .min(to_count.saturating_sub(to_port))
@@ -824,15 +1118,15 @@ impl Graph {
     }
 
     fn draw_folder_side_panel(
+        &self,
         frame: &mut canvas::Frame,
         data: &StateData,
         bounds: Rectangle,
         hw_width: f32,
         is_input: bool,
-        edge_panel: Color,
-        edge_panel_border: Color,
+        style: FolderPanelStyle,
     ) {
-        let Some(track) = Self::folder_track(data) else {
+        let Some(track) = self.folder_track(data) else {
             return;
         };
         let hovering = &data.hovering;
@@ -853,11 +1147,11 @@ impl Graph {
             Point::new(bounds.width - hw_width, 0.0)
         };
         let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
-        frame.fill(&rect, edge_panel);
+        frame.fill(&rect, style.fill);
         frame.stroke(
             &rect,
             canvas::Stroke::default()
-                .with_color(edge_panel_border)
+                .with_color(style.border)
                 .with_width(2.0),
         );
 
@@ -1091,11 +1385,11 @@ impl Graph {
 }
 
 impl canvas::Program<Message> for Graph {
-    type State = ();
+    type State = GraphState;
 
     fn update(
         &self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
@@ -1107,11 +1401,105 @@ impl canvas::Program<Message> for Graph {
 
         if let Ok(mut data) = self.state.try_write() {
             match event {
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                    if self.effective_folder(&data).is_some() {
+                        for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate().rev() {
+                            let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
+                            let size = Self::plugin_box_size(plugin);
+                            if Rectangle::new(pos, size).contains(cursor_position) {
+                                let instance_id = plugin.instance_id;
+                                let track_name =
+                                    self.effective_track_root(&data).unwrap_or_default();
+                                select_plugin_indices(
+                                    &mut data.plugin_graph_selected_plugins,
+                                    instance_id,
+                                    false,
+                                );
+                                data.plugin_graph_selected_connections.clear();
+                                data.connection_view_selection = ConnectionViewSelection::None;
+                                return Some(
+                                    Action::publish(Message::PluginGraphControllerMenuOpen {
+                                        track_name,
+                                        instance_id,
+                                        position: cursor_position,
+                                    })
+                                    .and_capture(),
+                                );
+                            }
+                        }
+                    }
+                    return Some(
+                        Action::publish(Message::PluginGraphControllerMenuClose).and_capture(),
+                    );
+                }
+
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                    // Controller context menu takes precedence when open.
+                    if let Some(menu) = data.plugin_graph_controller_menu.as_ref() {
+                        let track_name = menu.track_name.clone();
+                        let instance_id = menu.instance_id;
+                        let params = Self::controller_menu_params(&data, &track_name, instance_id);
+                        let param_count = params.map(|p| p.len()).unwrap_or(0);
+                        if let Some(idx) = Self::controller_menu_item_index(
+                            menu,
+                            param_count,
+                            cursor_position,
+                            bounds,
+                        ) && let Some(param) = params.and_then(|p| p.get(idx))
+                        {
+                            let value = ((param.min + param.max) / 2.0) as f32;
+                            return Some(Action::publish(Message::PluginGraphShowController {
+                                track_name,
+                                instance_id,
+                                param_id: param.param_id,
+                                name: param.name.clone(),
+                                value,
+                                min: param.min as f32,
+                                max: param.max as f32,
+                            }));
+                        }
+                        return Some(Action::publish(Message::PluginGraphControllerMenuClose));
+                    }
+
+                    // Show the modulator target range dialog when clicking a controller
+                    // while a modulator is selected; otherwise start dragging the slider.
+                    let controller_track_name =
+                        self.effective_track_root(&data).unwrap_or_default();
+                    if let Some(modulator) = self.selected_modulator.as_ref() {
+                        if let Some(target) = self.controller_bar_target_at(
+                            &data,
+                            &controller_track_name,
+                            cursor_position,
+                            bounds,
+                        ) {
+                            return Some(
+                                Action::publish(Message::ModulatorTargetShow {
+                                    modulator_id: modulator.id,
+                                    track_name: target.track_name,
+                                    target: target.target,
+                                })
+                                .and_capture(),
+                            );
+                        }
+                    } else if let Some(hit) =
+                        self.controller_at(&data, &controller_track_name, cursor_position, bounds)
+                    {
+                        let (min, max) = Self::controller_range(hit.param, hit.controller);
+                        state.controller_drag = Some(ControllerDrag {
+                            track_name: controller_track_name,
+                            instance_id: hit.plugin.instance_id,
+                            param_id: hit.controller.param_id,
+                            rect: hit.rect,
+                            min,
+                            max,
+                        });
+                        return Some(Action::capture());
+                    }
+
                     let ctrl = data.ctrl;
                     let mut pending_action: Option<Action<Message>> = None;
 
-                    let folder = Self::folder_track(&data);
+                    let folder = self.folder_track(&data);
                     let folder_view = folder.is_some();
                     if let Some(folder) = folder {
                         let in_count = Self::folder_input_count(folder);
@@ -1258,6 +1646,7 @@ impl canvas::Program<Message> for Graph {
                                     track_idx: format!("{MIDI_HW_IN_ID}:{device}"),
                                     offset_x: cursor_position.x - pos.x,
                                     offset_y: cursor_position.y - pos.y,
+                                    start_position: pos,
                                 });
                                 return Some(Action::capture());
                             }
@@ -1306,13 +1695,14 @@ impl canvas::Program<Message> for Graph {
                                     track_idx: format!("{MIDI_HW_OUT_ID}:{device}"),
                                     offset_x: cursor_position.x - pos.x,
                                     offset_y: cursor_position.y - pos.y,
+                                    start_position: pos,
                                 });
                                 return Some(Action::capture());
                             }
                         }
                     }
 
-                    let visible_names = Self::visible_track_names(&data);
+                    let visible_names = self.visible_track_names(&data);
                     for track in data.tracks.iter().rev() {
                         if !visible_names.contains(&track.name) {
                             continue;
@@ -1380,13 +1770,12 @@ impl canvas::Program<Message> for Graph {
                                     track_idx: track_name.clone(),
                                     offset_x: cursor_position.x - track_pos.x,
                                     offset_y: cursor_position.y - track_pos.y,
+                                    start_position: track_pos,
                                 });
                                 let mut set = std::collections::HashSet::new();
                                 set.insert(track_name.clone());
                                 data.connection_view_selection =
                                     ConnectionViewSelection::Tracks(set);
-                                data.selected.clear();
-                                data.selected.insert(track_name.clone());
                                 pending_action = Some(Action::capture());
                             }
                             break;
@@ -1468,11 +1857,8 @@ impl canvas::Program<Message> for Graph {
                                     });
                                 if is_double_click {
                                     data.plugin_graph_last_plugin_click = None;
-                                    let track_name = data
-                                        .plugin_graph_track
-                                        .clone()
-                                        .or_else(|| data.connections_folder.clone())
-                                        .unwrap_or_default();
+                                    let track_name =
+                                        self.effective_track_root(&data).unwrap_or_default();
                                     let clip_idx = data
                                         .plugin_graph_clip
                                         .as_ref()
@@ -1511,6 +1897,7 @@ impl canvas::Program<Message> for Graph {
                                     instance_id,
                                     offset_x: cursor_position.x - pos.x,
                                     offset_y: cursor_position.y - pos.y,
+                                    start_position: pos,
                                 });
                                 return Some(Action::capture());
                             }
@@ -1518,7 +1905,7 @@ impl canvas::Program<Message> for Graph {
 
                         let mut clicked_plugin_connection = None;
                         for (idx, conn) in data.plugin_graph_connections.iter().enumerate() {
-                            let start = Self::plugin_graph_node_port_position(
+                            let start = self.plugin_graph_node_port_position(
                                 &data,
                                 &conn.from_node,
                                 conn.from_port,
@@ -1526,7 +1913,7 @@ impl canvas::Program<Message> for Graph {
                                 bounds,
                                 hw_width,
                             );
-                            let end = Self::plugin_graph_node_port_position(
+                            let end = self.plugin_graph_node_port_position(
                                 &data,
                                 &conn.to_node,
                                 conn.to_port,
@@ -1563,23 +1950,21 @@ impl canvas::Program<Message> for Graph {
                             if !involves_child || from_is_track_input {
                                 continue;
                             }
-                            let start = Self::connectable_port_position(
+                            let start = self.connectable_port_position(
                                 &data,
                                 &conn.from,
                                 conn.from_port,
                                 false,
                                 conn.kind,
                                 bounds,
-                                hw_width,
                             );
-                            let end = Self::connectable_port_position(
+                            let end = self.connectable_port_position(
                                 &data,
                                 &conn.to,
                                 conn.to_port,
                                 true,
                                 conn.kind,
                                 bounds,
-                                hw_width,
                             );
                             if let (Some(start), Some(end)) = (start, end)
                                 && is_bezier_hit(start, end, cursor_position, 100, 12.0)
@@ -1602,18 +1987,18 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     let mut clicked_connection = None;
-                    let folder_name_opt = data.connections_folder.as_ref();
+                    let folder_name_opt = self.effective_folder(&data);
                     for (idx, conn) in data.connections.iter().enumerate() {
                         // In folder view, hide track-level connections that involve the folder
                         // track itself; those are managed in the root connections view.
-                        let from_visible = if data.connections_folder.is_some() {
+                        let from_visible = if self.effective_folder(&data).is_some() {
                             Self::is_track_view_hw_node(&conn.from_track)
                                 || visible_names.contains(&conn.from_track)
                         } else {
                             Self::is_hw_node(&conn.from_track)
                                 || visible_names.contains(&conn.from_track)
                         };
-                        let to_visible = if data.connections_folder.is_some() {
+                        let to_visible = if self.effective_folder(&data).is_some() {
                             Self::is_track_view_hw_node(&conn.to_track)
                                 || visible_names.contains(&conn.to_track)
                         } else {
@@ -1627,13 +2012,15 @@ impl canvas::Program<Message> for Graph {
                             data.tracks.iter().find(|t| t.name == conn.from_track);
                         let end_track_option = data.tracks.iter().find(|t| t.name == conn.to_track);
 
-                        let start_is_folder = folder_name_opt == Some(&conn.from_track);
-                        let end_is_folder = folder_name_opt == Some(&conn.to_track);
+                        let start_is_folder =
+                            folder_name_opt.as_deref() == Some(conn.from_track.as_str());
+                        let end_is_folder =
+                            folder_name_opt.as_deref() == Some(conn.to_track.as_str());
 
                         let start_point = if conn.from_track == HW_IN_ID
-                            || (data.connections_folder.is_some() && start_is_folder)
+                            || (self.effective_folder(&data).is_some() && start_is_folder)
                         {
-                            if let Some(folder) = Self::folder_track(&data) {
+                            if let Some(folder) = self.folder_track(&data) {
                                 Some(Self::folder_input_port_position(
                                     folder,
                                     conn.from_port,
@@ -1679,9 +2066,9 @@ impl canvas::Program<Message> for Graph {
                         };
 
                         let end_point = if conn.to_track == HW_OUT_ID
-                            || (data.connections_folder.is_some() && end_is_folder)
+                            || (self.effective_folder(&data).is_some() && end_is_folder)
                         {
-                            if let Some(folder) = Self::folder_track(&data) {
+                            if let Some(folder) = self.folder_track(&data) {
                                 Some(Self::folder_output_port_position(
                                     folder,
                                     conn.to_port,
@@ -1743,18 +2130,40 @@ impl canvas::Program<Message> for Graph {
                         return Some(action);
                     }
 
-                    return Some(Action::publish(Message::DeselectAll));
+                    return Some(Action::publish(Message::ConnectionViewDeselectAll));
                 }
 
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    data.plugin_graph_moving_plugin = None;
+                    if state.controller_drag.take().is_some() {
+                        return Some(Action::request_redraw());
+                    }
+
+                    if data.plugin_graph_controller_menu.is_some() {
+                        return Some(Action::capture());
+                    }
+
+                    let mut positions_changed = false;
+
+                    if let Some(mp) = data.plugin_graph_moving_plugin.take() {
+                        let track_name = data.plugin_graph_track.clone().unwrap_or_default();
+                        let current_pos = data
+                            .plugin_graph_plugin_positions
+                            .get(&track_name)
+                            .and_then(|positions| positions.get(&mp.instance_id))
+                            .copied()
+                            .unwrap_or(mp.start_position);
+                        if current_pos != mp.start_position {
+                            positions_changed = true;
+                        }
+                    }
+
                     if let Some(conn) = data.connecting.take() {
                         let from_t = conn.from_track;
                         let from_p = conn.from_port;
                         let kind = conn.kind;
                         let is_input = conn.is_input;
                         let mut target_port = None;
-                        let visible_names = Self::visible_track_names(&data);
+                        let visible_names = self.visible_track_names(&data);
 
                         if is_input {
                             for track in data.tracks.iter() {
@@ -1783,7 +2192,7 @@ impl canvas::Program<Message> for Graph {
                             }
 
                             if target_port.is_none() && from_t != HW_IN_ID {
-                                if let Some(folder) = Self::folder_track(&data) {
+                                if let Some(folder) = self.folder_track(&data) {
                                     let count = Self::folder_input_count(folder);
                                     for j in 0..count {
                                         let pos = Self::folder_input_port_position(
@@ -1811,7 +2220,7 @@ impl canvas::Program<Message> for Graph {
 
                             if kind == Kind::MIDI
                                 && target_port.is_none()
-                                && data.connections_folder.is_none()
+                                && self.effective_folder(&data).is_none()
                             {
                                 for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
                                     let port_pos = Self::midi_hw_in_port_pos(
@@ -1855,7 +2264,7 @@ impl canvas::Program<Message> for Graph {
                             }
 
                             if target_port.is_none() && from_t != HW_OUT_ID {
-                                if let Some(folder) = Self::folder_track(&data) {
+                                if let Some(folder) = self.folder_track(&data) {
                                     let count = Self::folder_output_count(folder);
                                     for j in 0..count {
                                         let pos = Self::folder_output_port_position(
@@ -1885,7 +2294,7 @@ impl canvas::Program<Message> for Graph {
 
                             if kind == Kind::MIDI
                                 && target_port.is_none()
-                                && data.connections_folder.is_none()
+                                && self.effective_folder(&data).is_none()
                             {
                                 for (idx, device) in data.opened_midi_out_hw.iter().enumerate() {
                                     let port_pos = Self::midi_hw_out_port_pos(
@@ -1907,12 +2316,12 @@ impl canvas::Program<Message> for Graph {
                         }
 
                         if target_port.is_none()
-                            && data.connections_folder.is_some()
+                            && self.effective_folder(&data).is_some()
                             && (from_t == HW_IN_ID
                                 || from_t == HW_OUT_ID
                                 || visible_names.contains(&from_t))
                         {
-                            let plugin_hits = Self::plugin_only_port_hits(&data, bounds, hw_width);
+                            let plugin_hits = self.plugin_only_port_hits(&data, bounds, hw_width);
                             let radius = if kind == Kind::Audio {
                                 PORT_HIT_RADIUS
                             } else {
@@ -1948,7 +2357,7 @@ impl canvas::Program<Message> for Graph {
                                             target.port,
                                         )
                                     };
-                                    if let Some(action) = Self::plugin_graph_connection_actions(
+                                    if let Some(action) = self.plugin_graph_connection_actions(
                                         &data, from_node, from_port, to_node, to_port, kind,
                                     ) {
                                         return Some(action);
@@ -1967,7 +2376,7 @@ impl canvas::Program<Message> for Graph {
                                             true,
                                         )
                                         .1;
-                                        return Self::connectable_connection_actions(
+                                        return self.connectable_connection_actions(
                                             &data,
                                             target_ref,
                                             target.port,
@@ -1984,7 +2393,7 @@ impl canvas::Program<Message> for Graph {
                                             false,
                                         )
                                         .1;
-                                        return Self::connectable_connection_actions(
+                                        return self.connectable_connection_actions(
                                             &data,
                                             source_ref,
                                             engine_port,
@@ -1998,26 +2407,27 @@ impl canvas::Program<Message> for Graph {
                         }
 
                         if let Some((to_t_name, to_p)) = target_port {
-                            let folder_name = data.connections_folder.clone();
-                            let from_t = if data.connections_folder.is_some() && from_t == HW_IN_ID
-                            {
-                                folder_name.clone().unwrap()
-                            } else {
-                                from_t
-                            };
-                            let to_t_name =
-                                if data.connections_folder.is_some() && to_t_name == HW_OUT_ID {
-                                    folder_name.unwrap()
+                            let folder_name = self.effective_folder(&data);
+                            let from_t =
+                                if self.effective_folder(&data).is_some() && from_t == HW_IN_ID {
+                                    folder_name.clone().unwrap()
                                 } else {
-                                    to_t_name
+                                    from_t
                                 };
+                            let to_t_name = if self.effective_folder(&data).is_some()
+                                && to_t_name == HW_OUT_ID
+                            {
+                                folder_name.unwrap()
+                            } else {
+                                to_t_name
+                            };
                             let target_track_option =
                                 data.tracks.iter().find(|t| t.name == to_t_name);
 
                             let is_target_midi_hw = to_t_name.starts_with(MIDI_HW_IN_ID)
                                 || to_t_name.starts_with(MIDI_HW_OUT_ID);
                             let target_kind = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
-                                if let Some(folder) = Self::folder_track(&data) {
+                                if let Some(folder) = self.folder_track(&data) {
                                     Self::track_port_kind(folder, to_p, to_t_name == HW_IN_ID)
                                 } else {
                                     Kind::Audio
@@ -2037,7 +2447,7 @@ impl canvas::Program<Message> for Graph {
 
                                 let parallel_count = if data.shift {
                                     let src_count = if is_source_hw_audio {
-                                        if let Some(folder) = Self::folder_track(&data) {
+                                        if let Some(folder) = self.folder_track(&data) {
                                             if from_t == HW_IN_ID {
                                                 Self::folder_input_count(folder)
                                                     .saturating_sub(from_p)
@@ -2072,7 +2482,7 @@ impl canvas::Program<Message> for Graph {
                                     let tgt_count = if to_t_name == HW_IN_ID
                                         || to_t_name == HW_OUT_ID
                                     {
-                                        if let Some(folder) = Self::folder_track(&data) {
+                                        if let Some(folder) = self.folder_track(&data) {
                                             if to_t_name == HW_IN_ID {
                                                 Self::folder_input_count(folder)
                                                     .saturating_sub(to_p)
@@ -2164,7 +2574,7 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
                     if let Some(connecting) = data.plugin_graph_connecting.take() {
-                        let hits = Self::plugin_port_hits(&data, bounds, hw_width);
+                        let hits = self.plugin_port_hits(&data, bounds, hw_width);
                         let radius = if connecting.kind == Kind::Audio {
                             PORT_HIT_RADIUS
                         } else {
@@ -2189,7 +2599,7 @@ impl canvas::Program<Message> for Graph {
                             } else {
                                 (from_node, connecting.from_port, target.node, target.port)
                             };
-                            if let Some(action) = Self::plugin_graph_connection_actions(
+                            if let Some(action) = self.plugin_graph_connection_actions(
                                 &data,
                                 from_node,
                                 from_port,
@@ -2202,8 +2612,8 @@ impl canvas::Program<Message> for Graph {
                         }
 
                         // Allow dropping a plugin port onto a child-track port.
-                        if data.connections_folder.is_some() {
-                            let visible_names = Self::visible_track_names(&data);
+                        if self.effective_folder(&data).is_some() {
+                            let visible_names = self.visible_track_names(&data);
                             for track in data
                                 .tracks
                                 .iter()
@@ -2233,8 +2643,8 @@ impl canvas::Program<Message> for Graph {
                                             let to = Self::plugin_node_to_connectable_ref(
                                                 &connecting.from_node,
                                             )?;
-                                            if let Some(action) =
-                                                Self::connectable_connection_actions(
+                                            if let Some(action) = self
+                                                .connectable_connection_actions(
                                                     &data,
                                                     from,
                                                     engine_port,
@@ -2269,8 +2679,8 @@ impl canvas::Program<Message> for Graph {
                                                 &connecting.from_node,
                                             )?;
                                             let to = ConnectableRef::ChildTrack(track.name.clone());
-                                            if let Some(action) =
-                                                Self::connectable_connection_actions(
+                                            if let Some(action) = self
+                                                .connectable_connection_actions(
                                                     &data,
                                                     from,
                                                     connecting.from_port,
@@ -2288,14 +2698,79 @@ impl canvas::Program<Message> for Graph {
                         }
                         return Some(Action::request_redraw());
                     }
-                    data.moving_track = None;
+                    if let Some(mt) = data.moving_track.take()
+                        && !mt.track_idx.starts_with(MIDI_HW_IN_ID)
+                        && !mt.track_idx.starts_with(MIDI_HW_OUT_ID)
+                        && let Some(t) = data.tracks.iter().find(|tr| tr.name == mt.track_idx)
+                        && t.position != mt.start_position
+                    {
+                        positions_changed = true;
+                    }
+                    if positions_changed {
+                        return Some(Action::publish(Message::ConnectionPositionsChanged));
+                    }
                     return Some(Action::request_redraw());
                 }
 
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                    if let Some(drag) = state.controller_drag.as_ref() {
+                        let pos = cursor.position().unwrap_or(cursor_position);
+                        let x = pos.x.clamp(drag.rect.x, drag.rect.x + drag.rect.width);
+                        let ratio = if drag.rect.width > 0.0 {
+                            (x - drag.rect.x) / drag.rect.width
+                        } else {
+                            0.0
+                        };
+                        let value = drag.min + ratio * (drag.max - drag.min);
+                        if let Some(controller) = data
+                            .plugin_graph_visible_controllers
+                            .get_mut(&drag.track_name)
+                            .and_then(|map| map.get_mut(&drag.instance_id))
+                            .and_then(|controllers| {
+                                controllers.iter_mut().find(|c| c.param_id == drag.param_id)
+                            })
+                        {
+                            controller.value = value;
+                        }
+                        if let Some(plugin) = data
+                            .plugin_graph_plugins
+                            .iter()
+                            .find(|p| p.instance_id == drag.instance_id)
+                            && let Some(message) = Self::set_controller_value_message(
+                                plugin,
+                                &drag.track_name,
+                                drag.param_id,
+                                value,
+                            )
+                        {
+                            return Some(Action::publish(message));
+                        }
+                        return Some(Action::request_redraw());
+                    }
+
+                    // Controller context menu hover takes precedence when open.
+                    if let Some(menu) = data.plugin_graph_controller_menu.as_ref() {
+                        let track_name = menu.track_name.clone();
+                        let instance_id = menu.instance_id;
+                        let params = Self::controller_menu_params(&data, &track_name, instance_id);
+                        let param_count = params.map(|p| p.len()).unwrap_or(0);
+                        let new_hovered = Self::controller_menu_item_index(
+                            menu,
+                            param_count,
+                            cursor_position,
+                            bounds,
+                        );
+                        if menu.hovered != new_hovered {
+                            return Some(Action::publish(Message::PluginGraphControllerMenuHover(
+                                new_hovered,
+                            )));
+                        }
+                        return Some(Action::request_redraw());
+                    }
+
                     let mut new_h = None;
 
-                    let folder = Self::folder_track(&data);
+                    let folder = self.folder_track(&data);
                     let folder_view = folder.is_some();
                     if new_h.is_none()
                         && let Some(folder) = folder
@@ -2413,7 +2888,7 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    let visible_names = Self::visible_track_names(&data);
+                    let visible_names = self.visible_track_names(&data);
                     if new_h.is_none() {
                         for track in data.tracks.iter().rev() {
                             if !visible_names.contains(&track.name) {
@@ -2468,7 +2943,7 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    if new_h.is_none() && data.connections_folder.is_some() {
+                    if new_h.is_none() && self.effective_folder(&data).is_some() {
                         for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate().rev() {
                             let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
                             let total_ins = plugin.audio_inputs + plugin.midi_inputs;
@@ -2574,13 +3049,17 @@ impl canvas::Program<Message> for Graph {
                         redraw_needed = true;
                     }
                     if let Some(mp) = data.plugin_graph_moving_plugin.clone() {
-                        data.plugin_graph_plugin_positions.insert(
-                            mp.instance_id,
-                            Point::new(
-                                cursor_position.x - mp.offset_x,
-                                cursor_position.y - mp.offset_y,
-                            ),
-                        );
+                        let track_name = data.plugin_graph_track.clone().unwrap_or_default();
+                        data.plugin_graph_plugin_positions
+                            .entry(track_name)
+                            .or_default()
+                            .insert(
+                                mp.instance_id,
+                                Point::new(
+                                    cursor_position.x - mp.offset_x,
+                                    cursor_position.y - mp.offset_y,
+                                ),
+                            );
                         redraw_needed = true;
                     }
 
@@ -2711,8 +3190,8 @@ impl canvas::Program<Message> for Graph {
         if let Ok(data) = self.state.try_read() {
             use crate::state::ConnectionViewSelection;
 
-            let visible_names = Self::visible_track_names(&data);
-            if let Some(folder) = &data.connections_folder {
+            let visible_names = self.visible_track_names(&data);
+            if let Some(folder) = self.effective_folder(&data) {
                 frame.fill_text(Text {
                     content: format!("Folder: {folder}"),
                     position: Point::new(bounds.width / 2.0, 18.0),
@@ -2724,17 +3203,17 @@ impl canvas::Program<Message> for Graph {
                 });
             }
 
-            let folder_name_opt = data.connections_folder.as_ref();
+            let folder_name_opt = self.effective_folder(&data);
             for (idx, conn) in data.connections.iter().enumerate() {
                 // In folder view, hide track-level connections that involve the folder
                 // track itself; those are managed in the root connections view.
-                let from_visible = if data.connections_folder.is_some() {
+                let from_visible = if self.effective_folder(&data).is_some() {
                     Self::is_track_view_hw_node(&conn.from_track)
                         || visible_names.contains(&conn.from_track)
                 } else {
                     Self::is_hw_node(&conn.from_track) || visible_names.contains(&conn.from_track)
                 };
-                let to_visible = if data.connections_folder.is_some() {
+                let to_visible = if self.effective_folder(&data).is_some() {
                     Self::is_track_view_hw_node(&conn.to_track)
                         || visible_names.contains(&conn.to_track)
                 } else {
@@ -2746,13 +3225,13 @@ impl canvas::Program<Message> for Graph {
                 let start_track_option = data.tracks.iter().find(|t| t.name == conn.from_track);
                 let end_track_option = data.tracks.iter().find(|t| t.name == conn.to_track);
 
-                let start_is_folder = folder_name_opt == Some(&conn.from_track);
-                let end_is_folder = folder_name_opt == Some(&conn.to_track);
+                let start_is_folder = folder_name_opt.as_deref() == Some(conn.from_track.as_str());
+                let end_is_folder = folder_name_opt.as_deref() == Some(conn.to_track.as_str());
 
                 let start_point = if conn.from_track == HW_IN_ID
-                    || (data.connections_folder.is_some() && start_is_folder)
+                    || (self.effective_folder(&data).is_some() && start_is_folder)
                 {
-                    if let Some(folder) = Self::folder_track(&data) {
+                    if let Some(folder) = self.folder_track(&data) {
                         Some(Self::folder_input_port_position(
                             folder,
                             conn.from_port,
@@ -2792,9 +3271,9 @@ impl canvas::Program<Message> for Graph {
                 };
 
                 let end_point = if conn.to_track == HW_OUT_ID
-                    || (data.connections_folder.is_some() && end_is_folder)
+                    || (self.effective_folder(&data).is_some() && end_is_folder)
                 {
-                    if let Some(folder) = Self::folder_track(&data) {
+                    if let Some(folder) = self.folder_track(&data) {
                         Some(Self::folder_output_port_position(
                             folder,
                             conn.to_port,
@@ -2888,9 +3367,9 @@ impl canvas::Program<Message> for Graph {
             }
 
             // Draw folder plugin graph connections in the same canvas.
-            if data.connections_folder.is_some() {
+            if self.effective_folder(&data).is_some() {
                 for (idx, conn) in data.plugin_graph_connections.iter().enumerate() {
-                    let start = Self::plugin_graph_node_port_position(
+                    let start = self.plugin_graph_node_port_position(
                         &data,
                         &conn.from_node,
                         conn.from_port,
@@ -2898,7 +3377,7 @@ impl canvas::Program<Message> for Graph {
                         bounds,
                         hw_width,
                     );
-                    let end = Self::plugin_graph_node_port_position(
+                    let end = self.plugin_graph_node_port_position(
                         &data,
                         &conn.to_node,
                         conn.to_port,
@@ -2943,25 +3422,23 @@ impl canvas::Program<Message> for Graph {
                     if !involves_child {
                         continue;
                     }
-                    let Some(start) = Self::connectable_port_position(
+                    let Some(start) = self.connectable_port_position(
                         &data,
                         &conn.from,
                         conn.from_port,
                         false,
                         conn.kind,
                         bounds,
-                        hw_width,
                     ) else {
                         continue;
                     };
-                    let Some(end) = Self::connectable_port_position(
+                    let Some(end) = self.connectable_port_position(
                         &data,
                         &conn.to,
                         conn.to_port,
                         true,
                         conn.kind,
                         bounds,
-                        hw_width,
                     ) else {
                         continue;
                     };
@@ -3136,7 +3613,7 @@ impl canvas::Program<Message> for Graph {
             }
 
             if let Some(connecting) = &data.plugin_graph_connecting {
-                let start = Self::plugin_graph_node_port_position(
+                let start = self.plugin_graph_node_port_position(
                     &data,
                     &connecting.from_node,
                     connecting.from_port,
@@ -3166,28 +3643,23 @@ impl canvas::Program<Message> for Graph {
                 }
             }
 
-            if Self::folder_track(&data).is_some() {
-                Self::draw_folder_side_panel(
-                    &mut frame,
-                    &data,
-                    bounds,
-                    hw_width,
-                    true,
-                    edge_panel,
-                    edge_panel_border,
-                );
-                Self::draw_folder_side_panel(
+            if self.folder_track(&data).is_some() {
+                let panel_style = FolderPanelStyle {
+                    fill: edge_panel,
+                    border: edge_panel_border,
+                };
+                self.draw_folder_side_panel(&mut frame, &data, bounds, hw_width, true, panel_style);
+                self.draw_folder_side_panel(
                     &mut frame,
                     &data,
                     bounds,
                     hw_width,
                     false,
-                    edge_panel,
-                    edge_panel_border,
+                    panel_style,
                 );
             }
 
-            if data.connections_folder.is_none()
+            if self.effective_folder(&data).is_none()
                 && let Some(hw_in) = &data.hw_in
             {
                 let pos = Point::new(0.0, 0.0);
@@ -3229,7 +3701,7 @@ impl canvas::Program<Message> for Graph {
                     let can_highlight_port = should_highlight_port(
                         h,
                         data.connecting.as_ref().map(|c| c.kind),
-                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
                     );
 
                     frame.fill(
@@ -3242,7 +3714,7 @@ impl canvas::Program<Message> for Graph {
                 }
             }
 
-            if data.connections_folder.is_none()
+            if self.effective_folder(&data).is_none()
                 && let Some(hw_out) = &data.hw_out
             {
                 let pos = Point::new(bounds.width - hw_width, 0.0);
@@ -3284,7 +3756,7 @@ impl canvas::Program<Message> for Graph {
                     let can_highlight_port = should_highlight_port(
                         h,
                         data.connecting.as_ref().map(|c| c.kind),
-                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
                     );
 
                     frame.fill(
@@ -3294,7 +3766,7 @@ impl canvas::Program<Message> for Graph {
                 }
             }
 
-            if data.connections_folder.is_none() {
+            if self.effective_folder(&data).is_none() {
                 for (j, device) in data.opened_midi_in_hw.iter().enumerate() {
                     let label = Self::midi_device_label(&data, device);
                     let default_rect =
@@ -3488,7 +3960,7 @@ impl canvas::Program<Message> for Graph {
                     let can_highlight_port = should_highlight_port(
                         h,
                         data.connecting.as_ref().map(|c| c.kind),
-                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
                     );
 
                     frame.fill(
@@ -3511,7 +3983,7 @@ impl canvas::Program<Message> for Graph {
                     let can_highlight_port = should_highlight_port(
                         h,
                         data.connecting.as_ref().map(|c| c.kind),
-                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
                     );
 
                     frame.fill(
@@ -3532,7 +4004,8 @@ impl canvas::Program<Message> for Graph {
             }
 
             // Draw folder plugin nodes as equals in the same graph.
-            if data.connections_folder.is_some() {
+            if self.effective_folder(&data).is_some() {
+                let controller_track_name = self.effective_track_root(&data).unwrap_or_default();
                 for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate() {
                     let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
                     let size = Self::plugin_box_size(plugin);
@@ -3622,6 +4095,199 @@ impl canvas::Program<Message> for Graph {
                         position: Point::new(
                             pos.x + size.width / 2.0,
                             pos.y + size.height / 2.0 - 8.0,
+                        ),
+                        color: Color::WHITE,
+                        size: 12.0.into(),
+                        align_x: Horizontal::Center.into(),
+                        align_y: Vertical::Center,
+                        ..Default::default()
+                    });
+
+                    // Draw visible controller sliders below the plugin.
+                    for hit in
+                        Self::visible_controller_rects(&data, &controller_track_name, plugin, pos)
+                    {
+                        let (min, max) = Self::controller_range(hit.param, hit.controller);
+                        let value = hit.controller.value.clamp(min, max);
+                        let ratio = if max > min {
+                            (value - min) / (max - min)
+                        } else {
+                            0.0
+                        };
+                        let fill_width = hit.rect.width * ratio;
+
+                        let track_bg = Color::from_rgb(0.12, 0.15, 0.21);
+                        let track_fill = Color::from_rgb(0.2, 0.65, 0.9);
+                        let border_color = Color::from_rgb(0.12, 0.45, 0.7);
+
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(hit.rect.x, hit.rect.y),
+                                iced::Size::new(hit.rect.width, hit.rect.height),
+                            ),
+                            track_bg,
+                        );
+                        if fill_width > 0.0 {
+                            frame.fill(
+                                &Path::rectangle(
+                                    Point::new(hit.rect.x, hit.rect.y),
+                                    iced::Size::new(fill_width, hit.rect.height),
+                                ),
+                                track_fill,
+                            );
+                        }
+                        frame.stroke(
+                            &Path::rectangle(
+                                Point::new(hit.rect.x, hit.rect.y),
+                                iced::Size::new(hit.rect.width, hit.rect.height),
+                            ),
+                            canvas::Stroke::default()
+                                .with_color(border_color)
+                                .with_width(1.0),
+                        );
+                        if fill_width > 0.0 && fill_width < hit.rect.width {
+                            frame.fill(
+                                &Path::rectangle(
+                                    Point::new(hit.rect.x + fill_width - 1.0, hit.rect.y),
+                                    iced::Size::new(2.0, hit.rect.height),
+                                ),
+                                Color::WHITE,
+                            );
+                        }
+                        frame.fill_text(Text {
+                            content: Self::trim_label_to_width(
+                                &hit.controller.name,
+                                hit.rect.width - 4.0,
+                            ),
+                            position: Point::new(
+                                hit.rect.x + hit.rect.width / 2.0,
+                                hit.rect.y + hit.rect.height / 2.0,
+                            ),
+                            color: Color::WHITE,
+                            size: 9.0.into(),
+                            align_x: Horizontal::Center.into(),
+                            align_y: Vertical::Center,
+                            ..Default::default()
+                        });
+
+                        if self.selected_modulator.is_some() {
+                            let assigned = self.is_controller_assigned(
+                                &controller_track_name,
+                                hit.plugin,
+                                hit.controller,
+                                min,
+                                max,
+                            );
+                            let highlight = Color {
+                                r: 1.0,
+                                g: 0.78,
+                                b: 0.27,
+                                a: if assigned { 0.25 } else { 0.08 },
+                            };
+                            let highlight_border = if assigned {
+                                Color::from_rgb(1.0, 0.784, 0.275)
+                            } else {
+                                Color::from_rgb(0.706, 0.588, 0.314)
+                            };
+                            frame.fill(
+                                &Path::rectangle(
+                                    Point::new(hit.rect.x, hit.rect.y),
+                                    iced::Size::new(hit.rect.width, hit.rect.height),
+                                ),
+                                highlight,
+                            );
+                            frame.stroke(
+                                &Path::rectangle(
+                                    Point::new(hit.rect.x, hit.rect.y),
+                                    iced::Size::new(hit.rect.width, hit.rect.height),
+                                ),
+                                canvas::Stroke::default()
+                                    .with_color(highlight_border)
+                                    .with_width(if assigned { 2.0 } else { 1.5 }),
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Draw controller context menu on top of everything.
+            if let Some(menu) = data.plugin_graph_controller_menu.as_ref() {
+                let params =
+                    Self::controller_menu_params(&data, &menu.track_name, menu.instance_id);
+                let param_count = params.map(|p| p.len()).unwrap_or(0);
+                let rect = Self::controller_menu_rect(menu, param_count, bounds);
+                let menu_bg = Color::from_rgb(0.18, 0.22, 0.32);
+                let menu_border = Color::from_rgb(0.45, 0.52, 0.7);
+                let menu_hover = Color::from_rgb(0.28, 0.35, 0.5);
+                frame.fill(
+                    &Path::rectangle(
+                        Point::new(rect.x, rect.y),
+                        iced::Size::new(rect.width, rect.height),
+                    ),
+                    menu_bg,
+                );
+                frame.stroke(
+                    &Path::rectangle(
+                        Point::new(rect.x, rect.y),
+                        iced::Size::new(rect.width, rect.height),
+                    ),
+                    canvas::Stroke::default()
+                        .with_color(menu_border)
+                        .with_width(1.0),
+                );
+                if let Some(params) = params {
+                    if params.is_empty() {
+                        frame.fill_text(Text {
+                            content: "No parameters".to_string(),
+                            position: Point::new(
+                                rect.x + rect.width / 2.0,
+                                rect.y + CONTROLLER_MENU_ITEM_HEIGHT / 2.0,
+                            ),
+                            color: Color::from_rgb(0.7, 0.7, 0.7),
+                            size: 12.0.into(),
+                            align_x: Horizontal::Center.into(),
+                            align_y: Vertical::Center,
+                            ..Default::default()
+                        });
+                    } else {
+                        for (idx, param) in params.iter().enumerate() {
+                            let item_y = rect.y + idx as f32 * CONTROLLER_MENU_ITEM_HEIGHT;
+                            let item_rect = Rectangle::new(
+                                Point::new(rect.x, item_y),
+                                iced::Size::new(rect.width, CONTROLLER_MENU_ITEM_HEIGHT),
+                            );
+                            let fill = if menu.hovered == Some(idx) {
+                                menu_hover
+                            } else {
+                                menu_bg
+                            };
+                            frame.fill(
+                                &Path::rectangle(
+                                    Point::new(item_rect.x, item_rect.y),
+                                    iced::Size::new(item_rect.width, item_rect.height),
+                                ),
+                                fill,
+                            );
+                            frame.fill_text(Text {
+                                content: Self::trim_label_to_width(&param.name, rect.width - 12.0),
+                                position: Point::new(
+                                    rect.x + 6.0,
+                                    item_y + CONTROLLER_MENU_ITEM_HEIGHT / 2.0,
+                                ),
+                                color: Color::WHITE,
+                                size: 12.0.into(),
+                                align_x: Horizontal::Left.into(),
+                                align_y: Vertical::Center,
+                                ..Default::default()
+                            });
+                        }
+                    }
+                } else {
+                    frame.fill_text(Text {
+                        content: "Loading...".to_string(),
+                        position: Point::new(
+                            rect.x + rect.width / 2.0,
+                            rect.y + CONTROLLER_MENU_ITEM_HEIGHT / 2.0,
                         ),
                         color: Color::WHITE,
                         size: 12.0.into(),
@@ -3785,13 +4451,13 @@ mod tests {
         let track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
         let click = Point::new(track.position.x + 5.0, track.position.y + 5.0);
         state.blocking_write().tracks.push(track);
-        let graph = Graph::new(state.clone());
+        let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor = mouse::Cursor::Available(click);
 
         let action = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -3812,20 +4478,19 @@ mod tests {
             ConnectionViewSelection::Tracks(selected) => assert!(selected.contains("Track")),
             other => panic!("unexpected selection: {other:?}"),
         }
-        assert!(data.selected.contains("Track"));
     }
 
     #[test]
     fn update_double_clicking_hw_in_opens_hw_input_ports_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         state.blocking_write().hw_in = Some(crate::state::HW { channels: 1 });
-        let graph = Graph::new(state.clone());
+        let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor = mouse::Cursor::Available(Point::new(20.0, 20.0));
 
         let first = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -3837,7 +4502,7 @@ mod tests {
 
         let second = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -3855,13 +4520,13 @@ mod tests {
     fn update_double_clicking_hw_out_opens_hw_output_ports_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         state.blocking_write().hw_out = Some(crate::state::HW { channels: 1 });
-        let graph = Graph::new(state.clone());
+        let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor = mouse::Cursor::Available(Point::new(780.0, 20.0));
 
         let first = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -3873,7 +4538,7 @@ mod tests {
 
         let second = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -3917,7 +4582,7 @@ mod tests {
             data.plugin_graph_track = Some("Folder".to_string());
             data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
         }
-        let graph = Graph::new(state.clone());
+        let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let port_pos = {
             let data = state.blocking_read();
@@ -3929,7 +4594,7 @@ mod tests {
 
         let action = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -3958,7 +4623,7 @@ mod tests {
             data.plugin_graph_track = Some("Folder".to_string());
             data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
         }
-        let graph = Graph::new(state.clone());
+        let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let click = {
             let data = state.blocking_read();
@@ -3970,7 +4635,7 @@ mod tests {
 
         let action = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -4000,15 +4665,18 @@ mod tests {
         data.shift = true;
         data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
 
-        let action = Graph::plugin_graph_connection_actions(
-            &data,
-            PluginGraphNode::Vst3PluginInstance(7),
-            0,
-            PluginGraphNode::TrackOutput,
-            0,
-            Kind::Audio,
-        )
-        .expect("action");
+        let state = Arc::new(RwLock::new(data));
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .plugin_graph_connection_actions(
+                &state.blocking_read(),
+                PluginGraphNode::Vst3PluginInstance(7),
+                0,
+                PluginGraphNode::TrackOutput,
+                0,
+                Kind::Audio,
+            )
+            .expect("action");
 
         let message = action_message(action).0.expect("message");
         match message {
@@ -4034,15 +4702,18 @@ mod tests {
         data.shift = true;
         data.plugin_graph_plugins.push(test_plugin_graph_plugin(7));
 
-        let action = Graph::connectable_connection_actions(
-            &data,
-            ConnectableRef::Vst3Plugin(7),
-            0,
-            ConnectableRef::TrackOutput,
-            0,
-            Kind::Audio,
-        )
-        .expect("action");
+        let state = Arc::new(RwLock::new(data));
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .connectable_connection_actions(
+                &state.blocking_read(),
+                ConnectableRef::Vst3Plugin(7),
+                0,
+                ConnectableRef::TrackOutput,
+                0,
+                Kind::Audio,
+            )
+            .expect("action");
 
         let message = action_message(action).0.expect("message");
         match message {
@@ -4071,15 +4742,18 @@ mod tests {
         plugin.audio_outputs = 4;
         data.plugin_graph_plugins.push(plugin);
 
-        let action = Graph::plugin_graph_connection_actions(
-            &data,
-            PluginGraphNode::Vst3PluginInstance(8),
-            0,
-            PluginGraphNode::TrackOutput,
-            0,
-            Kind::Audio,
-        )
-        .expect("action");
+        let state = Arc::new(RwLock::new(data));
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .plugin_graph_connection_actions(
+                &state.blocking_read(),
+                PluginGraphNode::Vst3PluginInstance(8),
+                0,
+                PluginGraphNode::TrackOutput,
+                0,
+                Kind::Audio,
+            )
+            .expect("action");
 
         let message = action_message(action).0.expect("message");
         match message {
