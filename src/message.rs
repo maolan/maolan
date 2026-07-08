@@ -182,7 +182,7 @@ impl fmt::Display for PreferencesDeviceOption {
 pub enum ModulatorChange {
     Name(String),
     Shape(crate::state::ModulatorShape),
-    RateHz(f32),
+    Rate(crate::state::ModulatorRate),
     Phase(f32),
     Enabled(bool),
     Targets(Vec<crate::state::ModulatorTarget>),

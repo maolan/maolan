@@ -80,6 +80,126 @@ impl fmt::Display for ModulatorShape {
     }
 }
 
+/// Musical note division used for tempo-synced modulator rates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MusicalDivision {
+    Bar,
+    Half,
+    Beat,
+    Eighth,
+    Sixteenth,
+    ThirtySecond,
+    SixtyFourth,
+}
+
+impl fmt::Display for MusicalDivision {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bar => write!(f, "1/1"),
+            Self::Half => write!(f, "1/2"),
+            Self::Beat => write!(f, "1/4"),
+            Self::Eighth => write!(f, "1/8"),
+            Self::Sixteenth => write!(f, "1/16"),
+            Self::ThirtySecond => write!(f, "1/32"),
+            Self::SixtyFourth => write!(f, "1/64"),
+        }
+    }
+}
+
+impl MusicalDivision {
+    pub const ALL: [Self; 7] = [
+        Self::Bar,
+        Self::Half,
+        Self::Beat,
+        Self::Eighth,
+        Self::Sixteenth,
+        Self::ThirtySecond,
+        Self::SixtyFourth,
+    ];
+}
+
+/// Modulator rate specified either as a fixed frequency or as a tempo-synced division.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub enum ModulatorRate {
+    Hz(f32),
+    Musical(MusicalDivision),
+}
+
+impl Default for ModulatorRate {
+    fn default() -> Self {
+        Self::Hz(1.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum ModulatorRateSerde {
+    Hz(f32),
+    Structured {
+        kind: ModulatorRateKind,
+        value: ModulatorRateValueSerde,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+enum ModulatorRateKind {
+    Hz,
+    Musical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum ModulatorRateValueSerde {
+    Hz(f32),
+    Musical(MusicalDivision),
+}
+
+impl From<ModulatorRate> for ModulatorRateSerde {
+    fn from(rate: ModulatorRate) -> Self {
+        match rate {
+            ModulatorRate::Hz(hz) => Self::Hz(hz),
+            ModulatorRate::Musical(div) => Self::Structured {
+                kind: ModulatorRateKind::Musical,
+                value: ModulatorRateValueSerde::Musical(div),
+            },
+        }
+    }
+}
+
+impl From<ModulatorRateSerde> for ModulatorRate {
+    fn from(rate: ModulatorRateSerde) -> Self {
+        match rate {
+            ModulatorRateSerde::Hz(hz) => Self::Hz(hz),
+            ModulatorRateSerde::Structured {
+                kind: ModulatorRateKind::Hz,
+                value: ModulatorRateValueSerde::Hz(hz),
+            } => Self::Hz(hz),
+            ModulatorRateSerde::Structured {
+                kind: ModulatorRateKind::Musical,
+                value: ModulatorRateValueSerde::Musical(div),
+            } => Self::Musical(div),
+            // Fallback for malformed structured values.
+            ModulatorRateSerde::Structured {
+                value: ModulatorRateValueSerde::Hz(hz),
+                ..
+            } => Self::Hz(hz),
+            ModulatorRateSerde::Structured {
+                value: ModulatorRateValueSerde::Musical(div),
+                ..
+            } => Self::Musical(div),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ModulatorRate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        ModulatorRateSerde::deserialize(deserializer).map(Into::into)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ModulatorTarget {
     pub track_name: String,
@@ -200,7 +320,7 @@ pub struct Modulator {
     pub id: usize,
     pub name: String,
     pub shape: ModulatorShape,
-    pub rate_hz: f32,
+    pub rate: ModulatorRate,
     pub phase: f32,
     pub enabled: bool,
     pub targets: Vec<ModulatorTarget>,
@@ -216,7 +336,10 @@ impl<'de> serde::Deserialize<'de> for Modulator {
             id: usize,
             name: String,
             shape: ModulatorShape,
-            rate_hz: f32,
+            #[serde(default)]
+            rate_hz: Option<f32>,
+            #[serde(default)]
+            rate: Option<ModulatorRate>,
             phase: f32,
             #[serde(default)]
             _bipolar: Option<bool>,
@@ -232,11 +355,15 @@ impl<'de> serde::Deserialize<'de> for Modulator {
         } else {
             data.targets
         };
+        let rate = data.rate.unwrap_or_else(|| {
+            data.rate_hz
+                .map_or_else(ModulatorRate::default, ModulatorRate::Hz)
+        });
         Ok(Self {
             id: data.id,
             name: data.name,
             shape: data.shape,
-            rate_hz: data.rate_hz,
+            rate,
             phase: data.phase,
             enabled: data.enabled,
             targets,
@@ -250,7 +377,7 @@ impl Modulator {
             id,
             name: format!("Modulator {id}"),
             shape: ModulatorShape::default(),
-            rate_hz: 1.0,
+            rate: ModulatorRate::default(),
             phase: 0.0,
             enabled: true,
             targets: Vec::new(),
@@ -264,7 +391,7 @@ impl From<&Modulator> for maolan_engine::modulator::Modulator {
             id: m.id,
             name: m.name.clone(),
             shape: m.shape.into(),
-            rate_hz: m.rate_hz,
+            rate: m.rate.into(),
             phase: m.phase,
             enabled: m.enabled,
             targets: m
@@ -273,6 +400,29 @@ impl From<&Modulator> for maolan_engine::modulator::Modulator {
                 .cloned()
                 .filter_map(|t| t.try_into().ok())
                 .collect(),
+        }
+    }
+}
+
+impl From<ModulatorRate> for maolan_engine::modulator::ModulatorRate {
+    fn from(rate: ModulatorRate) -> Self {
+        match rate {
+            ModulatorRate::Hz(hz) => Self::Hz(hz),
+            ModulatorRate::Musical(div) => Self::Musical(div.into()),
+        }
+    }
+}
+
+impl From<MusicalDivision> for maolan_engine::modulator::MusicalDivision {
+    fn from(div: MusicalDivision) -> Self {
+        match div {
+            MusicalDivision::Bar => Self::Bar,
+            MusicalDivision::Half => Self::Half,
+            MusicalDivision::Beat => Self::Beat,
+            MusicalDivision::Eighth => Self::Eighth,
+            MusicalDivision::Sixteenth => Self::Sixteenth,
+            MusicalDivision::ThirtySecond => Self::ThirtySecond,
+            MusicalDivision::SixtyFourth => Self::SixtyFourth,
         }
     }
 }
@@ -1629,17 +1779,26 @@ mod tests {
             id: 1,
             name: "Test".to_string(),
             shape: ModulatorShape::Sine,
-            rate_hz: 1.0,
+            rate: ModulatorRate::Hz(1.0),
             phase: 0.0,
             enabled: true,
             targets: Vec::new(),
         };
         let engine_m: maolan_engine::modulator::Modulator = (&m).into();
         let sample_rate = 48000.0;
-        assert!((engine_m.value_at(0, sample_rate) - 0.5).abs() < 0.001);
-        assert!((engine_m.value_at(sample_rate as usize / 4, sample_rate) - 1.0).abs() < 0.001);
-        assert!((engine_m.value_at(sample_rate as usize / 2, sample_rate) - 0.5).abs() < 0.001);
-        assert!((engine_m.value_at(sample_rate as usize * 3 / 4, sample_rate) - 0.0).abs() < 0.001);
+        assert!((engine_m.value_at(0, sample_rate, 120.0, 4, 4) - 0.5).abs() < 0.001);
+        assert!(
+            (engine_m.value_at(sample_rate as usize / 4, sample_rate, 120.0, 4, 4) - 1.0).abs()
+                < 0.001
+        );
+        assert!(
+            (engine_m.value_at(sample_rate as usize / 2, sample_rate, 120.0, 4, 4) - 0.5).abs()
+                < 0.001
+        );
+        assert!(
+            (engine_m.value_at(sample_rate as usize * 3 / 4, sample_rate, 120.0, 4, 4) - 0.0).abs()
+                < 0.001
+        );
     }
 
     #[test]
