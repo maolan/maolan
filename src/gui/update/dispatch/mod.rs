@@ -9371,7 +9371,7 @@ impl Maolan {
                     match change {
                         ModulatorChange::Name(v) => m.name = v.clone(),
                         ModulatorChange::Shape(v) => m.shape = *v,
-                        ModulatorChange::RateHz(v) => m.rate_hz = *v,
+                        ModulatorChange::Rate(v) => m.rate = *v,
                         ModulatorChange::Phase(v) => m.phase = *v,
                         ModulatorChange::Enabled(v) => m.enabled = *v,
                         ModulatorChange::Targets(v) => m.targets = v.clone(),
