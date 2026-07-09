@@ -1,16 +1,18 @@
 use crate::{
     consts::message_lists::{PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL},
-    message::{Message, PianoControllerLane},
+    message::{Message, PianoControllerLane, PianoNrpnKind, PianoRpnKind},
     state::{PianoControllerPoint, PianoNote, PianoSysExPoint, State},
-    widget::piano::PianoRollInteraction,
+    widget::{curve::CurvePoint, piano::PianoRollInteraction},
 };
 use iced::{
     Color, Event, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
 };
 use maolan_widgets::controller::{
-    controller_lane_line_count, lane_controller_events, nrpn_param, rpn_param,
+    controller_lane_line_count, lane_controller_events, nrpn_param, nrpn_row_for_param, rpn_param,
+    rpn_row_for_param,
 };
+use maolan_widgets::midi::MIDI_CHANNELS;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy)]
@@ -191,6 +193,129 @@ impl ControllerRollInteraction {
         out.sort_unstable();
         out.dedup();
         out
+    }
+}
+
+/// Build normalized curve points for the currently selected controller lane.
+///
+/// For CC lanes the curve covers the selected controller number. For RPN/NRPN
+/// lanes it covers the selected parameter, reconstructing the 14-bit data-entry
+/// value at each sample.
+pub fn lane_curve_points(
+    lane: PianoControllerLane,
+    selected_cc: u8,
+    selected_rpn: PianoRpnKind,
+    selected_nrpn: PianoNrpnKind,
+    controllers: &[PianoControllerPoint],
+) -> Vec<CurvePoint> {
+    match lane {
+        PianoControllerLane::Controller => {
+            let mut points: Vec<CurvePoint> = controllers
+                .iter()
+                .filter(|ctrl| ctrl.controller == selected_cc)
+                .map(|ctrl| CurvePoint {
+                    sample: ctrl.sample,
+                    value: (ctrl.value as f32 / 127.0).clamp(0.0, 1.0),
+                })
+                .collect();
+            points.sort_unstable_by_key(|point| point.sample);
+            points
+        }
+        PianoControllerLane::Rpn => {
+            let Some(selected_row) = PIANO_RPN_KIND_ALL
+                .iter()
+                .position(|kind| *kind == selected_rpn)
+            else {
+                return vec![];
+            };
+            let mut ordered: Vec<usize> = (0..controllers.len()).collect();
+            ordered.sort_unstable_by(|&a, &b| {
+                let ca = &controllers[a];
+                let cb = &controllers[b];
+                let priority = |ctrl: &PianoControllerPoint| match ctrl.controller {
+                    101 | 100 => 0,
+                    38 => 1,
+                    6 => 2,
+                    _ => 3,
+                };
+                (ca.sample, priority(ca), a).cmp(&(cb.sample, priority(cb), b))
+            });
+            let mut current_msb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+            let mut current_lsb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+            let mut last_data_lsb: [u8; MIDI_CHANNELS] = [0; MIDI_CHANNELS];
+            let mut points = Vec::new();
+            for idx in ordered {
+                let ctrl = &controllers[idx];
+                let channel = usize::from(ctrl.channel.min((MIDI_CHANNELS - 1) as u8));
+                match ctrl.controller {
+                    101 => current_msb[channel] = Some(ctrl.value),
+                    100 => current_lsb[channel] = Some(ctrl.value),
+                    38 => last_data_lsb[channel] = ctrl.value,
+                    6 => {
+                        if let (Some(msb), Some(lsb)) = (current_msb[channel], current_lsb[channel])
+                            && rpn_row_for_param(msb, lsb) == Some(selected_row)
+                        {
+                            let value14 =
+                                ((ctrl.value as u16) << 7) | last_data_lsb[channel] as u16;
+                            points.push(CurvePoint {
+                                sample: ctrl.sample,
+                                value: (value14 as f32 / 16383.0).clamp(0.0, 1.0),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            points
+        }
+        PianoControllerLane::Nrpn => {
+            let Some(selected_row) = PIANO_NRPN_KIND_ALL
+                .iter()
+                .position(|kind| *kind == selected_nrpn)
+            else {
+                return vec![];
+            };
+            let mut ordered: Vec<usize> = (0..controllers.len()).collect();
+            ordered.sort_unstable_by(|&a, &b| {
+                let ca = &controllers[a];
+                let cb = &controllers[b];
+                let priority = |ctrl: &PianoControllerPoint| match ctrl.controller {
+                    99 | 98 => 0,
+                    38 => 1,
+                    6 => 2,
+                    _ => 3,
+                };
+                (ca.sample, priority(ca), a).cmp(&(cb.sample, priority(cb), b))
+            });
+            let mut current_msb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+            let mut current_lsb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+            let mut last_data_lsb: [u8; MIDI_CHANNELS] = [0; MIDI_CHANNELS];
+            let mut points = Vec::new();
+            for idx in ordered {
+                let ctrl = &controllers[idx];
+                let channel = usize::from(ctrl.channel.min((MIDI_CHANNELS - 1) as u8));
+                match ctrl.controller {
+                    99 => current_msb[channel] = Some(ctrl.value),
+                    98 => current_lsb[channel] = Some(ctrl.value),
+                    38 => last_data_lsb[channel] = ctrl.value,
+                    6 => {
+                        if let (Some(msb), Some(lsb)) = (current_msb[channel], current_lsb[channel])
+                            && nrpn_row_for_param(msb, lsb) == Some(selected_row)
+                        {
+                            let value14 =
+                                ((ctrl.value as u16) << 7) | last_data_lsb[channel] as u16;
+                            points.push(CurvePoint {
+                                sample: ctrl.sample,
+                                value: (value14 as f32 / 16383.0).clamp(0.0, 1.0),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            points
+        }
+        PianoControllerLane::Velocity | PianoControllerLane::SysEx => vec![],
     }
 }
 
@@ -799,6 +924,60 @@ mod tests {
         assert!(matches!(state.mode, ControllerDragMode::None));
         assert!(state.last_sysex_click.is_none());
     }
+
+    #[test]
+    fn lane_curve_points_returns_points_for_selected_cc() {
+        let controllers = vec![
+            PianoControllerPoint {
+                sample: 100,
+                controller: 1,
+                value: 0,
+                channel: 0,
+            },
+            PianoControllerPoint {
+                sample: 200,
+                controller: 1,
+                value: 127,
+                channel: 0,
+            },
+            PianoControllerPoint {
+                sample: 300,
+                controller: 7,
+                value: 64,
+                channel: 0,
+            },
+        ];
+        let points = lane_curve_points(
+            PianoControllerLane::Controller,
+            1,
+            crate::message::PianoRpnKind::PitchBendSensitivity,
+            crate::message::PianoNrpnKind::Brightness,
+            &controllers,
+        );
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].sample, 100);
+        assert_eq!(points[0].value, 0.0);
+        assert_eq!(points[1].sample, 200);
+        assert_eq!(points[1].value, 1.0);
+    }
+
+    #[test]
+    fn lane_curve_points_filters_out_other_controllers() {
+        let controllers = vec![PianoControllerPoint {
+            sample: 100,
+            controller: 7,
+            value: 64,
+            channel: 0,
+        }];
+        let points = lane_curve_points(
+            PianoControllerLane::Controller,
+            1,
+            crate::message::PianoRpnKind::PitchBendSensitivity,
+            crate::message::PianoNrpnKind::Brightness,
+            &controllers,
+        );
+        assert!(points.is_empty());
+    }
 }
 
 pub mod controllers_lane {
@@ -906,11 +1085,9 @@ pub mod controllers_lane {
                         i as f32 / (points - 1) as f32
                     };
                     let sample = start_sample + ((end_sample - start_sample) as f32 * t) as usize;
-                    let value = if delta >= 0 {
-                        (start_value + i as i16).clamp(0, 127) as u8
-                    } else {
-                        (start_value - i as i16).clamp(0, 127) as u8
-                    };
+                    let value = (start_value as f32 + (delta as f32) * t)
+                        .round()
+                        .clamp(0.0, 127.0) as u8;
                     out.push(PianoControllerEditData {
                         sample,
                         controller: cc,

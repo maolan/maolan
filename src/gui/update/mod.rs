@@ -79,8 +79,6 @@ struct CachedPitchCorrectionFile {
 }
 
 impl Maolan {
-    const PITCH_CORRECTION_HISTORY_LIMIT: usize = 100;
-
     fn pitch_correction_cache_file_name(
         source_name: &str,
         source_offset: usize,
@@ -238,91 +236,6 @@ impl Maolan {
                 path.display()
             ))
         })
-    }
-
-    fn push_pitch_correction_history(
-        &mut self,
-        points: Vec<crate::state::PitchCorrectionPoint>,
-        selected_points: HashSet<usize>,
-    ) {
-        self.pitch_correction_undo
-            .push(super::PitchCorrectionHistoryEntry {
-                points,
-                selected_points,
-            });
-        if self.pitch_correction_undo.len() > Self::PITCH_CORRECTION_HISTORY_LIMIT {
-            self.pitch_correction_undo.remove(0);
-        }
-        self.pitch_correction_redo.clear();
-        self.pitch_correction_dirty = true;
-    }
-
-    fn clear_pitch_correction_history(&mut self) {
-        self.pitch_correction_undo.clear();
-        self.pitch_correction_redo.clear();
-        self.pitch_correction_dirty = false;
-    }
-
-    fn undo_pitch_correction_edit(&mut self) -> Task<Message> {
-        let Some(previous) = self.pitch_correction_undo.pop() else {
-            return Task::none();
-        };
-        let mut state = self.state.blocking_write();
-        let current_points = match state.pitch_correction.as_ref() {
-            Some(pitch_correction) => pitch_correction.points.clone(),
-            None => {
-                self.pitch_correction_undo.push(previous);
-                return Task::none();
-            }
-        };
-        let current_selected = state.pitch_correction_selected_points.clone();
-        self.pitch_correction_redo
-            .push(super::PitchCorrectionHistoryEntry {
-                points: current_points,
-                selected_points: current_selected,
-            });
-        if let Some(pitch_correction) = state.pitch_correction.as_mut() {
-            pitch_correction.points = previous.points;
-        }
-        state.pitch_correction_selected_points = previous.selected_points;
-        state.pitch_correction_dragging_points = None;
-        state.pitch_correction_selecting_rect = None;
-        state.message = "Undid pitch correction edit".to_string();
-        drop(state);
-        if self.pitch_correction_undo.is_empty() {
-            self.pitch_correction_dirty = false;
-        }
-        self.sync_pitch_correction_realtime()
-    }
-
-    fn redo_pitch_correction_edit(&mut self) -> Task<Message> {
-        let Some(next) = self.pitch_correction_redo.pop() else {
-            return Task::none();
-        };
-        let mut state = self.state.blocking_write();
-        let current_points = match state.pitch_correction.as_ref() {
-            Some(pitch_correction) => pitch_correction.points.clone(),
-            None => {
-                self.pitch_correction_redo.push(next);
-                return Task::none();
-            }
-        };
-        let current_selected = state.pitch_correction_selected_points.clone();
-        self.pitch_correction_undo
-            .push(super::PitchCorrectionHistoryEntry {
-                points: current_points,
-                selected_points: current_selected,
-            });
-        if let Some(pitch_correction) = state.pitch_correction.as_mut() {
-            pitch_correction.points = next.points;
-        }
-        state.pitch_correction_selected_points = next.selected_points;
-        state.pitch_correction_dragging_points = None;
-        state.pitch_correction_selecting_rect = None;
-        state.message = "Redid pitch correction edit".to_string();
-        drop(state);
-        self.pitch_correction_dirty = true;
-        self.sync_pitch_correction_realtime()
     }
 
     fn quantize_meter_db(level_db: f32) -> f32 {
@@ -3505,12 +3418,10 @@ impl Maolan {
         };
         state.pitch_correction_dragging_points = None;
         state.pitch_correction_selecting_rect = None;
-        let before_selection = state.pitch_correction_selected_points.clone();
 
         let Some(pitch_correction) = state.pitch_correction.as_mut() else {
             return Task::none();
         };
-        let before_points = pitch_correction.points.clone();
         let mut snapped = 0usize;
         for idx in selection.iter().copied() {
             if let Some(point) = pitch_correction.points.get_mut(idx) {
@@ -3537,7 +3448,6 @@ impl Maolan {
         };
         drop(state);
         if snapped > 0 {
-            self.push_pitch_correction_history(before_points, before_selection);
             return self.sync_pitch_correction_realtime();
         }
         Task::none()

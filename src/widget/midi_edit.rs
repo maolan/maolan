@@ -10,15 +10,16 @@ use crate::{
     message::{Message, PianoControllerLane},
     state::State,
     widget::{
-        controller::ControllerRollInteraction,
+        controller::{ControllerRollInteraction, lane_curve_points},
+        curve::CurveCanvas,
         piano::{self, PianoRollInteraction},
     },
 };
 use iced::{
     Background, Border, Color, Element, Length, Point,
     widget::{
-        Id, Stack, button, checkbox, column, container, pick_list, pin, row, scrollable, slider,
-        text, text_input, vertical_slider,
+        Id, Stack, button, canvas, checkbox, column, container, pick_list, pin, row, scrollable,
+        slider, text, text_input, vertical_slider,
     },
 };
 use iced_aw::{
@@ -560,42 +561,34 @@ impl MIDIEdit {
         }
 
         match controller_lane {
-            PianoControllerLane::Controller => {
-                for (idx, row) in
-                    controller::lane_controller_events(controller_lane, &roll.controllers)
-                {
-                    let ctrl = &roll.controllers[idx];
-                    let x = ctrl.sample as f32 * pps_ctrl;
-                    let mut color = controller::controller_color(ctrl.controller, ctrl.channel);
-                    color.a = (0.2 + (ctrl.value as f32 / 127.0) * 0.8).clamp(0.2, 1.0);
-                    let stem_h = (ctrl_h * (ctrl.value as f32 / 127.0)).max(1.0);
-                    let stem_y = ctrl_h - stem_h;
-                    ctrl_layers.push(
-                        pin(container("")
-                            .width(Length::Fixed(2.0))
-                            .height(Length::Fixed(stem_h))
-                            .style(move |_theme| container::Style {
-                                background: Some(Background::Color(color)),
-                                ..container::Style::default()
-                            }))
-                        .position(Point::new(x, stem_y))
-                        .into(),
-                    );
-                    let y = row as f32 * ctrl_row_h;
-                    ctrl_layers.push(
-                        pin(container("")
-                            .width(Length::Fixed(2.0))
-                            .height(Length::Fixed(1.0))
-                            .style(move |_theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgba(
-                                    1.0, 1.0, 1.0, 0.35,
-                                ))),
-                                ..container::Style::default()
-                            }))
-                        .position(Point::new(x, y))
-                        .into(),
-                    );
-                }
+            PianoControllerLane::Controller
+            | PianoControllerLane::Rpn
+            | PianoControllerLane::Nrpn => {
+                let points = lane_curve_points(
+                    controller_lane,
+                    state.piano_controller_kind,
+                    state.piano_rpn_kind,
+                    state.piano_nrpn_kind,
+                    &roll.controllers,
+                );
+                let color = if matches!(controller_lane, PianoControllerLane::Controller) {
+                    controller::controller_color(state.piano_controller_kind, 0)
+                } else {
+                    controller::controller_color(6, 0)
+                };
+                ctrl_layers.push(
+                    pin(canvas(CurveCanvas {
+                        points,
+                        pixels_per_sample: pps_ctrl,
+                        color,
+                        dot_radius: 2.5,
+                        line_width: 2.0,
+                    })
+                    .width(Length::Fixed(ctrl_w))
+                    .height(Length::Fixed(ctrl_h)))
+                    .position(Point::new(0.0, 0.0))
+                    .into(),
+                );
             }
             PianoControllerLane::Velocity => {
                 for note in &roll.notes {
@@ -611,80 +604,6 @@ impl MIDIEdit {
                             .height(Length::Fixed(stem_h))
                             .style(move |_theme| container::Style {
                                 background: Some(Background::Color(color)),
-                                ..container::Style::default()
-                            }))
-                        .position(Point::new(x, y))
-                        .into(),
-                    );
-                }
-            }
-            PianoControllerLane::Rpn => {
-                for (idx, row) in
-                    controller::lane_controller_events(controller_lane, &roll.controllers)
-                {
-                    let ctrl = &roll.controllers[idx];
-                    let x = ctrl.sample as f32 * pps_ctrl;
-                    let mut color = controller::controller_color(ctrl.controller, ctrl.channel);
-                    color.a = (0.2 + (ctrl.value as f32 / 127.0) * 0.8).clamp(0.2, 1.0);
-                    let stem_h = (ctrl_h * (ctrl.value as f32 / 127.0)).max(1.0);
-                    let stem_y = ctrl_h - stem_h;
-                    ctrl_layers.push(
-                        pin(container("")
-                            .width(Length::Fixed(2.0))
-                            .height(Length::Fixed(stem_h))
-                            .style(move |_theme| container::Style {
-                                background: Some(Background::Color(color)),
-                                ..container::Style::default()
-                            }))
-                        .position(Point::new(x, stem_y))
-                        .into(),
-                    );
-                    let y = row as f32 * ctrl_row_h;
-                    ctrl_layers.push(
-                        pin(container("")
-                            .width(Length::Fixed(2.0))
-                            .height(Length::Fixed(1.0))
-                            .style(move |_theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgba(
-                                    1.0, 1.0, 1.0, 0.35,
-                                ))),
-                                ..container::Style::default()
-                            }))
-                        .position(Point::new(x, y))
-                        .into(),
-                    );
-                }
-            }
-            PianoControllerLane::Nrpn => {
-                for (idx, row) in
-                    controller::lane_controller_events(controller_lane, &roll.controllers)
-                {
-                    let ctrl = &roll.controllers[idx];
-                    let x = ctrl.sample as f32 * pps_ctrl;
-                    let mut color = controller::controller_color(ctrl.controller, ctrl.channel);
-                    color.a = (0.2 + (ctrl.value as f32 / 127.0) * 0.8).clamp(0.2, 1.0);
-                    let stem_h = (ctrl_h * (ctrl.value as f32 / 127.0)).max(1.0);
-                    let stem_y = ctrl_h - stem_h;
-                    ctrl_layers.push(
-                        pin(container("")
-                            .width(Length::Fixed(2.0))
-                            .height(Length::Fixed(stem_h))
-                            .style(move |_theme| container::Style {
-                                background: Some(Background::Color(color)),
-                                ..container::Style::default()
-                            }))
-                        .position(Point::new(x, stem_y))
-                        .into(),
-                    );
-                    let y = row as f32 * ctrl_row_h;
-                    ctrl_layers.push(
-                        pin(container("")
-                            .width(Length::Fixed(2.0))
-                            .height(Length::Fixed(1.0))
-                            .style(move |_theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgba(
-                                    1.0, 1.0, 1.0, 0.35,
-                                ))),
                                 ..container::Style::default()
                             }))
                         .position(Point::new(x, y))

@@ -3,6 +3,7 @@ use iced::{
     widget::{Id, text_editor},
 };
 use maolan_engine::{kind::Kind, message::Action};
+use maolan_widgets::curve_editor::{CurveEditorMessage, CurvePoint as CurveEditorPoint};
 pub use maolan_widgets::midi::{PianoControllerLane, PianoNrpnKind, PianoRpnKind};
 use std::path::PathBuf;
 
@@ -233,6 +234,28 @@ impl fmt::Display for TrackAutomationMode {
     }
 }
 
+impl From<maolan_engine::message::TrackAutomationMode> for TrackAutomationMode {
+    fn from(mode: maolan_engine::message::TrackAutomationMode) -> Self {
+        match mode {
+            maolan_engine::message::TrackAutomationMode::Read => Self::Read,
+            maolan_engine::message::TrackAutomationMode::Touch => Self::Touch,
+            maolan_engine::message::TrackAutomationMode::Latch => Self::Latch,
+            maolan_engine::message::TrackAutomationMode::Write => Self::Write,
+        }
+    }
+}
+
+impl From<TrackAutomationMode> for maolan_engine::message::TrackAutomationMode {
+    fn from(mode: TrackAutomationMode) -> Self {
+        match mode {
+            TrackAutomationMode::Read => Self::Read,
+            TrackAutomationMode::Touch => Self::Touch,
+            TrackAutomationMode::Latch => Self::Latch,
+            TrackAutomationMode::Write => Self::Write,
+        }
+    }
+}
+
 impl fmt::Display for TrackAutomationTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -325,6 +348,34 @@ impl TrackAutomationTarget {
                 },
             ) => a == c && b == d,
             _ => false,
+        }
+    }
+}
+
+impl CurveEditorMessage for Message {
+    type Context = (String, TrackAutomationTarget);
+
+    fn draw_line(context: Self::Context, points: Vec<CurveEditorPoint>) -> Self {
+        let (track_name, target) = context;
+        Message::TrackAutomationLaneInsertPoints {
+            track_name,
+            target,
+            points: points
+                .into_iter()
+                .map(|point| crate::state::TrackAutomationPoint {
+                    sample: point.sample,
+                    value: point.value,
+                })
+                .collect(),
+        }
+    }
+
+    fn delete_point(context: Self::Context, sample: usize) -> Self {
+        let (track_name, target) = context;
+        Message::TrackAutomationLaneDeletePoint {
+            track_name,
+            target,
+            sample,
         }
     }
 }
@@ -731,14 +782,10 @@ pub enum Message {
         plugin_path: String,
         format: String,
     },
-    TrackAutomationLaneHover {
+    TrackAutomationLaneInsertPoints {
         track_name: String,
         target: TrackAutomationTarget,
-        position: Point,
-    },
-    TrackAutomationLaneInsertPoint {
-        track_name: String,
-        target: TrackAutomationTarget,
+        points: Vec<crate::state::TrackAutomationPoint>,
     },
     TrackAutomationLaneDeletePoint {
         track_name: String,
@@ -1712,5 +1759,55 @@ mod tests {
             "happy-new-year"
         );
         assert_eq!(format!("{}", GenerateAudioModelOption::Rl), "RL");
+    }
+
+    #[test]
+    fn curve_editor_draw_line_maps_to_automation_insert_points() {
+        let context = ("Track 1".to_string(), TrackAutomationTarget::Volume);
+        let points = vec![
+            CurveEditorPoint {
+                sample: 100,
+                value: 0.25,
+            },
+            CurveEditorPoint {
+                sample: 200,
+                value: 0.75,
+            },
+        ];
+        let message = Message::draw_line(context, points);
+        match message {
+            Message::TrackAutomationLaneInsertPoints {
+                track_name,
+                target,
+                points,
+            } => {
+                assert_eq!(track_name, "Track 1");
+                assert_eq!(target, TrackAutomationTarget::Volume);
+                assert_eq!(points.len(), 2);
+                assert_eq!(points[0].sample, 100);
+                assert_eq!(points[0].value, 0.25);
+                assert_eq!(points[1].sample, 200);
+                assert_eq!(points[1].value, 0.75);
+            }
+            other => panic!("expected TrackAutomationLaneInsertPoints, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn curve_editor_delete_point_maps_to_automation_delete_point() {
+        let context = ("Track 2".to_string(), TrackAutomationTarget::Balance);
+        let message = Message::delete_point(context, 480);
+        match message {
+            Message::TrackAutomationLaneDeletePoint {
+                track_name,
+                target,
+                sample,
+            } => {
+                assert_eq!(track_name, "Track 2");
+                assert_eq!(target, TrackAutomationTarget::Balance);
+                assert_eq!(sample, 480);
+            }
+            other => panic!("expected TrackAutomationLaneDeletePoint, got {:?}", other),
+        }
     }
 }

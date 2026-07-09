@@ -439,6 +439,158 @@ impl From<ModulatorShape> for maolan_engine::modulator::ModulatorShape {
     }
 }
 
+impl From<maolan_engine::modulator::Modulator> for Modulator {
+    fn from(m: maolan_engine::modulator::Modulator) -> Self {
+        Self {
+            id: m.id,
+            name: m.name,
+            shape: m.shape.into(),
+            rate: m.rate.into(),
+            phase: m.phase,
+            enabled: m.enabled,
+            targets: m.targets.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<maolan_engine::modulator::ModulatorRate> for ModulatorRate {
+    fn from(rate: maolan_engine::modulator::ModulatorRate) -> Self {
+        match rate {
+            maolan_engine::modulator::ModulatorRate::Hz(hz) => Self::Hz(hz),
+            maolan_engine::modulator::ModulatorRate::Musical(div) => Self::Musical(div.into()),
+        }
+    }
+}
+
+impl From<maolan_engine::modulator::MusicalDivision> for MusicalDivision {
+    fn from(div: maolan_engine::modulator::MusicalDivision) -> Self {
+        match div {
+            maolan_engine::modulator::MusicalDivision::Bar => Self::Bar,
+            maolan_engine::modulator::MusicalDivision::Half => Self::Half,
+            maolan_engine::modulator::MusicalDivision::Beat => Self::Beat,
+            maolan_engine::modulator::MusicalDivision::Eighth => Self::Eighth,
+            maolan_engine::modulator::MusicalDivision::Sixteenth => Self::Sixteenth,
+            maolan_engine::modulator::MusicalDivision::ThirtySecond => Self::ThirtySecond,
+            maolan_engine::modulator::MusicalDivision::SixtyFourth => Self::SixtyFourth,
+        }
+    }
+}
+
+impl From<maolan_engine::modulator::ModulatorShape> for ModulatorShape {
+    fn from(shape: maolan_engine::modulator::ModulatorShape) -> Self {
+        match shape {
+            maolan_engine::modulator::ModulatorShape::Sine => Self::Sine,
+            maolan_engine::modulator::ModulatorShape::Triangle => Self::Triangle,
+            maolan_engine::modulator::ModulatorShape::Saw => Self::Saw,
+            maolan_engine::modulator::ModulatorShape::Square => Self::Square,
+            maolan_engine::modulator::ModulatorShape::SampleHold => Self::SampleHold,
+        }
+    }
+}
+
+impl From<maolan_engine::modulator::ModulatorTarget> for ModulatorTarget {
+    fn from(t: maolan_engine::modulator::ModulatorTarget) -> Self {
+        let (track_name, target, min, max) = match t {
+            maolan_engine::modulator::ModulatorTarget::TrackVolume {
+                track_name,
+                min,
+                max,
+            } => (track_name, TrackAutomationTarget::Volume, min, max),
+            maolan_engine::modulator::ModulatorTarget::TrackBalance {
+                track_name,
+                min,
+                max,
+            } => (track_name, TrackAutomationTarget::Balance, min, max),
+            maolan_engine::modulator::ModulatorTarget::HwOutVolume { min, max } => (
+                "hw:out".to_string(),
+                TrackAutomationTarget::Volume,
+                min,
+                max,
+            ),
+            maolan_engine::modulator::ModulatorTarget::HwOutBalance { min, max } => (
+                "hw:out".to_string(),
+                TrackAutomationTarget::Balance,
+                min,
+                max,
+            ),
+            maolan_engine::modulator::ModulatorTarget::ClapParameter {
+                track_name,
+                instance_id,
+                param_id,
+                min,
+                max,
+            } => (
+                track_name,
+                TrackAutomationTarget::ClapParameter {
+                    instance_id,
+                    param_id,
+                    min,
+                    max,
+                },
+                min as f32,
+                max as f32,
+            ),
+            maolan_engine::modulator::ModulatorTarget::Vst3Parameter {
+                track_name,
+                instance_id,
+                param_id,
+                min,
+                max,
+            } => (
+                track_name,
+                TrackAutomationTarget::Vst3Parameter {
+                    instance_id,
+                    param_id,
+                },
+                min,
+                max,
+            ),
+            maolan_engine::modulator::ModulatorTarget::MidiCc {
+                track_name,
+                channel,
+                cc,
+            } => (
+                track_name,
+                TrackAutomationTarget::MidiCc { channel, cc },
+                0.0,
+                127.0,
+            ),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            maolan_engine::modulator::ModulatorTarget::Lv2Parameter {
+                track_name,
+                instance_id,
+                index,
+                min,
+                max,
+            } => (
+                track_name,
+                TrackAutomationTarget::Lv2Parameter {
+                    instance_id,
+                    index,
+                    min,
+                    max,
+                },
+                min,
+                max,
+            ),
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            maolan_engine::modulator::ModulatorTarget::Lv2Parameter {
+                track_name,
+                instance_id,
+                index,
+                min,
+                max,
+            } => (track_name, TrackAutomationTarget::Volume, min, max),
+        };
+        Self {
+            track_name,
+            target,
+            min,
+            max,
+        }
+    }
+}
+
 impl TryFrom<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
     type Error = ();
 
@@ -1074,7 +1226,6 @@ pub struct StateData {
     pub clip_marquee_end: Option<Point>,
     pub midi_clip_create_start: Option<Point>,
     pub midi_clip_create_end: Option<Point>,
-    pub automation_lane_hover: Option<(String, TrackAutomationTarget, Point)>,
     pub mixer_height: Length,
     pub tracks_width: Length,
     pub live_view_tracks_width: Length,
@@ -1292,7 +1443,6 @@ impl Default for StateData {
             clip_marquee_end: None,
             midi_clip_create_start: None,
             midi_clip_create_end: None,
-            automation_lane_hover: None,
             mixer_height: Length::Fixed(cfg.mixer_height),
             tracks_width: Length::Fixed(cfg.track_width),
             live_view_tracks_width: Length::Fixed(cfg.track_width),

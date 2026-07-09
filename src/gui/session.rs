@@ -2495,14 +2495,6 @@ impl Maolan {
                 },
             );
         }
-        {
-            let mut state = self.state.blocking_write();
-            state.tempo = loaded_tempo;
-            state.time_signature_num = loaded_num;
-            state.time_signature_denom = loaded_denom;
-            state.tempo_points = loaded_tempo_points;
-            state.time_signature_points = loaded_time_signature_points;
-        }
         self.tempo_input = format!("{:.2}", loaded_tempo);
         self.time_signature_num_input = loaded_num.to_string();
         self.time_signature_denom_input = loaded_denom.to_string();
@@ -2513,6 +2505,31 @@ impl Maolan {
             numerator: loaded_num as u16,
             denominator: loaded_denom as u16,
         });
+        restore_actions.push(Action::SetTempoMap {
+            tempo_points: loaded_tempo_points
+                .iter()
+                .map(|p| maolan_engine::message::TempoPoint {
+                    sample: p.sample,
+                    bpm: p.bpm as f64,
+                })
+                .collect(),
+            time_signature_points: loaded_time_signature_points
+                .iter()
+                .map(|p| maolan_engine::message::TimeSignaturePoint {
+                    sample: p.sample,
+                    numerator: p.numerator as u16,
+                    denominator: p.denominator as u16,
+                })
+                .collect(),
+        });
+        {
+            let mut state = self.state.blocking_write();
+            state.tempo = loaded_tempo;
+            state.time_signature_num = loaded_num;
+            state.time_signature_denom = loaded_denom;
+            state.tempo_points = loaded_tempo_points;
+            state.time_signature_points = loaded_time_signature_points;
+        }
 
         {
             let mut state = self.state.blocking_write();

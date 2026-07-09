@@ -9,7 +9,6 @@ impl Maolan {
             Action::SetSessionPath(_) => {
                 self.has_unsaved_changes = false;
                 self.engine_dirty = false;
-                self.pitch_correction_dirty = false;
                 self.last_autosave_snapshot = None;
                 self.pending_autosave_recovery = None;
                 self.pending_open_session_dir = None;

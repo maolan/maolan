@@ -121,6 +121,37 @@ impl Maolan {
                 self.last_sent_time_signature = Some((incoming_num as u16, incoming_den as u16));
                 true
             }
+            Action::SetTempoMap {
+                tempo_points,
+                time_signature_points,
+            } => {
+                let mut state = self.state.blocking_write();
+                state.tempo_points = tempo_points
+                    .iter()
+                    .map(|p| crate::state::TempoPoint {
+                        sample: p.sample,
+                        bpm: p.bpm as f32,
+                    })
+                    .collect();
+                state.time_signature_points = time_signature_points
+                    .iter()
+                    .map(|p| crate::state::TimeSignaturePoint {
+                        sample: p.sample,
+                        numerator: p.numerator as u8,
+                        denominator: p.denominator as u8,
+                    })
+                    .collect();
+                let (base_bpm, base_num, base_den) = Self::timing_at_sample(&state, 0);
+                state.tempo = base_bpm;
+                state.time_signature_num = base_num;
+                state.time_signature_denom = base_den;
+                self.tempo_input = format!("{:.2}", base_bpm);
+                self.time_signature_num_input = base_num.to_string();
+                self.time_signature_denom_input = base_den.to_string();
+                self.last_sent_tempo_bpm = Some(base_bpm as f64);
+                self.last_sent_time_signature = Some((base_num as u16, base_den as u16));
+                true
+            }
             _ => false,
         }
     }

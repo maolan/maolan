@@ -166,6 +166,10 @@ impl Maolan {
                 state.message = "Cleared all MIDI mappings".to_string();
                 true
             }
+            Action::SetModulators(modulators) => {
+                self.modulators = modulators.clone().into_iter().map(Into::into).collect();
+                true
+            }
             Action::TrackSetFolder {
                 track_name,
                 is_folder,

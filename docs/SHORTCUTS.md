@@ -76,7 +76,7 @@ Last updated: 2026-05-21
 - `Right drag on MIDI lane`: Create empty MIDI clip
 
 ### Automation Lanes
-- `Left click empty area`: Insert automation point at the cursor position
+- `Right drag empty area`: Draw a straight automation ramp between the press and release points (same interaction as the MIDI controller lane). A click without movement inserts a single point.
 - `Right click point`: Delete automation point
 
 ### Ruler (Top Timeline)

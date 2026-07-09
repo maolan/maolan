@@ -17,6 +17,7 @@ use iced::{
     },
 };
 use iced_drop::droppable;
+use maolan_widgets::clip::AudioClip as AudioClipWidget;
 
 impl Maolan {
     fn log_window(&self) -> iced::Element<'_, Message> {
@@ -248,9 +249,9 @@ impl Maolan {
                             .iter()
                             .find(|t| t.name == target.track_name)
                             .and_then(|t| t.audio.clips.get(target.clip_idx))
-                            .map(|c| c.name.clone())
+                            .map(|c| AudioClipWidget::<Message>::clean_name(&c.name))
                             .unwrap_or_else(|| format!("clip {}", target.clip_idx));
-                        format!("Clip: {} / {}", target.track_name, clip_label)
+                        format!("Clip: {}", clip_label)
                     });
                     drop(state);
 

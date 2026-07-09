@@ -1215,9 +1215,7 @@ impl Maolan {
                     if delta_pitch.abs() <= f32::EPSILON {
                         return Task::none();
                     }
-                    let before_selection = state.pitch_correction_selected_points.clone();
                     if let Some(pitch_correction) = state.pitch_correction.as_mut() {
-                        let before_points = pitch_correction.points.clone();
                         for (point_idx, original_point) in dragging
                             .point_indices
                             .iter()
@@ -1240,7 +1238,6 @@ impl Maolan {
                             }
                         );
                         drop(state);
-                        self.push_pitch_correction_history(before_points, before_selection);
                         return self.sync_pitch_correction_realtime();
                     }
                 }
@@ -2871,7 +2868,8 @@ impl Maolan {
 
                             if let Some(pos) = state.tracks.iter().position(|t| t.name == *name) {
                                 let existing_height = state.tracks[pos].height;
-                                track.height = existing_height;
+                                let min_h = track.min_height_for_layout();
+                                track.height = existing_height.max(min_h);
                                 state.tracks[pos] = track;
                             } else if let Some(index) = state.undo_track_indices.remove(name) {
                                 let insert_index = index.min(state.tracks.len());
@@ -3991,6 +3989,11 @@ impl Maolan {
                                     );
                                 }
                             }
+                            if pending
+                                && let Some(action) = self.track_automation_lanes_action(track_name)
+                            {
+                                let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+                            }
                         }
                         Action::TrackVst3Parameters {
                             track_name,
@@ -4051,6 +4054,11 @@ impl Maolan {
                                         track_name
                                     );
                                 }
+                            }
+                            if pending
+                                && let Some(action) = self.track_automation_lanes_action(track_name)
+                            {
+                                let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
                             }
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
@@ -4116,6 +4124,11 @@ impl Maolan {
                                         track_name
                                     );
                                 }
+                            }
+                            if pending
+                                && let Some(action) = self.track_automation_lanes_action(track_name)
+                            {
+                                let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
                             }
                         }
                         Action::TrackSnapshotAllClapStates { track_name: _ } => {}
@@ -5201,6 +5214,8 @@ impl Maolan {
                         track.automation_lane_count() as isize - previously_visible as isize;
                     track.adjust_height_for_automation_lanes(previous_lane_height, lanes_delta);
                 }
+                drop(state);
+                return self.send_track_automation_lanes(track_name);
             }
             Message::TrackColorChanged {
                 ref track_name,
@@ -5251,6 +5266,7 @@ impl Maolan {
                     .iter()
                     .find(|track| track.name == key)
                     .map(|track| track.automation_mode);
+                let mode_task = self.send_track_automation_lanes(track_name);
                 match mode {
                     Some(TrackAutomationMode::Read) => {
                         self.touch_active_keys.remove(&key);
@@ -5266,6 +5282,7 @@ impl Maolan {
                     }
                     _ => {}
                 }
+                return mode_task;
             }
             Message::TrackAutomationAddPluginLanes {
                 ref track_name,
@@ -5293,72 +5310,70 @@ impl Maolan {
                     include_state: false,
                 });
             }
-            Message::TrackAutomationLaneHover {
+            Message::TrackAutomationLaneInsertPoints {
                 ref track_name,
                 target,
-                position,
+                ref points,
             } => {
-                let mut state = self.state.blocking_write();
-                state.automation_lane_hover = Some((track_name.clone(), target, position));
-            }
-            Message::TrackAutomationLaneInsertPoint {
-                ref track_name,
-                target,
-            } => {
-                let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
-                let mut state = self.state.blocking_write();
-                let Some((hover_track, hover_target, hover_position)) = state
-                    .automation_lane_hover
-                    .as_ref()
-                    .map(|(name, target, position)| (name.as_str(), *target, *position))
-                else {
-                    return Task::none();
-                };
-                if hover_track != track_name.as_str() || hover_target != target {
+                if points.is_empty() {
                     return Task::none();
                 }
-                if let Some(track) = state
+                let mut state = self.state.blocking_write();
+                let Some(track) = state
                     .tracks
                     .iter_mut()
                     .find(|track| track.name == track_name.as_str())
-                {
-                    let previous_lane_height = track
-                        .lane_layout()
-                        .lane_height
-                        .max(TRACK_SUBTRACK_MIN_HEIGHT);
-                    let previously_visible = track.automation_lane_count();
-                    let lane_height = track.lane_layout().lane_height.max(12.0);
-                    let lane_value_h = (lane_height - 6.0).max(1.0);
-                    let value = (1.0 - ((hover_position.y - 3.0) / lane_value_h)).clamp(0.0, 1.0);
-                    let sample = ((hover_position.x / pixels_per_sample).round().max(0.0)) as usize;
+                else {
+                    return Task::none();
+                };
+                let previous_lane_height = track
+                    .lane_layout()
+                    .lane_height
+                    .max(TRACK_SUBTRACK_MIN_HEIGHT);
+                let previously_visible = track.automation_lane_count();
 
-                    if let Some(lane) = track
+                let lane_exists = track
+                    .automation_lanes
+                    .iter()
+                    .any(|lane| lane.target == target);
+                if !lane_exists {
+                    track
                         .automation_lanes
-                        .iter_mut()
-                        .find(|lane| lane.target == target)
-                    {
-                        if let Some(existing) = lane.points.iter_mut().find(|p| p.sample == sample)
-                        {
-                            existing.value = value;
-                        } else {
-                            lane.points
-                                .push(crate::state::TrackAutomationPoint { sample, value });
-                            lane.points.sort_unstable_by_key(|p| p.sample);
-                        }
-                        lane.visible = true;
-                    } else {
-                        track
-                            .automation_lanes
-                            .push(crate::state::TrackAutomationLane {
-                                target,
-                                visible: true,
-                                points: vec![crate::state::TrackAutomationPoint { sample, value }],
-                            });
-                    }
-                    let lanes_delta =
-                        track.automation_lane_count() as isize - previously_visible as isize;
-                    track.adjust_height_for_automation_lanes(previous_lane_height, lanes_delta);
+                        .push(crate::state::TrackAutomationLane {
+                            target,
+                            visible: true,
+                            points: vec![],
+                        });
                 }
+                let lane = track
+                    .automation_lanes
+                    .iter_mut()
+                    .find(|lane| lane.target == target)
+                    .expect("lane was just created");
+                lane.visible = true;
+
+                let min_sample = points.iter().map(|p| p.sample).min().unwrap_or(0);
+                let max_sample = points.iter().map(|p| p.sample).max().unwrap_or(min_sample);
+
+                // Replace any existing points in the drawn range so the new line
+                // overrides the previous curve, matching MIDI controller lane
+                // behavior. Points outside the range are kept, creating an
+                // interpolation from the old line to the new line at the edges.
+                lane.points
+                    .retain(|point| point.sample < min_sample || point.sample > max_sample);
+                for point in points {
+                    lane.points.push(crate::state::TrackAutomationPoint {
+                        sample: point.sample,
+                        value: point.value,
+                    });
+                }
+                lane.points.sort_unstable_by_key(|p| p.sample);
+
+                let lanes_delta =
+                    track.automation_lane_count() as isize - previously_visible as isize;
+                track.adjust_height_for_automation_lanes(previous_lane_height, lanes_delta);
+                drop(state);
+                return self.send_track_automation_lanes(track_name);
             }
             Message::TrackAutomationLaneDeletePoint {
                 ref track_name,
@@ -5377,6 +5392,8 @@ impl Maolan {
                 {
                     lane.points.retain(|point| point.sample != sample);
                 }
+                drop(state);
+                return self.send_track_automation_lanes(track_name);
             }
             Message::RemoveSelectedTracks => {
                 let mut actions = vec![Action::BeginHistoryGroup];
@@ -5978,7 +5995,6 @@ impl Maolan {
                         state.message =
                             format!("Opened pitch correction for '{}'", request.clip_name);
                         drop(state);
-                        self.clear_pitch_correction_history();
                     }
                     Err(e) => {
                         self.state.blocking_write().message =
