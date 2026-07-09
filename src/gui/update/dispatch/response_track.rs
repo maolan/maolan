@@ -460,6 +460,40 @@ impl Maolan {
                 };
                 true
             }
+            Action::SetClipPluginGraphJson {
+                track_name,
+                clip_index,
+                plugin_graph_json,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    && let Some(clip) = track.audio.clips.get_mut(*clip_index)
+                {
+                    clip.plugin_graph_json = plugin_graph_json.clone();
+                }
+                true
+            }
+            Action::SetTrackAutomationLanes {
+                track_name,
+                lanes,
+                mode,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    let previous_lane_height = track
+                        .lane_layout()
+                        .lane_height
+                        .max(crate::consts::state_track::TRACK_SUBTRACK_MIN_HEIGHT);
+                    let previously_visible = track.automation_lane_count();
+                    track.automation_lanes =
+                        serde_json::from_value(lanes.clone()).unwrap_or_default();
+                    let lanes_delta =
+                        track.automation_lane_count() as isize - previously_visible as isize;
+                    track.adjust_height_for_automation_lanes(previous_lane_height, lanes_delta);
+                    track.automation_mode = (*mode).into();
+                }
+                true
+            }
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackSetPluginBypassed {
                 track_name,

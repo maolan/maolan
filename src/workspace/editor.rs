@@ -23,6 +23,7 @@ use maolan_widgets::clip::{
     MIDIClip as MIDIClipWidget, MIDIClipData as WidgetMIDIClipData,
     MIDIClipInteraction as WidgetMIDIClipInteraction,
 };
+use maolan_widgets::curve_editor::{CurveEditor, CurvePoint};
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
@@ -510,7 +511,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     };
     let layout = track.lane_layout();
     let lane_height = layout.lane_height.max(12.0);
-    let lane_clip_height = (lane_height - 6.0).max(12.0);
     let track_name_cloned = track.name.clone();
     let mut selected_audio_indices = HashSet::new();
     let mut selected_midi_indices = HashSet::new();
@@ -555,111 +555,49 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         .iter()
         .filter(|lane| lane.visible)
         .collect();
-    for (lane_index, lane) in visible_automation_lanes.iter().enumerate() {
-        let lane_top = track.automation_lane_top(lane_index);
-        let lane_track_name = track_name_cloned.clone();
-        let lane_target = lane.target;
-        clips.push(
-            pin(mouse_area(
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(lane_height))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.26,
-                            g: 0.18,
-                            b: 0.1,
-                            a: 0.22,
-                        })),
-                        ..container::Style::default()
-                    }),
-            )
-            .on_move(move |position| Message::TrackAutomationLaneHover {
-                track_name: lane_track_name.clone(),
-                target: lane_target,
-                position,
-            })
-            .on_press(Message::TrackAutomationLaneInsertPoint {
-                track_name: track_name_cloned.clone(),
-                target: lane.target,
-            }))
-            .position(Point::new(0.0, lane_top))
-            .into(),
-        );
-        clips.push(
-            pin(
-                container(text(format!("Automation {}", lane.target)).size(10))
-                    .width(Length::Shrink)
-                    .height(Length::Fixed(12.0))
-                    .padding([1, 4])
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.35,
-                            g: 0.24,
-                            b: 0.12,
-                            a: 0.45,
-                        })),
-                        ..container::Style::default()
-                    }),
-            )
-            .position(Point::new(4.0, lane_top + 2.0))
-            .into(),
-        );
-
-        let point_color = automation_point_color(lane.target);
-        let mut sorted_indices: Vec<usize> = (0..lane.points.len()).collect();
-        sorted_indices.sort_unstable_by_key(|&idx| lane.points[idx].sample);
-        for pair in sorted_indices.windows(2) {
-            let left = &lane.points[pair[0]];
-            let right = &lane.points[pair[1]];
-            let left_x = left.sample as f32 * pixels_per_sample;
-            let right_x = right.sample as f32 * pixels_per_sample;
-            let left_y =
-                lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - left.value.clamp(0.0, 1.0));
-            let right_y =
-                lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - right.value.clamp(0.0, 1.0));
-            let width = (right_x - left_x).abs().max(1.0);
-            let min_y = left_y.min(right_y);
+    if !track.collapsed() {
+        for (lane_index, lane) in visible_automation_lanes.iter().enumerate() {
+            let lane_top = track.automation_lane_top(lane_index);
+            let point_color = automation_point_color(lane.target);
+            let curve_points: Vec<CurvePoint> = lane
+                .points
+                .iter()
+                .map(|point| CurvePoint {
+                    sample: point.sample,
+                    value: point.value,
+                })
+                .collect();
             clips.push(
-                pin(container("")
-                    .width(Length::Fixed(width))
-                    .height(Length::Fixed(1.0))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(point_color)),
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(left_x.min(right_x), min_y))
+                pin(canvas(CurveEditor {
+                    context: (track_name_cloned.clone(), lane.target),
+                    points: curve_points,
+                    pixels_per_sample,
+                    color: point_color,
+                    dot_radius: 2.5,
+                    line_width: 2.0,
+                })
+                .width(Length::Fill)
+                .height(Length::Fixed(lane_height)))
+                .position(Point::new(0.0, lane_top))
                 .into(),
             );
-        }
-        for point in &lane.points {
-            let clamped_value = point.value.clamp(0.0, 1.0);
-            let x = point.sample as f32 * pixels_per_sample;
-            let y = lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - clamped_value);
-            let point_track_name = track_name_cloned.clone();
-            let point_target = lane.target;
-            let point_sample = point.sample;
             clips.push(
-                pin(mouse_area(
-                    container("")
-                        .width(Length::Fixed(5.0))
-                        .height(Length::Fixed(5.0))
-                        .style(move |_theme| container::Style {
-                            background: Some(Background::Color(point_color)),
-                            border: Border {
-                                color: Color::from_rgba(0.1, 0.1, 0.1, 0.9),
-                                width: 1.0,
-                                radius: 2.5.into(),
-                            },
+                pin(
+                    container(text(format!("Automation {}", lane.target)).size(10))
+                        .width(Length::Shrink)
+                        .height(Length::Fixed(12.0))
+                        .padding([1, 4])
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.35,
+                                g: 0.24,
+                                b: 0.12,
+                                a: 0.45,
+                            })),
                             ..container::Style::default()
                         }),
                 )
-                .on_right_press(Message::TrackAutomationLaneDeletePoint {
-                    track_name: point_track_name,
-                    target: point_target,
-                    sample: point_sample,
-                }))
-                .position(Point::new((x - 2.0).max(0.0), y.max(lane_top + 2.0)))
+                .position(Point::new(4.0, lane_top + 2.0))
                 .into(),
             );
         }

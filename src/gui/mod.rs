@@ -151,12 +151,6 @@ struct PendingAutosaveRecovery {
     confirm_armed: bool,
 }
 
-#[derive(Debug, Clone)]
-struct PitchCorrectionHistoryEntry {
-    points: Vec<PitchCorrectionPoint>,
-    selected_points: HashSet<usize>,
-}
-
 struct ExportSessionOptions {
     export_path: PathBuf,
     sample_rate: i32,
@@ -494,8 +488,6 @@ pub struct Maolan {
     pending_source_lengths: HashMap<AudioClipKey, usize>,
     undo_peaks_cache: HashMap<AudioClipKey, crate::state::ClipPeaks>,
     undo_source_lengths_cache: HashMap<AudioClipKey, usize>,
-    pitch_correction_undo: Vec<PitchCorrectionHistoryEntry>,
-    pitch_correction_redo: Vec<PitchCorrectionHistoryEntry>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_midi_editor_view_mode: HashMap<String, crate::message::MidiEditorViewMode>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
@@ -626,7 +618,6 @@ pub struct Maolan {
     midi_mappings_report_lines: Vec<String>,
     has_unsaved_changes: bool,
     engine_dirty: bool,
-    pitch_correction_dirty: bool,
     pending_exit_after_save: bool,
     session_restore_in_progress: bool,
     last_autosave_snapshot: Option<Instant>,
@@ -804,8 +795,6 @@ impl Default for Maolan {
             pending_source_lengths: HashMap::new(),
             undo_peaks_cache: HashMap::new(),
             undo_source_lengths_cache: HashMap::new(),
-            pitch_correction_undo: Vec::new(),
-            pitch_correction_redo: Vec::new(),
             pending_track_freeze_restore: HashMap::new(),
             pending_track_midi_editor_view_mode: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
@@ -937,7 +926,6 @@ impl Default for Maolan {
             midi_mappings_report_lines: Vec::new(),
             has_unsaved_changes: false,
             engine_dirty: false,
-            pitch_correction_dirty: false,
             pending_exit_after_save: false,
             session_restore_in_progress: false,
             last_autosave_snapshot: None,
@@ -968,7 +956,7 @@ impl Maolan {
     }
 
     fn is_dirty(&self) -> bool {
-        self.has_unsaved_changes || self.engine_dirty || self.pitch_correction_dirty
+        self.has_unsaved_changes || self.engine_dirty
     }
 
     fn push_log_entry(state: &mut StateData, level: LogLevel, message: String) {
@@ -6334,6 +6322,24 @@ impl Maolan {
         let engine_modulators: Vec<maolan_engine::modulator::Modulator> =
             self.modulators.iter().map(Into::into).collect();
         self.send(Action::SetModulators(engine_modulators))
+    }
+
+    fn track_automation_lanes_action(&self, track_name: &str) -> Option<Action> {
+        let state = self.state.blocking_read();
+        let track = state.tracks.iter().find(|t| t.name == track_name)?;
+        let lanes = serde_json::to_value(&track.automation_lanes).unwrap_or_default();
+        let mode = track.automation_mode.into();
+        Some(Action::SetTrackAutomationLanes {
+            track_name: track_name.to_string(),
+            lanes,
+            mode,
+        })
+    }
+
+    fn send_track_automation_lanes(&self, track_name: &str) -> Task<Message> {
+        self.track_automation_lanes_action(track_name)
+            .map(|action| self.send(action))
+            .unwrap_or(Task::none())
     }
 
     fn selected_export_formats(&self) -> Vec<ExportFormat> {

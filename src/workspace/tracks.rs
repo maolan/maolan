@@ -1323,39 +1323,40 @@ impl Tracks {
         .height(Length::Fill)
         .into();
 
-        let resize_handle = mouse_area(
-            mouse_area(
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(resize_handle_height))
-                    .style(move |_theme| container::Style {
-                        background: if is_resize_hovered {
-                            Some(Background::Color(Color::from_rgba(0.51, 0.68, 0.92, 0.95)))
-                        } else {
-                            None
-                        },
-                        border: Border {
-                            color: Color::TRANSPARENT,
-                            width: 0.0,
-                            radius: 2.0.into(),
-                        },
-                        ..container::Style::default()
-                    }),
+        let mut track_ui = Stack::new().push(track_content);
+        if !track.is_folder {
+            let resize_handle = mouse_area(
+                mouse_area(
+                    container("")
+                        .width(Length::Fill)
+                        .height(Length::Fixed(resize_handle_height))
+                        .style(move |_theme| container::Style {
+                            background: if is_resize_hovered {
+                                Some(Background::Color(Color::from_rgba(0.51, 0.68, 0.92, 0.95)))
+                            } else {
+                                None
+                            },
+                            border: Border {
+                                color: Color::TRANSPARENT,
+                                width: 0.0,
+                                radius: 2.0.into(),
+                            },
+                            ..container::Style::default()
+                        }),
+                )
+                .on_enter(Message::TrackResizeHover(track.name.clone(), true))
+                .on_exit(Message::TrackResizeHover(track.name.clone(), false))
+                .on_press(Message::TrackResizeStart(track.name.clone())),
             )
-            .on_enter(Message::TrackResizeHover(track.name.clone(), true))
-            .on_exit(Message::TrackResizeHover(track.name.clone(), false))
-            .on_press(Message::TrackResizeStart(track.name.clone())),
-        )
-        .on_enter(Message::ShortcutsHint(Some("Resize height".to_string())))
-        .on_exit(Message::ShortcutsHint(None));
+            .on_enter(Message::ShortcutsHint(Some("Resize height".to_string())))
+            .on_exit(Message::ShortcutsHint(None));
 
-        let track_ui = Stack::new()
-            .push(track_content)
-            .push(pin(resize_handle).position(Point::new(
+            track_ui = track_ui.push(pin(resize_handle).position(Point::new(
                 0.0,
                 (visible_height - 8.0 - resize_handle_height).max(0.0),
-            )))
-            .height(Length::Fill);
+            )));
+        }
+        let track_ui = track_ui.height(Length::Fill);
 
         let track_body_content = container(row![track_ui.width(Length::Fill), setup_panel])
             .id(track.name.clone())

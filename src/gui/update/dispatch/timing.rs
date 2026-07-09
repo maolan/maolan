@@ -52,6 +52,32 @@ impl Maolan {
         self.timing_selection_lane = if samples.is_empty() { None } else { lane };
     }
 
+    fn send_current_tempo_map(&self) -> Task<Message> {
+        let state = self.state.blocking_read();
+        let tempo_points = state
+            .tempo_points
+            .iter()
+            .map(|p| maolan_engine::message::TempoPoint {
+                sample: p.sample,
+                bpm: p.bpm as f64,
+            })
+            .collect();
+        let time_signature_points = state
+            .time_signature_points
+            .iter()
+            .map(|p| maolan_engine::message::TimeSignaturePoint {
+                sample: p.sample,
+                numerator: p.numerator as u16,
+                denominator: p.denominator as u16,
+            })
+            .collect();
+        drop(state);
+        self.send(Action::SetTempoMap {
+            tempo_points,
+            time_signature_points,
+        })
+    }
+
     pub(super) fn handle_timing_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TempoAdjust(delta) => {
@@ -103,7 +129,7 @@ impl Maolan {
                 self.tempo_input = format!("{:.2}", tempo);
                 drop(state);
                 self.last_sent_tempo_bpm = Some(tempo as f64);
-                return self.send(Action::SetTempo(tempo as f64));
+                return self.send_current_tempo_map();
             }
             Message::TempoPointAdd(sample) => {
                 let mut state = self.state.blocking_write();
@@ -135,7 +161,10 @@ impl Maolan {
                 self.timing_selection_lane = Some(super::super::super::TimingSelectionLane::Tempo);
                 drop(state);
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TempoPointSelect { sample, additive } => {
                 if additive {
@@ -224,7 +253,10 @@ impl Maolan {
                     Some(super::super::super::TimingSelectionLane::Tempo),
                 );
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TempoSelectionDuplicate => {
                 let selected_samples = self.selected_timing_samples();
@@ -288,7 +320,10 @@ impl Maolan {
                     Some(super::super::super::TimingSelectionLane::Tempo),
                 );
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TempoSelectionResetToPrevious => {
                 let samples = self.selected_timing_samples();
@@ -326,7 +361,10 @@ impl Maolan {
                 }
                 drop(state);
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TempoSelectionDelete => {
                 let selected = self.selected_timing_samples();
@@ -342,7 +380,10 @@ impl Maolan {
                     .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
                 drop(state);
                 self.set_timing_selection([], None);
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TimeSignaturePointAdd(sample) => {
                 let mut state = self.state.blocking_write();
@@ -376,7 +417,10 @@ impl Maolan {
                     Some(super::super::super::TimingSelectionLane::TimeSignature);
                 drop(state);
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TimeSignaturePointSelect { sample, additive } => {
                 if additive {
@@ -468,7 +512,10 @@ impl Maolan {
                     Some(super::super::super::TimingSelectionLane::TimeSignature),
                 );
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TimeSignatureSelectionDuplicate => {
                 let selected_samples = self.selected_timing_samples();
@@ -532,7 +579,10 @@ impl Maolan {
                     Some(super::super::super::TimingSelectionLane::TimeSignature),
                 );
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TimeSignatureSelectionResetToPrevious => {
                 let samples = self.selected_timing_samples();
@@ -570,7 +620,10 @@ impl Maolan {
                 }
                 drop(state);
                 self.sync_timing_inputs_from_selection();
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::TimeSignatureSelectionDelete => {
                 let selected = self.selected_timing_samples();
@@ -586,7 +639,10 @@ impl Maolan {
                     .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
                 drop(state);
                 self.set_timing_selection([], None);
-                return self.update(Message::PlaybackTick);
+                return Task::batch(vec![
+                    self.send_current_tempo_map(),
+                    self.update(Message::PlaybackTick),
+                ]);
             }
             Message::ClearTimingPointSelection => {
                 self.selected_tempo_points.clear();
@@ -656,10 +712,7 @@ impl Maolan {
                 self.time_signature_num_input = numerator.to_string();
                 drop(state);
                 self.last_sent_time_signature = Some((numerator, denominator));
-                return self.send(Action::SetTimeSignature {
-                    numerator,
-                    denominator,
-                });
+                return self.send_current_tempo_map();
             }
             Message::TimeSignatureDenominatorAdjust(delta) => {
                 let sample = self.transport_samples.max(0.0) as usize;
@@ -727,10 +780,7 @@ impl Maolan {
                 self.time_signature_denom_input = denominator.to_string();
                 drop(state);
                 self.last_sent_time_signature = Some((numerator, denominator));
-                return self.send(Action::SetTimeSignature {
-                    numerator,
-                    denominator,
-                });
+                return self.send_current_tempo_map();
             }
             Message::TempoInputChanged(ref value) => {
                 self.tempo_input = value.clone();
@@ -775,7 +825,7 @@ impl Maolan {
                 self.selected_time_signature_points.clear();
                 self.timing_selection_lane = None;
                 self.last_sent_tempo_bpm = Some(bpm as f64);
-                return self.send(Action::SetTempo(bpm as f64));
+                return self.send_current_tempo_map();
             }
             Message::TapTempo => {
                 let now = Instant::now();
@@ -841,7 +891,7 @@ impl Maolan {
                         self.selected_time_signature_points.clear();
                         self.timing_selection_lane = None;
                         self.last_sent_tempo_bpm = Some(bpm as f64);
-                        return self.send(Action::SetTempo(bpm as f64));
+                        return self.send_current_tempo_map();
                     }
                 }
                 return Task::none();
@@ -909,10 +959,7 @@ impl Maolan {
                 self.selected_tempo_points.clear();
                 self.timing_selection_lane = None;
                 self.last_sent_time_signature = Some((numerator as u16, denominator as u16));
-                return self.send(Action::SetTimeSignature {
-                    numerator: numerator as u16,
-                    denominator: denominator as u16,
-                });
+                return self.send_current_tempo_map();
             }
             _ => {}
         }
