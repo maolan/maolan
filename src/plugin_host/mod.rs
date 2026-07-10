@@ -12,9 +12,23 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+/// Returns the real user home directory, ignoring any temporary override of
+/// `HOME` that tests may have performed. The plugin-host scanner needs a
+/// stable home directory to locate CLAP/VST3 plugins by ID.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn real_user_home_dir() -> Option<PathBuf> {
+    use nix::unistd::{Uid, User};
+    User::from_uid(Uid::current()).ok().flatten().map(|u| u.dir)
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn real_user_home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
 fn spawn_plugin_host(
     format: &str,
-    plugin_path: &str,
+    plugin_id: &str,
     instance_id: &str,
 ) -> Result<(Child, ShmMapping, EventPair), String> {
     let pid = std::process::id();
@@ -32,7 +46,7 @@ fn spawn_plugin_host(
 
     let mut cmd = Command::new(&host_bin);
     cmd.arg(format)
-        .arg(plugin_path)
+        .arg(plugin_id)
         .arg(&shm_name)
         .arg(instance_id);
     #[cfg(unix)]
@@ -41,6 +55,9 @@ fn spawn_plugin_host(
     #[cfg(windows)]
     cmd.arg(events.daw_to_host_name())
         .arg(events.host_to_daw_name());
+    if let Some(home) = real_user_home_dir() {
+        cmd.env("HOME", home);
+    }
     append_parent_log_level(&mut cmd);
     cmd.stdin(Stdio::null()).stdout(Stdio::null());
 
@@ -234,7 +251,7 @@ mod tests {
         let plugin_id = "rs.maolan.monitoring";
         let instance_id = "test-clap-005";
         let (mut child, mapping, events) =
-            spawn_plugin_host("clap", &format!("{plugin_path}#{plugin_id}"), instance_id).unwrap();
+            spawn_plugin_host("clap", plugin_id, instance_id).unwrap();
 
         let header = unsafe { header_ref(mapping.as_ptr()) };
         assert!(

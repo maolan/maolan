@@ -327,34 +327,43 @@ impl Maolan {
         }
     }
 
-    fn resolve_clap_plugin_path(
+    fn resolve_clap_plugin_id(
         stored: &str,
         clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
     ) -> Option<String> {
-        if stored.contains("::") || stored.contains('/') {
-            return Some(stored.to_string());
+        if let Some((_, id)) = stored.rsplit_once("::") {
+            return Some(id.to_string());
         }
-        for info in clap_plugins {
-            if let Some((_, id)) = info.path.split_once("::")
-                && id == stored
-            {
-                return Some(info.path.clone());
-            }
+        if stored.contains('/') {
+            return clap_plugins
+                .iter()
+                .find(|info| info.path == stored)
+                .map(|info| info.id.clone())
+                .or_else(|| Some(stored.to_string()));
         }
-        None
+        clap_plugins
+            .iter()
+            .find(|info| info.id == stored)
+            .map(|info| info.id.clone())
+            .or_else(|| Some(stored.to_string()))
     }
 
-    fn resolve_vst3_plugin_path(
+    fn resolve_vst3_plugin_id(
         stored: &str,
         vst3_plugins: &[maolan_engine::vst3::Vst3PluginInfo],
     ) -> Option<String> {
-        if stored.contains('/') {
-            return Some(stored.to_string());
+        if stored.contains('/') || stored.contains('\\') {
+            return vst3_plugins
+                .iter()
+                .find(|info| info.path == stored)
+                .map(|info| info.id.clone())
+                .or_else(|| Some(stored.to_string()));
         }
         vst3_plugins
             .iter()
-            .find(|info| info.path == stored || info.id == stored)
-            .map(|info| info.path.clone())
+            .find(|info| info.id == stored)
+            .map(|info| info.id.clone())
+            .or_else(|| Some(stored.to_string()))
     }
 
     pub(super) fn save_template(&self, path: String) -> std::io::Result<()> {
@@ -759,12 +768,12 @@ impl Maolan {
                                         instance_id,
                                     ),
                                 );
-                                if let Some(plugin_path) =
-                                    Self::resolve_vst3_plugin_path(uri, &vst3_plugins)
+                                if let Some(plugin_id) =
+                                    Self::resolve_vst3_plugin_id(uri, &vst3_plugins)
                                 {
                                     restore_actions.push(Action::TrackLoadVst3Plugin {
                                         track_name: track_name.to_string(),
-                                        plugin_path,
+                                        plugin_id,
                                         instance_id: Some(instance_id),
                                     });
                                 }
@@ -777,12 +786,12 @@ impl Maolan {
                                         instance_id,
                                     ),
                                 );
-                                if let Some(plugin_path) =
-                                    Self::resolve_clap_plugin_path(uri, &clap_plugins)
+                                if let Some(plugin_id) =
+                                    Self::resolve_clap_plugin_id(uri, &clap_plugins)
                                 {
                                     restore_actions.push(Action::TrackLoadClapPlugin {
                                         track_name: track_name.to_string(),
-                                        plugin_path,
+                                        plugin_id,
                                         instance_id: Some(instance_id),
                                     });
                                     if let Some(state) =
@@ -3293,12 +3302,12 @@ impl Maolan {
                                         instance_id,
                                     ),
                                 );
-                                if let Some(plugin_path) =
-                                    Self::resolve_vst3_plugin_path(uri, &vst3_plugins)
+                                if let Some(plugin_id) =
+                                    Self::resolve_vst3_plugin_id(uri, &vst3_plugins)
                                 {
                                     restore_actions.push(Action::TrackLoadVst3Plugin {
                                         track_name: track_name.clone(),
-                                        plugin_path,
+                                        plugin_id,
                                         instance_id: Some(instance_id),
                                     });
                                 } else {
@@ -3316,11 +3325,11 @@ impl Maolan {
                                         instance_id,
                                     ),
                                 );
-                                let resolved = Self::resolve_clap_plugin_path(uri, &clap_plugins);
-                                if let Some(plugin_path) = resolved {
+                                let resolved = Self::resolve_clap_plugin_id(uri, &clap_plugins);
+                                if let Some(plugin_id) = resolved {
                                     restore_actions.push(Action::TrackLoadClapPlugin {
                                         track_name: track_name.clone(),
-                                        plugin_path,
+                                        plugin_id,
                                         instance_id: Some(instance_id),
                                     });
                                     if let Some(state) = Self::clap_state_from_json_resolved(
@@ -4054,10 +4063,10 @@ mod tests {
             a,
             Action::TrackLoadVst3Plugin {
                 track_name,
-                plugin_path,
+                plugin_id,
                 instance_id: Some(0),
                 ..
-            } if track_name == "MyDrums" && plugin_path == "/fake/plugin.vst3"
+            } if track_name == "MyDrums" && plugin_id == "/fake/plugin.vst3"
         )));
 
         assert!(actions.iter().any(|a| matches!(
@@ -4074,13 +4083,14 @@ mod tests {
     }
 
     #[test]
-    fn build_track_template_actions_resolves_clap_plugin_id_to_path() {
+    fn build_track_template_actions_resolves_clap_plugin_id() {
         let app = Maolan::default();
         {
             let mut state = app.state.blocking_write();
             state
                 .clap_plugins
                 .push(maolan_engine::clap::ClapPluginInfo {
+                    id: "com.example.drummachine".to_string(),
                     path: "/usr/lib/clap/DrumMachine.clap::com.example.drummachine".to_string(),
                     name: "Drum Machine".to_string(),
                     capabilities: None,
@@ -4102,10 +4112,10 @@ mod tests {
             a,
             Action::TrackLoadClapPlugin {
                 track_name,
-                plugin_path,
+                plugin_id,
                 instance_id: Some(0),
                 ..
-            } if track_name == "MyDrums" && plugin_path == "/usr/lib/clap/DrumMachine.clap::com.example.drummachine"
+            } if track_name == "MyDrums" && plugin_id == "com.example.drummachine"
         )));
     }
 

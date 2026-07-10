@@ -1,10 +1,11 @@
 # Maolan Operations, Storage, and Recovery
 
-Last updated: 2026-05-01
+Last updated: 2026-07-09
 
 ## Runtime and Platform Behavior
 
-- Linux and FreeBSD builds force the X11 backend at startup by unsetting `WAYLAND_DISPLAY` and `WAYLAND_SOCKET`.
+- Linux and FreeBSD builds run on Wayland when available and fall back to X11 (Xorg) when Wayland is unavailable.
+- Plugin UI embedding on Unix still uses X11, so an X11 server must be reachable even under Wayland (for example via XWayland).
 - macOS builds support CLAP and VST3, but not the Unix LV2 host path.
 - Plugin discovery runs automatically on startup:
   - Linux / FreeBSD: LV2, VST3, CLAP
@@ -22,13 +23,21 @@ Last updated: 2026-05-01
   - Avoid broad build output roots when possible (for example full Cargo target trees) to reduce unrelated binary probing.
 - Passing `--log-level <level>` enables tracing output to stderr. Valid levels: none, info, warning, error, debug.
 
+## Audio Device Filtering
+
+The hardware preference dialog filters devices by direction:
+
+- Output device lists show only devices that report output support.
+- Input device lists show only devices that report input support.
+- Devices that only support one direction no longer appear in the opposite list.
+
 ## Plugin Blocklist
 
 Maolan maintains a plugin blocklist at:
 
 `~/.config/maolan/plugin-blocklist.json`
 
-The blocklist hides plugins from the plugin browser and causes the scanner to skip them entirely during system scans, so a known-bad plugin cannot crash `maolan-plugin-host --scan`. You can add entries manually, or the DAW can add them automatically when a single-plugin scan fails or the scanner host crashes.
+The blocklist hides plugins from the plugin browser and causes the scanner to skip them entirely during system scans, so a known-bad plugin cannot crash `maolan-plugin-host --scan`. You can add entries manually, or the DAW can add them automatically when a single-plugin scan fails, the scanner reports warnings or errors for a plugin, or the scanner host crashes.
 
 A blocklist entry uses the plugin path as the key:
 
@@ -88,6 +97,7 @@ A saved session is a directory containing:
 - `peaks/`: cached waveform peak data written on save
 - `pitch/`: cached pitch-analysis JSON files keyed by source clip path + source window
 - `plugins/`: plugin-related session assets
+- `data/`: consolidated external audio, MIDI, and plugin file references
 - `.maolan_commits/<branch>/<timestamp>.json`: commit history created on every save
 - `.maolan_autosave/snapshots/`: autosave snapshots
 
@@ -171,6 +181,41 @@ Track and folder templates intentionally do not keep:
 - MIDI clips
 - connections to tracks outside the saved subtree
 
+## Modulators
+
+The Modulators pane (View → Modulators or `M`) shows the session's LFO-style modulators.
+
+- Press `+` to add a modulator.
+- Each modulator has a name, enable toggle, shape, rate mode, rate value, and phase offset.
+- Rate can be set in Hz or in musical divisions (bar, half, beat, eighth, … sixty-fourth).
+- While a modulator is selected, mixer faders/pans and automation-lane headers show a target overlay.
+- Click the overlay (or use the track context menu) to open the **Assign modulator** dialog.
+- The dialog asks for a min and max value; the modulator output is scaled to that range.
+- Targets include track Volume/Balance, visible automation lanes (plugin parameters, MIDI CC), and master output Volume/Balance.
+- Existing assignments can be removed from the same dialog.
+
+Modulator assignments are saved in the session and restored on load.
+
+## Step Recording
+
+Step recording is a MIDI input mode in the piano roll for entering notes one step at a time.
+
+- Open a MIDI clip in the piano roll (double-click a MIDI clip).
+- Toggle step recording from the toolbar (`Step` button), visible only while the MIDI editor is active.
+- When enabled, the editor shows a step cursor at the current insert position.
+- Played MIDI notes are inserted at the step cursor with length equal to the current MIDI snap interval, and the cursor advances automatically.
+- `NoSnap` / `Clips` snap modes fall back to a sixteenth-note step length.
+
+## Fold Mixer Strips
+
+Folder tracks render in the mixer as collapsible strips.
+
+- Folder mixer strips have a ▼ / ▶ toggle in their header; click it to expand or collapse the child tracks.
+- When expanded, child tracks are nested to the right of the folder strip.
+- When collapsed, only the folder strip is shown.
+- Folder strips omit the record-arm button because folders cannot be armed.
+- Double-click a folder strip to open its connections graph.
+
 ## Autosave and Recovery
 
 - Autosave snapshots are generated every 15 seconds.
@@ -228,6 +273,15 @@ The current HeartMuLa generation path uses the `maolan-generate` crate/binary.
 - `--decode-threads <int>` can be used to control decode-only CPU worker count.
 - `--model-dir <path>` can be used to bypass Hugging Face cache resolution and point at a local export directly.
 
+## Media Consolidation and File References
+
+Maolan can collect external media files into the session directory and update plugin file references to keep sessions portable.
+
+- **File → Consolidate** copies imported audio/MIDI files and any CLAP/LV2 plugin file references into the session's `data/` directory.
+- Consolidation updates plugin file references to absolute paths immediately, and saved plugin state is rewritten to relative `data/` paths on save.
+- **File → Delete unused files** scans `audio/`, `midi/`, `peaks/`, and `pitch/` and removes files not referenced by the current session or any non-hidden branch JSON.
+- Consolidation makes it safer to move or share a session directory.
+
 ## Pitch Correction Caching and Rendering
 
 - Opening pitch correction for an audio clip requires a saved/opened session.
@@ -256,24 +310,3 @@ Recent sessions are stored in `config.toml` via `recent_session_paths`.
 - duplicates are removed
 - invalid paths are dropped
 - the list is capped to the app's configured recent-session limit
-
-## Project Structure
-
-The codebase is split across multiple repositories:
-
-- `daw/` — Main application and GUI
-- `engine/` — Audio engine (moved to its own repository)
-- `widgets/` — Reusable iced widgets (moved to its own repository)
-- `generate/` — AI audio generation via `maolan-generate` (moved to its own repository)
-- `mixosc/` — OSC mixing control integration
-
-## Build and Test
-
-- Code coverage is tracked and reported.
-- Unit test coverage has been expanded across the codebase.
-- Cleanup and dead-code removal passes are performed regularly.
-
-## Recent Fixes
-
-- Fixed note names display in the piano roll.
-- Fixed GitHub Actions workflow configuration.

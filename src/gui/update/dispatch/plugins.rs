@@ -20,19 +20,19 @@ impl Maolan {
                 }
                 None
             }
-            Message::SelectVst3Plugin(ref plugin_path) => {
-                if self.selected_vst3_plugins.contains(plugin_path) {
-                    self.selected_vst3_plugins.remove(plugin_path);
+            Message::SelectVst3Plugin(ref plugin_id) => {
+                if self.selected_vst3_plugins.contains(plugin_id) {
+                    self.selected_vst3_plugins.remove(plugin_id);
                 } else {
-                    self.selected_vst3_plugins.insert(plugin_path.clone());
+                    self.selected_vst3_plugins.insert(plugin_id.clone());
                 }
                 None
             }
-            Message::SelectClapPlugin(ref plugin_path) => {
-                if self.selected_clap_plugins.contains(plugin_path) {
-                    self.selected_clap_plugins.remove(plugin_path);
+            Message::SelectClapPlugin(ref plugin_id) => {
+                if self.selected_clap_plugins.contains(plugin_id) {
+                    self.selected_clap_plugins.remove(plugin_id);
                 } else {
-                    self.selected_clap_plugins.insert(plugin_path.clone());
+                    self.selected_clap_plugins.insert(plugin_id.clone());
                 }
                 None
             }
@@ -113,10 +113,8 @@ impl Maolan {
                         }
                     }
                     let plugin_infos = state.clap_plugins.clone();
-                    for plugin_path in clap_selected {
-                        if let Some(info) =
-                            plugin_infos.iter().find(|info| info.path == plugin_path)
-                        {
+                    for plugin_id in clap_selected {
+                        if let Some(info) = plugin_infos.iter().find(|info| info.id == plugin_id) {
                             let caps = info.capabilities.as_ref();
                             state.plugin_graph_plugins.push(
                                 maolan_engine::message::PluginGraphPlugin {
@@ -127,11 +125,7 @@ impl Maolan {
                                     instance_id: next_id,
                                     format: "CLAP".to_string(),
                                     uri: info.path.clone(),
-                                    plugin_id: info
-                                        .path
-                                        .split_once("::")
-                                        .map(|(_, id)| id.to_string())
-                                        .unwrap_or_default(),
+                                    plugin_id: info.id.clone(),
                                     name: info.name.clone(),
                                     main_audio_inputs: caps
                                         .map(|caps| caps.audio_inputs)
@@ -151,10 +145,8 @@ impl Maolan {
                         }
                     }
                     let plugin_infos = state.vst3_plugins.clone();
-                    for plugin_path in vst3_selected {
-                        if let Some(info) =
-                            plugin_infos.iter().find(|info| info.path == plugin_path)
-                        {
+                    for plugin_id in vst3_selected {
+                        if let Some(info) = plugin_infos.iter().find(|info| info.id == plugin_id) {
                             state.plugin_graph_plugins.push(
                                 maolan_engine::message::PluginGraphPlugin {
                                     node:
@@ -196,30 +188,20 @@ impl Maolan {
                         }));
                         self.selected_lv2_plugins.clear();
                     }
-                    tasks.extend(
-                        self.selected_clap_plugins
-                            .iter()
-                            .cloned()
-                            .map(|plugin_path| {
-                                self.send(Action::TrackLoadClapPlugin {
-                                    track_name: track_name.clone(),
-                                    plugin_path,
-                                    instance_id: None,
-                                })
-                            }),
-                    );
-                    tasks.extend(
-                        self.selected_vst3_plugins
-                            .iter()
-                            .cloned()
-                            .map(|plugin_path| {
-                                self.send(Action::TrackLoadVst3Plugin {
-                                    track_name: track_name.clone(),
-                                    plugin_path,
-                                    instance_id: None,
-                                })
-                            }),
-                    );
+                    tasks.extend(self.selected_clap_plugins.iter().cloned().map(|plugin_id| {
+                        self.send(Action::TrackLoadClapPlugin {
+                            track_name: track_name.clone(),
+                            plugin_id,
+                            instance_id: None,
+                        })
+                    }));
+                    tasks.extend(self.selected_vst3_plugins.iter().cloned().map(|plugin_id| {
+                        self.send(Action::TrackLoadVst3Plugin {
+                            track_name: track_name.clone(),
+                            plugin_id,
+                            instance_id: None,
+                        })
+                    }));
                     self.selected_clap_plugins.clear();
                     self.selected_vst3_plugins.clear();
                     self.modal = None;
@@ -235,8 +217,9 @@ impl Maolan {
                 ref track_name,
                 clip_idx: _,
                 instance_id,
-                plugin_path: _,
+                plugin_id,
             } => {
+                let _ = plugin_id;
                 if self.session_restore_in_progress {
                     self.state.blocking_write().message =
                         "Plugin UI will be available after session restore finishes".to_string();
@@ -328,8 +311,9 @@ impl Maolan {
                 ref track_name,
                 clip_idx: _,
                 instance_id,
-                plugin_path: _,
+                plugin_id,
             } => {
+                let _ = plugin_id;
                 if self.session_restore_in_progress {
                     self.state.blocking_write().message =
                         "Plugin UI will be available after session restore finishes".to_string();

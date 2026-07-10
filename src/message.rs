@@ -779,7 +779,7 @@ pub enum Message {
     },
     TrackAutomationAddPluginLanes {
         track_name: String,
-        plugin_path: String,
+        plugin_id: String,
         format: String,
     },
     TrackAutomationLaneInsertPoints {
@@ -1325,13 +1325,13 @@ pub enum Message {
         track_name: String,
         clip_idx: Option<usize>,
         instance_id: usize,
-        plugin_path: String,
+        plugin_id: String,
     },
     OpenVst3PluginUi {
         track_name: String,
         clip_idx: Option<usize>,
         instance_id: usize,
-        plugin_path: String,
+        plugin_id: String,
     },
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]

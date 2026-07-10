@@ -85,15 +85,15 @@ impl Maolan {
                             })
                         }
                         PluginGraphNode::ClapPluginInstance(_) => {
-                            let plugin_path = state
+                            let plugin_id = state
                                 .plugin_graph_plugins
                                 .iter()
                                 .find(|p| p.instance_id == instance_id)
-                                .map(|p| p.uri.clone())
+                                .map(|p| p.plugin_id.clone())
                                 .unwrap_or_default();
                             self.send(Action::TrackUnloadClapPlugin {
                                 track_name: track_name.clone(),
-                                plugin_path,
+                                plugin_id,
                             })
                         }
                         PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => Task::none(),
@@ -3787,13 +3787,13 @@ impl Maolan {
                         }
                         Action::TrackLoadClapPlugin {
                             track_name,
-                            plugin_path,
+                            plugin_id,
                             ..
                         } => {
-                            let plugin_name = std::path::Path::new(plugin_path)
+                            let plugin_name = std::path::Path::new(plugin_id)
                                 .file_stem()
                                 .map(|s| s.to_string_lossy().to_string())
-                                .unwrap_or_else(|| plugin_path.clone());
+                                .unwrap_or_else(|| plugin_id.clone());
                             {
                                 let mut state = self.state.blocking_write();
                                 let entry = state
@@ -3802,9 +3802,9 @@ impl Maolan {
                                     .or_default();
                                 if !entry
                                     .iter()
-                                    .any(|existing| existing.eq_ignore_ascii_case(plugin_path))
+                                    .any(|existing| existing.eq_ignore_ascii_case(plugin_id))
                                 {
-                                    entry.push(plugin_path.clone());
+                                    entry.push(plugin_id.clone());
                                 }
                             }
                             self.state.blocking_write().message = format!(
@@ -3818,26 +3818,26 @@ impl Maolan {
                         }
                         Action::TrackUnloadClapPlugin {
                             track_name,
-                            plugin_path,
+                            plugin_id,
                         } => {
                             {
                                 let mut state = self.state.blocking_write();
                                 if let Some(entry) = state.clap_plugins_by_track.get_mut(track_name)
                                     && let Some(pos) = entry.iter().position(|existing| {
-                                        existing.eq_ignore_ascii_case(plugin_path)
+                                        existing.eq_ignore_ascii_case(plugin_id)
                                     })
                                 {
                                     entry.remove(pos);
                                 }
                                 if let Some(states) = state.clap_states_by_track.get_mut(track_name)
                                 {
-                                    states.remove(plugin_path);
+                                    states.remove(plugin_id);
                                 }
                             }
-                            let plugin_name = std::path::Path::new(plugin_path)
+                            let plugin_name = std::path::Path::new(plugin_id)
                                 .file_stem()
                                 .map(|s| s.to_string_lossy().to_string())
-                                .unwrap_or_else(|| plugin_path.clone());
+                                .unwrap_or_else(|| plugin_id.clone());
                             self.state.blocking_write().message = format!(
                                 "Unloaded CLAP plugin '{plugin_name}' from track '{track_name}'"
                             );
@@ -3850,18 +3850,18 @@ impl Maolan {
                         Action::TrackClapStateSnapshot {
                             track_name,
                             instance_id: _instance_id,
-                            plugin_path,
+                            plugin_id,
                             state: clap_state,
                             ..
                         } => {
                             let state_len = clap_state.bytes.len();
-                            tracing::info!(%track_name, instance_id = *_instance_id, %plugin_path, state_len, "DAW received TrackClapStateSnapshot");
+                            tracing::info!(%track_name, instance_id = *_instance_id, %plugin_id, state_len, "DAW received TrackClapStateSnapshot");
                             let mut state = self.state.blocking_write();
                             state
                                 .clap_states_by_track
                                 .entry(track_name.clone())
                                 .or_default()
-                                .insert(plugin_path.clone(), clap_state.clone());
+                                .insert(plugin_id.clone(), clap_state.clone());
                             #[cfg(all(unix, not(target_os = "macos")))]
                             {
                                 let state_json = serde_json::to_value(clap_state)
@@ -3893,7 +3893,7 @@ impl Maolan {
                             track_name,
                             clip_idx,
                             instance_id,
-                            plugin_path: _,
+                            plugin_id: _,
                             state: clap_state,
                             ..
                         } => {
@@ -4964,7 +4964,11 @@ impl Maolan {
                             value: p.value,
                         })
                         .collect::<Vec<_>>();
-                    automation_lanes.push(OfflineAutomationLane { target, points });
+                    automation_lanes.push(OfflineAutomationLane {
+                        target,
+                        visible: true,
+                        points,
+                    });
                 }
                 self.pending_track_freeze_bounce.insert(
                     track_name.clone(),
@@ -5097,7 +5101,11 @@ impl Maolan {
                             value: p.value,
                         })
                         .collect::<Vec<_>>();
-                    automation_lanes.push(OfflineAutomationLane { target, points });
+                    automation_lanes.push(OfflineAutomationLane {
+                        target,
+                        visible: true,
+                        points,
+                    });
                 }
                 self.pending_track_freeze_bounce.insert(
                     track_name.clone(),
@@ -5286,22 +5294,22 @@ impl Maolan {
             }
             Message::TrackAutomationAddPluginLanes {
                 ref track_name,
-                ref plugin_path,
+                ref plugin_id,
                 ref format,
             } => {
                 match format.as_str() {
                     "CLAP" => {
                         self.pending_add_clap_automation_paths
-                            .insert((track_name.clone(), plugin_path.clone()));
+                            .insert((track_name.clone(), plugin_id.clone()));
                     }
                     "VST3" => {
                         self.pending_add_vst3_automation_paths
-                            .insert((track_name.clone(), plugin_path.clone()));
+                            .insert((track_name.clone(), plugin_id.clone()));
                     }
                     #[cfg(all(unix, not(target_os = "macos")))]
                     "LV2" => {
                         self.pending_add_lv2_automation_uris
-                            .insert((track_name.clone(), plugin_path.clone()));
+                            .insert((track_name.clone(), plugin_id.clone()));
                     }
                     _ => {}
                 }

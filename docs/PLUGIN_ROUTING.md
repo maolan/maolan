@@ -1,6 +1,6 @@
 # Plugin Routing and Sidechains
 
-Last updated: 2026-03-21
+Last updated: 2026-07-09
 
 ## Overview
 
@@ -15,6 +15,8 @@ Maolan uses a per-track plugin graph instead of a fixed insert-only chain. A tra
 Connections are explicit. Audio and MIDI routing are managed separately.
 
 Audio clips on supported Unix builds can also carry their own per-clip plugin graph. That graph is separate from the parent track graph and is stored with the clip in session data.
+
+Folder tracks also have their own plugin graph. Child tracks route into the folder graph, and child outputs can also be connected directly to folder plugins or to the folder output.
 
 ## Default Behavior
 
