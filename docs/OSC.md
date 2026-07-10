@@ -374,6 +374,7 @@ Queries return replies to the sender.
 - `/query/vst3_plugins` → `/response/vst3_plugins s...`
 - `/query/lv2_plugins` → `/response/lv2_plugins s...`
 - `/query/clap_note_names s` → `/response/clap_note_names s...`
+- `/query/lv2_midnam s` → `/response/lv2_midnam s ...` (LV2 midnam MIDI note names; Unix only)
 - `/query/vst3_graph s` → `/response/vst3_graph s...`
 - `/query/diagnostics` → `/response/diagnostics s...`
 - `/query/midi_learn_report` → `/response/midi_learn_report s...`

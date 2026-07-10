@@ -421,6 +421,54 @@ impl HostRuntime {
         Ok(offset)
     }
 
+    fn serialize_clap_note_names(
+        scratch: *mut u8,
+        note_names: &std::collections::HashMap<u8, String>,
+    ) -> Result<usize, String> {
+        let max_len = SCRATCH_SIZE;
+        let mut offset = 0usize;
+
+        if offset + 4 > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::write_unaligned(scratch.add(offset) as *mut u32, note_names.len() as u32);
+        }
+        offset += 4;
+
+        for (note, name) in note_names {
+            if offset + 4 > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::write_unaligned(scratch.add(offset) as *mut u32, u32::from(*note));
+            }
+            offset += 4;
+
+            let name_bytes = name.as_bytes();
+            if offset + 4 > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::write_unaligned(scratch.add(offset) as *mut u32, name_bytes.len() as u32);
+            }
+            offset += 4;
+            if offset + name_bytes.len() > max_len {
+                return Err("scratch overflow".to_string());
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    name_bytes.as_ptr(),
+                    scratch.add(offset),
+                    name_bytes.len(),
+                );
+            }
+            offset += name_bytes.len();
+        }
+
+        Ok(offset)
+    }
+
     pub fn run_clap_plugin(&self) {
         let mut plugin = match PluginInstance::new(self.real_plugin_path(), self.plugin_id()) {
             Ok(p) => p,
@@ -903,6 +951,18 @@ impl HostRuntime {
                             Err(e) => Err(e),
                         }
                     }
+                    maolan_plugin_protocol::protocol::REQUEST_CLAP_NOTE_NAMES => {
+                        tracing::info!("CLAP host: received note-name request");
+                        let note_names = plugin.note_names();
+                        tracing::info!(count = note_names.len(), "CLAP host: got note names");
+                        match Self::serialize_clap_note_names(scratch, &note_names) {
+                            Ok(size) => {
+                                header.scratch_size.store(size as u32, Ordering::Release);
+                                Ok(())
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
                     _ => Err(format!("Unknown request type: {req}")),
                 };
                 header
@@ -910,7 +970,12 @@ impl HostRuntime {
                     .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
                 if matches!(
                     req,
-                    1 | 2 | 5 | 6 | 7 | maolan_plugin_protocol::protocol::REQUEST_CLAP_PARAMETERS
+                    1 | 2
+                        | 5
+                        | 6
+                        | 7
+                        | maolan_plugin_protocol::protocol::REQUEST_CLAP_PARAMETERS
+                        | maolan_plugin_protocol::protocol::REQUEST_CLAP_NOTE_NAMES
                 ) {
                     let _ = self.events.signal_daw();
                 }

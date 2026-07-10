@@ -1145,6 +1145,96 @@ fn serialize_lv2_control_ports(
     Ok(offset)
 }
 
+#[cfg(unix)]
+fn serialize_lv2_note_names(
+    scratch: *mut u8,
+    note_names: &std::collections::HashMap<u8, String>,
+) -> Result<usize, String> {
+    let max_len = SCRATCH_SIZE;
+    let mut offset = 0usize;
+
+    if offset + 4 > max_len {
+        return Err("scratch overflow".to_string());
+    }
+    unsafe {
+        std::ptr::write_unaligned(scratch.add(offset) as *mut u32, note_names.len() as u32);
+    }
+    offset += 4;
+
+    for (note, name) in note_names {
+        if offset + 4 > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::write_unaligned(scratch.add(offset) as *mut u32, u32::from(*note));
+        }
+        offset += 4;
+
+        let name_bytes = name.as_bytes();
+        if offset + 4 > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::write_unaligned(scratch.add(offset) as *mut u32, name_bytes.len() as u32);
+        }
+        offset += 4;
+        if offset + name_bytes.len() > max_len {
+            return Err("scratch overflow".to_string());
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                name_bytes.as_ptr(),
+                scratch.add(offset),
+                name_bytes.len(),
+            );
+        }
+        offset += name_bytes.len();
+    }
+
+    Ok(offset)
+}
+
+#[cfg(all(unix, test))]
+fn deserialize_lv2_note_names(
+    scratch: *const u8,
+    size: usize,
+) -> Result<std::collections::HashMap<u8, String>, String> {
+    if size < 4 {
+        return Err("scratch too small for LV2 note names".to_string());
+    }
+    let mut offset = 0usize;
+    let count = unsafe { std::ptr::read_unaligned(scratch.add(offset) as *const u32) } as usize;
+    offset += 4;
+
+    let mut note_names = std::collections::HashMap::with_capacity(count);
+    for _ in 0..count {
+        if offset + 4 > size {
+            return Err("scratch underflow".to_string());
+        }
+        let note = unsafe { std::ptr::read_unaligned(scratch.add(offset) as *const u32) } as u8;
+        offset += 4;
+
+        if offset + 4 > size {
+            return Err("scratch underflow".to_string());
+        }
+        let name_len =
+            unsafe { std::ptr::read_unaligned(scratch.add(offset) as *const u32) } as usize;
+        offset += 4;
+        if offset + name_len > size {
+            return Err("scratch underflow".to_string());
+        }
+        let mut name_bytes = vec![0u8; name_len];
+        unsafe {
+            std::ptr::copy_nonoverlapping(scratch.add(offset), name_bytes.as_mut_ptr(), name_len);
+        }
+        offset += name_len;
+        let name = String::from_utf8(name_bytes).map_err(|e| e.to_string())?;
+        note_names.insert(note, name);
+    }
+
+    Ok(note_names)
+}
+
 #[cfg(all(unix, test))]
 fn deserialize_lv2_control_ports(
     scratch: *const u8,
@@ -1317,6 +1407,18 @@ pub fn run_lv2(
                         Err(e) => Err(e),
                     }
                 }
+                maolan_plugin_protocol::protocol::REQUEST_LV2_MIDNAM => {
+                    tracing::info!("LV2 host: received midnam request");
+                    let note_names = processor.midnam_note_names();
+                    tracing::info!(count = note_names.len(), "LV2 host: got midnam note names");
+                    match serialize_lv2_note_names(scratch, &note_names) {
+                        Ok(size) => {
+                            header.scratch_size.store(size as u32, Ordering::Release);
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
                 _ => Err(format!("Unknown request type: {}", req)),
             };
             header
@@ -1325,7 +1427,10 @@ pub fn run_lv2(
 
             if matches!(
                 req,
-                1 | 2 | 5 | maolan_plugin_protocol::protocol::REQUEST_LV2_CONTROL_PORTS
+                1 | 2
+                    | 5
+                    | maolan_plugin_protocol::protocol::REQUEST_LV2_CONTROL_PORTS
+                    | maolan_plugin_protocol::protocol::REQUEST_LV2_MIDNAM
             ) {
                 let _ = events.signal_daw();
             }
@@ -1483,5 +1588,27 @@ mod tests {
         assert_eq!(decoded[1].min, ports[1].min);
         assert_eq!(decoded[1].max, ports[1].max);
         assert_eq!(decoded[1].value, ports[1].value);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn lv2_note_names_serialization_roundtrip() {
+        let note_names = std::collections::HashMap::from([
+            (36_u8, "Kick".to_string()),
+            (38_u8, "Snare".to_string()),
+            (42_u8, "Closed Hi-Hat".to_string()),
+        ]);
+        let mut scratch = vec![0u8; SCRATCH_SIZE];
+        let size = serialize_lv2_note_names(scratch.as_mut_ptr(), &note_names)
+            .expect("serialize should succeed");
+        assert!(size > 0);
+        assert!(size < SCRATCH_SIZE);
+
+        let decoded =
+            deserialize_lv2_note_names(scratch.as_ptr(), size).expect("deserialize should succeed");
+        assert_eq!(decoded.len(), note_names.len());
+        for (note, name) in &note_names {
+            assert_eq!(decoded.get(note), Some(name));
+        }
     }
 }
