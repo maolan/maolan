@@ -632,9 +632,7 @@ impl Lv2Processor {
         };
         processor.validate_required_runtime_callbacks()?;
         processor.connect_ports();
-        if std::env::var_os("MAOLAN_LV2_ENABLE_MIDNAM").is_some() {
-            processor.query_midnam();
-        }
+        processor.query_midnam();
         Ok(processor)
     }
 

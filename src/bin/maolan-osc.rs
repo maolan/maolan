@@ -256,6 +256,7 @@ Queries:
   query vst3_plugins
   query lv2_plugins
   query clap_note_names <track>
+  query lv2_midnam <track>              /query/lv2_midnam
   query vst3_graph <track>
   query diagnostics
   query midi_learn_report
@@ -1303,6 +1304,14 @@ fn build_query_packet(command: &[String]) -> Result<Vec<u8>, String> {
             require_len(command, 3)?;
             Ok(osc_packet_with_args(
                 "/query/clap_note_names",
+                "s",
+                &[OscArg::String(command[2].clone())],
+            ))
+        }
+        "lv2_midnam" => {
+            require_len(command, 3)?;
+            Ok(osc_packet_with_args(
+                "/query/lv2_midnam",
                 "s",
                 &[OscArg::String(command[2].clone())],
             ))

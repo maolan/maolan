@@ -420,6 +420,7 @@ pub union ClapWindowUnion {
 pub const CLAP_EXT_PARAMS: &CStr = c"clap.params";
 pub const CLAP_EXT_AUDIO_PORTS: &CStr = c"clap.audio-ports";
 pub const CLAP_EXT_NOTE_PORTS: &CStr = c"clap.note-ports";
+pub const CLAP_EXT_NOTE_NAME: &CStr = c"clap.note-name";
 pub const CLAP_EXT_GUI: &CStr = c"clap.gui";
 pub const CLAP_EXT_STATE: &CStr = c"clap.state";
 pub const CLAP_EXT_FILE_REFERENCE: &CStr = c"clap.file-reference";
@@ -462,6 +463,23 @@ pub struct ClapNotePortInfo {
     pub flags: u32,
     pub supported_dialects: u16,
     pub preferred_dialect: u16,
+}
+
+pub const CLAP_NAME_SIZE: usize = 256;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ClapNoteName {
+    pub name: [c_char; CLAP_NAME_SIZE],
+    pub port: i16,
+    pub key: i16,
+    pub channel: i16,
+}
+
+#[repr(C)]
+pub struct ClapPluginNoteName {
+    pub count: Option<unsafe extern "C" fn(*const ClapPlugin) -> u32>,
+    pub get: Option<unsafe extern "C" fn(*const ClapPlugin, u32, *mut ClapNoteName) -> bool>,
 }
 
 #[repr(C)]
@@ -911,6 +929,46 @@ impl PluginInstance {
             }
         }
         infos
+    }
+
+    pub fn note_names(&self) -> std::collections::HashMap<u8, String> {
+        let mut result = std::collections::HashMap::new();
+        unsafe {
+            let ext = (*self.plugin)
+                .get_extension
+                .map(|f| f(self.plugin, CLAP_EXT_NOTE_NAME.as_ptr()));
+            let Some(ptr) = ext.filter(|p| !p.is_null()) else {
+                return result;
+            };
+            let note_name = &*(ptr as *const ClapPluginNoteName);
+            let count = note_name.count.map(|f| f(self.plugin)).unwrap_or(0);
+            for ni in 0..count {
+                let mut info = ClapNoteName {
+                    name: [0; CLAP_NAME_SIZE],
+                    port: -1,
+                    key: -1,
+                    channel: -1,
+                };
+                let ok = note_name
+                    .get
+                    .map(|f| f(self.plugin, ni, &mut info))
+                    .unwrap_or(false);
+                if !ok {
+                    continue;
+                }
+                if !(0..=127).contains(&info.key) {
+                    continue;
+                }
+                let name = CStr::from_ptr(info.name.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
+                if name.is_empty() {
+                    continue;
+                }
+                result.insert(info.key as u8, name);
+            }
+        }
+        result
     }
 
     pub fn gui_is_supported(&self) -> bool {
