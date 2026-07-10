@@ -1,8 +1,18 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-fn print_usage() {}
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!("  maolan-plugin-host <format> <plugin-id-or-path> <shm> <instance-id> [args]");
+    eprintln!("  maolan-plugin-host --scan --format <format> [--path <path>] [--output <file>]");
+    eprintln!("Formats: clap, vst3, lv2, null");
+    eprintln!(
+        "The plugin argument may be a plugin ID (e.g. rs.maolan.widener) or a filesystem path."
+    );
+}
 
 #[cfg(target_os = "linux")]
 fn setup_parent_death_signal() {
@@ -47,6 +57,78 @@ fn parse_log_level(args: &mut Vec<String>) -> Option<Option<tracing::Level>> {
         }
     } else {
         None
+    }
+}
+
+fn is_direct_plugin_spec(spec: &str) -> bool {
+    matches!(spec, "__test__" | "__crash__" | "__hang__" | "null")
+        || spec.contains('/')
+        || spec.contains('\\')
+        || spec.contains("::")
+        || spec.contains('#')
+        || spec.contains("://")
+        || spec.starts_with("file:")
+        || std::path::Path::new(spec).exists()
+}
+
+fn scan_clap_plugins_cached(
+    scan_capabilities: bool,
+) -> Result<Vec<maolan_plugin_host::scan::ClapPluginInfo>, String> {
+    static CACHE: OnceLock<Mutex<HashMap<bool, Vec<maolan_plugin_host::scan::ClapPluginInfo>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().map_err(|e| format!("cache lock: {e}"))?;
+    if let Some(plugins) = map.get(&scan_capabilities) {
+        return Ok(plugins.clone());
+    }
+    let plugins = maolan_plugin_host::scan::scan_clap_plugins(scan_capabilities);
+    map.insert(scan_capabilities, plugins.clone());
+    Ok(plugins)
+}
+
+fn scan_vst3_plugins_cached() -> Result<Vec<maolan_plugin_host::vst3::Vst3PluginInfo>, String> {
+    static CACHE: OnceLock<Mutex<Option<Vec<maolan_plugin_host::vst3::Vst3PluginInfo>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let mut opt = cache.lock().map_err(|e| format!("cache lock: {e}"))?;
+    if let Some(plugins) = opt.as_ref() {
+        return Ok(plugins.clone());
+    }
+    let plugins = maolan_plugin_host::scan::scan_vst3_plugins();
+    *opt = Some(plugins.clone());
+    Ok(plugins)
+}
+
+fn resolve_plugin_spec(format: &str, identifier: &str) -> Result<String, String> {
+    if identifier.is_empty() {
+        return Err("plugin identifier is empty".to_string());
+    }
+    if is_direct_plugin_spec(identifier) {
+        return Ok(identifier.to_string());
+    }
+
+    match format {
+        "clap" => {
+            let plugins = scan_clap_plugins_cached(false)
+                .map_err(|e| format!("failed to scan CLAP plugins: {e}"))?;
+            plugins
+                .into_iter()
+                .find(|p| !p.id.is_empty() && p.id == identifier)
+                .map(|p| p.path)
+                .ok_or_else(|| format!("CLAP plugin ID not found: {identifier}"))
+        }
+        "vst3" => {
+            let plugins = scan_vst3_plugins_cached()
+                .map_err(|e| format!("failed to scan VST3 plugins: {e}"))?;
+            plugins
+                .into_iter()
+                .find(|p| !p.id.is_empty() && p.id == identifier)
+                .map(|p| p.path)
+                .ok_or_else(|| format!("VST3 plugin ID not found: {identifier}"))
+        }
+        _ => Err(format!(
+            "plugin ID resolution not supported for format: {format}"
+        )),
     }
 }
 
@@ -122,7 +204,13 @@ fn main() {
         std::process::exit(1);
     }
 
-    let plugin_spec = args[2].clone();
+    let plugin_spec = match resolve_plugin_spec(&format, &args[2]) {
+        Ok(spec) => spec,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(5);
+        }
+    };
     let shm_name = args[3].clone();
     let instance_id = args[4].clone();
 

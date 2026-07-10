@@ -1839,7 +1839,7 @@ impl canvas::Program<Message> for Graph {
                             if Rectangle::new(pos, size).contains(cursor_position) {
                                 let instance_id = plugin.instance_id;
                                 let node = plugin.node.clone();
-                                let uri = plugin.uri.clone();
+                                let plugin_id = plugin.plugin_id.clone();
                                 select_plugin_indices(
                                     &mut data.plugin_graph_selected_plugins,
                                     instance_id,
@@ -1877,7 +1877,7 @@ impl canvas::Program<Message> for Graph {
                                                 track_name,
                                                 clip_idx,
                                                 instance_id,
-                                                plugin_path: uri.clone(),
+                                                plugin_id: plugin_id.clone(),
                                             }))
                                         }
                                         PluginGraphNode::Vst3PluginInstance(_) => {
@@ -1885,7 +1885,7 @@ impl canvas::Program<Message> for Graph {
                                                 track_name,
                                                 clip_idx,
                                                 instance_id,
-                                                plugin_path: uri.clone(),
+                                                plugin_id: plugin_id.clone(),
                                             }))
                                         }
                                         PluginGraphNode::TrackInput

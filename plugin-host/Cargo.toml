@@ -1,6 +1,6 @@
 [package]
 name = "maolan-plugin-host"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 description = "Out-of-process plugin host for Maolan DAW"
 authors = ["Maolan Team"]

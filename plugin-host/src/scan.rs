@@ -66,6 +66,7 @@ pub struct ScanOutput<T> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClapPluginInfo {
+    pub id: String,
     pub name: String,
     pub path: String,
     pub capabilities: Option<ClapPluginCapabilities>,
@@ -477,6 +478,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
         Ok(l) => l,
         Err(_) => {
             return vec![ClapPluginInfo {
+                id: "".to_string(),
                 name: path
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
@@ -492,6 +494,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
             Ok(sym) => sym,
             Err(_) => {
                 return vec![ClapPluginInfo {
+                    id: "".to_string(),
                     name: path
                         .file_stem()
                         .map(|s| s.to_string_lossy().to_string())
@@ -508,6 +511,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
             Ok(s) => s,
             Err(_) => {
                 return vec![ClapPluginInfo {
+                    id: "".to_string(),
                     name: path_str.clone(),
                     path: path_str,
                     capabilities: None,
@@ -516,6 +520,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
         };
         if !unsafe { init(path_c.as_ptr()) } {
             return vec![ClapPluginInfo {
+                id: "".to_string(),
                 name: path_str.clone(),
                 path: path_str,
                 capabilities: None,
@@ -527,6 +532,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
         let factory_ptr = unsafe { get_factory(factory_id.as_ptr()) };
         if factory_ptr.is_null() {
             return vec![ClapPluginInfo {
+                id: "".to_string(),
                 name: path_str.clone(),
                 path: path_str,
                 capabilities: None,
@@ -535,6 +541,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
         unsafe { &*(factory_ptr as *const ClapPluginFactory) }
     } else {
         return vec![ClapPluginInfo {
+            id: "".to_string(),
             name: path_str.clone(),
             path: path_str,
             capabilities: None,
@@ -725,6 +732,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
         }
 
         out.push(ClapPluginInfo {
+            id: plugin_id.clone(),
             name,
             path: format!("{}::{}", path_str, plugin_id),
             capabilities,
@@ -737,6 +745,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
 
     if out.is_empty() {
         out.push(ClapPluginInfo {
+            id: "".to_string(),
             name: path
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
@@ -798,6 +807,7 @@ fn collect_clap_plugins(
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| path_str.clone());
                 out.push(ClapPluginInfo {
+                    id: "".to_string(),
                     name,
                     path: path_str,
                     capabilities: None,

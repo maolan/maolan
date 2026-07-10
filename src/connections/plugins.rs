@@ -584,7 +584,7 @@ impl canvas::Program<Message> for Graph {
                                                 .as_ref()
                                                 .map(|target| target.clip_idx),
                                             instance_id,
-                                            plugin_path: plugin.uri.clone(),
+                                            plugin_id: plugin.plugin_id.clone(),
                                         }))
                                     }
                                     PluginGraphNode::Vst3PluginInstance(_) => {
@@ -595,7 +595,7 @@ impl canvas::Program<Message> for Graph {
                                                 .as_ref()
                                                 .map(|target| target.clip_idx),
                                             instance_id,
-                                            plugin_path: plugin.uri.clone(),
+                                            plugin_id: plugin.plugin_id.clone(),
                                         }))
                                     }
                                     PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => {

@@ -1,6 +1,6 @@
 # Maolan Features
 
-Last updated: 2026-04-30
+Last updated: 2026-07-09
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
@@ -52,6 +52,14 @@ Last updated: 2026-04-30
   - Offline pitch-corrected freeze preparation using Rubber Band preview renders
 - Audio warp markers with reset / half-speed / double-speed helpers
 
+## Folder Tracks
+- Folder tracks for hierarchical track organization
+- Collapsible/expandable folder view in the track list
+- Child tracks route through the folder track and are connectable to folder plugins
+- Folder track plugin graph for processing the summed child output
+- Track-to-folder plugin connections and disabled folder-output feeds
+- Folder track templates that save the full child subtree recursively
+
 ## Timeline Markers and Arrangement Aids
 - Per-track editor markers
 - Marker create / rename / move / delete workflow
@@ -82,6 +90,7 @@ Last updated: 2026-04-30
   - LV2 parameters (Unix)
 - Lane point insert/delete/edit
 - Automation ramp drawing
+- Automation lane editing with MIDI-style gestures (right-drag to draw ramps, click to insert points)
 - Automation modes:
   - Read
   - Touch
@@ -89,6 +98,15 @@ Last updated: 2026-04-30
   - Write
 - Automation writeback from manual control changes
 - Plugin automation lane creation from loaded plugin parameters
+
+## Modulators
+- LFO-style modulators per session
+- Modulator shapes: Sine, Triangle, Saw, Square, Sample & Hold
+- Rate modes: Hz or musical divisions (beat, bar, etc.)
+- Per-modulator phase offset and enable toggle
+- Assign modulators to track parameters, plugin parameters, and MIDI controllers
+- Per-assignment min/max range scaling via the modulator target dialog
+- Modulators pane for creating, selecting, and editing modulators
 
 ## Piano Roll / MIDI Tools
 - Note editing and selection
@@ -116,6 +134,28 @@ Last updated: 2026-04-30
 - Toolbar panic button for hardware MIDI outputs (`CC64=0`, `CC120=0`, `CC123=0`)
 - Metronome enable/disable with visual icon
 - Clip playback enable/disable at transport level
+
+## Step Recording
+- Step recording mode in the piano roll
+- Toggle step recording from the MIDI editor toolbar (`Step` button)
+- Each incoming MIDI note is inserted at the step cursor and advances the cursor by the current MIDI snap interval
+- Step cursor drawn in the piano roll while the mode is active
+
+## Live Session View
+- Clip-launch grid modeled after Ableton Live
+- Switch between Workspace and Session view with `Tab` or the toolbar
+- Each row is a track; each column is a scene
+- Slots reference arrangement clips by stable clip ID
+- Launch/stop slots with click or `Return`
+- Launch scenes by clicking scene headers; per-scene tempo changes on launch
+- Stop all clips with `Shift+Space` or the master stop column
+- Move, duplicate, and copy slot references between slots and the arrangement
+- Assign arrangement clips to session slots
+- Import the arrangement into the session grid
+- Record session clips into the arrangement (`Rec to Arr`)
+- Record directly into a slot
+- Scene options: rename, set color, set per-scene tempo, change launch quantization
+- Track strip with mute, solo, arm, volume, and pan controls
 
 ## Freeze / Commit / Flatten
 - Per-track freeze/unfreeze
@@ -204,6 +244,12 @@ Last updated: 2026-04-30
   - `maolandaw/HeartCodec-oss-20260123-burn`
 - Local model directory override with `--model-dir`
 
+## Media Management and File References
+- Collect/consolidate external media and plugin file references into the session's `data/` directory
+- Delete unused session media files from `audio/`, `midi/`, `peaks/`, and `pitch/`
+- CLAP and LV2 file-reference support: plugins can declare external file references and Maolan updates them to session-relative `data/` paths on consolidate
+- Consolidation makes sessions safer to move or share
+
 ## Session Safety and Recovery
 - Dirty-state tracking
 - Close guard for unsaved changes
@@ -245,7 +291,8 @@ Last updated: 2026-04-30
 - Linux and FreeBSD builds support CLAP, VST3, and LV2.
 - Windows builds support WSAPI backend, CLAP, and VST3.
 - macOS builds refresh CLAP and VST3 plugin support paths; LV2 is Unix-only in the current codebase.
-- Linux and FreeBSD builds currently force the X11 window backend at startup.
+- Linux and FreeBSD builds run on Wayland when available and fall back to X11 (Xorg) when Wayland is unavailable.
+- Plugin UI embedding on Unix still uses X11, so an X11 server must be reachable even under Wayland (for example via XWayland).
 - FreeBSD roadmap notes still mark MIDI 2.0 as N/A.
 
 ## Known Boundaries

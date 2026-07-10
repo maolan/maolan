@@ -1,6 +1,6 @@
 # Maolan Shortcuts and Gestures
 
-Last updated: 2026-05-21
+Last updated: 2026-07-09
 
 ## Keyboard Shortcuts
 ### Global / Session
@@ -20,6 +20,7 @@ Last updated: 2026-05-21
 - `Delete` or `Backspace`: Remove selected item(s)
 - `Escape`: Cancel or clear the current context-dependent interaction
 - `N`: Toggle the Shortcuts pane
+- `M`: Toggle the Modulators pane
 - `C`: Toggle the cut indicator (a vertical guide line showing where a cut would land; only visible in workspace view)
 
 ### Transport

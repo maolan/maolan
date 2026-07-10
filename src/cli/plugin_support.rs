@@ -63,10 +63,10 @@ fn push_track_plugin_graph_restore_actions(
                         let instance_id = next_instance_id;
                         next_instance_id += 1;
                         runtime_nodes.push(PluginGraphNode::ClapPluginInstance(instance_id));
-                        if let Some(plugin_path) = resolve_clap_plugin_path(uri, clap_plugins) {
+                        if let Some(plugin_id) = resolve_clap_plugin_id(uri, clap_plugins) {
                             actions.push(Action::TrackLoadClapPlugin {
                                 track_name: track_name.clone(),
-                                plugin_path,
+                                plugin_id,
                                 instance_id: Some(instance_id),
                             });
                             if let Some(state) = clap_state_from_json(&plugin["state"]) {
@@ -82,10 +82,10 @@ fn push_track_plugin_graph_restore_actions(
                         let instance_id = next_instance_id;
                         next_instance_id += 1;
                         runtime_nodes.push(PluginGraphNode::Vst3PluginInstance(instance_id));
-                        if let Some(plugin_path) = resolve_vst3_plugin_path(uri, vst3_plugins) {
+                        if let Some(plugin_id) = resolve_vst3_plugin_id(uri, vst3_plugins) {
                             actions.push(Action::TrackLoadVst3Plugin {
                                 track_name: track_name.clone(),
-                                plugin_path,
+                                plugin_id,
                                 instance_id: Some(instance_id),
                             });
                             if let Some(state) = vst3_state_from_json(&plugin["state"]) {
@@ -177,28 +177,38 @@ fn parse_plugin_node_with_runtime_nodes(
     }
 }
 
-fn resolve_clap_plugin_path(stored: &str, clap_plugins: &[ClapPluginInfo]) -> Option<String> {
-    if stored.contains("::") || stored.contains('/') {
-        return Some(stored.to_string());
+fn resolve_clap_plugin_id(stored: &str, clap_plugins: &[ClapPluginInfo]) -> Option<String> {
+    if stored.contains("::") {
+        // Old combined path::id URI; keep the ID half so sessions remain portable.
+        return stored.split_once("::").map(|(_, id)| id.to_string());
+    }
+    if stored.contains('/') {
+        // Legacy bare path; try to locate the matching scanned plugin by path.
+        return clap_plugins
+            .iter()
+            .find(|info| info.path == stored)
+            .map(|info| info.id.clone());
     }
     for info in clap_plugins {
-        if let Some((_, id)) = info.path.split_once("::")
-            && id == stored
-        {
-            return Some(info.path.clone());
+        if info.id == stored {
+            return Some(info.id.clone());
         }
     }
     None
 }
 
-fn resolve_vst3_plugin_path(stored: &str, vst3_plugins: &[Vst3PluginInfo]) -> Option<String> {
+fn resolve_vst3_plugin_id(stored: &str, vst3_plugins: &[Vst3PluginInfo]) -> Option<String> {
     if stored.contains('/') {
-        return Some(stored.to_string());
+        // Legacy path; locate the matching scanned plugin and return its class ID.
+        return vst3_plugins
+            .iter()
+            .find(|info| info.path == stored)
+            .map(|info| info.id.clone());
     }
     vst3_plugins
         .iter()
-        .find(|info| info.path == stored || info.id == stored)
-        .map(|info| info.path.clone())
+        .find(|info| info.id == stored || info.path == stored)
+        .map(|info| info.id.clone())
 }
 
 fn clap_state_from_json(value: &Value) -> Option<ClapPluginState> {

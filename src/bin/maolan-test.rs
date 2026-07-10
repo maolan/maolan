@@ -155,21 +155,21 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<TestOptions, 
 }
 
 fn help_text() -> String {
-    "Usage: maolan-test --plugin-path <PATH> [options]
+    "Usage: maolan-test --plugin-path <ID-or-PATH> [options]
 
 Options:
-  --plugin-path <PATH>     Path to CLAP plugin binary (required)
-  --device <PATH>          Output OSS device (default: /dev/dsp6)
-  --input-device <PATH>    Input OSS device (default: /dev/dsp6)
-  --duration-secs <N>      How many seconds to run playback (default: 5)
-  --sample-rate <HZ>       Sample rate (default: 48000)
-  --period-frames <N>      Period size in frames (default: 1024)
-  --nperiods <N>           Number of periods (default: 1)
-  --track-name <NAME>      Track name (default: test)
-  --param-id <ID>          Parameter ID to set after load
-  --param-value <VALUE>    Parameter value to set (requires --param-id)
-  --verbose, -v            Print detailed progress
-  --help, -h               Show this help"
+  --plugin-path <ID-or-PATH>  CLAP plugin ID or path (required)
+  --device <PATH>             Output OSS device (default: /dev/dsp6)
+  --input-device <PATH>       Input OSS device (default: /dev/dsp6)
+  --duration-secs <N>         How many seconds to run playback (default: 5)
+  --sample-rate <HZ>          Sample rate (default: 48000)
+  --period-frames <N>         Period size in frames (default: 1024)
+  --nperiods <N>              Number of periods (default: 1)
+  --track-name <NAME>         Track name (default: test)
+  --param-id <ID>             Parameter ID to set after load
+  --param-value <VALUE>       Parameter value to set (requires --param-id)
+  --verbose, -v               Print detailed progress
+  --help, -h                  Show this help"
         .to_string()
 }
 
@@ -310,7 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client
         .send(EngineMessage::Request(Action::TrackLoadClapPlugin {
             track_name: options.track_name.clone(),
-            plugin_path: plugin_path.clone(),
+            plugin_id: plugin_path.clone(),
             instance_id: Some(0),
         }))
         .await?;

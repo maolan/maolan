@@ -269,7 +269,11 @@ fn build_offline_automation_lanes(
                 value: p.value,
             })
             .collect::<Vec<_>>();
-        automation_lanes.push(OfflineAutomationLane { target, points });
+        automation_lanes.push(OfflineAutomationLane {
+            target,
+            visible: true,
+            points,
+        });
     }
     automation_lanes
 }
@@ -5984,12 +5988,12 @@ impl Maolan {
         for plugin in &state.clap_plugins {
             if !clap_filter.is_empty() {
                 let name = plugin.name.to_lowercase();
-                let path = plugin.path.to_lowercase();
-                if !name.contains(&clap_filter) && !path.contains(&clap_filter) {
+                let id = plugin.id.to_lowercase();
+                if !name.contains(&clap_filter) && !id.contains(&clap_filter) {
                     continue;
                 }
             }
-            let is_selected = self.selected_clap_plugins.contains(&plugin.path);
+            let is_selected = self.selected_clap_plugins.contains(&plugin.id);
 
             let mut capability_icons = String::new();
             if let Some(caps) = &plugin.capabilities {
@@ -6020,7 +6024,7 @@ impl Maolan {
             clap_items.push(
                 row_button
                     .width(Length::Fill)
-                    .on_press(Message::SelectClapPlugin(plugin.path.clone()))
+                    .on_press(Message::SelectClapPlugin(plugin.id.clone()))
                     .into(),
             );
         }
@@ -6031,12 +6035,12 @@ impl Maolan {
         for plugin in &state.vst3_plugins {
             if !vst3_filter.is_empty() {
                 let name = plugin.name.to_lowercase();
-                let path = plugin.path.to_lowercase();
-                if !name.contains(&vst3_filter) && !path.contains(&vst3_filter) {
+                let id = plugin.id.to_lowercase();
+                if !name.contains(&vst3_filter) && !id.contains(&vst3_filter) {
                     continue;
                 }
             }
-            let is_selected = self.selected_vst3_plugins.contains(&plugin.path);
+            let is_selected = self.selected_vst3_plugins.contains(&plugin.id);
             let row_content: iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
@@ -6052,7 +6056,7 @@ impl Maolan {
             vst3_items.push(
                 row_button
                     .width(Length::Fill)
-                    .on_press(Message::SelectVst3Plugin(plugin.path.clone()))
+                    .on_press(Message::SelectVst3Plugin(plugin.id.clone()))
                     .into(),
             );
         }
@@ -6160,12 +6164,12 @@ impl Maolan {
         for plugin in &state.vst3_plugins {
             if !filter.is_empty() {
                 let name = plugin.name.to_lowercase();
-                let path = plugin.path.to_lowercase();
-                if !name.contains(&filter) && !path.contains(&filter) {
+                let id = plugin.id.to_lowercase();
+                if !name.contains(&filter) && !id.contains(&filter) {
                     continue;
                 }
             }
-            let is_selected = self.selected_vst3_plugins.contains(&plugin.path);
+            let is_selected = self.selected_vst3_plugins.contains(&plugin.id);
             let row_content: iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
@@ -6181,7 +6185,7 @@ impl Maolan {
             vst3_items.push(
                 row_button
                     .width(Length::Fill)
-                    .on_press(Message::SelectVst3Plugin(plugin.path.clone()))
+                    .on_press(Message::SelectVst3Plugin(plugin.id.clone()))
                     .into(),
             );
         }
@@ -6192,12 +6196,12 @@ impl Maolan {
         for plugin in &state.clap_plugins {
             if !clap_filter.is_empty() {
                 let name = plugin.name.to_lowercase();
-                let path = plugin.path.to_lowercase();
-                if !name.contains(&clap_filter) && !path.contains(&clap_filter) {
+                let id = plugin.id.to_lowercase();
+                if !name.contains(&clap_filter) && !id.contains(&clap_filter) {
                     continue;
                 }
             }
-            let is_selected = self.selected_clap_plugins.contains(&plugin.path);
+            let is_selected = self.selected_clap_plugins.contains(&plugin.id);
 
             let mut capability_icons = String::new();
             if let Some(caps) = &plugin.capabilities {
@@ -6228,7 +6232,7 @@ impl Maolan {
             clap_items.push(
                 row_button
                     .width(Length::Fill)
-                    .on_press(Message::SelectClapPlugin(plugin.path.clone()))
+                    .on_press(Message::SelectClapPlugin(plugin.id.clone()))
                     .into(),
             );
         }
@@ -7530,6 +7534,7 @@ mod tests {
             }]
         });
         let clap_plugins = vec![maolan_engine::clap::ClapPluginInfo {
+            id: "rs.maolan.synth".to_string(),
             name: "Maolan Synth".to_string(),
             path: "/home/meka/.clap/Maolan.clap::rs.maolan.synth".to_string(),
             capabilities: None,
@@ -7719,6 +7724,7 @@ mod tests {
             state
                 .clap_plugins
                 .push(maolan_engine::clap::ClapPluginInfo {
+                    id: "test.plugin".to_string(),
                     name: "Test Plugin".to_string(),
                     path: "/fake/path/test.clap::test.plugin".to_string(),
                     capabilities: None,
@@ -7771,6 +7777,7 @@ mod tests {
             state
                 .clap_plugins
                 .push(maolan_engine::clap::ClapPluginInfo {
+                    id: "test.plugin".to_string(),
                     name: "Test Plugin".to_string(),
                     path: "/fake/path/test.clap::test.plugin".to_string(),
                     capabilities: None,
