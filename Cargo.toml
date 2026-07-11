@@ -27,7 +27,6 @@ chrono = "0.4"
 crossterm = "0.29.0"
 dirs = "6"
 ebur128 = "0.1"
-flacenc = "0.5"
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "rustls-tls"] }
 i24 = "2.3.3"
 iced = { version = "0.14.0", features = ["advanced", "image", "lazy", "tokio"] }
