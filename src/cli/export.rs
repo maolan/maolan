@@ -15,9 +15,6 @@ use ffmpeg_next::{
     format::output,
     frame::Audio,
 };
-use flacenc::bitsink::ByteSink;
-use flacenc::component::BitRepr;
-use flacenc::error::Verify;
 pub const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
     8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000,
 ];
@@ -985,28 +982,121 @@ fn write_flac_with_bit_depth(
     bit_depth: ExportBitDepth,
 ) -> io::Result<()> {
     let (quantized, bits_per_sample) = quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
-    let config = flacenc::config::Encoder::default()
-        .into_verified()
-        .map_err(|e| io::Error::other(format!("Invalid FLAC encoder config: {e:?}")))?;
-    let source = flacenc::source::MemSource::from_samples(
-        &quantized,
-        output_channels,
-        bits_per_sample as usize,
-        sample_rate.max(1) as usize,
-    );
-    let stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size)
-        .map_err(|e| io::Error::other(format!("FLAC encode failed: {e}")))?;
-    let mut sink = ByteSink::new();
-    stream
-        .write(&mut sink)
-        .map_err(|e| io::Error::other(format!("FLAC bitstream write failed: {e}")))?;
-    fs::write(export_path, sink.as_slice()).map_err(|e| {
-        io::Error::other(format!(
-            "Failed to write '{}': {}",
-            export_path.display(),
-            e
-        ))
-    })
+    let use_i16 = bits_per_sample <= 16;
+
+    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
+
+    let mut octx = output(export_path.to_str().unwrap_or("output.flac"))
+        .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
+
+    let encoder_codec = ffmpeg_next::codec::encoder::find(CodecId::FLAC)
+        .ok_or_else(|| io::Error::other("FLAC encoder not found"))?;
+
+    let mut encoder_ctx = CodecContext::new_with_codec(encoder_codec);
+    // ffmpeg-next exposes no safe setter for this field; set it so 24-bit
+    // sources are written as 24-bit FLAC rather than promoted to 32-bit.
+    unsafe {
+        (*encoder_ctx.as_mut_ptr()).bits_per_raw_sample = i32::from(bits_per_sample);
+    }
+
+    let mut encoder = encoder_ctx
+        .encoder()
+        .audio()
+        .map_err(|e| io::Error::other(format!("Failed to create audio encoder: {e}")))?;
+
+    encoder.set_rate(sample_rate);
+    encoder.set_channel_layout(ffmpeg_next::channel_layout::ChannelLayout::default(
+        output_channels as i32,
+    ));
+    if use_i16 {
+        encoder.set_format(ffmpeg_next::format::Sample::I16(
+            ffmpeg_next::format::sample::Type::Packed,
+        ));
+    } else {
+        encoder.set_format(ffmpeg_next::format::Sample::I32(
+            ffmpeg_next::format::sample::Type::Packed,
+        ));
+    }
+
+    let mut output_stream = octx
+        .add_stream(encoder_codec)
+        .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
+    output_stream.set_parameters(&encoder);
+
+    let mut encoder = encoder
+        .open_as(encoder_codec)
+        .map_err(|e| io::Error::other(format!("Failed to open encoder: {e}")))?;
+
+    octx.write_header()
+        .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
+
+    // Packed 16-bit path needs a narrowed interleaved buffer.
+    let quantized_i16: Option<Vec<i16>> = if use_i16 {
+        Some(quantized.iter().map(|&s| s as i16).collect())
+    } else {
+        None
+    };
+
+    const FRAME_SIZE: usize = 4096;
+    for chunk_start in (0..mixed_buffer.len()).step_by(FRAME_SIZE * output_channels) {
+        let chunk_end = (chunk_start + FRAME_SIZE * output_channels).min(mixed_buffer.len());
+        let actual_frames = (chunk_end - chunk_start) / output_channels;
+        if actual_frames == 0 {
+            continue;
+        }
+
+        let mut frame = Audio::empty();
+        frame.set_format(encoder.format());
+        frame.set_channel_layout(encoder.channel_layout());
+        frame.set_rate(encoder.rate());
+        frame.set_samples(actual_frames);
+        unsafe {
+            ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
+        }
+
+        if let Some(ref narrow) = quantized_i16 {
+            let src = &narrow[chunk_start..chunk_end];
+            let dst = frame.data_mut(0).as_mut_ptr().cast::<i16>();
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
+            }
+        } else {
+            let src = &quantized[chunk_start..chunk_end];
+            let dst = frame.data_mut(0).as_mut_ptr().cast::<i32>();
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
+            }
+        }
+
+        encoder
+            .send_frame(&frame)
+            .map_err(|e| io::Error::other(format!("Failed to send frame: {e}")))?;
+
+        let mut packet = ffmpeg_next::packet::Packet::empty();
+        while encoder.receive_packet(&mut packet).is_ok() {
+            packet.set_stream(0);
+            packet
+                .write_interleaved(&mut octx)
+                .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
+        }
+    }
+
+    encoder
+        .send_eof()
+        .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;
+
+    let mut packet = ffmpeg_next::packet::Packet::empty();
+    while encoder.receive_packet(&mut packet).is_ok() {
+        packet.set_stream(0);
+        packet
+            .write_interleaved(&mut octx)
+            .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
+    }
+
+    octx.write_trailer()
+        .map_err(|e| io::Error::other(format!("Failed to write trailer: {e}")))?;
+
+    Ok(())
 }
 
 fn write_mp3(
