@@ -2865,6 +2865,11 @@ impl Maolan {
                                 *midi_outs,
                             );
                             track.is_folder = *folder;
+                            if let Some((lanes, mode)) = state.pending_track_automation.remove(name)
+                            {
+                                track.automation_lanes = lanes;
+                                track.automation_mode = mode;
+                            }
 
                             if let Some(pos) = state.tracks.iter().position(|t| t.name == *name) {
                                 let existing_height = state.tracks[pos].height;
@@ -5200,7 +5205,7 @@ impl Maolan {
                 {
                     let previous_lane_height = track
                         .lane_layout()
-                        .lane_height
+                        .representative_height()
                         .max(TRACK_SUBTRACK_MIN_HEIGHT);
                     let previously_visible = track.automation_lane_count();
                     if let Some(lane) = track
@@ -5336,7 +5341,7 @@ impl Maolan {
                 };
                 let previous_lane_height = track
                     .lane_layout()
-                    .lane_height
+                    .representative_height()
                     .max(TRACK_SUBTRACK_MIN_HEIGHT);
                 let previously_visible = track.automation_lane_count();
 
@@ -6482,6 +6487,39 @@ impl Maolan {
                     state.hovered_track_resize_handle = None;
                 }
             }
+            Message::TrackLaneResizeStart {
+                ref track_name,
+                divider,
+            } => {
+                let payload = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_name)
+                        .map(|track| {
+                            let available = if track.is_folder {
+                                track.folder_content_height()
+                            } else {
+                                track.height
+                            };
+                            (track.resolved_lane_heights(available), state.cursor.y)
+                        })
+                };
+                if let Some((heights, y)) = payload {
+                    self.state.blocking_write().resizing =
+                        Some(Resizing::Lane(track_name.clone(), divider, heights, y));
+                }
+            }
+            Message::TrackLaneDividerReset {
+                ref track_name,
+                divider: _,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                    track.reset_lane_heights();
+                }
+            }
             Message::ShortcutsHint(ref hint) => {
                 let mut state = self.state.blocking_write();
                 state.shortcuts_hint = hint.clone();
@@ -6745,6 +6783,7 @@ impl Maolan {
 
                             if (track.height - new_height).abs() >= 0.5 {
                                 track.height = new_height;
+                                track.scale_lane_heights_to(new_height);
                             }
                         }
                     }
@@ -6752,6 +6791,19 @@ impl Maolan {
                 };
                 match resizing {
                     Some(Resizing::Track(..)) => {}
+                    Some(Resizing::Lane(
+                        ref track_name,
+                        divider,
+                        ref initial_heights,
+                        initial_mouse_y,
+                    )) => {
+                        let dy = position.y - initial_mouse_y;
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        {
+                            track.apply_lane_divider_drag_from(divider, initial_heights, dy);
+                        }
+                    }
                     Some(Resizing::Clip {
                         kind,
                         ref track_name,
@@ -7335,14 +7387,13 @@ impl Maolan {
                             .filter(|track| track.name != METRONOME_TRACK_ID)
                         {
                             let layout = track.lane_layout();
-                            let lane_clip_h = layout.lane_height.max(12.0);
                             for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
                                 let lane =
                                     clip.input_channel.min(track.audio.ins.saturating_sub(1));
                                 let cy = y_offset + track.lane_top(Kind::Audio, lane);
-                                let ch = lane_clip_h.max(1.0);
+                                let ch = layout.lane_height_for(Kind::Audio, lane).max(1.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {
@@ -7358,7 +7409,7 @@ impl Maolan {
                                 let cw = (clip.length as f32 * pps).max(12.0);
                                 let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
                                 let cy = y_offset + track.lane_top(Kind::MIDI, lane);
-                                let ch = lane_clip_h.max(1.0);
+                                let ch = layout.lane_height_for(Kind::MIDI, lane).max(1.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {

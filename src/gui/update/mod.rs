@@ -1181,7 +1181,7 @@ impl Maolan {
         }
         let previous_lane_height = track
             .lane_layout()
-            .lane_height
+            .representative_height()
             .max(TRACK_SUBTRACK_MIN_HEIGHT);
         let previously_visible = track.automation_lane_count();
         if let Some(lane) = track
@@ -2217,8 +2217,9 @@ impl Maolan {
             let local_y = (position.y - y_offset).max(0.0);
             let layout = track.lane_layout();
             let midi_top = track.lane_top(Kind::MIDI, 0);
-            let midi_bottom =
-                track.lane_top(Kind::MIDI, track.midi.ins.saturating_sub(1)) + layout.lane_height;
+            let last_midi = track.midi.ins.saturating_sub(1);
+            let midi_bottom = track.lane_top(Kind::MIDI, last_midi)
+                + layout.lane_height_for(Kind::MIDI, last_midi);
             if local_y < midi_top || local_y > midi_bottom {
                 return None;
             }
@@ -2248,11 +2249,11 @@ impl Maolan {
             let local_y = (position.y - y_offset).max(0.0);
             let local_x = position.x.max(0.0);
             let layout = track.lane_layout();
-            let lane_clip_h = layout.lane_height.max(12.0);
+            let audio_clip_h = layout.lane_height_for(Kind::Audio, 0).max(12.0);
 
             if track.audio.ins > 0 {
                 let audio_top = track.lane_top(Kind::Audio, 0);
-                let audio_bottom = audio_top + lane_clip_h;
+                let audio_bottom = audio_top + audio_clip_h;
                 if local_y >= audio_top && local_y <= audio_bottom {
                     let (take_idx, take_count) = Self::assign_take_lanes(
                         &track.audio.clips,
@@ -2283,7 +2284,7 @@ impl Maolan {
                         .unwrap_or(1)
                         .max(1);
                     let rel_y = (local_y - audio_top).max(0.0);
-                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
+                    let slot_h = (audio_clip_h / max_takes as f32).max(1.0);
                     let desired_take = (rel_y / slot_h).floor() as usize;
                     if let Some(idx) = overlap
                         .iter()
@@ -2304,7 +2305,8 @@ impl Maolan {
                     .lane_index_at_y(Kind::MIDI, local_y)
                     .min(track.midi.ins.saturating_sub(1));
                 let midi_top = track.lane_top(Kind::MIDI, midi_lane);
-                let midi_bottom = midi_top + lane_clip_h;
+                let midi_clip_h = layout.lane_height_for(Kind::MIDI, midi_lane).max(12.0);
+                let midi_bottom = midi_top + midi_clip_h;
                 if local_y >= midi_top && local_y <= midi_bottom {
                     let (take_idx, take_count) = Self::assign_take_lanes(
                         &track.midi.clips,
@@ -2339,7 +2341,7 @@ impl Maolan {
                         .unwrap_or(1)
                         .max(1);
                     let rel_y = (local_y - midi_top).max(0.0);
-                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
+                    let slot_h = (midi_clip_h / max_takes as f32).max(1.0);
                     let desired_take = (rel_y / slot_h).floor() as usize;
                     if let Some(idx) = overlap
                         .iter()

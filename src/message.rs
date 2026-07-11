@@ -884,6 +884,14 @@ pub enum Message {
 
     TrackResizeStart(String),
     TrackResizeHover(String, bool),
+    TrackLaneResizeStart {
+        track_name: String,
+        divider: usize,
+    },
+    TrackLaneDividerReset {
+        track_name: String,
+        divider: usize,
+    },
     ShortcutsHint(Option<String>),
     ClipResizeHandleHover {
         kind: Kind,

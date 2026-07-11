@@ -2545,6 +2545,7 @@ impl Maolan {
             state.pending_track_positions.clear();
             state.pending_track_heights.clear();
             state.pending_track_folder_state.clear();
+            state.pending_track_automation.clear();
 
             let tracks_width = session["ui"]["tracks_width"].as_f64().ok_or_else(|| {
                 io::Error::new(
@@ -2625,6 +2626,31 @@ impl Maolan {
                         .blocking_write()
                         .pending_track_heights
                         .insert(name.clone(), height as f32);
+                }
+
+                if let Some(lanes_value) = track.get("automation_lanes")
+                    && let Ok(lanes) = serde_json::from_value::<
+                        Vec<crate::state::TrackAutomationLane>,
+                    >(lanes_value.clone())
+                {
+                    let mode = track
+                        .get("automation_mode")
+                        .and_then(|value| {
+                            serde_json::from_value::<crate::message::TrackAutomationMode>(
+                                value.clone(),
+                            )
+                            .ok()
+                        })
+                        .unwrap_or(crate::message::TrackAutomationMode::Read);
+                    self.state
+                        .blocking_write()
+                        .pending_track_automation
+                        .insert(name.clone(), (lanes, mode));
+                    restore_actions.push(Action::SetTrackAutomationLanes {
+                        track_name: name.clone(),
+                        lanes: lanes_value.clone(),
+                        mode: mode.into(),
+                    });
                 }
 
                 let audio_ins = {

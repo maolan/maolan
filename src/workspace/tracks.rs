@@ -681,9 +681,12 @@ impl Tracks {
         track.name.hash(&mut hasher);
         track.height.to_bits().hash(&mut hasher);
         track.layout.header_height.to_bits().hash(&mut hasher);
-        track.layout.lane_height.to_bits().hash(&mut hasher);
+        for h in &track.layout.lane_heights {
+            h.to_bits().hash(&mut hasher);
+        }
         track.layout.audio_lanes.hash(&mut hasher);
         track.layout.midi_lanes.hash(&mut hasher);
+        track.layout.automation_lanes.hash(&mut hasher);
         track.selected.hash(&mut hasher);
         track.resize_hovered.hash(&mut hasher);
         track.armed.hash(&mut hasher);
@@ -858,8 +861,8 @@ impl Tracks {
         let midi_learn_arm = track.midi_learn_arm;
         let midi_learn_input_monitor = track.midi_learn_input_monitor;
         let midi_learn_disk_monitor = track.midi_learn_disk_monitor;
-        let layout = track.layout;
-        let lane_h = layout.lane_height.max(12.0);
+        let layout = track.layout.clone();
+        let lane_h = layout.representative_height().max(12.0);
 
         let max_name_chars = (((track_width_px - 98.0) / 7.0).floor() as i32).clamp(10, 64);
         let learn_count = [
@@ -1052,7 +1055,8 @@ impl Tracks {
             .align_y(Alignment::Center);
 
         let mut lane_rows: Column<'static, Message> = column![];
-        for lane in &track.visible_automation_lanes {
+        for (lane_index, lane) in track.visible_automation_lanes.iter().enumerate() {
+            let automation_row_h = layout.automation_lane_height(lane_index).max(12.0);
             lane_rows = lane_rows.push(
                 container(automation_lane_header_control(
                     track.name.clone(),
@@ -1062,7 +1066,7 @@ impl Tracks {
                     selected_modulator,
                 ))
                 .width(Length::Fill)
-                .height(Length::Fixed(lane_h))
+                .height(Length::Fixed(automation_row_h))
                 .padding([4, 6])
                 .style(move |_theme| container::Style {
                     background: Some(Background::Color(Color::from_rgba(0.19, 0.16, 0.11, 0.88))),

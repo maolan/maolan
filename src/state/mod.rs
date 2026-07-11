@@ -14,7 +14,7 @@ mod track;
 use crate::config;
 use crate::message::{
     PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScaleRoot,
-    PianoVelocityKind, TrackAutomationTarget,
+    PianoVelocityKind, TrackAutomationMode, TrackAutomationTarget,
 };
 
 pub use clip::{AudioClip, ClipPeaks, MIDIClip, generate_clip_id};
@@ -949,6 +949,9 @@ pub enum Resizing {
     },
     Mixer(f32, f32),
     Track(String, f32, f32),
+    /// Per-lane divider drag: track name, divider index (between lane `divider` and
+    /// `divider + 1`), the lane heights at drag start, and the initial mouse y.
+    Lane(String, usize, Vec<f32>, f32),
     Tracks(f32, f32),
     LiveViewTracks(f32, f32),
     LiveViewLeftSplit(f32, f32),
@@ -1237,6 +1240,7 @@ pub struct StateData {
     pub pending_track_positions: HashMap<String, Point>,
     pub pending_track_heights: HashMap<String, f32>,
     pub pending_track_folder_state: HashMap<String, (bool, bool, Option<String>)>,
+    pub pending_track_automation: HashMap<String, (Vec<TrackAutomationLane>, TrackAutomationMode)>,
     pub undo_track_indices: HashMap<String, usize>,
     pub hovered_track_resize_handle: Option<String>,
     pub hovered_clip_resize_handle: Option<(String, usize, Kind, bool)>,
@@ -1452,6 +1456,7 @@ impl Default for StateData {
             pending_track_positions: HashMap::new(),
             pending_track_heights: HashMap::new(),
             pending_track_folder_state: HashMap::new(),
+            pending_track_automation: HashMap::new(),
             undo_track_indices: HashMap::new(),
             hovered_track_resize_handle: None,
             hovered_clip_resize_handle: None,
