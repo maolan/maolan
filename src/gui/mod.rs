@@ -7709,6 +7709,81 @@ mod tests {
     }
 
     #[test]
+    fn session_save_and_load_roundtrip_restores_open_automation_lanes_without_growing_height() {
+        use crate::message::{TrackAutomationMode, TrackAutomationTarget};
+        use crate::state::{Track, TrackAutomationLane};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root =
+            std::env::temp_dir().join(format!("maolan_track_automation_session_{unique}"));
+
+        let saved_height = 200.0_f32;
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state
+                .tracks
+                .push(Track::new("Drums".to_string(), 0.0, 2, 2, 0, 0));
+            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == "Drums") {
+                track.height = saved_height;
+                track.automation_mode = TrackAutomationMode::Touch;
+                track.automation_lanes.push(TrackAutomationLane {
+                    target: TrackAutomationTarget::Volume,
+                    visible: true,
+                    points: vec![],
+                });
+            }
+        }
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let mut restored = Maolan::default();
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+        {
+            let state = restored.state.blocking_read();
+            let (lanes, mode) = state
+                .pending_track_automation
+                .get("Drums")
+                .expect("pending automation for Drums");
+            assert_eq!(lanes.len(), 1);
+            assert!(lanes[0].visible);
+            assert_eq!(*mode, TrackAutomationMode::Touch);
+        }
+
+        let _ = restored.update(Message::Response(Ok(
+            maolan_engine::message::Action::AddTrack {
+                name: "Drums".to_string(),
+                audio_ins: 2,
+                audio_outs: 2,
+                midi_ins: 0,
+                midi_outs: 0,
+                folder: false,
+            },
+        )));
+        {
+            let state = restored.state.blocking_read();
+            let track = state
+                .tracks
+                .iter()
+                .find(|t| t.name == "Drums")
+                .expect("Drums track after response");
+            assert_eq!(track.automation_lane_count(), 1);
+            assert!(track.automation_lanes[0].visible);
+            assert_eq!(track.automation_mode, TrackAutomationMode::Touch);
+            // Height must equal the saved combined height, not grow by a lane step.
+            assert!((track.height - saved_height).abs() < f32::EPSILON);
+            assert!(!state.pending_track_automation.contains_key("Drums"));
+        }
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
     fn session_save_and_load_roundtrip_preserves_plugin_positions() {
         use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
 

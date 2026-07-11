@@ -482,7 +482,7 @@ impl Maolan {
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     let previous_lane_height = track
                         .lane_layout()
-                        .lane_height
+                        .representative_height()
                         .max(crate::consts::state_track::TRACK_SUBTRACK_MIN_HEIGHT);
                     let previously_visible = track.automation_lane_count();
                     track.automation_lanes =

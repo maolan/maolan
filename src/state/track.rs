@@ -8,12 +8,72 @@ pub use crate::consts::state_track::{
     TRACK_SUBTRACK_MIN_HEIGHT,
 };
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone)]
 pub struct TrackLaneLayout {
     pub header_height: f32,
-    pub lane_height: f32,
+    /// Per-lane heights in visual order: audio lanes, then MIDI lanes, then
+    /// visible automation lanes. Length == audio_lanes + midi_lanes + automation_lanes
+    /// (or 1 for a collapsed track).
+    pub lane_heights: Vec<f32>,
     pub audio_lanes: usize,
     pub midi_lanes: usize,
+    pub automation_lanes: usize,
+}
+
+impl TrackLaneLayout {
+    pub fn lane_height_for(&self, kind: maolan_engine::kind::Kind, lane: usize) -> f32 {
+        let fallback = TRACK_SUBTRACK_MIN_HEIGHT;
+        match kind {
+            maolan_engine::kind::Kind::Audio => {
+                if self.audio_lanes == 0 {
+                    fallback
+                } else {
+                    self.lane_heights
+                        .get(lane.min(self.audio_lanes - 1))
+                        .copied()
+                        .unwrap_or(fallback)
+                }
+            }
+            maolan_engine::kind::Kind::MIDI => {
+                if self.midi_lanes == 0 {
+                    fallback
+                } else {
+                    let idx = self.audio_lanes + lane.min(self.midi_lanes - 1);
+                    self.lane_heights.get(idx).copied().unwrap_or(fallback)
+                }
+            }
+        }
+    }
+
+    pub fn automation_lane_height(&self, lane: usize) -> f32 {
+        let fallback = TRACK_SUBTRACK_MIN_HEIGHT;
+        if self.automation_lanes == 0 {
+            fallback
+        } else {
+            let idx = self.audio_lanes + self.midi_lanes + lane.min(self.automation_lanes - 1);
+            self.lane_heights.get(idx).copied().unwrap_or(fallback)
+        }
+    }
+
+    /// A representative positive lane height, for callers that only need a scale.
+    pub fn representative_height(&self) -> f32 {
+        self.lane_heights
+            .iter()
+            .copied()
+            .fold(TRACK_SUBTRACK_MIN_HEIGHT, f32::max)
+    }
+}
+
+impl Default for TrackLaneLayout {
+    fn default() -> Self {
+        Self {
+            header_height: 0.0,
+            lane_heights: vec![TRACK_SUBTRACK_MIN_HEIGHT],
+            audio_lanes: 0,
+            midi_lanes: 0,
+            automation_lanes: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -211,6 +271,8 @@ pub struct Track {
     pub automation_lanes: Vec<TrackAutomationLane>,
     #[serde(default = "default_automation_mode")]
     pub automation_mode: TrackAutomationMode,
+    #[serde(default)]
+    pub lane_heights: Option<Vec<f32>>,
     #[serde(with = "PointDef")]
     pub position: Point,
     #[serde(
@@ -270,6 +332,7 @@ impl Track {
             frozen_render_clip: None,
             automation_lanes: vec![],
             automation_mode: TrackAutomationMode::Read,
+            lane_heights: None,
             height: 82.0,
             setup_open: false,
             position: Point::new(100.0, 100.0),
@@ -355,33 +418,57 @@ impl Track {
             self.height = self.height.max(min_height);
             return;
         }
+        // The lane set changed; drop any custom per-lane heights so the new lane
+        // layout splits equally instead of keeping a now-mismatched height vector.
+        self.lane_heights = None;
         let lane_step = previous_lane_height.max(TRACK_SUBTRACK_MIN_HEIGHT) + TRACK_SUBTRACK_GAP;
         self.height = (self.height + lanes_delta as f32 * lane_step).max(min_height);
+    }
+
+    /// Heights of every visual lane (audio, then MIDI, then automation) in order.
+    /// Uses the stored custom heights when present and consistent with the current
+    /// lane count; otherwise splits the available height equally (clamped to the
+    /// per-lane minimum).
+    pub fn resolved_lane_heights(&self, available: f32) -> Vec<f32> {
+        let n = self.total_lane_count().max(1);
+        if let Some(stored) = &self.lane_heights
+            && stored.len() == n
+        {
+            return stored
+                .iter()
+                .map(|h| h.max(TRACK_SUBTRACK_MIN_HEIGHT))
+                .collect();
+        }
+        let gaps = (n.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
+        let h = ((available - gaps) / n as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
+        vec![h; n]
+    }
+
+    fn available_for_lanes(&self) -> f32 {
+        if self.is_folder {
+            self.folder_content_height().max(0.0)
+        } else {
+            self.height.max(0.0)
+        }
     }
 
     pub fn lane_layout(&self) -> TrackLaneLayout {
         if self.collapsed() {
             TrackLaneLayout {
                 header_height: 0.0,
-                lane_height: self.height.max(1.0),
+                lane_heights: vec![self.height.max(1.0)],
                 audio_lanes: self.audio_lane_count(),
                 midi_lanes: self.midi_lane_count(),
+                automation_lanes: self.automation_lane_count(),
             }
         } else {
-            let total_lanes = self.total_lane_count().max(1);
-            let available = if self.is_folder {
-                self.folder_content_height().max(0.0)
-            } else {
-                self.height.max(0.0)
-            };
-            let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
-            let lane_height =
-                ((available - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
+            let lane_heights = self.resolved_lane_heights(self.available_for_lanes());
             TrackLaneLayout {
                 header_height: 0.0,
-                lane_height,
+                lane_heights,
                 audio_lanes: self.audio_lane_count(),
                 midi_lanes: self.midi_lane_count(),
+                automation_lanes: self.automation_lane_count(),
             }
         }
     }
@@ -394,13 +481,20 @@ impl Track {
         let mut y = layout.header_height;
         match kind {
             maolan_engine::kind::Kind::Audio => {
-                y + lane.min(layout.audio_lanes.saturating_sub(1)) as f32
-                    * (layout.lane_height + TRACK_SUBTRACK_GAP)
+                for i in 0..lane.min(layout.audio_lanes) {
+                    y += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                }
+                y
             }
             maolan_engine::kind::Kind::MIDI => {
-                y += layout.audio_lanes as f32 * (layout.lane_height + TRACK_SUBTRACK_GAP);
-                y + lane.min(layout.midi_lanes.saturating_sub(1)) as f32
-                    * (layout.lane_height + TRACK_SUBTRACK_GAP)
+                for i in 0..layout.audio_lanes {
+                    y += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                }
+                let base = layout.audio_lanes;
+                for i in 0..lane.min(layout.midi_lanes) {
+                    y += layout.lane_heights[base + i] + TRACK_SUBTRACK_GAP;
+                }
+                y
             }
         }
     }
@@ -410,23 +504,41 @@ impl Track {
             return 0;
         }
         let layout = self.lane_layout();
-        let lane_span = layout.lane_height + TRACK_SUBTRACK_GAP;
         let local = (y - layout.header_height).max(0.0);
         match kind {
             maolan_engine::kind::Kind::Audio => {
                 if layout.audio_lanes == 0 {
-                    0
-                } else {
-                    ((local / lane_span).floor() as usize).min(layout.audio_lanes - 1)
+                    return 0;
                 }
+                let mut acc = 0.0;
+                for i in 0..layout.audio_lanes {
+                    let span = layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                    if local < acc + span {
+                        return i;
+                    }
+                    acc += span;
+                }
+                layout.audio_lanes - 1
             }
             maolan_engine::kind::Kind::MIDI => {
-                let midi_local = local - (layout.audio_lanes as f32 * lane_span);
                 if layout.midi_lanes == 0 {
-                    0
-                } else {
-                    ((midi_local.max(0.0) / lane_span).floor() as usize).min(layout.midi_lanes - 1)
+                    return 0;
                 }
+                let mut acc = 0.0;
+                for i in 0..layout.audio_lanes {
+                    acc += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                }
+                let midi_local = (local - acc).max(0.0);
+                let base = layout.audio_lanes;
+                let mut macc = 0.0;
+                for i in 0..layout.midi_lanes {
+                    let span = layout.lane_heights[base + i] + TRACK_SUBTRACK_GAP;
+                    if midi_local < macc + span {
+                        return i;
+                    }
+                    macc += span;
+                }
+                layout.midi_lanes - 1
             }
         }
     }
@@ -436,8 +548,82 @@ impl Track {
             return 0.0;
         }
         let layout = self.lane_layout();
-        let lane_span = layout.lane_height + TRACK_SUBTRACK_GAP;
-        layout.header_height + (layout.audio_lanes + layout.midi_lanes + lane) as f32 * lane_span
+        let mut y = layout.header_height;
+        let base = layout.audio_lanes + layout.midi_lanes;
+        for i in 0..base {
+            y += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+        }
+        for i in 0..lane.min(layout.automation_lanes) {
+            y += layout.lane_heights[base + i] + TRACK_SUBTRACK_GAP;
+        }
+        y
+    }
+
+    /// Splitter drag of the divider between lane `divider` and `divider + 1`
+    /// (indices into the visual lane order). Borrows `dy` from the lower lane and
+    /// gives it to the upper, clamped so both stay at/above the per-lane minimum.
+    /// The track's total height is unchanged.
+    pub fn apply_lane_divider_drag(&mut self, divider: usize, dy: f32) {
+        let initial = self.resolved_lane_heights(self.available_for_lanes());
+        self.apply_lane_divider_drag_from(divider, &initial, dy);
+    }
+
+    /// Like [`Self::apply_lane_divider_drag`], but applies `dy` to a caller-supplied
+    /// starting height vector. Used during interactive drags so every move event is
+    /// computed relative to the drag-start heights (no cumulative error).
+    pub fn apply_lane_divider_drag_from(&mut self, divider: usize, initial: &[f32], dy: f32) {
+        let n = self.total_lane_count().max(1);
+        if divider + 1 >= n || initial.len() != n {
+            return;
+        }
+        let mut heights: Vec<f32> = initial
+            .iter()
+            .map(|h| h.max(TRACK_SUBTRACK_MIN_HEIGHT))
+            .collect();
+        // `dy > 0` means the divider moved down: the upper lane grows and the
+        // lower lane shrinks by the same amount. Clamp so neither lane drops
+        // below the per-lane minimum.
+        let max_shrink_upper = heights[divider] - TRACK_SUBTRACK_MIN_HEIGHT;
+        let max_shrink_lower = heights[divider + 1] - TRACK_SUBTRACK_MIN_HEIGHT;
+        let clamped_dy = dy.clamp(-max_shrink_upper, max_shrink_lower);
+        heights[divider] += clamped_dy;
+        heights[divider + 1] -= clamped_dy;
+        self.lane_heights = Some(heights);
+    }
+
+    /// Scale custom lane heights to a new total track height (used when the track's
+    /// own bottom edge is dragged). No-op when lanes are in equal-split mode.
+    pub fn scale_lane_heights_to(&mut self, new_total: f32) {
+        let n = self.total_lane_count().max(1);
+        let Some(stored) = &self.lane_heights else {
+            return;
+        };
+        if stored.len() != n {
+            self.lane_heights = None;
+            return;
+        }
+        let gaps = (n.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
+        let old_sum: f32 = stored.iter().sum();
+        let target_sum = (new_total - gaps).max(TRACK_SUBTRACK_MIN_HEIGHT * n as f32);
+        if old_sum <= f32::EPSILON {
+            self.lane_heights = None;
+            return;
+        }
+        let scale = target_sum / old_sum;
+        let mut scaled: Vec<f32> = stored
+            .iter()
+            .map(|h| (h * scale).max(TRACK_SUBTRACK_MIN_HEIGHT))
+            .collect();
+        // Absorb rounding/clamping error into the last lane so the sum stays put.
+        let scaled_sum: f32 = scaled.iter().sum();
+        if let Some(last) = scaled.last_mut() {
+            *last = (*last + (target_sum - scaled_sum)).max(TRACK_SUBTRACK_MIN_HEIGHT);
+        }
+        self.lane_heights = Some(scaled);
+    }
+
+    pub fn reset_lane_heights(&mut self) {
+        self.lane_heights = None;
     }
 
     pub fn folder_depth(&self, all_tracks: &[Track]) -> usize {
@@ -581,11 +767,65 @@ mod tests {
     fn track_lane_layout_creation() {
         let layout = TrackLaneLayout {
             header_height: 24.0,
-            lane_height: 80.0,
+            lane_heights: vec![80.0, 80.0, 80.0],
             audio_lanes: 2,
             midi_lanes: 1,
+            automation_lanes: 0,
         };
         assert_eq!(layout.header_height, 24.0);
         assert_eq!(layout.audio_lanes, 2);
+        assert_eq!(layout.lane_heights.len(), 3);
+    }
+
+    #[test]
+    fn lane_divider_drag_borrows_from_neighbor_and_clamps_to_min() {
+        use crate::message::TrackAutomationTarget;
+        let mut track = Track::new("T".to_string(), 0.0, 1, 1, 0, 0);
+        // One audio lane + one visible automation lane => two visual lanes.
+        track.automation_lanes.push(TrackAutomationLane {
+            target: TrackAutomationTarget::Volume,
+            visible: true,
+            points: vec![],
+        });
+        track.height = 200.0;
+        assert_eq!(track.total_lane_count(), 2);
+
+        let before = track.resolved_lane_heights(track.height);
+        let sum_before: f32 = before.iter().sum();
+
+        // Drag the divider down: upper lane (audio) grows, lower (automation) shrinks.
+        track.apply_lane_divider_drag(0, 30.0);
+        let after = track.resolved_lane_heights(track.height);
+        let sum_after: f32 = after.iter().sum();
+
+        assert!((sum_after - sum_before).abs() < 0.01);
+        assert!(after[0] >= TRACK_SUBTRACK_MIN_HEIGHT - f32::EPSILON);
+        assert!(after[1] >= TRACK_SUBTRACK_MIN_HEIGHT - f32::EPSILON);
+        assert!((after[0] - (before[0] + 30.0)).abs() < 0.01);
+        assert!((after[1] - (before[1] - 30.0)).abs() < 0.01);
+        // Track height is unchanged by a lane-divider drag.
+        assert!((track.height - 200.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn lane_heights_scale_with_track_resize_and_reset_returns_to_equal() {
+        let mut track = Track::new("T".to_string(), 0.0, 1, 1, 1, 0);
+        track.height = 200.0;
+        // Force custom heights via a divider drag, then scale.
+        track.apply_lane_divider_drag(0, 20.0);
+        assert!(track.lane_heights.is_some());
+
+        let custom = track.resolved_lane_heights(track.height);
+        track.height = 300.0;
+        track.scale_lane_heights_to(track.height);
+        let scaled = track.resolved_lane_heights(track.height);
+        // Each lane grew (track got taller) and none dropped below the minimum.
+        for (c, s) in custom.iter().zip(scaled.iter()) {
+            assert!(*s >= *c - 0.01);
+            assert!(*s >= TRACK_SUBTRACK_MIN_HEIGHT - f32::EPSILON);
+        }
+
+        track.reset_lane_heights();
+        assert!(track.lane_heights.is_none());
     }
 }
