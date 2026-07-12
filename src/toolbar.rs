@@ -5,12 +5,12 @@ use crate::{
     message::{Message, SnapMode},
 };
 use iced::{
+    widget::{button, container, mouse_area, pick_list, row, text, text_input, tooltip, Space},
     Alignment, Background, Border, Color, Length, Theme,
-    widget::{Space, button, container, mouse_area, pick_list, row, text, text_input},
 };
 use iced_fonts::lucide::{
-    audio_lines, brackets, cable, circle, fast_forward, pause, play, radio, repeat, rewind,
-    sliders_vertical, square, volume_x,
+    audio_lines, brackets, cable, circle, fast_forward, hand, pause, play, radio, repeat,
+    rewind, sliders_vertical, square, volume_x,
 };
 use maolan_engine::message::GlobalMidiLearnTarget;
 #[derive(Debug, Default)]
@@ -84,6 +84,31 @@ impl Toolbar {
         let metronome_active = view_state.metronome_enabled;
         let loop_active = view_state.has_loop_range && view_state.loop_enabled;
         let punch_active = view_state.has_punch_range && view_state.punch_enabled;
+        fn with_tooltip<'a>(
+            element: iced::Element<'a, Message>,
+            label: &'static str,
+        ) -> iced::Element<'a, Message> {
+            tooltip(
+                element,
+                container(text(label).size(12))
+                    .padding([4, 8])
+                    .style(|_theme: &Theme| container::Style {
+                        text_color: Some(Color::from_rgb(0.94, 0.94, 0.94)),
+                        background: Some(Background::Color(Color::from_rgba(
+                            0.08, 0.08, 0.08, 0.96,
+                        ))),
+                        border: Border {
+                            color: Color::from_rgba(0.32, 0.32, 0.32, 1.0),
+                            width: 1.0,
+                            radius: 3.0.into(),
+                        },
+                        ..container::Style::default()
+                    }),
+                tooltip::Position::Bottom,
+            )
+            .gap(4)
+            .into()
+        }
         fn with_hint<'a>(
             element: iced::Element<'a, Message>,
             hint: &'static str,
@@ -95,7 +120,7 @@ impl Toolbar {
             if let Some(msg) = right_press {
                 area = area.on_right_press(msg);
             }
-            area.into()
+            with_tooltip(area.into(), hint)
         }
         let play_button = with_hint(
             button(play())
@@ -123,36 +148,59 @@ impl Toolbar {
             "Shift+Space: Pause",
             None,
         );
-        let loop_button = if view_state.has_loop_range {
-            button(repeat())
+        let loop_button = with_tooltip(
+            if view_state.has_loop_range {
+                button(repeat())
+                    .style(Self::button_style(
+                        view_state.has_loop_range,
+                        loop_active,
+                        Color::from_rgba(0.2, 0.55, 0.9, 0.35),
+                    ))
+                    .on_press(Message::ToggleLoop)
+                    .into()
+            } else {
+                button(repeat())
+                    .style(Self::button_style(
+                        view_state.has_loop_range,
+                        loop_active,
+                        Color::from_rgba(0.2, 0.55, 0.9, 0.35),
+                    ))
+                    .into()
+            },
+            "Toggle loop",
+        );
+        let punch_button = with_tooltip(
+            if view_state.has_punch_range {
+                button(brackets())
+                    .style(Self::button_style(
+                        view_state.has_punch_range,
+                        punch_active,
+                        Color::from_rgba(0.85, 0.25, 0.25, 0.4),
+                    ))
+                    .on_press(Message::TogglePunch)
+                    .into()
+            } else {
+                button(brackets())
+                    .style(Self::button_style(
+                        view_state.has_punch_range,
+                        punch_active,
+                        Color::from_rgba(0.85, 0.25, 0.25, 0.4),
+                    ))
+                    .into()
+            },
+            "Toggle punch",
+        );
+        let metronome_button = with_tooltip(
+            button(metronome())
                 .style(Self::button_style(
-                    view_state.has_loop_range,
-                    loop_active,
-                    Color::from_rgba(0.2, 0.55, 0.9, 0.35),
+                    true,
+                    metronome_active,
+                    Color::from_rgba(0.15, 0.65, 0.9, 0.35),
                 ))
-                .on_press(Message::ToggleLoop)
-        } else {
-            button(repeat()).style(Self::button_style(
-                view_state.has_loop_range,
-                loop_active,
-                Color::from_rgba(0.2, 0.55, 0.9, 0.35),
-            ))
-        };
-        let punch_button = if view_state.has_punch_range {
-            button(brackets())
-                .style(Self::button_style(
-                    view_state.has_punch_range,
-                    punch_active,
-                    Color::from_rgba(0.85, 0.25, 0.25, 0.4),
-                ))
-                .on_press(Message::TogglePunch)
-        } else {
-            button(brackets()).style(Self::button_style(
-                view_state.has_punch_range,
-                punch_active,
-                Color::from_rgba(0.85, 0.25, 0.25, 0.4),
-            ))
-        };
+                .on_press(Message::ToggleMetronome)
+                .into(),
+            "Toggle metronome",
+        );
         let readout_style = |_theme: &Theme| container::Style {
             text_color: Some(Color::from_rgb(0.92, 0.92, 0.92)),
             background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.10, 1.0))),
@@ -165,13 +213,7 @@ impl Toolbar {
         };
         row![
             row![
-                button(metronome())
-                    .style(Self::button_style(
-                        true,
-                        metronome_active,
-                        Color::from_rgba(0.15, 0.65, 0.9, 0.35)
-                    ))
-                    .on_press(Message::ToggleMetronome),
+                metronome_button,
                 with_hint(
                     button(rewind())
                         .style(Self::button_style(true, false, Color::TRANSPARENT))
@@ -234,9 +276,12 @@ impl Toolbar {
                         None,
                     )
                 } else {
-                    button(fast_forward())
-                        .style(Self::button_style(false, false, Color::TRANSPARENT))
-                        .into()
+                    with_tooltip(
+                        button(fast_forward())
+                            .style(Self::button_style(false, false, Color::TRANSPARENT))
+                            .into(),
+                        "Jump to end",
+                    )
                 },
                 if view_state.midi_editor_active {
                     pick_list(
@@ -253,14 +298,17 @@ impl Toolbar {
                 },
                 {
                     let step_button: iced::Element<'_, Message> = if view_state.midi_editor_active {
-                        button(text("Step").size(11))
-                            .style(Self::button_style(
-                                view_state.step_recording_active,
-                                false,
-                                Color::TRANSPARENT,
-                            ))
-                            .on_press(Message::ToggleStepRecording)
-                            .into()
+                        with_tooltip(
+                            button(text("Step").size(11))
+                                .style(Self::button_style(
+                                    view_state.step_recording_active,
+                                    false,
+                                    Color::TRANSPARENT,
+                                ))
+                                .on_press(Message::ToggleStepRecording)
+                                .into(),
+                            "Toggle step recording",
+                        )
                     } else {
                         Space::new().into()
                     };
@@ -270,10 +318,14 @@ impl Toolbar {
                     .on_input(Message::TempoInputChanged)
                     .on_submit(Message::TempoInputCommit)
                     .width(Length::Fixed(72.0)),
-                button(text("Tap"))
-                    .style(Self::button_style(true, false, Color::TRANSPARENT))
-                    .on_press(Message::TapTempo)
-                    .width(Length::Fixed(40.0)),
+                with_tooltip(
+                    button(hand())
+                        .style(Self::button_style(true, false, Color::TRANSPARENT))
+                        .on_press(Message::TapTempo)
+                        .width(Length::Fixed(40.0))
+                        .into(),
+                    "Tap tempo",
+                ),
                 text_input("Num", &view_state.tsig_num_input)
                     .on_input(Message::TimeSignatureNumeratorInputChanged)
                     .on_submit(Message::TimeSignatureInputCommit)
@@ -283,11 +335,9 @@ impl Toolbar {
                     .on_submit(Message::TimeSignatureInputCommit)
                     .width(Length::Fixed(44.0)),
                 container(
-                    row![
-                        text(view_state.playhead_time_label)
-                            .size(16)
-                            .color(MIDI_CLIP_BORDER),
-                    ]
+                    row![text(view_state.playhead_time_label)
+                        .size(16)
+                        .color(MIDI_CLIP_BORDER),]
                     .spacing(4),
                 )
                 .padding([5, 8])
@@ -310,18 +360,34 @@ impl Toolbar {
             .spacing(3)
             .align_y(Alignment::Center)
             .width(Length::Fill),
-            button(audio_lines())
-                .style(Self::button_style(true, false, Color::TRANSPARENT))
-                .on_press(Message::Workspace),
-            button(cable())
-                .style(Self::button_style(true, false, Color::TRANSPARENT))
-                .on_press(Message::Connections),
-            button(sliders_vertical())
-                .style(Self::button_style(true, false, Color::TRANSPARENT))
-                .on_press(Message::X32),
-            button(radio())
-                .style(Self::button_style(true, false, Color::TRANSPARENT))
-                .on_press(Message::Session),
+            with_tooltip(
+                button(audio_lines())
+                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                    .on_press(Message::Workspace)
+                    .into(),
+                "Workspace",
+            ),
+            with_tooltip(
+                button(cable())
+                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                    .on_press(Message::Connections)
+                    .into(),
+                "Connections",
+            ),
+            with_tooltip(
+                button(sliders_vertical())
+                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                    .on_press(Message::X32)
+                    .into(),
+                "Mixer control",
+            ),
+            with_tooltip(
+                button(radio())
+                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                    .on_press(Message::Session)
+                    .into(),
+                "Session view",
+            ),
         ]
         .align_y(Alignment::Center)
         .into()
