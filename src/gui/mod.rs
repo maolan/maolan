@@ -9063,6 +9063,96 @@ mod tests {
     }
 
     #[test]
+    fn track_setup_toggle_ignores_folder_tracks() {
+        let mut app = Maolan::default();
+        app.state
+            .blocking_write()
+            .tracks
+            .push(crate::state::Track::new(
+                "Folder".to_string(),
+                0.0,
+                0,
+                0,
+                0,
+                0,
+            ));
+        app.state.blocking_write().tracks[0].is_folder = true;
+
+        let _ = app.update(Message::TrackSetupToggle("Folder".to_string()));
+
+        assert!(!app.state.blocking_read().tracks[0].setup_open);
+    }
+
+    #[test]
+    fn track_setup_toggle_expands_narrow_tracks_panel() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.tracks_width = Length::Fixed(200.0);
+            state.tracks.push(crate::state::Track::new(
+                "Track".to_string(),
+                0.0,
+                0,
+                0,
+                0,
+                0,
+            ));
+        }
+
+        let _ = app.update(Message::TrackSetupToggle("Track".to_string()));
+
+        let state = app.state.blocking_read();
+        assert!(state.tracks[0].setup_open);
+        assert_eq!(state.tracks_width, Length::Fixed(338.6557));
+    }
+
+    #[test]
+    fn track_setup_toggle_leaves_wide_tracks_panel_alone() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.tracks_width = Length::Fixed(420.0);
+            state.tracks.push(crate::state::Track::new(
+                "Track".to_string(),
+                0.0,
+                0,
+                0,
+                0,
+                0,
+            ));
+        }
+
+        let _ = app.update(Message::TrackSetupToggle("Track".to_string()));
+
+        let state = app.state.blocking_read();
+        assert!(state.tracks[0].setup_open);
+        assert_eq!(state.tracks_width, Length::Fixed(420.0));
+    }
+
+    #[test]
+    fn track_toggle_phase_ignores_folder_tracks() {
+        let mut app = Maolan::default();
+        app.state
+            .blocking_write()
+            .tracks
+            .push(crate::state::Track::new(
+                "Folder".to_string(),
+                0.0,
+                0,
+                0,
+                0,
+                0,
+            ));
+        app.state.blocking_write().tracks[0].is_folder = true;
+
+        let _ = app.update(Message::Response(Ok(Action::TrackTogglePhase(
+            "Folder".to_string(),
+        ))));
+
+        assert!(!app.state.blocking_read().tracks[0].phase_inverted);
+    }
+
+    #[test]
     fn session_io_save_folder_selected_none_cancels_pending_exit() {
         let mut app = Maolan {
             pending_exit_after_save: true,

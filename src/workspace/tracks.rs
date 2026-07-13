@@ -1014,7 +1014,7 @@ impl Tracks {
             )))
             .into(),
         );
-        if !track.is_master {
+        if !track.is_master && !track.is_folder {
             controls.push(
                 button(
                     container(text("Ø").size(13))
@@ -1033,7 +1033,7 @@ impl Tracks {
                 .into(),
             );
         }
-        if !track.is_master {
+        if !track.is_master && !track.is_folder {
             controls.push(
                 button(
                     container(settings().size(13))
@@ -1114,7 +1114,7 @@ impl Tracks {
             Space::new().height(Length::Fixed(0.0)).into()
         };
 
-        let setup_panel: Element<'static, Message> = if track.setup_open {
+        let setup_panel: Element<'static, Message> = if track.setup_open && !track.is_folder {
             let mut setup_lanes: Column<'static, Message> = column![];
             let track_name = track.name.clone();
 

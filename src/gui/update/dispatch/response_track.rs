@@ -108,7 +108,7 @@ impl Maolan {
                     .blocking_write()
                     .tracks
                     .iter_mut()
-                    .find(|t| t.name == *name)
+                    .find(|t| t.name == *name && !t.is_folder)
                 {
                     track.phase_inverted = !track.phase_inverted;
                 }
