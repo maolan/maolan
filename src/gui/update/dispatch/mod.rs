@@ -20,6 +20,7 @@ mod transport;
 mod ui;
 
 const CLIP_EDGE_SNAP_THRESHOLD_PX: f32 = 12.0;
+const TRACK_SETUP_MIN_TRACKS_WIDTH: f32 = 338.6557;
 
 struct MoveClipSnapArgs<'a> {
     kind: Kind,
@@ -4596,8 +4597,21 @@ impl Maolan {
             }
             Message::TrackSetupToggle(ref track_name) => {
                 let mut state = self.state.blocking_write();
-                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                let mut opened_setup = false;
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    && !track.is_folder
+                {
                     track.setup_open = !track.setup_open;
+                    opened_setup = track.setup_open;
+                }
+                if opened_setup {
+                    let current_width = match state.tracks_width {
+                        Length::Fixed(width) => width,
+                        _ => 0.0,
+                    };
+                    if current_width < TRACK_SETUP_MIN_TRACKS_WIDTH {
+                        state.tracks_width = Length::Fixed(TRACK_SETUP_MIN_TRACKS_WIDTH);
+                    }
                 }
             }
             Message::TrackMidiSetupChannelSelected {
