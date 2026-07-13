@@ -41,9 +41,10 @@ use ffmpeg_next::{
 };
 use iced::{
     Color, Length, Size, Task,
+    advanced::text::Span,
     widget::{
-        Column, button, checkbox, column, container, pick_list, progress_bar, row, scrollable,
-        text, text_editor, text_input,
+        Column, button, checkbox, column, container, pick_list, progress_bar, rich_text, row,
+        scrollable, span, text, text_editor, text_input,
     },
 };
 use iced_aw::helpers::color_picker_with_change;
@@ -68,6 +69,7 @@ use std::{
     fs::{self, File},
     hash::{DefaultHasher, Hash, Hasher},
     io::{self, BufReader, Write},
+    ops::Range,
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::AtomicBool,
@@ -79,6 +81,199 @@ use tokio::sync::RwLock;
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
+
+#[derive(Debug, Clone, PartialEq, Default)]
+struct LogHighlightSettings {
+    lines: Vec<Vec<(Range<usize>, LogHighlight)>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LogHighlight {
+    color: Color,
+}
+
+fn format_log_entry_for_editor(entry: &LogEntry) -> (String, Vec<(Range<usize>, LogHighlight)>) {
+    let prefix = format!("[{}] ", entry.level);
+    let mut line = prefix.clone();
+    let mut highlights = vec![(
+        0..prefix.len(),
+        LogHighlight {
+            color: log_level_color(entry.level),
+        },
+    )];
+
+    let (message, message_highlights) = strip_ansi_and_collect_highlights(&entry.message);
+    let message_offset = line.len();
+    line.push_str(&message);
+    highlights.extend(message_highlights.into_iter().map(|(range, highlight)| {
+        (
+            range.start + message_offset..range.end + message_offset,
+            highlight,
+        )
+    }));
+
+    (line, highlights)
+}
+
+fn last_message_status_text(message: &str) -> iced::Element<'static, Message> {
+    rich_text(ansi_status_spans("Last message: ", message))
+        .width(Length::Fill)
+        .into()
+}
+
+fn ansi_status_spans(prefix: &'static str, message: &str) -> Vec<Span<'static, (), iced::Font>> {
+    let (text, highlights) = strip_ansi_and_collect_highlights(message);
+    let mut spans = Vec::with_capacity(highlights.len().saturating_mul(2).saturating_add(1));
+    spans.push(span(prefix.to_string()));
+
+    let mut cursor = 0;
+    for (range, highlight) in highlights {
+        if cursor < range.start {
+            spans.push(span(text[cursor..range.start].to_string()));
+        }
+        spans.push(span(text[range.clone()].to_string()).color(highlight.color));
+        cursor = range.end;
+    }
+
+    if cursor < text.len() {
+        spans.push(span(text[cursor..].to_string()));
+    }
+
+    spans
+}
+
+fn strip_ansi_and_collect_highlights(message: &str) -> (String, Vec<(Range<usize>, LogHighlight)>) {
+    let mut text = String::with_capacity(message.len());
+    let mut highlights = Vec::new();
+    let mut current_color = None;
+    let mut bold = false;
+    let mut segment_start = None;
+    let bytes = message.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == 0x1b && bytes.get(index + 1) == Some(&b'[') {
+            flush_log_highlight(
+                &mut highlights,
+                &mut segment_start,
+                text.len(),
+                current_color,
+            );
+            index += 2;
+            let sequence_start = index;
+            while index < bytes.len() && bytes[index] != b'm' {
+                index += 1;
+            }
+            if index < bytes.len() {
+                apply_sgr_codes(
+                    &message[sequence_start..index],
+                    &mut current_color,
+                    &mut bold,
+                );
+                index += 1;
+                continue;
+            }
+
+            text.push_str(&message[sequence_start.saturating_sub(2)..]);
+            break;
+        }
+
+        if let Some(ch) = message[index..].chars().next() {
+            if current_color.is_some() && segment_start.is_none() {
+                segment_start = Some(text.len());
+            }
+            text.push(ch);
+            index += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    flush_log_highlight(
+        &mut highlights,
+        &mut segment_start,
+        text.len(),
+        current_color,
+    );
+
+    (text, highlights)
+}
+
+fn flush_log_highlight(
+    highlights: &mut Vec<(Range<usize>, LogHighlight)>,
+    segment_start: &mut Option<usize>,
+    segment_end: usize,
+    current_color: Option<Color>,
+) {
+    if let (Some(start), Some(color)) = (segment_start.take(), current_color)
+        && start < segment_end
+    {
+        highlights.push((start..segment_end, LogHighlight { color }));
+    }
+}
+
+fn apply_sgr_codes(codes: &str, current_color: &mut Option<Color>, bold: &mut bool) {
+    if codes.is_empty() {
+        *current_color = None;
+        *bold = false;
+        return;
+    }
+
+    let mut selected_color = None;
+    for code in codes.split(';').filter_map(|code| code.parse::<u16>().ok()) {
+        match code {
+            0 => {
+                *current_color = None;
+                *bold = false;
+                selected_color = None;
+            }
+            1 => *bold = true,
+            22 => *bold = false,
+            30..=37 => selected_color = Some((code - 30, false)),
+            39 => {
+                *current_color = None;
+                selected_color = None;
+            }
+            90..=97 => selected_color = Some((code - 90, true)),
+            _ => {}
+        }
+    }
+
+    if let Some((index, bright)) = selected_color {
+        *current_color = ansi_color(index, bright || *bold);
+    }
+}
+
+fn ansi_color(index: u16, bright: bool) -> Option<Color> {
+    let (r, g, b) = match (index, bright) {
+        (0, false) => (96, 96, 96),
+        (1, false) => (205, 84, 84),
+        (2, false) => (88, 166, 95),
+        (3, false) => (205, 168, 80),
+        (4, false) => (98, 148, 206),
+        (5, false) => (176, 117, 197),
+        (6, false) => (77, 178, 188),
+        (7, false) => (210, 210, 210),
+        (0, true) => (142, 142, 142),
+        (1, true) => (245, 108, 108),
+        (2, true) => (116, 210, 126),
+        (3, true) => (244, 202, 99),
+        (4, true) => (123, 176, 245),
+        (5, true) => (211, 146, 235),
+        (6, true) => (101, 219, 229),
+        (7, true) => (242, 242, 242),
+        _ => return None,
+    };
+    Some(Color::from_rgb8(r, g, b))
+}
+
+fn log_level_color(level: LogLevel) -> Color {
+    match level {
+        LogLevel::Info => Color::from_rgb8(123, 176, 245),
+        LogLevel::Warning => Color::from_rgb8(244, 202, 99),
+        LogLevel::Error => Color::from_rgb8(245, 108, 108),
+    }
+}
 
 #[cfg(unix)]
 const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
@@ -563,6 +758,7 @@ pub struct Maolan {
     generate_audio_model: GenerateAudioModelOption,
     generate_audio_prompt_editor: text_editor::Content,
     log_viewer_content: text_editor::Content,
+    log_viewer_highlights: LogHighlightSettings,
 
     generate_audio_tags_input: String,
     generate_audio_backend: BurnBackendOption,
@@ -871,6 +1067,7 @@ impl Default for Maolan {
             log_viewer_content: text_editor::Content::with_text(
                 "[INFO] Thank you for using Maolan!",
             ),
+            log_viewer_highlights: LogHighlightSettings::default(),
 
             generate_audio_tags_input: String::new(),
             generate_audio_backend: BurnBackendOption::Vulkan,
@@ -971,15 +1168,19 @@ impl Maolan {
     }
 
     fn refresh_log_viewer_content(&mut self) {
-        let log_text = self
-            .state
-            .blocking_read()
-            .log_entries
-            .iter()
-            .map(|entry| format!("[{}] {}", entry.level, entry.message))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let entries = self.state.blocking_read().log_entries.clone();
+        let mut lines = Vec::with_capacity(entries.len());
+        let mut highlights = Vec::with_capacity(entries.len());
+
+        for entry in entries {
+            let (line, line_highlights) = format_log_entry_for_editor(&entry);
+            lines.push(line);
+            highlights.push(line_highlights);
+        }
+
+        let log_text = lines.join("\n");
         self.log_viewer_content = text_editor::Content::with_text(&log_text);
+        self.log_viewer_highlights = LogHighlightSettings { lines: highlights };
     }
 
     fn sync_message_log_from_state(&mut self) {
@@ -6790,7 +6991,7 @@ impl Maolan {
 
         column![
             body,
-            container(text(format!("Last message: {}", last_message)))
+            container(last_message_status_text(&last_message))
                 .width(Length::Fill)
                 .padding([0, 20]),
         ]

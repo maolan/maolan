@@ -1,4 +1,4 @@
-use super::Maolan;
+use super::{LogHighlight, LogHighlightSettings, Maolan, last_message_status_text};
 use crate::{
     connections,
     consts::state_ids::METRONOME_TRACK_ID,
@@ -11,6 +11,7 @@ use crate::{
 };
 use iced::{
     Alignment, Border, Color, Length, Theme,
+    advanced::text::{Highlighter, highlighter},
     widget::{
         Column, Space, Stack, button, column, container, mouse_area, pick_list, progress_bar, row,
         scrollable, text, text_editor, text_input,
@@ -18,6 +19,59 @@ use iced::{
 };
 use iced_drop::droppable;
 use maolan_widgets::clip::AudioClip as AudioClipWidget;
+use std::ops::Range;
+
+struct LogHighlighter {
+    settings: LogHighlightSettings,
+    current_line: usize,
+}
+
+impl Highlighter for LogHighlighter {
+    type Settings = LogHighlightSettings;
+    type Highlight = LogHighlight;
+    type Iterator<'a> = std::vec::IntoIter<(Range<usize>, Self::Highlight)>;
+
+    fn new(settings: &Self::Settings) -> Self {
+        Self {
+            settings: settings.clone(),
+            current_line: 0,
+        }
+    }
+
+    fn update(&mut self, new_settings: &Self::Settings) {
+        self.settings = new_settings.clone();
+        self.current_line = 0;
+    }
+
+    fn change_line(&mut self, line: usize) {
+        self.current_line = line;
+    }
+
+    fn highlight_line(&mut self, _line: &str) -> Self::Iterator<'_> {
+        let highlights = self
+            .settings
+            .lines
+            .get(self.current_line)
+            .cloned()
+            .unwrap_or_default();
+        self.current_line = self.current_line.saturating_add(1);
+        highlights.into_iter()
+    }
+
+    fn current_line(&self) -> usize {
+        self.current_line
+    }
+}
+
+fn log_highlight_format(
+    highlight: &LogHighlight,
+    _theme: &Theme,
+) -> highlighter::Format<iced::Font> {
+    highlighter::Format {
+        color: Some(highlight.color),
+        font: None,
+    }
+}
 
 impl Maolan {
     fn log_window(&self) -> iced::Element<'_, Message> {
@@ -30,6 +84,10 @@ impl Maolan {
                 .spacing(12),
                 text_editor(&self.log_viewer_content)
                     .on_action(Message::LogViewAction)
+                    .highlight_with::<LogHighlighter>(
+                        self.log_viewer_highlights.clone(),
+                        log_highlight_format,
+                    )
                     .height(Length::Fill),
             ]
             .spacing(12),
@@ -1103,7 +1161,7 @@ impl Maolan {
                             .padding(8),
                         );
                     }
-                    let status_bar = container(text(format!("Last message: {}", status_message)))
+                    let status_bar = container(last_message_status_text(&status_message))
                         .width(Length::Fill)
                         .padding(8);
                     self.wrap_with_log_window(
@@ -1125,7 +1183,7 @@ impl Maolan {
                     container(self.hw.audio_view())
                         .width(Length::Fill)
                         .height(Length::Fill),
-                    container(text(format!("Last message: {}", message)))
+                    container(last_message_status_text(&message))
                         .width(Length::Fill)
                         .padding(8),
                 ]
