@@ -7521,6 +7521,47 @@ mod tests {
 
     static AUDIO_PEAK_TEST_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+    #[cfg(unix)]
+    fn test_jack_graph() -> maolan_engine::message::JackGraphInfo {
+        use maolan_engine::message::{JackConnectionInfo, JackGraphInfo, JackPortInfo};
+        JackGraphInfo {
+            ports: vec![
+                JackPortInfo {
+                    name: "system:capture_1".to_string(),
+                    kind: Kind::Audio,
+                    is_input: false,
+                    is_output: true,
+                    is_physical: true,
+                    is_maolan: false,
+                },
+                JackPortInfo {
+                    name: "maolan:in_1".to_string(),
+                    kind: Kind::Audio,
+                    is_input: true,
+                    is_output: false,
+                    is_physical: false,
+                    is_maolan: true,
+                },
+            ],
+            connections: vec![JackConnectionInfo {
+                source: "system:capture_1".to_string(),
+                destination: "maolan:in_1".to_string(),
+            }],
+        }
+    }
+
+    #[cfg(unix)]
+    fn select_non_jack_backend(state: &mut crate::state::StateData) {
+        if let Some(backend) = state
+            .available_backends
+            .iter()
+            .find(|backend| !matches!(backend, crate::state::AudioBackendOption::Jack))
+            .cloned()
+        {
+            state.selected_backend = backend;
+        }
+    }
+
     #[test]
     fn normalize_recent_session_paths_trims_deduplicates_and_limits() {
         let paths = vec![
@@ -7795,6 +7836,115 @@ mod tests {
             assert!((track.position.x - 123.0).abs() < f32::EPSILON);
             assert!((track.position.y - 456.0).abs() < f32::EPSILON);
         }
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_save_with_jack_writes_current_jack_routing() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_jack_save_{unique}"));
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.selected_backend = crate::state::AudioBackendOption::Jack;
+            state.jack_graph = test_jack_graph();
+        }
+
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session: serde_json::Value = serde_json::from_reader(
+            File::open(session_root.join("main.json")).expect("open saved session"),
+        )
+        .expect("parse saved session");
+        assert_eq!(
+            session["jack_routing"]["connections"][0]["source"].as_str(),
+            Some("system:capture_1")
+        );
+        assert_eq!(
+            session["jack_routing"]["connections"][0]["destination"].as_str(),
+            Some("maolan:in_1")
+        );
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_save_with_non_jack_preserves_loaded_jack_routing() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_jack_preserve_{unique}"));
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            select_non_jack_backend(&mut state);
+            state.jack_session_routing = Some(test_jack_graph());
+            state.jack_graph = maolan_engine::message::JackGraphInfo::default();
+        }
+
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session: serde_json::Value = serde_json::from_reader(
+            File::open(session_root.join("main.json")).expect("open saved session"),
+        )
+        .expect("parse saved session");
+        assert_eq!(
+            session["jack_routing"]["connections"][0]["source"].as_str(),
+            Some("system:capture_1")
+        );
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_load_with_non_jack_keeps_but_ignores_jack_routing() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_jack_ignore_{unique}"));
+        let app = Maolan::default();
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+        let session_path = session_root.join("main.json");
+        let mut session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open session"))
+                .expect("parse session");
+        session["jack_routing"] = serde_json::to_value(test_jack_graph()).unwrap();
+        serde_json::to_writer_pretty(
+            File::create(&session_path).expect("rewrite session"),
+            &session,
+        )
+        .expect("write session");
+
+        let mut restored = Maolan::default();
+        {
+            let mut state = restored.state.blocking_write();
+            select_non_jack_backend(&mut state);
+        }
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+        let state = restored.state.blocking_read();
+        assert_eq!(
+            state
+                .jack_session_routing
+                .as_ref()
+                .and_then(|routing| routing.connections.first())
+                .map(|connection| connection.source.as_str()),
+            Some("system:capture_1")
+        );
+        assert!(state.jack_graph.connections.is_empty());
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }

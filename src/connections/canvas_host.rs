@@ -32,3 +32,8 @@ pub fn tracks(
 pub fn plugin_graph(state: State) -> Element<'static, Message> {
     view(crate::connections::plugins::Graph::new(state))
 }
+
+/// Render external JACK connections.
+pub fn jack(state: State) -> Element<'static, Message> {
+    view(crate::connections::jack::Graph::new(state))
+}

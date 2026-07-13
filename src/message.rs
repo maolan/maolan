@@ -1127,6 +1127,16 @@ pub enum Message {
     SessionViewConnectionsClose,
     EditorConnectionsOpen(String),
     EditorConnectionsClose,
+    OpenJackConnections,
+    CloseJackConnections,
+    JackPortClick {
+        port: String,
+        is_output: bool,
+    },
+    JackDisconnect {
+        source: String,
+        destination: String,
+    },
     OpenHwPorts {
         input: bool,
     },

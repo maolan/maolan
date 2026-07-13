@@ -1005,6 +1005,7 @@ pub enum View {
     Connections,
     X32,
     Session,
+    JackConnections,
     HwInputPorts,
     HwOutputPorts,
     TrackPlugins,
@@ -1290,6 +1291,10 @@ pub struct StateData {
     pub hw_out_balance: f32,
     pub hw_out_muted: bool,
     pub hw_out_meter_db: Vec<f32>,
+    pub jack_graph: maolan_engine::message::JackGraphInfo,
+    pub jack_connecting: Option<String>,
+    pub jack_node_positions: HashMap<String, Point>,
+    pub jack_session_routing: Option<maolan_engine::message::JackGraphInfo>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_plugins: Vec<Lv2PluginInfo>,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -1505,6 +1510,10 @@ impl Default for StateData {
             hw_out_balance: 0.0,
             hw_out_muted: false,
             hw_out_meter_db: vec![],
+            jack_graph: maolan_engine::message::JackGraphInfo::default(),
+            jack_connecting: None,
+            jack_node_positions: HashMap::new(),
+            jack_session_routing: None,
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_plugins: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]

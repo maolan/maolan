@@ -1,7 +1,7 @@
 use super::{CLIENT, Maolan};
 use crate::{
     message::Message,
-    state::{Connection, ConnectionViewSelection},
+    state::{AudioBackendOption, Connection, ConnectionViewSelection},
 };
 use iced::{Length, Point, Task};
 use maolan_engine::{
@@ -20,6 +20,30 @@ use std::{
 };
 
 impl Maolan {
+    fn should_restore_jack_routing(backend: &AudioBackendOption) -> bool {
+        #[cfg(unix)]
+        {
+            matches!(backend, AudioBackendOption::Jack)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = backend;
+            false
+        }
+    }
+
+    fn jack_routing_for_save(
+        state: &crate::state::StateData,
+    ) -> Option<maolan_engine::message::JackGraphInfo> {
+        if Self::should_restore_jack_routing(&state.selected_backend)
+            && (!state.jack_graph.ports.is_empty() || !state.jack_graph.connections.is_empty())
+        {
+            Some(state.jack_graph.clone())
+        } else {
+            state.jack_session_routing.clone()
+        }
+    }
+
     fn clip_clap_snapshot_targets(&self, track_names: &[String]) -> Vec<(String, usize, usize)> {
         let state = self.state.blocking_read();
         track_names
@@ -1750,10 +1774,12 @@ impl Maolan {
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
         let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
+        let jack_routing = Self::jack_routing_for_save(&state);
         let result = json!({
             "tracks": tracks_json,
             "modulators": &self.modulators,
             "connections": &state.connections,
+            "jack_routing": jack_routing,
             "graphs": graphs,
             "metadata": {
                 "author": state.session_author.clone(),
@@ -1916,6 +1942,16 @@ impl Maolan {
         let file = File::open(&p)?;
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
+        let loaded_jack_routing = session
+            .get("jack_routing")
+            .filter(|value| !value.is_null())
+            .and_then(|value| {
+                serde_json::from_value::<maolan_engine::message::JackGraphInfo>(value.clone()).ok()
+            });
+        {
+            let mut state = self.state.blocking_write();
+            state.jack_session_routing = loaded_jack_routing.clone();
+        }
         {
             let session_json_path = session_root.join("session.json");
             let mut state = self.state.blocking_write();
@@ -3273,6 +3309,20 @@ impl Maolan {
                 }
                 Err(e) => {
                     warnings.push(format!("Failed to parse 'connections': {e}"));
+                }
+            }
+        }
+        if let Some(jack_routing) = loaded_jack_routing.as_ref() {
+            let restore_jack = {
+                let state = self.state.blocking_read();
+                Self::should_restore_jack_routing(&state.selected_backend)
+            };
+            if restore_jack {
+                for connection in &jack_routing.connections {
+                    restore_actions.push(Action::JackConnect {
+                        source: connection.source.clone(),
+                        destination: connection.destination.clone(),
+                    });
                 }
             }
         }

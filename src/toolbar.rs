@@ -5,12 +5,12 @@ use crate::{
     message::{Message, SnapMode},
 };
 use iced::{
-    widget::{button, container, mouse_area, pick_list, row, text, text_input, tooltip, Space},
     Alignment, Background, Border, Color, Length, Theme,
+    widget::{Space, button, container, mouse_area, pick_list, row, text, text_input, tooltip},
 };
 use iced_fonts::lucide::{
-    audio_lines, brackets, cable, circle, fast_forward, hand, pause, play, radio, repeat,
-    rewind, sliders_vertical, square, volume_x,
+    audio_lines, brackets, cable, circle, fast_forward, hand, pause, play, radio, repeat, rewind,
+    sliders_vertical, square, volume_x,
 };
 use maolan_engine::message::GlobalMidiLearnTarget;
 #[derive(Debug, Default)]
@@ -335,9 +335,11 @@ impl Toolbar {
                     .on_submit(Message::TimeSignatureInputCommit)
                     .width(Length::Fixed(44.0)),
                 container(
-                    row![text(view_state.playhead_time_label)
-                        .size(16)
-                        .color(MIDI_CLIP_BORDER),]
+                    row![
+                        text(view_state.playhead_time_label)
+                            .size(16)
+                            .color(MIDI_CLIP_BORDER),
+                    ]
                     .spacing(4),
                 )
                 .padding([5, 8])
