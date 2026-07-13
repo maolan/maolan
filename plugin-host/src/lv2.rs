@@ -153,7 +153,7 @@ pub struct Lv2Processor {
     _state_path_feature: StatePathFeature,
     _instantiate_features: InstantiateFeatureSet,
     port_bindings: Vec<PortBinding>,
-    scalar_values: Arc<Mutex<Vec<f32>>>,
+    scalar_values: Vec<f32>,
     audio_inputs: Vec<Arc<AudioPort>>,
     audio_outputs: Vec<Arc<AudioPort>>,
     main_audio_inputs: usize,
@@ -602,7 +602,7 @@ impl Lv2Processor {
             _state_path_feature: state_path_feature,
             _instantiate_features: instantiate_features,
             port_bindings,
-            scalar_values: Arc::new(Mutex::new(scalar_values)),
+            scalar_values,
             audio_inputs,
             audio_outputs,
             main_audio_inputs,
@@ -686,10 +686,8 @@ impl Lv2Processor {
     }
 
     pub fn process(&mut self, input_channels: &[Vec<f32>], frames: usize) -> Vec<Vec<f32>> {
-        if let Ok(mut values) = self.scalar_values.lock()
-            && values.is_empty()
-        {
-            values.push(0.0);
+        if self.scalar_values.is_empty() {
+            self.scalar_values.push(0.0);
         }
 
         for (channel, io) in self.audio_inputs.iter_mut().enumerate() {
@@ -761,10 +759,8 @@ impl Lv2Processor {
         midi_inputs: &[Vec<MidiEvent>],
         transport: Lv2TransportInfo,
     ) -> Vec<Vec<MidiEvent>> {
-        if let Ok(mut values) = self.scalar_values.lock()
-            && values.is_empty()
-        {
-            values.push(0.0);
+        if self.scalar_values.is_empty() {
+            self.scalar_values.push(0.0);
         }
 
         for io in &self.audio_outputs {
@@ -915,10 +911,8 @@ impl Lv2Processor {
                     }
                 }
                 PortBinding::Scalar(index) => {
-                    if let Ok(mut values) = self.scalar_values.lock()
-                        && *index < values.len()
-                    {
-                        let ptr = (&mut values[*index]) as *mut f32;
+                    if *index < self.scalar_values.len() {
+                        let ptr = (&mut self.scalar_values[*index]) as *mut f32;
                         if let Some(instance) = self.instance.as_mut() {
                             unsafe {
                                 instance.instance_mut().connect_port_mut(port_index, ptr);
@@ -1115,26 +1109,22 @@ impl Lv2Processor {
     }
 
     fn control_port_values(&self) -> Vec<Lv2StatePortValue> {
-        let Ok(values) = self.scalar_values.lock() else {
-            return vec![];
-        };
         self.control_ports
             .iter()
             .filter_map(|port| {
-                values.get(port.index as usize).map(|v| Lv2StatePortValue {
-                    index: port.index,
-                    value: *v,
-                })
+                self.scalar_values
+                    .get(port.index as usize)
+                    .map(|v| Lv2StatePortValue {
+                        index: port.index,
+                        value: *v,
+                    })
             })
             .collect()
     }
 
     fn set_control_port_values(&mut self, port_values: &[Lv2StatePortValue]) {
-        let Ok(mut values) = self.scalar_values.lock() else {
-            return;
-        };
         for port in port_values {
-            if let Some(slot) = values.get_mut(port.index as usize) {
+            if let Some(slot) = self.scalar_values.get_mut(port.index as usize) {
                 *slot = port.value;
             }
         }
@@ -1145,9 +1135,6 @@ impl Lv2Processor {
     }
 
     pub fn control_ports_with_values(&self) -> Vec<Lv2ControlPortInfo> {
-        let Ok(values) = self.scalar_values.lock() else {
-            return Vec::new();
-        };
         self.control_ports
             .iter()
             .map(|port| Lv2ControlPortInfo {
@@ -1155,7 +1142,11 @@ impl Lv2Processor {
                 name: port.name.clone(),
                 min: port.min,
                 max: port.max,
-                value: values.get(port.index as usize).copied().unwrap_or(0.0),
+                value: self
+                    .scalar_values
+                    .get(port.index as usize)
+                    .copied()
+                    .unwrap_or(0.0),
             })
             .collect()
     }
@@ -1165,10 +1156,7 @@ impl Lv2Processor {
             return Err(format!("Unknown LV2 control port index: {index}"));
         };
         let clamped = value.clamp(port.min, port.max);
-        let Ok(mut values) = self.scalar_values.lock() else {
-            return Err("Failed to lock LV2 control values".to_string());
-        };
-        let Some(slot) = values.get_mut(index as usize) else {
+        let Some(slot) = self.scalar_values.get_mut(index as usize) else {
             return Err(format!("LV2 control port index out of range: {index}"));
         };
         *slot = clamped;

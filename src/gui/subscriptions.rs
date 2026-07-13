@@ -319,6 +319,8 @@ impl Maolan {
                             Message::ToggleModulatorsPane
                         } else if s == "c" {
                             Message::ToggleCutIndicator
+                        } else if s == "b" {
+                            Message::ToggleSelectedPluginBypass
                         } else {
                             Message::None
                         }

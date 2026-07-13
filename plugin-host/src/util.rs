@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub struct SimpleMutex<T> {
     data: UnsafeCell<T>,
@@ -17,6 +18,27 @@ impl<T> SimpleMutex<T> {
     #[allow(clippy::mut_from_ref)]
     pub fn lock(&self) -> &mut T {
         unsafe { &mut *self.data.get() }
+    }
+}
+
+#[derive(Debug)]
+pub struct AtomicF32 {
+    bits: AtomicU32,
+}
+
+impl AtomicF32 {
+    pub fn new(value: f32) -> Self {
+        Self {
+            bits: AtomicU32::new(value.to_bits()),
+        }
+    }
+
+    pub fn load(&self) -> f32 {
+        f32::from_bits(self.bits.load(Ordering::Acquire))
+    }
+
+    pub fn store(&self, value: f32) {
+        self.bits.store(value.to_bits(), Ordering::Release);
     }
 }
 

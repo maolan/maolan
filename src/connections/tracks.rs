@@ -3194,6 +3194,8 @@ impl canvas::Program<Message> for Graph {
         let node_border = rgb8(78, 93, 130);
         let node_hover = rgb8(106, 122, 158);
         let node_selected = rgb8(123, 173, 240);
+        let bypass_fill = rgb8(96, 96, 96);
+        let bypass_border = rgb8(180, 180, 180);
         let midi_box_fill = rgb8(55, 90, 50);
         let midi_box_selected_fill = rgb8(84, 133, 72);
         let midi_box_border = rgb8(148, 215, 118);
@@ -4026,7 +4028,11 @@ impl canvas::Program<Message> for Graph {
                     let pos = Self::plugin_node_position(&data, plugin, idx, bounds);
                     let size = Self::plugin_box_size(plugin);
                     let path = Path::rectangle(pos, size);
-                    draw_true_gradient_box(&mut frame, pos, size, track_node_fill);
+                    if plugin.bypassed {
+                        frame.fill(&path, bypass_fill);
+                    } else {
+                        draw_true_gradient_box(&mut frame, pos, size, track_node_fill);
+                    }
 
                     let is_h = data.hovering
                         == Some(Hovering::Plugin {
@@ -4036,9 +4042,18 @@ impl canvas::Program<Message> for Graph {
                         .plugin_graph_selected_plugins
                         .contains(&plugin.instance_id);
                     let (sc, sw) = if is_s {
-                        (node_selected, 2.5)
+                        (
+                            if plugin.bypassed {
+                                bypass_border
+                            } else {
+                                node_selected
+                            },
+                            2.5,
+                        )
                     } else if is_h {
                         (node_hover, 1.4)
+                    } else if plugin.bypassed {
+                        (bypass_border, 2.0)
                     } else {
                         (node_border, 1.0)
                     };

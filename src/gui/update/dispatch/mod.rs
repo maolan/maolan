@@ -142,6 +142,109 @@ impl Maolan {
         None
     }
 
+    fn toggle_selected_plugin_bypass(&mut self) -> Task<Message> {
+        let (
+            track_name,
+            clip_graph_open,
+            selected_plugins,
+            plugin_graph_plugins,
+            plugin_graph_connections,
+        ) = {
+            let state = self.state.blocking_read();
+            (
+                state.plugin_graph_track.clone(),
+                state.plugin_graph_clip.is_some(),
+                state.plugin_graph_selected_plugins.clone(),
+                state.plugin_graph_plugins.clone(),
+                state.plugin_graph_connections.clone(),
+            )
+        };
+        let Some(track_name) = track_name else {
+            return Task::none();
+        };
+        if selected_plugins.is_empty() {
+            return Task::none();
+        }
+
+        if clip_graph_open {
+            let mut state = self.state.blocking_write();
+            let mut changed = false;
+            let selected_plugins = state.plugin_graph_selected_plugins.clone();
+            for plugin in &mut state.plugin_graph_plugins {
+                if selected_plugins.contains(&plugin.instance_id) {
+                    plugin.bypassed = !plugin.bypassed;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return Task::none();
+            }
+            let sync = Self::save_open_clip_plugin_graph(&mut state);
+            drop(state);
+            self.has_unsaved_changes = true;
+            return sync.map_or_else(Task::none, |action| self.send(action));
+        }
+
+        let actions = selected_plugins
+            .into_iter()
+            .filter_map(|instance_id| {
+                plugin_graph_plugins
+                    .iter()
+                    .find(|plugin| plugin.instance_id == instance_id)
+                    .map(|plugin| Action::TrackSetPluginBypassed {
+                        track_name: track_name.clone(),
+                        instance_id,
+                        format: plugin.format.clone(),
+                        bypassed: !plugin.bypassed,
+                    })
+            })
+            .collect::<Vec<_>>();
+        if actions.is_empty() {
+            return Task::none();
+        }
+
+        let mut state = self.state.blocking_write();
+        for action in &actions {
+            if let Action::TrackSetPluginBypassed {
+                instance_id,
+                bypassed,
+                ..
+            } = action
+                && let Some(plugin) = state
+                    .plugin_graph_plugins
+                    .iter_mut()
+                    .find(|plugin| plugin.instance_id == *instance_id)
+            {
+                plugin.bypassed = *bypassed;
+            }
+        }
+        let current_plugins = state.plugin_graph_plugins.clone();
+        if let Some((plugins, _)) = state.plugin_graphs_by_track.get_mut(&track_name) {
+            for action in &actions {
+                if let Action::TrackSetPluginBypassed {
+                    instance_id,
+                    bypassed,
+                    ..
+                } = action
+                    && let Some(plugin) = plugins
+                        .iter_mut()
+                        .find(|plugin| plugin.instance_id == *instance_id)
+                {
+                    plugin.bypassed = *bypassed;
+                }
+            }
+        } else {
+            state.plugin_graphs_by_track.insert(
+                track_name.clone(),
+                (current_plugins, plugin_graph_connections),
+            );
+        }
+        drop(state);
+
+        self.has_unsaved_changes = true;
+        Task::batch(actions.into_iter().map(|action| self.send(action)))
+    }
+
     fn clip_edge_snap_threshold_samples(&self) -> f32 {
         (CLIP_EDGE_SNAP_THRESHOLD_PX / self.pixels_per_sample().max(1.0e-6)).max(1.0)
     }
@@ -9572,6 +9675,9 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.cut_indicator = None;
                 }
+            }
+            Message::ToggleSelectedPluginBypass => {
+                return self.toggle_selected_plugin_bypass();
             }
             Message::LogViewAction(ref action) if !action.is_edit() => {
                 self.log_viewer_content.perform(action.clone());

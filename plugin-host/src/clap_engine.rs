@@ -1,5 +1,5 @@
 use crate::midi::io::MidiEvent;
-use crate::mutex::UnsafeMutex;
+use crate::util::SimpleMutex;
 #[cfg(any(
     target_os = "macos",
     target_os = "linux",
@@ -342,8 +342,8 @@ struct HostTimer {
 }
 
 struct HostRuntimeState {
-    callback_flags: UnsafeMutex<HostCallbackFlags>,
-    timers: UnsafeMutex<Vec<HostTimer>>,
+    callback_flags: SimpleMutex<HostCallbackFlags>,
+    timers: SimpleMutex<Vec<HostTimer>>,
     ui_should_close: AtomicU32,
     ui_active: AtomicU32,
     param_flush_requested: AtomicU32,
@@ -667,8 +667,8 @@ fn scan_bundle_descriptors(path: &Path, scan_capabilities: bool) -> Vec<ClapPlug
     let path_str = path.to_string_lossy().to_string();
     let factory_id = c"clap.plugin-factory";
     let mut host_runtime_state = Box::new(HostRuntimeState {
-        callback_flags: UnsafeMutex::new(HostCallbackFlags::default()),
-        timers: UnsafeMutex::new(Vec::new()),
+        callback_flags: SimpleMutex::new(HostCallbackFlags::default()),
+        timers: SimpleMutex::new(Vec::new()),
         ui_should_close: AtomicU32::new(0),
         ui_active: AtomicU32::new(0),
         param_flush_requested: AtomicU32::new(0),
