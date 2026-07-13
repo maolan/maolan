@@ -60,7 +60,13 @@ pub fn load_session_restore_actions(
     branch: &str,
 ) -> Result<Vec<Action>, String> {
     let session = load_session_json(session_dir, branch)?;
+    load_session_restore_actions_from_value(session_dir, &session)
+}
 
+fn load_session_restore_actions_from_value(
+    session_dir: &Path,
+    session: &Value,
+) -> Result<Vec<Action>, String> {
     let mut actions = vec![
         Action::BeginSessionRestore,
         Action::SetSessionPath(session_dir.to_string_lossy().to_string()),
@@ -143,10 +149,16 @@ pub fn load_session_restore_actions(
         push_track_restore_actions(&mut actions, track)?;
     }
 
+    #[cfg(not(miri))]
     let clap_plugins = scan_plugins::<ClapPluginInfo>("clap").unwrap_or_default();
+    #[cfg(miri)]
+    let clap_plugins = Vec::new();
+    #[cfg(not(miri))]
     let vst3_plugins = scan_plugins::<Vst3PluginInfo>("vst3").unwrap_or_default();
+    #[cfg(miri)]
+    let vst3_plugins = Vec::new();
     let graph_actions = crate::cli::plugin_support::load_session_graph_restore_actions(
-        &session,
+        session,
         &valid_track_names,
         &clap_plugins,
         &vst3_plugins,
@@ -937,13 +949,8 @@ mod tests {
 
     #[test]
     fn load_session_restore_actions_parses_tracks_and_connections() {
-        let dir =
-            std::env::temp_dir().join(format!("maolan-cli-support-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-        std::fs::write(
-            dir.join("main.json"),
-            serde_json::json!({
+        let dir = Path::new("maolan-cli-support-test");
+        let session = serde_json::json!({
                 "transport": {
                     "loop_range_samples": null,
                     "loop_enabled": false,
@@ -1003,12 +1010,10 @@ mod tests {
                         }]
                     }
                 }
-            })
-            .to_string(),
-        )
-        .expect("write session");
+        });
 
-        let actions = load_session_restore_actions(&dir, "main").expect("restore actions");
+        let actions =
+            load_session_restore_actions_from_value(dir, &session).expect("restore actions");
 
         assert!(actions.iter().any(|action| matches!(
             action,
@@ -1037,7 +1042,5 @@ mod tests {
         assert!(actions.iter().any(
             |action| matches!(action, Action::Connect { from_track, to_track, kind, .. } if from_track == "Track 1" && to_track == "midi:hw:out:dev-out" && *kind == Kind::MIDI)
         ));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

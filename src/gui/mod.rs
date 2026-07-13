@@ -2864,7 +2864,7 @@ impl Maolan {
         copied_files: &HashMap<PathBuf, String>,
     ) {
         let mut state = self.state.blocking_write();
-        for (_track_name, (plugins, _connections)) in state.plugin_graphs_by_track.iter_mut() {
+        for (plugins, _connections) in state.plugin_graphs_by_track.values_mut() {
             for plugin in plugins.iter_mut() {
                 if let Some(ref mut plugin_state) = plugin.state {
                     *plugin_state =

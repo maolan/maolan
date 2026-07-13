@@ -52,13 +52,12 @@ fn discover_sndstat_dsp_devices() -> Option<Vec<AudioDeviceOption>> {
 
 fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
     let root = nvtree_unpack(buf).ok()?;
-    let dsps = if let Some(pair) = nvtree_find(&root, "dsps") {
+    let dsps = {
+        let pair = nvtree_find(&root, "dsps")?;
         match &pair.value {
             Nvtvalue::NestedArray(arr) => arr,
             _ => return None,
         }
-    } else {
-        return None;
     };
 
     let out = dsps
