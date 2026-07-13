@@ -620,41 +620,6 @@ impl canvas::Program<Message> for Graph {
                     data.plugin_graph_selected_plugins.clear();
                     return Some(Action::request_redraw());
                 }
-                Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
-                    if *key == iced::keyboard::Key::Character("b".into()) =>
-                {
-                    if data.plugin_graph_clip.is_some() {
-                        return None;
-                    }
-                    let track_name = data.plugin_graph_track.clone().unwrap_or_default();
-                    let mut actions = Vec::new();
-                    for instance_id in data.plugin_graph_selected_plugins.iter().copied() {
-                        if let Some(plugin) = data
-                            .plugin_graph_plugins
-                            .iter()
-                            .find(|p| p.instance_id == instance_id)
-                        {
-                            let new_bypass = !plugin.bypassed;
-                            actions.push(Message::Request(EngineAction::TrackSetPluginBypassed {
-                                track_name: track_name.clone(),
-                                instance_id,
-                                format: plugin.format.clone(),
-                                bypassed: new_bypass,
-                            }));
-                        }
-                    }
-                    if !actions.is_empty() {
-                        return Some(Action::publish(Message::RequestBatch(
-                            actions
-                                .into_iter()
-                                .map(|m| match m {
-                                    Message::Request(a) => a,
-                                    _ => unreachable!(),
-                                })
-                                .collect(),
-                        )));
-                    }
-                }
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                     let mut redraw = true;
                     if let Some(connecting) = data.plugin_graph_connecting.as_mut() {
@@ -942,6 +907,8 @@ impl canvas::Program<Message> for Graph {
         let node_fill = rgb8(36, 45, 68);
         let node_border = rgb8(78, 93, 130);
         let node_selected = rgb8(123, 173, 240);
+        let bypass_fill = rgb8(96, 96, 96);
+        let bypass_border = rgb8(180, 180, 180);
         let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
         let conn_midi = Color::from_rgb(0.30, 0.82, 0.38);
         let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
@@ -1099,12 +1066,16 @@ impl canvas::Program<Message> for Graph {
                 let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                 let plugin_h = Self::plugin_height(plugin);
                 let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
-                draw_true_gradient_box(
-                    &mut frame,
-                    pos,
-                    iced::Size::new(PLUGIN_W, plugin_h),
-                    node_fill,
-                );
+                if plugin.bypassed {
+                    frame.fill(&rect, bypass_fill);
+                } else {
+                    draw_true_gradient_box(
+                        &mut frame,
+                        pos,
+                        iced::Size::new(PLUGIN_W, plugin_h),
+                        node_fill,
+                    );
+                }
                 let is_selected_plugin = data
                     .plugin_graph_selected_plugins
                     .contains(&plugin.instance_id);
@@ -1112,7 +1083,13 @@ impl canvas::Program<Message> for Graph {
                     &rect,
                     canvas::Stroke::default()
                         .with_color(if is_selected_plugin {
-                            node_selected
+                            if plugin.bypassed {
+                                bypass_border
+                            } else {
+                                node_selected
+                            }
+                        } else if plugin.bypassed {
+                            bypass_border
                         } else {
                             node_border
                         })
@@ -1121,27 +1098,12 @@ impl canvas::Program<Message> for Graph {
                 frame.fill_text(Text {
                     content: plugin.name.clone(),
                     position: Point::new(pos.x + PLUGIN_W / 2.0, pos.y + 16.0),
-                    color: if plugin.bypassed {
-                        Color::from_rgb(0.6, 0.6, 0.6)
-                    } else {
-                        Color::WHITE
-                    },
+                    color: Color::WHITE,
                     size: 14.0.into(),
                     align_x: Horizontal::Center.into(),
                     align_y: Vertical::Center,
                     ..Default::default()
                 });
-                if plugin.bypassed {
-                    frame.fill_text(Text {
-                        content: "BYP".into(),
-                        position: Point::new(pos.x + PLUGIN_W / 2.0, pos.y + plugin_h - 10.0),
-                        color: Color::from_rgb(0.85, 0.5, 0.3),
-                        size: 10.0.into(),
-                        align_x: Horizontal::Center.into(),
-                        align_y: Vertical::Center,
-                        ..Default::default()
-                    });
-                }
                 for port in 0..plugin.audio_inputs {
                     let Some(py) =
                         Self::plugin_input_port_y(plugin, plugin_h, pos.y, Kind::Audio, port)

@@ -1090,6 +1090,7 @@ pub enum Message {
     ToggleLogVisibility,
     ToggleShortcutsPane,
     ToggleModulatorsPane,
+    ToggleSelectedPluginBypass,
     ModulatorAdd,
     ModulatorRemove(usize),
     ModulatorSelect(Option<usize>),

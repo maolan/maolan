@@ -267,12 +267,16 @@ impl Maolan {
                 Task::batch(tasks)
             }
             Message::MeterPollTick => {
-                if let Err(_err) = CLIENT
-                    .sender
-                    .try_send(EngineMessage::Request(Action::RequestMeterSnapshot))
-                {
+                if let Some(snapshot) = CLIENT.meter_snapshot() {
+                    let action = Action::MeterSnapshot {
+                        hw_out_db: std::sync::Arc::new(snapshot.hw_out_db),
+                        track_meters: std::sync::Arc::new(snapshot.track_meters),
+                    };
+                    self.handle_response_freeze_meter_action(&action)
+                        .unwrap_or_else(Task::none)
+                } else {
+                    Task::none()
                 }
-                Task::none()
             }
             _ => Task::none(),
         }

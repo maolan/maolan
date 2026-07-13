@@ -3,7 +3,7 @@
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
 use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
@@ -322,11 +322,11 @@ impl IPlugFrameTrait for HostPlugFrame {
 }
 
 pub struct ComponentHandler {
-    pub parameter_changes: Arc<Mutex<Vec<(u32, f64)>>>,
+    pub parameter_changes: crossbeam_channel::Sender<(u32, f64)>,
 }
 
 impl ComponentHandler {
-    pub fn new(parameter_changes: Arc<Mutex<Vec<(u32, f64)>>>) -> Self {
+    pub fn new(parameter_changes: crossbeam_channel::Sender<(u32, f64)>) -> Self {
         Self { parameter_changes }
     }
 }
@@ -341,9 +341,7 @@ impl IComponentHandlerTrait for ComponentHandler {
     }
 
     unsafe fn performEdit(&self, id: ParamID, value_normalized: ParamValue) -> tresult {
-        if let Ok(mut changes) = self.parameter_changes.lock() {
-            changes.push((id, value_normalized));
-        }
+        let _ = self.parameter_changes.try_send((id, value_normalized));
         kResultOk
     }
 
@@ -362,7 +360,8 @@ pub struct PluginInstance {
     pub edit_controller: Option<ComPtr<IEditController>>,
     host_context: Box<HostApplicationContext>,
     component_handler: Option<ComWrapper<ComponentHandler>>,
-    pub parameter_changes: Arc<Mutex<Vec<(u32, f64)>>>,
+    pub parameter_changes_tx: crossbeam_channel::Sender<(u32, f64)>,
+    pub parameter_changes_rx: crossbeam_channel::Receiver<(u32, f64)>,
 }
 
 impl std::fmt::Debug for PluginInstance {
@@ -377,13 +376,15 @@ impl std::fmt::Debug for PluginInstance {
 
 impl PluginInstance {
     fn new(component: ComPtr<IComponent>) -> Self {
+        let (parameter_changes_tx, parameter_changes_rx) = crossbeam_channel::bounded(1024);
         Self {
             component,
             audio_processor: None,
             edit_controller: None,
             host_context: Box::new(HostApplicationContext::new()),
             component_handler: None,
-            parameter_changes: Arc::new(Mutex::new(Vec::new())),
+            parameter_changes_tx,
+            parameter_changes_rx,
         }
     }
 
@@ -525,7 +526,7 @@ impl PluginInstance {
         }
 
         if let Some(controller) = self.edit_controller.as_ref() {
-            let handler = ComWrapper::new(ComponentHandler::new(self.parameter_changes.clone()));
+            let handler = ComWrapper::new(ComponentHandler::new(self.parameter_changes_tx.clone()));
             if let Some(handler_ptr) = handler.to_com_ptr::<IComponentHandler>() {
                 let _ = unsafe { controller.setComponentHandler(handler_ptr.into_raw()) };
             }

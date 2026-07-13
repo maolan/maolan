@@ -2,11 +2,11 @@ use crate::clap::{
     CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EXT_AUDIO_PORTS,
     CLAP_EXT_PARAMS, CLAP_EXT_TIMER_SUPPORT, ClapAudioBuffer, ClapEventHeader, ClapEventMidi,
     ClapEventNote, ClapEventParamGesture, ClapEventParamMod, ClapEventParamValue, ClapPluginParams,
-    ClapProcess, EventBuffer, EventCapture, PluginInstance, ThreadType, host_timers,
+    ClapProcess, EventBuffer, EventCapture, PluginInstance, ThreadType, host_timers_snapshot,
     set_thread_type,
 };
 #[cfg(unix)]
-use crate::clap::{CLAP_EXT_POSIX_FD_SUPPORT, host_fds};
+use crate::clap::{CLAP_EXT_POSIX_FD_SUPPORT, host_fds_snapshot};
 use crate::events::EventPair;
 #[cfg(windows)]
 use crate::gui_win32::win32::{ContainerWindow, create_container_window};
@@ -1399,7 +1399,7 @@ impl HostRuntime {
 
     #[cfg(unix)]
     fn poll_daw_and_fds(&self, daw_fd: i32, timeout: Duration) -> (bool, Vec<(i32, u32)>) {
-        let fds = host_fds().lock().unwrap();
+        let fds = host_fds_snapshot();
         if fds.is_empty() {
             return (self.events.wait_daw(timeout).is_ok(), Vec::new());
         }
@@ -1452,7 +1452,7 @@ impl HostRuntime {
     }
 
     fn next_timer_ms(&self) -> u64 {
-        let timers = host_timers().lock().unwrap();
+        let timers = host_timers_snapshot();
         let now = Instant::now();
         timers
             .iter()
@@ -1476,12 +1476,17 @@ impl HostRuntime {
         let now = Instant::now();
         let mut fired_timers = Vec::new();
         {
-            let mut timers = host_timers().lock().unwrap();
+            let mut timers = host_timers_snapshot().as_ref().clone();
+            let mut changed = false;
             for t in timers.iter_mut() {
                 if t.deadline <= now {
                     fired_timers.push(t.id);
                     t.deadline = now + Duration::from_millis(t.period_ms as u64);
+                    changed = true;
                 }
+            }
+            if changed {
+                crate::clap::replace_host_timers(timers);
             }
         }
         if let Some(ext) = timer_ext {

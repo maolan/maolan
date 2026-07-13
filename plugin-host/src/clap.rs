@@ -3,7 +3,7 @@ use std::ffi::{CStr, CString, c_char, c_ulong, c_void};
 use std::path::Path;
 use std::ptr;
 use std::sync::{
-    Mutex, OnceLock,
+    Arc, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant};
@@ -27,25 +27,51 @@ pub fn current_thread_type() -> ThreadType {
     CURRENT_THREAD.with(|t| t.get())
 }
 
+#[derive(Clone, Copy)]
 pub struct HostTimer {
     pub id: u32,
     pub period_ms: u32,
     pub deadline: Instant,
 }
 
+#[derive(Clone, Copy)]
 pub struct HostFd {
     pub fd: i32,
     pub flags: u32,
 }
 
-pub fn host_timers() -> &'static Mutex<Vec<HostTimer>> {
-    static TIMERS: OnceLock<Mutex<Vec<HostTimer>>> = OnceLock::new();
-    TIMERS.get_or_init(|| Mutex::new(Vec::new()))
+fn host_timers_slot() -> &'static arc_swap::ArcSwap<Vec<HostTimer>> {
+    static TIMERS: OnceLock<arc_swap::ArcSwap<Vec<HostTimer>>> = OnceLock::new();
+    TIMERS.get_or_init(|| arc_swap::ArcSwap::from_pointee(Vec::new()))
 }
 
-pub fn host_fds() -> &'static Mutex<Vec<HostFd>> {
-    static FDS: OnceLock<Mutex<Vec<HostFd>>> = OnceLock::new();
-    FDS.get_or_init(|| Mutex::new(Vec::new()))
+fn host_fds_slot() -> &'static arc_swap::ArcSwap<Vec<HostFd>> {
+    static FDS: OnceLock<arc_swap::ArcSwap<Vec<HostFd>>> = OnceLock::new();
+    FDS.get_or_init(|| arc_swap::ArcSwap::from_pointee(Vec::new()))
+}
+
+pub fn host_timers_snapshot() -> Arc<Vec<HostTimer>> {
+    host_timers_slot().load_full()
+}
+
+pub fn host_fds_snapshot() -> Arc<Vec<HostFd>> {
+    host_fds_slot().load_full()
+}
+
+pub fn replace_host_timers(timers: Vec<HostTimer>) {
+    host_timers_slot().store(Arc::new(timers));
+}
+
+fn update_host_timers(update: impl FnOnce(&mut Vec<HostTimer>)) {
+    let mut timers = host_timers_snapshot().as_ref().clone();
+    update(&mut timers);
+    host_timers_slot().store(Arc::new(timers));
+}
+
+fn update_host_fds(update: impl FnOnce(&mut Vec<HostFd>)) {
+    let mut fds = host_fds_snapshot().as_ref().clone();
+    update(&mut fds);
+    host_fds_slot().store(Arc::new(fds));
 }
 
 static HOST_GUI_CLOSED_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -1472,11 +1498,12 @@ unsafe extern "C" fn host_timer_support_register_timer(
     }
     let id = next_timer_id();
     unsafe { *timer_id = id };
-    let mut timers = host_timers().lock().unwrap();
-    timers.push(HostTimer {
-        id,
-        period_ms,
-        deadline: Instant::now() + Duration::from_millis(period_ms as u64),
+    update_host_timers(|timers| {
+        timers.push(HostTimer {
+            id,
+            period_ms,
+            deadline: Instant::now() + Duration::from_millis(period_ms as u64),
+        })
     });
     true
 }
@@ -1485,13 +1512,14 @@ unsafe extern "C" fn host_timer_support_unregister_timer(
     _host: *const ClapHost,
     timer_id: u32,
 ) -> bool {
-    let mut timers = host_timers().lock().unwrap();
-    if let Some(pos) = timers.iter().position(|t| t.id == timer_id) {
-        timers.swap_remove(pos);
-        true
-    } else {
-        false
-    }
+    let mut removed = false;
+    update_host_timers(|timers| {
+        if let Some(pos) = timers.iter().position(|t| t.id == timer_id) {
+            timers.swap_remove(pos);
+            removed = true;
+        }
+    });
+    removed
 }
 
 unsafe extern "C" fn host_posix_fd_support_register_fd(
@@ -1499,11 +1527,10 @@ unsafe extern "C" fn host_posix_fd_support_register_fd(
     fd: i32,
     flags: u32,
 ) -> bool {
-    let mut fds = host_fds().lock().unwrap();
-    if fds.iter().any(|f| f.fd == fd) {
+    if host_fds_snapshot().iter().any(|f| f.fd == fd) {
         return false;
     }
-    fds.push(HostFd { fd, flags });
+    update_host_fds(|fds| fds.push(HostFd { fd, flags }));
     true
 }
 
@@ -1512,23 +1539,25 @@ unsafe extern "C" fn host_posix_fd_support_modify_fd(
     fd: i32,
     flags: u32,
 ) -> bool {
-    let mut fds = host_fds().lock().unwrap();
-    if let Some(f) = fds.iter_mut().find(|f| f.fd == fd) {
-        f.flags = flags;
-        true
-    } else {
-        false
-    }
+    let mut modified = false;
+    update_host_fds(|fds| {
+        if let Some(f) = fds.iter_mut().find(|f| f.fd == fd) {
+            f.flags = flags;
+            modified = true;
+        }
+    });
+    modified
 }
 
 unsafe extern "C" fn host_posix_fd_support_unregister_fd(_host: *const ClapHost, fd: i32) -> bool {
-    let mut fds = host_fds().lock().unwrap();
-    if let Some(pos) = fds.iter().position(|f| f.fd == fd) {
-        fds.swap_remove(pos);
-        true
-    } else {
-        false
-    }
+    let mut removed = false;
+    update_host_fds(|fds| {
+        if let Some(pos) = fds.iter().position(|f| f.fd == fd) {
+            fds.swap_remove(pos);
+            removed = true;
+        }
+    });
+    removed
 }
 
 unsafe extern "C" fn empty_input_events_size(_: *const ClapInputEvents) -> u32 {

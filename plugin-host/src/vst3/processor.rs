@@ -4,8 +4,8 @@ use super::interfaces::{HostPlugFrame, PluginInstance, Vst3GuiInfo, protected_ca
 use super::midi::{EventBuffer, ParameterChanges};
 use super::port::{BusInfo, ParameterInfo};
 use super::state::{MemoryStream, Vst3PluginState, ibstream_ptr};
-use crate::util::AudioPort;
 use crate::util::MidiEvent;
+use crate::util::{AtomicF32, AudioPort};
 use std::ffi::{CString, c_void};
 use std::fmt;
 use std::path::Path;
@@ -46,17 +46,59 @@ pub struct Vst3Processor {
     output_buses: Vec<BusInfo>,
 
     parameters: Vec<ParameterInfo>,
-    scalar_values: Arc<Mutex<Vec<f32>>>,
-    previous_values: Arc<Mutex<Vec<f32>>>,
+    scalar_values: Arc<Vec<AtomicF32>>,
 
-    pending_param_changes: Arc<Mutex<Vec<(u32, f64, u32)>>>,
+    pending_param_changes_tx: crossbeam_channel::Sender<(u32, f64, u32)>,
+    pending_param_changes_rx: crossbeam_channel::Receiver<(u32, f64, u32)>,
     max_samples_per_block: usize,
     processing_started: bool,
     sample_rate: f64,
     bypassed: AtomicBool,
-    transport_info: Mutex<Vst3TransportInfo>,
+    transport_info: AtomicVst3TransportInfo,
 
     gui_session: Arc<Mutex<Vst3GuiSession>>,
+}
+
+#[derive(Debug)]
+struct AtomicVst3TransportInfo {
+    playhead_sample: std::sync::atomic::AtomicI64,
+    playing: AtomicBool,
+    tempo: std::sync::atomic::AtomicU64,
+    tsig_num: std::sync::atomic::AtomicI32,
+    tsig_denom: std::sync::atomic::AtomicI32,
+}
+
+impl Default for AtomicVst3TransportInfo {
+    fn default() -> Self {
+        Self {
+            playhead_sample: std::sync::atomic::AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            tempo: std::sync::atomic::AtomicU64::new(0.0f64.to_bits()),
+            tsig_num: std::sync::atomic::AtomicI32::new(0),
+            tsig_denom: std::sync::atomic::AtomicI32::new(0),
+        }
+    }
+}
+
+impl AtomicVst3TransportInfo {
+    fn load(&self) -> Vst3TransportInfo {
+        Vst3TransportInfo {
+            playhead_sample: self.playhead_sample.load(Ordering::Acquire),
+            playing: self.playing.load(Ordering::Acquire),
+            tempo: f64::from_bits(self.tempo.load(Ordering::Acquire)),
+            tsig_num: self.tsig_num.load(Ordering::Acquire),
+            tsig_denom: self.tsig_denom.load(Ordering::Acquire),
+        }
+    }
+
+    fn store(&self, info: Vst3TransportInfo) {
+        self.playhead_sample
+            .store(info.playhead_sample, Ordering::Release);
+        self.playing.store(info.playing, Ordering::Release);
+        self.tempo.store(info.tempo.to_bits(), Ordering::Release);
+        self.tsig_num.store(info.tsig_num, Ordering::Release);
+        self.tsig_denom.store(info.tsig_denom, Ordering::Release);
+    }
 }
 
 struct Vst3GuiSession {
@@ -193,13 +235,13 @@ impl Vst3Processor {
         let processing_started = false;
 
         let parameters = protected_call(|| instance.query_parameters()).unwrap_or_default();
-        let scalar_values = Arc::new(Mutex::new(
-            parameters.iter().map(|p| p.default_value as f32).collect(),
-        ));
-        let previous_values = Arc::new(Mutex::new(
-            parameters.iter().map(|p| p.default_value as f32).collect(),
-        ));
-        let pending_param_changes = Arc::new(Mutex::new(Vec::new()));
+        let scalar_values = Arc::new(
+            parameters
+                .iter()
+                .map(|p| AtomicF32::new(p.default_value as f32))
+                .collect(),
+        );
+        let (pending_param_changes_tx, pending_param_changes_rx) = crossbeam_channel::bounded(1024);
         let plugin_id = format!("{:02X?}", class_info.cid);
 
         let gui_session = Arc::new(Mutex::new(Vst3GuiSession {
@@ -225,13 +267,13 @@ impl Vst3Processor {
             output_buses,
             parameters,
             scalar_values,
-            previous_values,
-            pending_param_changes,
+            pending_param_changes_tx,
+            pending_param_changes_rx,
             max_samples_per_block: buffer_size,
             processing_started,
             sample_rate,
             bypassed: AtomicBool::new(false),
-            transport_info: Mutex::new(Vst3TransportInfo::default()),
+            transport_info: AtomicVst3TransportInfo::default(),
             gui_session,
         })
     }
@@ -420,10 +462,7 @@ impl Vst3Processor {
             });
         }
 
-        let transport = self
-            .transport_info
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let transport = self.transport_info.load();
         let mut process_context: ProcessContext = unsafe { std::mem::zeroed() };
         process_context.sampleRate = self.sample_rate;
         process_context.tempo = transport.tempo;
@@ -455,11 +494,8 @@ impl Vst3Processor {
             .as_ref()
             .and_then(|controller| controller.cast::<IMidiMapping>());
         let param_changes = ParameterChanges::new();
-        {
-            let mut pending = self.pending_param_changes.lock().unwrap();
-            for (param_id, value, offset) in pending.drain(..) {
-                param_changes.add_point(param_id, offset as i32, value);
-            }
+        while let Ok((param_id, value, offset)) = self.pending_param_changes_rx.try_recv() {
+            param_changes.add_point(param_id, offset as i32, value);
         }
         if let Some(mapping) = midi_mapping
             && let Some(midi_changes) =
@@ -551,13 +587,11 @@ impl Vst3Processor {
 
     pub fn get_parameter_value(&self, param_id: u32) -> Option<f32> {
         let idx = self.parameters.iter().position(|p| p.id == param_id)?;
-        Some(self.scalar_values.lock().unwrap()[idx])
+        self.scalar_values.get(idx).map(AtomicF32::load)
     }
 
     pub fn set_transport_info(&self, info: Vst3TransportInfo) {
-        if let Ok(mut t) = self.transport_info.lock() {
-            *t = info;
-        }
+        self.transport_info.store(info);
     }
 
     pub fn set_parameter_value(&self, param_id: u32, normalized_value: f32) -> Result<(), String> {
@@ -576,7 +610,7 @@ impl Vst3Processor {
             .position(|p| p.id == param_id)
             .ok_or("Parameter not found")?;
 
-        self.scalar_values.lock().unwrap()[idx] = normalized_value;
+        self.scalar_values[idx].store(normalized_value);
 
         if let Some(controller) = &self.instance.edit_controller {
             use vst3::Steinberg::Vst::IEditControllerTrait;
@@ -585,7 +619,7 @@ impl Vst3Processor {
             }
         }
 
-        self.pending_param_changes.lock().unwrap().push((
+        let _ = self.pending_param_changes_tx.try_send((
             param_id,
             normalized_value as f64,
             sample_offset,
@@ -659,8 +693,7 @@ impl Vst3Processor {
 
             for (idx, param) in self.parameters.iter().enumerate() {
                 let value = unsafe { controller.getParamNormalized(param.id) };
-                self.scalar_values.lock().unwrap()[idx] = value as f32;
-                self.previous_values.lock().unwrap()[idx] = value as f32;
+                self.scalar_values[idx].store(value as f32);
             }
         }
 
@@ -826,11 +859,7 @@ impl Vst3Processor {
     }
 
     pub fn ui_take_param_updates(&self) -> Vec<(u32, f64)> {
-        let mut changes = Vec::new();
-        if let Ok(mut param_changes) = self.instance.parameter_changes.lock() {
-            std::mem::swap(&mut changes, &mut *param_changes);
-        }
-        changes
+        self.instance.parameter_changes_rx.try_iter().collect()
     }
 
     pub fn gui_check_resize(&self) -> Option<(i32, i32)> {
