@@ -36,11 +36,15 @@ fn config_path() -> Result<PathBuf, String> {
 
 pub fn load_session_end_sample(session_dir: &Path, branch: &str) -> Result<usize, String> {
     let session = load_session_json(session_dir, branch)?;
-    Ok(session
+    Ok(session_end_sample(&session))
+}
+
+fn session_end_sample(session: &serde_json::Value) -> usize {
+    session
         .get("tracks")
         .and_then(serde_json::Value::as_array)
         .map(|tracks| tracks.iter().map(track_end_sample).max().unwrap_or(0))
-        .unwrap_or(0))
+        .unwrap_or(0)
 }
 
 fn load_session_json(session_dir: &Path, branch: &str) -> Result<serde_json::Value, String> {
@@ -87,15 +91,7 @@ mod tests {
 
     #[test]
     fn load_session_end_sample_uses_latest_audio_midi_and_grouped_clip_end() {
-        let dir = std::env::temp_dir().join(format!(
-            "maolan-cli-support-end-sample-test-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-        std::fs::write(
-            dir.join("main.json"),
-            serde_json::json!({
+        let session = serde_json::json!({
                 "tracks": [{
                     "name": "Track 1",
                     "audio": {"ins": 2, "outs": 2, "clips": [{
@@ -118,16 +114,8 @@ mod tests {
                         "length": 100
                     }]}
                 }]
-            })
-            .to_string(),
-        )
-        .expect("write session");
+        });
 
-        assert_eq!(
-            load_session_end_sample(&dir, "main").expect("end sample"),
-            425
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(session_end_sample(&session), 425);
     }
 }

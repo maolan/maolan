@@ -182,7 +182,7 @@ impl PitchCorrection {
                     frame_likeness,
                     Message::PitchCorrectionFrameLikenessChanged,
                 )
-                .step(0.05),
+                .step(0.05_f32),
                 text(format!("Inertia: {} ms", inertia_ms)).size(10),
                 slider(0..=1000, inertia_ms, Message::PitchCorrectionInertiaChanged).step(1_u16),
                 checkbox(formant_compensation)
@@ -218,7 +218,7 @@ impl PitchCorrection {
                                 Self::zoom_x_to_slider(zoom_x),
                                 |value| Message::PianoZoomXChanged(Self::slider_to_zoom_x(value)),
                             )
-                            .step(0.1)
+                            .step(0.1_f32)
                             .width(Length::Fixed(100.0)),
                         ]
                         .spacing(8)
@@ -235,7 +235,7 @@ impl PitchCorrection {
             column![
                 v_scroll,
                 vertical_slider(1.0..=8.0, zoom_y, Message::PianoZoomYChanged)
-                    .step(0.1)
+                    .step(0.1_f32)
                     .height(Length::Fixed(100.0)),
             ]
             .spacing(8)

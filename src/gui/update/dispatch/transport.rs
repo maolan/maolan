@@ -114,47 +114,50 @@ impl Maolan {
                 self.send(Action::TransportPosition(end_sample))
             }
             Message::PlaybackTick => {
-                if let Some(snapshot) = CLIENT.session_runtime_snapshot() {
-                    let mut state = self.state.blocking_write();
-                    let mut active_slots = HashSet::with_capacity(snapshot.slots.len());
-                    for slot in snapshot.slots {
-                        let key = (slot.track_name, slot.scene_index);
-                        active_slots.insert(key.clone());
-                        let runtime = state.slot_runtimes.entry(key).or_default();
-                        runtime.state = match slot.state {
-                            EngineSessionSlotState::Stopped => SlotPlayState::Stopped,
-                            EngineSessionSlotState::Queued => SlotPlayState::Queued,
-                            EngineSessionSlotState::Playing => SlotPlayState::Playing,
-                            EngineSessionSlotState::Stopping => SlotPlayState::Stopping,
-                        };
-                        runtime.play_position_samples = slot.play_position_samples;
-                        runtime.elapsed_samples = slot.elapsed_samples;
-                    }
-                    for (key, runtime) in &mut state.slot_runtimes {
-                        if active_slots.contains(key) {
-                            continue;
+                if tokio::runtime::Handle::try_current().is_ok() {
+                    if let Some(snapshot) = CLIENT.session_runtime_snapshot() {
+                        let mut state = self.state.blocking_write();
+                        let mut active_slots = HashSet::with_capacity(snapshot.slots.len());
+                        for slot in snapshot.slots {
+                            let key = (slot.track_name, slot.scene_index);
+                            active_slots.insert(key.clone());
+                            let runtime = state.slot_runtimes.entry(key).or_default();
+                            runtime.state = match slot.state {
+                                EngineSessionSlotState::Stopped => SlotPlayState::Stopped,
+                                EngineSessionSlotState::Queued => SlotPlayState::Queued,
+                                EngineSessionSlotState::Playing => SlotPlayState::Playing,
+                                EngineSessionSlotState::Stopping => SlotPlayState::Stopping,
+                            };
+                            runtime.play_position_samples = slot.play_position_samples;
+                            runtime.elapsed_samples = slot.elapsed_samples;
                         }
-                        runtime.state = SlotPlayState::Stopped;
-                        runtime.play_position_samples = 0;
-                        runtime.elapsed_samples = 0;
+                        for (key, runtime) in &mut state.slot_runtimes {
+                            if active_slots.contains(key) {
+                                continue;
+                            }
+                            runtime.state = SlotPlayState::Stopped;
+                            runtime.play_position_samples = 0;
+                            runtime.elapsed_samples = 0;
+                        }
                     }
-                }
-                if let Some(snapshot) = CLIENT.transport_snapshot() {
-                    let was_running = self.playing && !self.paused;
-                    self.playing = snapshot.playing;
-                    self.paused = snapshot.playing && !snapshot.transport_running;
-                    self.transport_samples = snapshot.sample as f64;
-                    self.playback_rate_hz = self.playback_rate_hz.max(1.0);
-                    self.tempo_input = format!("{:.2}", snapshot.tempo_bpm);
-                    self.time_signature_num_input = snapshot.tsig_num.to_string();
-                    self.time_signature_denom_input = snapshot.tsig_denom.to_string();
-                    self.last_sent_tempo_bpm = Some(snapshot.tempo_bpm);
-                    self.last_sent_time_signature = Some((snapshot.tsig_num, snapshot.tsig_denom));
-                    let running = self.playing && !self.paused;
-                    if running {
-                        self.last_playback_tick = Some(Instant::now());
-                    } else if was_running {
-                        self.last_playback_tick = None;
+                    if let Some(snapshot) = CLIENT.transport_snapshot() {
+                        let was_running = self.playing && !self.paused;
+                        self.playing = snapshot.playing;
+                        self.paused = snapshot.playing && !snapshot.transport_running;
+                        self.transport_samples = snapshot.sample as f64;
+                        self.playback_rate_hz = self.playback_rate_hz.max(1.0);
+                        self.tempo_input = format!("{:.2}", snapshot.tempo_bpm);
+                        self.time_signature_num_input = snapshot.tsig_num.to_string();
+                        self.time_signature_denom_input = snapshot.tsig_denom.to_string();
+                        self.last_sent_tempo_bpm = Some(snapshot.tempo_bpm);
+                        self.last_sent_time_signature =
+                            Some((snapshot.tsig_num, snapshot.tsig_denom));
+                        let running = self.playing && !self.paused;
+                        if running {
+                            self.last_playback_tick = Some(Instant::now());
+                        } else if was_running {
+                            self.last_playback_tick = None;
+                        }
                     }
                 }
                 let mut now_sample = self.transport_samples.max(0.0) as usize;

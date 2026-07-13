@@ -159,7 +159,6 @@ impl MIDIEdit {
 
         let notes_content: Element<'_, Message>;
         let notes_h: f32;
-        let keyboard_scroll: Element<'_, Message>;
 
         let midnam_note_names = self.midnam_note_names.clone();
 
@@ -170,7 +169,7 @@ impl MIDIEdit {
             .map(|t| t.midi.editor_view_mode)
             .unwrap_or_default();
 
-        if matches!(
+        let keyboard_scroll: Element<'_, Message> = if matches!(
             editor_view_mode,
             crate::message::MidiEditorViewMode::DrumGrid
         ) {
@@ -376,7 +375,7 @@ impl MIDIEdit {
                     )
                 });
 
-            keyboard_scroll = container(sidebar_rows)
+            container(sidebar_rows)
                 .width(Length::Fixed(KEYBOARD_WIDTH))
                 .height(Length::Fill)
                 .style(|_theme| container::Style {
@@ -388,7 +387,7 @@ impl MIDIEdit {
                     })),
                     ..container::Style::default()
                 })
-                .into();
+                .into()
         } else {
             notes_h = MIDI_NOTE_COUNT as f32
                 * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
@@ -468,7 +467,7 @@ impl MIDIEdit {
                     .padding(0),
                 )
             });
-            keyboard_scroll = container(
+            container(
                 keyboard
                     .width(Length::Fixed(KEYBOARD_WIDTH))
                     .height(Length::Fill),
@@ -484,8 +483,8 @@ impl MIDIEdit {
                 })),
                 ..container::Style::default()
             })
-            .into();
-        }
+            .into()
+        };
 
         let ctrl_line_count = controller::controller_lane_line_count(controller_lane).max(1);
         let ctrl_h = (ctrl_line_count as f32).max(140.0);
@@ -997,7 +996,7 @@ impl MIDIEdit {
                         velocity_shape_amount,
                         Message::PianoVelocityShapeAmountChanged
                     )
-                    .step(0.01)
+                    .step(0.01_f32)
                     .width(Length::Fill),
                 ]
                 .spacing(6),
@@ -1010,7 +1009,7 @@ impl MIDIEdit {
                         humanize_time_amount,
                         Message::PianoHumanizeTimeAmountChanged,
                     )
-                    .step(0.01)
+                    .step(0.01_f32)
                     .width(Length::Fill),
                     text("V").size(10),
                     slider(
@@ -1018,14 +1017,14 @@ impl MIDIEdit {
                         humanize_velocity_amount,
                         Message::PianoHumanizeVelocityAmountChanged,
                     )
-                    .step(0.01)
+                    .step(0.01_f32)
                     .width(Length::Fill),
                 ]
                 .spacing(6),
                 row![
                     button(text("Groove").size(11)).on_press(Message::PianoGrooveSelectedNotes),
                     slider(0.0..=1.0, groove_amount, Message::PianoGrooveAmountChanged)
-                        .step(0.01)
+                        .step(0.01_f32)
                         .width(Length::Fill),
                 ]
                 .spacing(6),
@@ -1060,7 +1059,7 @@ impl MIDIEdit {
                                 Self::zoom_x_to_slider(zoom_x),
                                 |value| Message::PianoZoomXChanged(Self::slider_to_zoom_x(value)),
                             )
-                            .step(0.1)
+                            .step(0.1_f32)
                             .width(Length::Fixed(100.0)),
                         ]
                         .spacing(8)
@@ -1077,7 +1076,7 @@ impl MIDIEdit {
             column![
                 v_scroll,
                 vertical_slider(1.0..=8.0, zoom_y, Message::PianoZoomYChanged)
-                    .step(0.1)
+                    .step(0.1_f32)
                     .height(Length::Fixed(100.0)),
             ]
             .spacing(8)

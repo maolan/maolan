@@ -778,7 +778,7 @@ impl Workspace {
                                 visible_bars_to_zoom_slider(zoom_visible_bars),
                                 Message::ZoomSliderChanged,
                             )
-                            .step(0.001)
+                            .step(0.001_f32)
                             .width(Length::Fixed(105.0)),
                         ]
                         .spacing(8),
