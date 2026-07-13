@@ -6461,7 +6461,9 @@ impl Maolan {
                     crate::state::View::Piano => {
                         return self.update(Message::RemoveSelected);
                     }
-                    crate::state::View::HwInputPorts | crate::state::View::HwOutputPorts => {
+                    crate::state::View::JackConnections
+                    | crate::state::View::HwInputPorts
+                    | crate::state::View::HwOutputPorts => {
                         return Task::none();
                     }
                     crate::state::View::PitchCorrection
@@ -9809,6 +9811,44 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.editor_connections = None;
                 state.plugin_graph_track = None;
+            }
+            Message::OpenJackConnections => {
+                let mut state = self.state.blocking_write();
+                state.view = View::JackConnections;
+                state.jack_connecting = None;
+                drop(state);
+                return self.send(Action::JackGetGraph);
+            }
+            Message::CloseJackConnections => {
+                let mut state = self.state.blocking_write();
+                state.view = View::Connections;
+                state.jack_connecting = None;
+            }
+            Message::JackPortClick { port, is_output } => {
+                let mut state = self.state.blocking_write();
+                if is_output {
+                    state.jack_connecting = Some(port);
+                    state.message = "Select a JACK input port to connect".to_string();
+                    return Task::none();
+                }
+                let Some(source) = state.jack_connecting.take() else {
+                    state.message = "Select a JACK output port first".to_string();
+                    return Task::none();
+                };
+                drop(state);
+                return self.send(Action::JackConnect {
+                    source,
+                    destination: port,
+                });
+            }
+            Message::JackDisconnect {
+                source,
+                destination,
+            } => {
+                return self.send(Action::JackDisconnect {
+                    source,
+                    destination,
+                });
             }
             Message::OpenHwPorts { input } => {
                 let mut state = self.state.blocking_write();

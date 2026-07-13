@@ -1,5 +1,6 @@
 pub mod canvas_host;
 pub mod colors;
+pub mod jack;
 pub mod plugins;
 pub mod port_kind;
 pub mod ports;

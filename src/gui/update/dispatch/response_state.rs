@@ -137,6 +137,34 @@ impl Maolan {
                 }
                 true
             }
+            Action::JackGraph(graph) => {
+                let mut state = self.state.blocking_write();
+                state.jack_graph = graph.clone();
+                state.jack_session_routing = Some(graph.clone());
+                state.message = format!(
+                    "JACK graph: {} ports, {} connections",
+                    graph.ports.len(),
+                    graph.connections.len()
+                );
+                true
+            }
+            Action::JackConnect {
+                source,
+                destination,
+            } => {
+                let mut state = self.state.blocking_write();
+                state.jack_connecting = None;
+                state.message = format!("Connected JACK {source} -> {destination}");
+                true
+            }
+            Action::JackDisconnect {
+                source,
+                destination,
+            } => {
+                let mut state = self.state.blocking_write();
+                state.message = format!("Disconnected JACK {source} -> {destination}");
+                true
+            }
             Action::MidiLearnMappingsReport { lines } => {
                 let report = lines.join(" | ");
                 self.midi_mappings_report_lines = lines.clone();

@@ -1562,7 +1562,16 @@ impl canvas::Program<Message> for Graph {
                                 && now.duration_since(*last_time) <= DOUBLE_CLICK
                             {
                                 data.connections_last_track_click = None;
-                                return Some(Action::publish(Message::OpenHwPorts { input: true }));
+                                return Some(Action::publish(
+                                    if matches!(
+                                        data.selected_backend,
+                                        crate::state::AudioBackendOption::Jack
+                                    ) {
+                                        Message::OpenJackConnections
+                                    } else {
+                                        Message::OpenHwPorts { input: true }
+                                    },
+                                ));
                             }
                             data.connections_last_track_click = Some((HW_IN_ID.to_string(), now));
                             return Some(Action::capture());
@@ -1597,9 +1606,16 @@ impl canvas::Program<Message> for Graph {
                                 && now.duration_since(*last_time) <= DOUBLE_CLICK
                             {
                                 data.connections_last_track_click = None;
-                                return Some(Action::publish(Message::OpenHwPorts {
-                                    input: false,
-                                }));
+                                return Some(Action::publish(
+                                    if matches!(
+                                        data.selected_backend,
+                                        crate::state::AudioBackendOption::Jack
+                                    ) {
+                                        Message::OpenJackConnections
+                                    } else {
+                                        Message::OpenHwPorts { input: false }
+                                    },
+                                ));
                             }
                             data.connections_last_track_click = Some((HW_OUT_ID.to_string(), now));
                             return Some(Action::capture());
@@ -4549,6 +4565,43 @@ mod tests {
             second_message,
             Some(Message::OpenHwPorts { input: false })
         ));
+        assert_eq!(second_status, event::Status::Ignored);
+    }
+
+    #[test]
+    fn update_double_clicking_hw_in_with_jack_opens_jack_connections_view() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        {
+            let mut data = state.blocking_write();
+            data.hw_in = Some(crate::state::HW { channels: 1 });
+            data.selected_backend = crate::state::AudioBackendOption::Jack;
+        }
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor = mouse::Cursor::Available(Point::new(20.0, 20.0));
+
+        let first = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("first action");
+        let (first_message, first_status) = action_message(first);
+        assert!(first_message.is_none());
+        assert_eq!(first_status, event::Status::Captured);
+
+        let second = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("second action");
+        let (second_message, second_status) = action_message(second);
+        assert!(matches!(second_message, Some(Message::OpenJackConnections)));
         assert_eq!(second_status, event::Status::Ignored);
     }
 

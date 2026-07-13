@@ -648,6 +648,7 @@ impl Maolan {
                             .height(Length::Fill)
                             .into()
                         }
+                        View::JackConnections => connections::canvas_host::jack(self.state.clone()),
                         View::HwInputPorts => self.hw.jack_ports_view(true),
                         View::HwOutputPorts => self.hw.jack_ports_view(false),
                         View::TrackPlugins => {
