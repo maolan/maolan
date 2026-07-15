@@ -130,9 +130,10 @@ impl Maolan {
                     }
                 }
                 if self.live_session_playing {
-                    return Some(
-                        self.send(Action::Session(SessionAction::QueueScene { scene_index })),
-                    );
+                    return Some(self.send(Action::Session(SessionAction::QueueScene {
+                        scene_index,
+                        launch_quantization: self.snap_mode.launch_quantization(),
+                    })));
                 }
                 None
             }
@@ -420,6 +421,7 @@ impl Maolan {
                                                     &target_track_name,
                                                     clip,
                                                     clip.start,
+                                                    clip.length,
                                                 )
                                             }),
                                         maolan_engine::kind::Kind::MIDI => source
@@ -433,6 +435,7 @@ impl Maolan {
                                                     &target_track_name,
                                                     clip,
                                                     clip.start,
+                                                    clip.length,
                                                 )
                                             }),
                                     };
@@ -470,6 +473,7 @@ impl Maolan {
                                                     &target_track_name,
                                                     clip,
                                                     clip.start,
+                                                    clip.length,
                                                 )
                                             }
                                         }),
@@ -491,6 +495,7 @@ impl Maolan {
                                                     &target_track_name,
                                                     clip,
                                                     clip.start,
+                                                    clip.length,
                                                 )
                                             }
                                         }),
@@ -992,6 +997,10 @@ impl Maolan {
             return Task::none();
         }
         self.live_session_playing = true;
+        if self.record_armed {
+            self.live_session_record_start_sample = Some(0);
+            self.recorded_live_session_clip_passes.clear();
+        }
         let scene = {
             let state = self.state.blocking_read();
             state
@@ -1005,6 +1014,8 @@ impl Maolan {
 
     pub(super) fn stop_live_session_play(&mut self) -> Task<Message> {
         self.live_session_playing = false;
+        self.live_session_record_start_sample = None;
+        self.recorded_live_session_clip_passes.clear();
         self.stop_all_session_clips();
         self.stop_workspace_playback(false)
     }
@@ -1032,6 +1043,8 @@ impl Maolan {
 
     pub(super) fn stop_all_session_clips(&mut self) {
         self.live_session_playing = false;
+        self.live_session_record_start_sample = None;
+        self.recorded_live_session_clip_passes.clear();
         let _ = CLIENT
             .sender
             .try_send(EngineMessage::Request(Action::Session(
@@ -1265,6 +1278,18 @@ impl Maolan {
             self.paused = false;
         }
 
+        self.live_session_record_start_sample = if self.live_session_playing {
+            Some(
+                CLIENT
+                    .session_runtime_snapshot()
+                    .map(|snapshot| snapshot.session_sample)
+                    .unwrap_or(0),
+            )
+        } else {
+            Some(0)
+        };
+        self.recorded_live_session_clip_passes.clear();
+
         if !self.record_armed {
             self.record_armed = true;
             if self.playing {
@@ -1276,6 +1301,93 @@ impl Maolan {
         }
 
         self.state.blocking_write().message = "Recording session to arrangement".to_string();
+    }
+
+    pub(super) fn capture_completed_live_session_clip_passes(
+        &mut self,
+        completed_passes: &[maolan_engine::meter::SessionCompletedClipPass],
+    ) {
+        let Some(record_start) = self.live_session_record_start_sample else {
+            return;
+        };
+
+        let mut candidates = Vec::new();
+        {
+            let state = self.state.blocking_read();
+            for completed in completed_passes {
+                if completed.start_sample < record_start {
+                    continue;
+                }
+                let Some(track) = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == completed.track_name)
+                else {
+                    continue;
+                };
+                let key = (
+                    completed.track_name.clone(),
+                    completed.scene_index,
+                    completed.clip_id.clone(),
+                    completed.pass_index,
+                    completed.start_sample,
+                );
+                if self.recorded_live_session_clip_passes.contains(&key) {
+                    continue;
+                }
+                if let Some(clip) = track
+                    .audio
+                    .clips
+                    .iter()
+                    .find(|clip| clip.id == completed.clip_id)
+                    .or_else(|| {
+                        state
+                            .unused_audio_clips
+                            .iter()
+                            .find(|clip| clip.id == completed.clip_id)
+                    })
+                {
+                    candidates.push((
+                        key,
+                        Self::audio_clip_add_action(
+                            &completed.clip_id,
+                            &completed.track_name,
+                            clip,
+                            completed.start_sample,
+                            completed.length_samples,
+                        ),
+                    ));
+                } else if let Some(clip) = track
+                    .midi
+                    .clips
+                    .iter()
+                    .find(|clip| clip.id == completed.clip_id)
+                    .or_else(|| {
+                        state
+                            .unused_midi_clips
+                            .iter()
+                            .find(|clip| clip.id == completed.clip_id)
+                    })
+                {
+                    candidates.push((
+                        key,
+                        Self::midi_clip_add_action(
+                            &completed.clip_id,
+                            &completed.track_name,
+                            clip,
+                            completed.start_sample,
+                            completed.length_samples,
+                        ),
+                    ));
+                }
+            }
+        }
+
+        for (key, action) in candidates {
+            if self.recorded_live_session_clip_passes.insert(key) {
+                let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+            }
+        }
     }
 
     fn record_into_session_slot(&mut self, track_name: &str, scene_index: usize) {
@@ -1305,6 +1417,7 @@ impl Maolan {
 
         if !self.record_armed {
             self.record_armed = true;
+            self.live_session_record_start_sample = None;
             if self.playing {
                 self.start_recording_preview();
             }

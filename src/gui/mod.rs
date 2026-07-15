@@ -711,6 +711,8 @@ pub struct Maolan {
     playing: bool,
     paused: bool,
     live_session_playing: bool,
+    recorded_live_session_clip_passes: HashSet<(String, usize, String, usize, usize)>,
+    live_session_record_start_sample: Option<usize>,
     metronome_enabled: bool,
     transport_samples: f64,
     last_playback_tick: Option<Instant>,
@@ -1018,6 +1020,8 @@ impl Default for Maolan {
             playing: false,
             paused: false,
             live_session_playing: false,
+            recorded_live_session_clip_passes: HashSet::new(),
+            live_session_record_start_sample: None,
             metronome_enabled: false,
             transport_samples: 0.0,
             last_playback_tick: None,
@@ -8075,6 +8079,49 @@ mod tests {
             .expect("load session");
 
         assert!((restored.zoom_visible_bars - 6.5).abs() < f32::EPSILON);
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_save_and_load_roundtrip_preserves_master_output_level() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_master_session_{unique}"));
+
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.hw_out_level = -7.5;
+            state.hw_out_balance = 0.25;
+        }
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("main.json");
+        let session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        assert_eq!(session["transport"]["hw_out_level"].as_f64(), Some(-7.5));
+        assert_eq!(session["transport"]["hw_out_balance"].as_f64(), Some(0.25));
+
+        let mut restored = Maolan::default();
+        {
+            let mut state = restored.state.blocking_write();
+            state.hw_out_level = 0.0;
+            state.hw_out_balance = 0.0;
+        }
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+
+        {
+            let state = restored.state.blocking_read();
+            assert!((state.hw_out_level - -7.5).abs() < f32::EPSILON);
+            assert!((state.hw_out_balance - 0.25).abs() < f32::EPSILON);
+        }
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }

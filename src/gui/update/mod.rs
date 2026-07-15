@@ -554,13 +554,14 @@ impl Maolan {
         track_name: &str,
         clip: &crate::state::AudioClip,
         start: usize,
+        length: usize,
     ) -> maolan_engine::message::Action {
         maolan_engine::message::Action::AddClip {
             clip_id: clip_id.to_string(),
             name: clip.name.clone(),
             track_name: track_name.to_string(),
             start,
-            length: clip.length,
+            length,
             offset: clip.offset,
             input_channel: clip.input_channel,
             muted: clip.muted,
@@ -596,13 +597,14 @@ impl Maolan {
         track_name: &str,
         clip: &crate::state::MIDIClip,
         start: usize,
+        length: usize,
     ) -> maolan_engine::message::Action {
         maolan_engine::message::Action::AddClip {
             clip_id: clip_id.to_string(),
             name: clip.name.clone(),
             track_name: track_name.to_string(),
             start,
-            length: clip.length,
+            length,
             offset: clip.offset,
             input_channel: clip.input_channel,
             muted: clip.muted,
@@ -769,6 +771,18 @@ impl Maolan {
     }
 
     pub(super) fn action_with_clip_identity_fork(&self, action: Action) -> Action {
+        self.action_with_clip_identity_fork_impl(action, false)
+    }
+
+    pub(super) fn action_with_confirmed_clip_length_change(&self, action: Action) -> Action {
+        self.action_with_clip_identity_fork_impl(action, true)
+    }
+
+    fn action_with_clip_identity_fork_impl(
+        &self,
+        action: Action,
+        confirmed_length_change: bool,
+    ) -> Action {
         if let Action::ApplyGroupedActions(actions) = action {
             let mut forked_actions = Vec::new();
             for action in actions {
@@ -843,7 +857,9 @@ impl Maolan {
         if matching_id_count <= 1 {
             return action;
         }
-        if let Some(new_length) = length_change {
+        if let Some(new_length) = length_change
+            && !confirmed_length_change
+        {
             let old_length = {
                 let state = self.state.blocking_read();
                 state
@@ -3885,6 +3901,7 @@ impl Maolan {
 mod tests {
     use super::Maolan;
     use crate::state::{AudioClip, PitchCorrectionData, PitchCorrectionPoint, Track};
+    use maolan_engine::kind::Kind;
     use maolan_engine::message::Action;
 
     #[test]
@@ -3897,6 +3914,61 @@ mod tests {
         assert_eq!(connections[0]["to_node"], serde_json::json!("TrackOutput"));
         assert_eq!(connections[0]["from_port"].as_u64(), Some(0));
         assert_eq!(connections[0]["to_port"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn confirmed_clip_length_change_forks_copied_clip_identity_after_live_resize() {
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            let mut track = Track::new("Synth".to_string(), 1.0, 2, 2, 0, 0);
+            track.audio.clips.push(AudioClip {
+                id: "shared-id".to_string(),
+                name: "audio/Synth.wav".to_string(),
+                start: 0,
+                length: 465_454,
+                ..AudioClip::default()
+            });
+            track.audio.clips.push(AudioClip {
+                id: "shared-id".to_string(),
+                name: "audio/Synth.wav".to_string(),
+                start: 465_454,
+                length: 930_909,
+                ..AudioClip::default()
+            });
+            state.tracks.push(track);
+        }
+
+        let action = app.action_with_confirmed_clip_length_change(Action::SetClipBounds {
+            track_name: "Synth".to_string(),
+            clip_index: 0,
+            kind: Kind::Audio,
+            start: 0,
+            length: 465_454,
+            offset: 0,
+        });
+
+        let Action::ApplyGroupedActions(actions) = action else {
+            panic!("length-changing copied clip should fork identity before bounds update");
+        };
+        assert_eq!(actions.len(), 2);
+        match &actions[0] {
+            Action::SetClipIdentity {
+                track_name,
+                clip_index,
+                kind,
+                new_id,
+                new_name,
+            } => {
+                assert_eq!(track_name, "Synth");
+                assert_eq!(*clip_index, 0);
+                assert_eq!(*kind, Kind::Audio);
+                assert_ne!(new_id, "shared-id");
+                assert_eq!(new_name, "audio/Synth_1.wav");
+            }
+            other => panic!("expected SetClipIdentity, got {other:?}"),
+        }
+        assert!(matches!(actions[1], Action::SetClipBounds { .. }));
     }
 
     #[test]

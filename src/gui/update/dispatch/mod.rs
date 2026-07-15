@@ -2752,6 +2752,8 @@ impl Maolan {
                     self.record_armed = false;
                     self.pending_record_after_save = false;
                     self.session_slot_record_target = None;
+                    self.live_session_record_start_sample = None;
+                    self.recorded_live_session_clip_passes.clear();
                     self.stop_recording_preview();
                     return self.send(Action::SetRecordEnabled(false));
                 }
@@ -2770,6 +2772,17 @@ impl Maolan {
                     );
                 }
                 self.record_armed = true;
+                self.live_session_record_start_sample = if self.live_session_playing {
+                    Some(
+                        CLIENT
+                            .session_runtime_snapshot()
+                            .map(|snapshot| snapshot.session_sample)
+                            .unwrap_or(0),
+                    )
+                } else {
+                    Some(0)
+                };
+                self.recorded_live_session_clip_passes.clear();
                 if self.playing {
                     self.start_recording_preview();
                 }
@@ -7497,14 +7510,20 @@ impl Maolan {
                             }
                             return Task::none();
                         }
-                        return self.send(Action::SetClipBounds {
+                        let action = Action::SetClipBounds {
                             track_name,
                             clip_index: index,
                             kind,
                             start,
                             length,
                             offset,
-                        });
+                        };
+                        let initial_length = initial_length.max(1.0) as usize;
+                        if length != initial_length {
+                            return self
+                                .send(self.action_with_confirmed_clip_length_change(action));
+                        }
+                        return self.send(action);
                     }
                     return Task::none();
                 }
@@ -8072,6 +8091,7 @@ impl Maolan {
                                             &target_track,
                                             clip,
                                             start,
+                                            clip.length,
                                         )
                                     }
                                 }),
@@ -8095,6 +8115,7 @@ impl Maolan {
                                             &target_track,
                                             clip,
                                             start,
+                                            clip.length,
                                         )
                                     }
                                 }),
@@ -8126,6 +8147,7 @@ impl Maolan {
                                                 &target_track,
                                                 clip,
                                                 start,
+                                                clip.length,
                                             )
                                         }
                                     }),
@@ -8150,6 +8172,7 @@ impl Maolan {
                                                 &target_track,
                                                 clip,
                                                 start,
+                                                clip.length,
                                             )
                                         }
                                     }),
