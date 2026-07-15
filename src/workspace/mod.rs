@@ -474,8 +474,6 @@ impl Workspace {
             session_root: session_root.cloned(),
             pixels_per_sample,
             samples_per_bar,
-            snap_mode,
-            samples_per_beat,
             active_clip_drag: active_clip_drag.cloned(),
             active_target_track: active_clip_target_track.map(str::to_string),
             active_target_valid: active_clip_target_valid,

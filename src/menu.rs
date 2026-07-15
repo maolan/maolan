@@ -26,6 +26,7 @@ pub struct MenuViewState {
     pub log_visible: bool,
     pub shortcuts_pane_visible: bool,
     pub modulators_pane_visible: bool,
+    pub clips_pane_visible: bool,
 }
 
 impl Menu {
@@ -210,6 +211,11 @@ impl Menu {
                         "Modulators",
                         state.modulators_pane_visible,
                         Message::ToggleModulatorsPane
+                    )),
+                    (menu_checkbox_item(
+                        "Clips",
+                        state.clips_pane_visible,
+                        Message::ToggleClipsPane
                     )),
                     (menu_item("About", Message::Show(Show::About))),
                 ))

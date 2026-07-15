@@ -407,11 +407,6 @@ impl Maolan {
             Length::Fixed(v) => v,
             _ => 200.0,
         };
-        let live_view_tracks_width = match state.live_view_tracks_width {
-            Length::Fixed(v) => v,
-            _ => 200.0,
-        };
-        let live_view_left_split = state.live_view_left_split;
         let mixer_height = match state.mixer_height {
             Length::Fixed(v) => v,
             _ => 300.0,
@@ -575,8 +570,6 @@ impl Maolan {
             },
             "ui": {
                 "tracks_width": tracks_width,
-                "live_view_tracks_width": live_view_tracks_width,
-                "live_view_left_split": live_view_left_split,
                 "mixer_height": mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
                 "snap_mode": self.snap_mode,
@@ -1580,6 +1573,12 @@ impl Maolan {
                     clip.ensure_id();
                 }
             }
+            for clip in &mut state.unused_audio_clips {
+                clip.ensure_id();
+            }
+            for clip in &mut state.unused_midi_clips {
+                clip.ensure_id();
+            }
         }
         let file = File::create(&p)?;
         let state = self.state.blocking_read();
@@ -1587,11 +1586,6 @@ impl Maolan {
             Length::Fixed(v) => v,
             _ => 200.0,
         };
-        let live_view_tracks_width = match state.live_view_tracks_width {
-            Length::Fixed(v) => v,
-            _ => 200.0,
-        };
-        let live_view_left_split = state.live_view_left_split;
         let mixer_height = match state.mixer_height {
             Length::Fixed(v) => v,
             _ => 300.0,
@@ -1777,6 +1771,8 @@ impl Maolan {
         let jack_routing = Self::jack_routing_for_save(&state);
         let result = json!({
             "tracks": tracks_json,
+            "unused_audio_clips": serde_json::to_value(&state.unused_audio_clips).unwrap_or(Value::Array(vec![])),
+            "unused_midi_clips": serde_json::to_value(&state.unused_midi_clips).unwrap_or(Value::Array(vec![])),
             "modulators": &self.modulators,
             "connections": &state.connections,
             "jack_routing": jack_routing,
@@ -1817,8 +1813,6 @@ impl Maolan {
             },
             "ui": {
                 "tracks_width": tracks_width,
-                "live_view_tracks_width": live_view_tracks_width,
-                "live_view_left_split": live_view_left_split,
                 "mixer_height": mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
                 "snap_mode": self.snap_mode,
@@ -1991,7 +1985,6 @@ impl Maolan {
             } else {
                 crate::state::SessionMatrix::default()
             };
-            state.session.backfill_play_stop_icons();
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
@@ -2589,12 +2582,6 @@ impl Maolan {
                     "No 'ui.tracks_width' in session",
                 )
             })?;
-            let live_view_tracks_width = session["ui"]["live_view_tracks_width"]
-                .as_f64()
-                .unwrap_or(tracks_width);
-            let live_view_left_split = session["ui"]["live_view_left_split"]
-                .as_f64()
-                .unwrap_or(0.5) as f32;
             let mixer_height = session["ui"]["mixer_height"].as_f64().ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -2602,8 +2589,6 @@ impl Maolan {
                 )
             })?;
             state.tracks_width = Length::Fixed(tracks_width as f32);
-            state.live_view_tracks_width = Length::Fixed(live_view_tracks_width as f32);
-            state.live_view_left_split = live_view_left_split;
             state.mixer_height = Length::Fixed(mixer_height as f32);
         }
         self.zoom_visible_bars = session["ui"]["zoom_visible_bars"]
@@ -2633,6 +2618,19 @@ impl Maolan {
             self.modulators =
                 serde_json::from_value::<Vec<crate::state::Modulator>>(modulators.clone())
                     .unwrap_or_default();
+        }
+        {
+            let unused_audio: Vec<crate::state::AudioClip> = session
+                .get("unused_audio_clips")
+                .and_then(|value| serde_json::from_value(value.clone()).ok())
+                .unwrap_or_default();
+            let unused_midi: Vec<crate::state::MIDIClip> = session
+                .get("unused_midi_clips")
+                .and_then(|value| serde_json::from_value(value.clone()).ok())
+                .unwrap_or_default();
+            let mut state = self.state.blocking_write();
+            state.unused_audio_clips = unused_audio;
+            state.unused_midi_clips = unused_midi;
         }
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {
@@ -3580,12 +3578,19 @@ impl Maolan {
                             scene_index,
                             clip_id: Some(clip_ref.clip_id.clone()),
                         });
-                        restore_actions.push(Action::TrackSetSessionSlotPlayEnabled {
-                            track_name: track_name.clone(),
-                            scene_index,
-                            enabled: slot.is_play_enabled(),
-                        });
                     }
+                    // Marks are synced for clipless slots as well: a stop or
+                    // play mark without a clip still drives scene switches.
+                    restore_actions.push(Action::TrackSetSessionSlotPlayEnabled {
+                        track_name: track_name.clone(),
+                        scene_index,
+                        enabled: slot.play_stop_icon == Some(true),
+                    });
+                    restore_actions.push(Action::TrackSetSessionSlotStopEnabled {
+                        track_name: track_name.clone(),
+                        scene_index,
+                        enabled: slot.play_stop_icon == Some(false),
+                    });
                 }
             }
         }
@@ -3612,6 +3617,21 @@ impl Maolan {
         let engine_modulators: Vec<maolan_engine::modulator::Modulator> =
             self.modulators.iter().map(Into::into).collect();
         restore_actions.push(Action::SetModulators(engine_modulators));
+        {
+            let state = self.state.blocking_read();
+            restore_actions.push(Action::SetUnusedClips {
+                audio: state
+                    .unused_audio_clips
+                    .iter()
+                    .map(Self::audio_clip_to_data)
+                    .collect(),
+                midi: state
+                    .unused_midi_clips
+                    .iter()
+                    .map(Self::midi_clip_to_data)
+                    .collect(),
+            });
+        }
         restore_actions.push(Action::EndSessionRestore);
         tracing::info!(
             path = %path,

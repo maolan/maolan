@@ -214,9 +214,10 @@ fn workspace_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
                 "Ctrl+Shift+Z / Ctrl+Y: Redo",
                 "Delete / Backspace: Remove selected",
                 "Escape: Cancel / clear",
-                "N: Toggle shortcuts pane",
+                "S: Toggle shortcuts pane",
                 "M: Toggle modulators pane",
-                "C: Toggle cut indicator",
+                "C: Toggle clips pane",
+                "X: Toggle cut indicator",
             ],
             hint
         ),

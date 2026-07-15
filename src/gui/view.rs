@@ -1,5 +1,6 @@
 use super::{LogHighlight, LogHighlightSettings, Maolan, last_message_status_text};
 use crate::{
+    clips_pane::ClipsPane,
     connections,
     consts::state_ids::METRONOME_TRACK_ID,
     menu::MenuViewState,
@@ -13,11 +14,10 @@ use iced::{
     Alignment, Border, Color, Length, Theme,
     advanced::text::{Highlighter, highlighter},
     widget::{
-        Column, Space, Stack, button, column, container, mouse_area, pick_list, progress_bar, row,
+        Space, Stack, button, column, container, mouse_area, pick_list, progress_bar, row,
         scrollable, text, text_editor, text_input,
     },
 };
-use iced_drop::droppable;
 use maolan_widgets::clip::AudioClip as AudioClipWidget;
 use std::ops::Range;
 
@@ -311,6 +311,29 @@ impl Maolan {
                             .unwrap_or_else(|| format!("clip {}", target.clip_idx));
                         format!("Clip: {}", clip_label)
                     });
+                    let clips_pane = if self.clips_pane_visible {
+                        let live_ids = state.session.slot_referenced_clip_ids();
+                        let unused_audio: Vec<_> = state
+                            .unused_audio_clips
+                            .iter()
+                            .filter(|clip| !live_ids.contains(&clip.id))
+                            .cloned()
+                            .collect();
+                        let unused_midi: Vec<_> = state
+                            .unused_midi_clips
+                            .iter()
+                            .filter(|clip| !live_ids.contains(&clip.id))
+                            .cloned()
+                            .collect();
+                        Some(ClipsPane::view(
+                            &state.tracks,
+                            &unused_audio,
+                            &unused_midi,
+                            &state.selected,
+                        ))
+                    } else {
+                        None
+                    };
                     drop(state);
 
                     let view = match view_kind {
@@ -379,20 +402,10 @@ impl Maolan {
                         }
                         View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
                         View::Session => {
-                            let (tracks_width, left_split, left_tab, session_view_connections) = {
+                            let session_view_connections = {
                                 let state = self.state.blocking_read();
-                                (
-                                    state.live_view_tracks_width,
-                                    state.live_view_left_split,
-                                    state.live_view_left_tab.clone(),
-                                    state.session_view_connections.clone(),
-                                )
+                                state.session_view_connections.clone()
                             };
-                            let tracks_width_px = match tracks_width {
-                                Length::Fixed(v) => v,
-                                _ => 200.0,
-                            };
-                            let left_panel_width = tracks_width_px * left_split;
                             let session_view: iced::Element<'_, Message> =
                                 if let Some(ref track_name) = session_view_connections {
                                     let selected_modulator =
@@ -468,9 +481,12 @@ impl Maolan {
                                         tracks: state.tracks.clone(),
                                         session: state.session.clone(),
                                         slot_runtimes: state.slot_runtimes.clone(),
+                                        unused_audio_clips: state.unused_audio_clips.clone(),
+                                        unused_midi_clips: state.unused_midi_clips.clone(),
                                         selected_slots: state.selected_slots.clone(),
                                         selected: state.selected.clone(),
                                         selected_scene: state.selected_scene,
+                                        current_scene: state.current_scene,
                                         midi_learn,
                                         master_track: Some(master_track),
                                         session_scene_context_menu: state
@@ -487,189 +503,6 @@ impl Maolan {
                                 self.selected_modulator_id
                                     .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
                             );
-                            let tracks_resize_hovered = self.live_view_tracks_resize_hovered;
-                            let tracks_splitter = mouse_area(
-                                container("")
-                                    .width(Length::Fixed(3.0))
-                                    .height(Length::Fill)
-                                    .style(move |_theme| container::Style {
-                                        background: Some(iced::Background::Color(Color {
-                                            r: 0.7,
-                                            g: 0.7,
-                                            b: 0.7,
-                                            a: if tracks_resize_hovered { 0.95 } else { 0.6 },
-                                        })),
-                                        ..Default::default()
-                                    }),
-                            )
-                            .on_enter(Message::LiveViewTracksResizeHover(true))
-                            .on_exit(Message::LiveViewTracksResizeHover(false))
-                            .on_press(Message::LiveViewTracksResizeStart);
-
-                            let left_panel_style = |_theme: &iced::Theme| container::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb(
-                                    0.1, 0.1, 0.1,
-                                ))),
-                                ..Default::default()
-                            };
-                            let left_panel_1 = container({
-                                let item_style = |selected: bool| {
-                                    move |_theme: &iced::Theme, _status: button::Status| {
-                                        button::Style {
-                                            background: Some(iced::Background::Color(
-                                                if selected {
-                                                    Color::from_rgb(0.2, 0.25, 0.35)
-                                                } else {
-                                                    Color::TRANSPARENT
-                                                },
-                                            )),
-                                            text_color: Color::WHITE,
-                                            ..button::Style::default()
-                                        }
-                                    }
-                                };
-                                column![
-                                    button(text("Favorites").size(12))
-                                        .style(item_style(matches!(
-                                            left_tab,
-                                            crate::state::LiveViewLeftTab::Favorites
-                                        )))
-                                        .padding([4, 8])
-                                        .width(Length::Fill)
-                                        .on_press(Message::LiveViewLeftTabSelect(
-                                            crate::state::LiveViewLeftTab::Favorites,
-                                        )),
-                                    button(text("Clips").size(12))
-                                        .style(item_style(matches!(
-                                            left_tab,
-                                            crate::state::LiveViewLeftTab::Clips
-                                        )))
-                                        .padding([4, 8])
-                                        .width(Length::Fill)
-                                        .on_press(Message::LiveViewLeftTabSelect(
-                                            crate::state::LiveViewLeftTab::Clips,
-                                        )),
-                                ]
-                                .spacing(8)
-                                .padding(8)
-                            })
-                            .width(Length::Fixed(left_panel_width))
-                            .height(Length::Fill)
-                            .style(left_panel_style);
-
-                            let left_panel_2_content: iced::Element<'static, Message> =
-                                match left_tab {
-                                    crate::state::LiveViewLeftTab::Clips => {
-                                        let clips = {
-                                            let state = self.state.blocking_read();
-                                            let mut clips: Vec<(
-                                                String,
-                                                String,
-                                                String,
-                                                maolan_engine::kind::Kind,
-                                            )> = Vec::new();
-                                            for track in &state.tracks {
-                                                for clip in &track.audio.clips {
-                                                    clips.push((
-                                                        track.name.clone(),
-                                                        clip.id.clone(),
-                                                        clip.name.clone(),
-                                                        maolan_engine::kind::Kind::Audio,
-                                                    ));
-                                                }
-                                                for clip in &track.midi.clips {
-                                                    clips.push((
-                                                        track.name.clone(),
-                                                        clip.id.clone(),
-                                                        clip.name.clone(),
-                                                        maolan_engine::kind::Kind::MIDI,
-                                                    ));
-                                                }
-                                            }
-                                            clips
-                                        };
-                                        let mut clip_items = Column::new().spacing(2).padding(8);
-                                        for (track_name, clip_id, clip_name, kind) in clips {
-                                            let display_name = {
-                                                let mut name = clip_name
-                                                    .strip_prefix("audio/")
-                                                    .or_else(|| clip_name.strip_prefix("midi/"))
-                                                    .unwrap_or(&clip_name)
-                                                    .to_string();
-                                                for suffix in [".wav", ".midi", ".mid"] {
-                                                    if let Some(stripped) =
-                                                        name.strip_suffix(suffix)
-                                                    {
-                                                        name = stripped.to_string();
-                                                        break;
-                                                    }
-                                                }
-                                                name
-                                            };
-                                            let clip_item: iced::Element<'static, Message> =
-                                                container(
-                                                    text(display_name).size(11).color(Color::WHITE),
-                                                )
-                                                .width(Length::Fill)
-                                                .height(Length::Fixed(22.0))
-                                                .padding([2, 4])
-                                                .style(|_theme: &iced::Theme| container::Style {
-                                                    background: Some(iced::Background::Color(
-                                                        Color::TRANSPARENT,
-                                                    )),
-                                                    ..Default::default()
-                                                })
-                                                .into();
-                                            let draggable = droppable(clip_item)
-                                                .on_drag(move |_point, _rect| {
-                                                    Message::SessionClipDragStart {
-                                                        source_track_name: track_name.clone(),
-                                                        clip_id: clip_id.clone(),
-                                                        kind,
-                                                    }
-                                                })
-                                                .on_drop(move |point, _rect| {
-                                                    Message::SessionClipDropped { point }
-                                                });
-                                            clip_items = clip_items.push(draggable);
-                                        }
-                                        scrollable(clip_items)
-                                            .width(Length::Fill)
-                                            .height(Length::Fill)
-                                            .into()
-                                    }
-                                    crate::state::LiveViewLeftTab::Favorites => {
-                                        Space::new().width(Length::Fixed(0.0)).into()
-                                    }
-                                };
-                            let left_panel_2 = container(left_panel_2_content)
-                                .width(Length::Fixed((tracks_width_px - left_panel_width).max(1.0)))
-                                .height(Length::Fill)
-                                .style(left_panel_style);
-
-                            let left_split_resize_hovered =
-                                self.live_view_left_split_resize_hovered;
-                            let left_splitter = mouse_area(
-                                container("")
-                                    .width(Length::Fixed(3.0))
-                                    .height(Length::Fill)
-                                    .style(move |_theme| container::Style {
-                                        background: Some(iced::Background::Color(Color {
-                                            r: 0.7,
-                                            g: 0.7,
-                                            b: 0.7,
-                                            a: if left_split_resize_hovered { 0.95 } else { 0.6 },
-                                        })),
-                                        ..Default::default()
-                                    }),
-                            )
-                            .on_enter(Message::LiveViewLeftSplitResizeHover(true))
-                            .on_exit(Message::LiveViewLeftSplitResizeHover(false))
-                            .on_press(Message::LiveViewLeftSplitResizeStart);
-
-                            let left_panel = row![left_panel_1, left_splitter, left_panel_2]
-                                .width(tracks_width)
-                                .height(Length::Fill);
 
                             let mixer_resize_hovered = self.mixer_resize_hovered;
                             let mixer_resize_handle = mouse_area(
@@ -691,15 +524,9 @@ impl Maolan {
                             .on_press(Message::MixerResizeStart);
 
                             container(
-                                row![
-                                    left_panel,
-                                    tracks_splitter,
-                                    column![session_view, mixer_resize_handle, mixer_view]
-                                        .width(Length::Fill)
-                                        .height(Length::Fill)
-                                ]
-                                .width(Length::Fill)
-                                .height(Length::Fill),
+                                column![session_view, mixer_resize_handle, mixer_view]
+                                    .width(Length::Fill)
+                                    .height(Length::Fill),
                             )
                             .style(|_theme| crate::style::app_background())
                             .width(Length::Fill)
@@ -830,6 +657,7 @@ impl Maolan {
                         log_visible: self.show_log_window,
                         shortcuts_pane_visible: self.shortcuts_pane_visible,
                         modulators_pane_visible: self.modulators_pane_visible,
+                        clips_pane_visible: self.clips_pane_visible,
                     }),];
                     if self.toolbar_visible {
                         content = content.push(self.toolbar.view(ToolbarViewState {
@@ -1070,6 +898,12 @@ impl Maolan {
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .into();
+                    }
+                    if let Some(clips_pane) = clips_pane {
+                        view = row![container(view).width(Length::Fill), clips_pane]
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into();
                     }
                     content = content.push(view);
                     if self.import_in_progress {

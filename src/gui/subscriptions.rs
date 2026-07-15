@@ -181,7 +181,13 @@ impl Maolan {
             })
         });
 
-        let playback_sub = if self.playing && !self.paused && self.should_drive_playback_ui() {
+        // Live session playback reports playing=true with the timeline
+        // transport stopped, which the paused derivation treats as paused;
+        // live_session_playing is the reliable signal that session slot
+        // runtimes need polling.
+        let playback_sub = if (self.playing && !self.paused && self.should_drive_playback_ui())
+            || self.live_session_playing
+        {
             iced::time::every(PLAYHEAD_UPDATE_INTERVAL).map(|_| Message::PlaybackTick)
         } else {
             Subscription::none()
@@ -313,11 +319,13 @@ impl Maolan {
                             Message::PianoHumanizeSelectedNotes
                         } else if s == "g" {
                             Message::PianoGrooveSelectedNotes
-                        } else if s == "n" {
+                        } else if s == "s" {
                             Message::ToggleShortcutsPane
                         } else if s == "m" {
                             Message::ToggleModulatorsPane
                         } else if s == "c" {
+                            Message::ToggleClipsPane
+                        } else if s == "x" {
                             Message::ToggleCutIndicator
                         } else if s == "b" {
                             Message::ToggleSelectedPluginBypass
@@ -552,6 +560,66 @@ mod tests {
                 view
             ),
             Message::JumpToEnd
+        ));
+    }
+
+    #[test]
+    fn s_in_workspace_toggles_shortcuts_pane() {
+        let view = crate::state::View::Workspace;
+        assert!(matches!(
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("s".into()),
+                    modified_key: Key::Character("s".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyS),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: Some("s".into()),
+                    repeat: false,
+                },
+                view
+            ),
+            Message::ToggleShortcutsPane
+        ));
+    }
+
+    #[test]
+    fn c_in_workspace_toggles_clips_pane() {
+        let view = crate::state::View::Workspace;
+        assert!(matches!(
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("c".into()),
+                    modified_key: Key::Character("c".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyC),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: Some("c".into()),
+                    repeat: false,
+                },
+                view
+            ),
+            Message::ToggleClipsPane
+        ));
+    }
+
+    #[test]
+    fn x_in_workspace_toggles_cut_indicator() {
+        let view = crate::state::View::Workspace;
+        assert!(matches!(
+            Maolan::keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("x".into()),
+                    modified_key: Key::Character("x".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyX),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: Some("x".into()),
+                    repeat: false,
+                },
+                view
+            ),
+            Message::ToggleCutIndicator
         ));
     }
 

@@ -148,6 +148,15 @@ impl SessionMatrix {
         self.scenes.len()
     }
 
+    /// Ids of all clips referenced by any session slot (live view usage).
+    pub fn slot_referenced_clip_ids(&self) -> HashSet<String> {
+        self.slots
+            .values()
+            .flat_map(|slots| slots.iter())
+            .filter_map(|slot| slot.clip.as_ref().map(|clip| clip.clip_id.clone()))
+            .collect()
+    }
+
     pub fn add_scene(&mut self) {
         let index = self.scenes.len() + 1;
         self.scenes.push(Scene {
@@ -162,17 +171,6 @@ impl SessionMatrix {
                 play_stop_icon: default_play_stop_icon(),
                 clip_name: None,
             });
-        }
-    }
-
-    /// Backfill missing play/stop icons so legacy slots default to stopped.
-    pub fn backfill_play_stop_icons(&mut self) {
-        for slots in self.slots.values_mut() {
-            for slot in slots {
-                if slot.play_stop_icon.is_none() {
-                    slot.play_stop_icon = Some(false);
-                }
-            }
         }
     }
 
@@ -357,27 +355,21 @@ mod tests {
     }
 
     #[test]
-    fn backfill_play_stop_icons_defaults_missing_to_false() {
-        let mut matrix = SessionMatrix::default();
-        matrix.slots.insert(
-            "track 1".to_string(),
-            vec![
-                ClipSlot {
-                    clip: None,
-                    play_stop_icon: None,
-                    clip_name: None,
-                },
-                ClipSlot {
-                    clip: None,
-                    play_stop_icon: Some(false),
-                    clip_name: None,
-                },
-            ],
-        );
-        matrix.backfill_play_stop_icons();
-        let slots = matrix.slots.get("track 1").unwrap();
-        assert_eq!(slots[0].play_stop_icon, Some(false));
-        assert_eq!(slots[1].play_stop_icon, Some(false));
+    fn clip_slot_unmarked_icon_survives_serialization() {
+        let slot = ClipSlot {
+            clip: None,
+            play_stop_icon: None,
+            clip_name: None,
+        };
+        let json = serde_json::to_string(&slot).unwrap();
+        assert!(json.contains("\"play_stop_icon\":null"));
+        let loaded: ClipSlot = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.play_stop_icon, None);
+
+        // A missing field (legacy session files) still defaults to
+        // stop-marked.
+        let legacy: ClipSlot = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.play_stop_icon, Some(false));
     }
 
     #[test]

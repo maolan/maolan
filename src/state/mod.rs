@@ -911,16 +911,10 @@ pub struct ShownPluginController {
 
 pub type PluginControllerMap = HashMap<usize, Vec<ShownPluginController>>;
 
-#[derive(Debug, Clone, Default)]
-pub enum LiveViewLeftTab {
-    #[default]
-    Favorites,
-    Clips,
-}
-
 #[derive(Debug, Clone)]
 pub struct DraggedSessionClip {
-    pub source_track_name: String,
+    /// `None` when the clip is dragged from the unused-clips pool.
+    pub source_track_name: Option<String>,
     pub clip_id: String,
     pub kind: Kind,
 }
@@ -953,8 +947,6 @@ pub enum Resizing {
     /// `divider + 1`), the lane heights at drag start, and the initial mouse y.
     Lane(String, usize, Vec<f32>, f32),
     Tracks(f32, f32),
-    LiveViewTracks(f32, f32),
-    LiveViewLeftSplit(f32, f32),
 }
 
 #[derive(Debug, Clone)]
@@ -1201,6 +1193,8 @@ pub struct StateData {
     pub shift: bool,
     pub ctrl: bool,
     pub tracks: Vec<Track>,
+    pub unused_audio_clips: Vec<AudioClip>,
+    pub unused_midi_clips: Vec<MIDIClip>,
     pub session_markers: Vec<EditorMarker>,
     pub connections: Vec<Connection>,
     pub selected: HashSet<String>,
@@ -1232,9 +1226,6 @@ pub struct StateData {
     pub midi_clip_create_end: Option<Point>,
     pub mixer_height: Length,
     pub tracks_width: Length,
-    pub live_view_tracks_width: Length,
-    pub live_view_left_split: f32,
-    pub live_view_left_tab: LiveViewLeftTab,
     pub view: View,
     pub connections_folder: Option<String>,
     pub metronome_enabled: bool,
@@ -1389,6 +1380,9 @@ pub struct StateData {
     pub session_view_scroll_y: f32,
     pub selected_slots: SelectedSlots,
     pub selected_scene: Option<usize>,
+    /// Scene whose launch most recently fired, as reported by the engine;
+    /// highlighted as the current scene in the Master column.
+    pub current_scene: Option<usize>,
     pub slot_runtimes: SlotRuntimes,
     pub session_view_connections: Option<String>,
     pub editor_connections: Option<String>,
@@ -1420,6 +1414,8 @@ impl Default for StateData {
             shift: false,
             ctrl: false,
             tracks: vec![],
+            unused_audio_clips: vec![],
+            unused_midi_clips: vec![],
             session_markers: vec![],
             connections: vec![],
             selected: HashSet::new(),
@@ -1454,7 +1450,6 @@ impl Default for StateData {
             midi_clip_create_end: None,
             mixer_height: Length::Fixed(cfg.mixer_height),
             tracks_width: Length::Fixed(cfg.track_width),
-            live_view_tracks_width: Length::Fixed(cfg.track_width),
             view: View::Workspace,
             connections_folder: None,
             metronome_enabled: false,
@@ -1615,11 +1610,10 @@ impl Default for StateData {
             session_view_scroll_y: 0.0,
             selected_slots: HashSet::new(),
             selected_scene: None,
+            current_scene: None,
             slot_runtimes: HashMap::new(),
             session_view_connections: None,
             editor_connections: None,
-            live_view_left_split: 0.5,
-            live_view_left_tab: LiveViewLeftTab::default(),
         }
     }
 }

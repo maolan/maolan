@@ -403,7 +403,10 @@ impl Maolan {
             selected_group,
             copy,
         } = args;
-        if !self.clip_edge_snap_enabled() {
+        // NoSnap disables all snapping. Grid modes snap to the grid; Clips
+        // mode snaps to clip edges instead of the grid (edge candidates are
+        // only gathered in that mode).
+        if matches!(self.snap_mode, crate::message::SnapMode::NoSnap) {
             return (0.0, None, Vec::new());
         }
 
@@ -427,7 +430,11 @@ impl Maolan {
         } else {
             Vec::new()
         };
-        let candidate_edges = self.clip_snap_edges(&excluded_clips);
+        let candidate_edges = if self.clip_edge_snap_enabled() {
+            self.clip_snap_edges(&excluded_clips)
+        } else {
+            Vec::new()
+        };
         let clip_edge_snap_threshold_samples = self.clip_edge_snap_threshold_samples();
         let state = self.state.blocking_read();
         let source = state
@@ -2736,15 +2743,6 @@ impl Maolan {
             Message::TracksResizeHover(hovered) => {
                 self.tracks_resize_hovered = hovered;
             }
-            Message::LiveViewTracksResizeHover(hovered) => {
-                self.live_view_tracks_resize_hovered = hovered;
-            }
-            Message::LiveViewLeftSplitResizeHover(hovered) => {
-                self.live_view_left_split_resize_hovered = hovered;
-            }
-            Message::LiveViewLeftTabSelect(ref tab) => {
-                self.state.blocking_write().live_view_left_tab = tab.clone();
-            }
             Message::MixerResizeHover(hovered) => {
                 self.mixer_resize_hovered = hovered;
             }
@@ -3272,6 +3270,8 @@ impl Maolan {
                                 }
                             }
                             let mut state = self.state.blocking_write();
+                            state.unused_audio_clips.retain(|clip| clip.id != *clip_id);
+                            state.unused_midi_clips.retain(|clip| clip.id != *clip_id);
                             if let Some(track) =
                                 state.tracks.iter_mut().find(|t| &t.name == track_name)
                             {
@@ -3396,6 +3396,16 @@ impl Maolan {
                             midi_clip,
                         } => {
                             let mut state = self.state.blocking_write();
+                            if let Some(clip) = audio_clip {
+                                state
+                                    .unused_audio_clips
+                                    .retain(|unused| unused.id != clip.id);
+                            }
+                            if let Some(clip) = midi_clip {
+                                state
+                                    .unused_midi_clips
+                                    .retain(|unused| unused.id != clip.id);
+                            }
                             if let Some(track) =
                                 state.tracks.iter_mut().find(|t| &t.name == track_name)
                             {
@@ -3725,6 +3735,117 @@ impl Maolan {
                             for (key, source_len) in undo_source_lengths {
                                 self.undo_source_lengths_cache.insert(key, source_len);
                             }
+                        }
+                        Action::MoveClipToUnused {
+                            track_name,
+                            kind,
+                            clip_indices,
+                        } => {
+                            let mut undo_peaks = Vec::new();
+                            let mut undo_source_lengths = Vec::new();
+                            let mut moved_audio = Vec::new();
+                            let mut moved_midi = Vec::new();
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            {
+                                match kind {
+                                    Kind::Audio => {
+                                        let mut indices = clip_indices.clone();
+                                        indices.sort_unstable();
+                                        indices.dedup();
+                                        for &idx in &indices {
+                                            if let Some(clip) = track.audio.clips.get(idx) {
+                                                let key = Self::audio_clip_key(
+                                                    track_name,
+                                                    &clip.name,
+                                                    clip.start,
+                                                    clip.length,
+                                                    clip.offset,
+                                                );
+                                                if !clip.peaks.is_empty() {
+                                                    undo_peaks
+                                                        .push((key.clone(), clip.peaks.clone()));
+                                                }
+                                                if clip.source_length_samples > 0 {
+                                                    undo_source_lengths
+                                                        .push((key, clip.source_length_samples));
+                                                }
+                                                moved_audio.push(clip.clone());
+                                            }
+                                        }
+                                        for idx in indices.into_iter().rev() {
+                                            if idx < track.audio.clips.len() {
+                                                track.audio.clips.remove(idx);
+                                            }
+                                        }
+                                    }
+                                    Kind::MIDI => {
+                                        let mut indices = clip_indices.clone();
+                                        indices.sort_unstable();
+                                        indices.dedup();
+                                        for &idx in &indices {
+                                            if let Some(clip) = track.midi.clips.get(idx) {
+                                                moved_midi.push(clip.clone());
+                                            }
+                                        }
+                                        for idx in indices.into_iter().rev() {
+                                            if idx < track.midi.clips.len() {
+                                                track.midi.clips.remove(idx);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            state.unused_audio_clips.extend(moved_audio);
+                            state.unused_midi_clips.extend(moved_midi);
+                            state.selected_clips.retain(|clip| {
+                                if clip.track_idx != *track_name || clip.kind != *kind {
+                                    return true;
+                                }
+                                !clip_indices.contains(&clip.clip_idx)
+                            });
+                            if *kind == Kind::MIDI {
+                                refresh_midi_clip_previews = true;
+                            }
+                            drop(state);
+                            for (key, peaks) in undo_peaks {
+                                self.undo_peaks_cache.insert(key, peaks);
+                            }
+                            for (key, source_len) in undo_source_lengths {
+                                self.undo_source_lengths_cache.insert(key, source_len);
+                            }
+                        }
+                        Action::SetUnusedClips { audio, midi } => {
+                            let mut state = self.state.blocking_write();
+                            state.unused_audio_clips = audio
+                                .iter()
+                                .map(|clip| {
+                                    Self::audio_clip_from_data(
+                                        clip,
+                                        clip.offset.saturating_add(clip.length).max(1),
+                                        0,
+                                    )
+                                })
+                                .collect();
+                            state.unused_midi_clips = midi
+                                .iter()
+                                .map(|clip| {
+                                    Self::midi_clip_from_data(
+                                        clip,
+                                        clip.offset.saturating_add(clip.length).max(1),
+                                    )
+                                })
+                                .collect();
+                        }
+                        Action::DeleteUnusedClips { clip_ids } => {
+                            let mut state = self.state.blocking_write();
+                            state
+                                .unused_audio_clips
+                                .retain(|clip| !clip_ids.contains(&clip.id));
+                            state
+                                .unused_midi_clips
+                                .retain(|clip| !clip_ids.contains(&clip.id));
                         }
                         Action::ModifyMidiNotes {
                             track_name,
@@ -6477,7 +6598,7 @@ impl Maolan {
                         clip_indices.sort_unstable_by(|a, b| b.cmp(a));
                         clip_indices.dedup();
                         for clip_index in clip_indices {
-                            actions.push(Action::RemoveClip {
+                            actions.push(Action::MoveClipToUnused {
                                 track_name: track_name.clone(),
                                 kind: Kind::Audio,
                                 clip_indices: vec![clip_index],
@@ -6488,7 +6609,7 @@ impl Maolan {
                         clip_indices.sort_unstable_by(|a, b| b.cmp(a));
                         clip_indices.dedup();
                         for clip_index in clip_indices {
-                            actions.push(Action::RemoveClip {
+                            actions.push(Action::MoveClipToUnused {
                                 track_name: track_name.clone(),
                                 kind: Kind::MIDI,
                                 clip_indices: vec![clip_index],
@@ -6665,33 +6786,6 @@ impl Maolan {
                 };
                 self.state.blocking_write().resizing =
                     Some(Resizing::Tracks(initial_width, initial_mouse_x));
-            }
-            Message::LiveViewTracksResizeStart => {
-                let (initial_width, initial_mouse_x) = {
-                    let state = self.state.blocking_read();
-                    let width = match state.live_view_tracks_width {
-                        Length::Fixed(v) => v,
-                        _ => 200.0,
-                    };
-                    (width, state.cursor.x)
-                };
-                self.state.blocking_write().resizing =
-                    Some(Resizing::LiveViewTracks(initial_width, initial_mouse_x));
-            }
-            Message::LiveViewLeftSplitResizeStart => {
-                let (initial_split, initial_mouse_x) = {
-                    let state = self.state.blocking_read();
-                    let width = match state.live_view_tracks_width {
-                        Length::Fixed(v) => v,
-                        _ => 200.0,
-                    };
-                    (
-                        state.live_view_left_split,
-                        width * state.live_view_left_split,
-                    )
-                };
-                self.state.blocking_write().resizing =
-                    Some(Resizing::LiveViewLeftSplit(initial_split, initial_mouse_x));
             }
             Message::MixerResizeStart => {
                 let (initial_height, initial_mouse_y) = {
@@ -7074,10 +7168,9 @@ impl Maolan {
                                 }
                                 Kind::MIDI => {
                                     let clip = &mut track.midi.clips[index];
-                                    let max_length_samples =
-                                        clip.max_length_samples.max(initial_length as usize) as f32;
-                                    let max_length_samples =
-                                        max_length_samples.max(min_length_samples);
+                                    // MIDI clips have no intrinsic upper
+                                    // bound: they can be extended past their
+                                    // content, leaving empty space.
                                     if is_right_side {
                                         let raw_end =
                                             clip.start as f32 + initial_value + delta_samples;
@@ -7090,14 +7183,12 @@ impl Maolan {
                                             );
                                         clip_snap_targets = snap_targets;
                                         let min_end = clip.start as f32 + min_length_samples;
-                                        let max_end = clip.start as f32 + max_length_samples;
-                                        let updated_end = snapped_end.clamp(min_end, max_end);
+                                        let updated_end = snapped_end.max(min_end);
                                         clip.length = updated_end.max(clip.start as f32) as usize
                                             - clip.start;
                                     } else {
                                         let right_edge = initial_value + initial_length;
                                         let max_start = (right_edge - min_length_samples).max(0.0);
-                                        let min_start = (right_edge - max_length_samples).max(0.0);
                                         let raw_start = initial_value + delta_samples;
                                         let (snapped_start, _snap_target, snap_targets) =
                                             Self::nearest_clip_edge_sample(
@@ -7107,16 +7198,15 @@ impl Maolan {
                                                 candidate_edges.iter().cloned(),
                                             );
                                         clip_snap_targets = snap_targets;
-                                        let new_start = snapped_start.clamp(min_start, max_start);
-                                        let updated_length = (right_edge - new_start)
-                                            .clamp(min_length_samples, max_length_samples);
+                                        let new_start = snapped_start.clamp(0.0, max_start);
+                                        let updated_length =
+                                            (right_edge - new_start).max(min_length_samples);
                                         let start_delta = new_start as isize - clip.start as isize;
                                         clip.start = new_start as usize;
                                         clip.length = updated_length as usize;
                                         if start_delta >= 0 {
-                                            clip.offset = (clip.offset + start_delta as usize).min(
-                                                clip.max_length_samples.saturating_sub(clip.length),
-                                            );
+                                            clip.offset = (clip.offset + start_delta as usize)
+                                                .min(clip.max_length_samples);
                                         } else {
                                             clip.offset =
                                                 clip.offset.saturating_sub((-start_delta) as usize);
@@ -7131,22 +7221,6 @@ impl Maolan {
                         let delta = position.x - initial_mouse_x;
                         self.state.blocking_write().tracks_width =
                             Length::Fixed((initial_width + delta).max(80.0));
-                    }
-                    Some(Resizing::LiveViewTracks(initial_width, initial_mouse_x)) => {
-                        let delta = position.x - initial_mouse_x;
-                        self.state.blocking_write().live_view_tracks_width =
-                            Length::Fixed((initial_width + delta).max(80.0));
-                    }
-                    Some(Resizing::LiveViewLeftSplit(initial_split, initial_mouse_x)) => {
-                        let total_width = match self.state.blocking_read().live_view_tracks_width {
-                            Length::Fixed(v) => v,
-                            _ => 200.0,
-                        };
-                        let delta = position.x - initial_mouse_x;
-                        let new_split_px = (initial_split * total_width + delta)
-                            .clamp(total_width * 0.1, total_width * 0.9);
-                        self.state.blocking_write().live_view_left_split =
-                            new_split_px / total_width;
                     }
                     Some(Resizing::Mixer(initial_height, initial_mouse_y)) => {
                         let delta = position.y - initial_mouse_y;
@@ -7918,6 +7992,193 @@ impl Maolan {
                     self.clip_snap_targets.clear();
                 }
             }
+            Message::PaneClipDragStart {
+                ref source_track_name,
+                ref clip_id,
+                kind,
+            } => {
+                self.dragging_pane_clip = Some(crate::state::DraggedSessionClip {
+                    source_track_name: source_track_name.clone(),
+                    clip_id: clip_id.clone(),
+                    kind,
+                });
+            }
+            Message::PaneClipDropped { point } => {
+                if self.dragging_pane_clip.is_some() {
+                    return iced_drop::zones_on_point(
+                        Message::HandlePaneClipDropZones,
+                        point,
+                        None,
+                        None,
+                    );
+                }
+            }
+            Message::HandlePaneClipDropZones(ref zones) => {
+                let Some(dragged) = self.dragging_pane_clip.take() else {
+                    return Task::none();
+                };
+                // Dropped over a live view session slot: hand off to the
+                // session clip logic, which assigns the clip to the slot
+                // (copying track clips to the target track or moving unused
+                // pool clips, keeping their id).
+                let over_slot = {
+                    let state = self.state.blocking_read();
+                    let slot_map = live_session::build_slot_zone_map(&state.tracks, &state.session);
+                    zones.iter().any(|(id, _)| slot_map.contains_key(id))
+                };
+                if over_slot {
+                    self.dragging_session_clip = Some(dragged);
+                    return self.update(Message::SessionClipHandleZones(zones.clone()));
+                }
+                let kind = dragged.kind;
+                let target_track = {
+                    let state = self.state.blocking_read();
+                    zones
+                        .iter()
+                        .filter_map(|(id, _)| {
+                            state
+                                .tracks
+                                .iter()
+                                .find(|t| Id::from(t.name.clone()) == *id)
+                        })
+                        .find(|track| {
+                            !track.is_master
+                                && !track.is_folder
+                                && track.name != METRONOME_TRACK_ID
+                                && match kind {
+                                    Kind::Audio => track.audio.ins > 0,
+                                    Kind::MIDI => track.midi.ins > 0,
+                                }
+                        })
+                        .map(|track| track.name.clone())
+                };
+                let Some(target_track) = target_track else {
+                    return Task::none();
+                };
+                let position = self.active_workspace_cursor();
+                let start = self
+                    .snap_sample_to_bar(position.x.max(0.0) / self.pixels_per_sample().max(1.0e-6));
+                let action = {
+                    let state = self.state.blocking_read();
+                    match &dragged.source_track_name {
+                        // From the unused pool: move the clip, keeping its id.
+                        None => match kind {
+                            Kind::Audio => state
+                                .unused_audio_clips
+                                .iter()
+                                .find(|clip| clip.id == dragged.clip_id)
+                                .map(|clip| {
+                                    if clip.is_group() {
+                                        let mut data = Self::audio_clip_to_data(clip);
+                                        data.start = start;
+                                        Action::AddGroupedClip {
+                                            track_name: target_track.clone(),
+                                            kind: Kind::Audio,
+                                            audio_clip: Some(data),
+                                            midi_clip: None,
+                                        }
+                                    } else {
+                                        Self::audio_clip_add_action(
+                                            &dragged.clip_id,
+                                            &target_track,
+                                            clip,
+                                            start,
+                                        )
+                                    }
+                                }),
+                            Kind::MIDI => state
+                                .unused_midi_clips
+                                .iter()
+                                .find(|clip| clip.id == dragged.clip_id)
+                                .map(|clip| {
+                                    if clip.is_group() {
+                                        let mut data = Self::midi_clip_to_data(clip);
+                                        data.start = start;
+                                        Action::AddGroupedClip {
+                                            track_name: target_track.clone(),
+                                            kind: Kind::MIDI,
+                                            audio_clip: None,
+                                            midi_clip: Some(data),
+                                        }
+                                    } else {
+                                        Self::midi_clip_add_action(
+                                            &dragged.clip_id,
+                                            &target_track,
+                                            clip,
+                                            start,
+                                        )
+                                    }
+                                }),
+                        },
+                        // From a track: copy the clip to the drop position with fresh ids.
+                        Some(source_track_name) => state
+                            .tracks
+                            .iter()
+                            .find(|t| &t.name == source_track_name)
+                            .and_then(|source| match kind {
+                                Kind::Audio => source
+                                    .audio
+                                    .clips
+                                    .iter()
+                                    .find(|clip| clip.id == dragged.clip_id)
+                                    .map(|clip| {
+                                        if clip.is_group() {
+                                            let mut data = Self::audio_clip_to_data(clip);
+                                            data.id = crate::state::generate_clip_id();
+                                            data.start = start;
+                                            for child in &mut data.grouped_clips {
+                                                child.id = crate::state::generate_clip_id();
+                                            }
+                                            Action::AddGroupedClip {
+                                                track_name: target_track.clone(),
+                                                kind: Kind::Audio,
+                                                audio_clip: Some(data),
+                                                midi_clip: None,
+                                            }
+                                        } else {
+                                            Self::audio_clip_add_action(
+                                                &crate::state::generate_clip_id(),
+                                                &target_track,
+                                                clip,
+                                                start,
+                                            )
+                                        }
+                                    }),
+                                Kind::MIDI => source
+                                    .midi
+                                    .clips
+                                    .iter()
+                                    .find(|clip| clip.id == dragged.clip_id)
+                                    .map(|clip| {
+                                        if clip.is_group() {
+                                            let mut data = Self::midi_clip_to_data(clip);
+                                            data.id = crate::state::generate_clip_id();
+                                            data.start = start;
+                                            for child in &mut data.grouped_clips {
+                                                child.id = crate::state::generate_clip_id();
+                                            }
+                                            Action::AddGroupedClip {
+                                                track_name: target_track.clone(),
+                                                kind: Kind::MIDI,
+                                                audio_clip: None,
+                                                midi_clip: Some(data),
+                                            }
+                                        } else {
+                                            Self::midi_clip_add_action(
+                                                &crate::state::generate_clip_id(),
+                                                &target_track,
+                                                clip,
+                                                start,
+                                            )
+                                        }
+                                    }),
+                            }),
+                    }
+                };
+                if let Some(action) = action {
+                    let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+                }
+            }
             Message::TrackDrag { index, position } => {
                 const TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT: f32 = 24.0;
 
@@ -8145,13 +8406,22 @@ impl Maolan {
 
                 match self.delete_unused_session_media_files(&session_root) {
                     Ok(report)
-                        if report.deleted_files.is_empty() && report.failed_files.is_empty() =>
+                        if report.deleted_files.is_empty()
+                            && report.failed_files.is_empty()
+                            && report.deleted_clips.is_empty() =>
                     {
                         self.state.blocking_write().message = "No unused files found".to_string();
                     }
                     Ok(report) if report.failed_files.is_empty() => {
+                        let mut parts = Vec::new();
+                        if !report.deleted_clips.is_empty() {
+                            parts.push(format!("{} unused clip(s)", report.deleted_clips.len()));
+                        }
+                        if !report.deleted_files.is_empty() {
+                            parts.push(format!("{} unused file(s)", report.deleted_files.len()));
+                        }
                         self.state.blocking_write().message =
-                            format!("Deleted {} unused file(s)", report.deleted_files.len());
+                            format!("Deleted {}", parts.join(" and "));
                     }
                     Ok(report) if report.deleted_files.is_empty() => {
                         self.state.blocking_write().message = format!(
@@ -9444,11 +9714,8 @@ impl Maolan {
                 }
             }
             Message::Workspace => {
-                let stop_task = if self.live_session_playing {
-                    self.stop_live_session_play()
-                } else {
-                    Task::none()
-                };
+                // Switching views never stops playback; only transport
+                // controls do that.
                 let mut state = self.state.blocking_write();
                 state.view = View::Workspace;
                 state.pitch_correction = None;
@@ -9457,7 +9724,7 @@ impl Maolan {
                 state.pitch_correction_selecting_rect = None;
                 drop(state);
                 let view_task = self.queue_midi_clip_preview_loads();
-                return Task::batch(vec![stop_task, view_task]);
+                return view_task;
             }
             Message::ToggleMixerVisibility => {
                 self.mixer_visible = !self.mixer_visible;
@@ -9489,7 +9756,6 @@ impl Maolan {
                 for track_name in track_names {
                     state.session.ensure_track_slots(&track_name);
                 }
-                state.session.backfill_play_stop_icons();
             }
             Message::HwMixer(msg) => {
                 return mixosc::app::update(&mut self.hw_mixer, msg).map(Message::HwMixer);
@@ -9499,6 +9765,9 @@ impl Maolan {
             }
             Message::ToggleShortcutsPane => {
                 self.shortcuts_pane_visible = !self.shortcuts_pane_visible;
+            }
+            Message::ToggleClipsPane => {
+                self.clips_pane_visible = !self.clips_pane_visible;
             }
             Message::ToggleModulatorsPane => {
                 self.modulators_pane_visible = !self.modulators_pane_visible;

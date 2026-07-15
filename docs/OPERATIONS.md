@@ -118,12 +118,14 @@ The session JSON persists:
 
 The Session View (switch to it with the `Live` toolbar button or `Tab`) is a clip-launch grid modeled after Ableton Live. Each row is a track and each column is a scene. Slots reference arrangement clips by their stable clip ID, so edits to the arrangement clip are reflected in the session.
 
-Session data is stored in `session.json` inside the session directory and includes the scene list and slot references. The arrangement (`<branch>.json`) is the source of truth for clip content; deleting an arrangement clip that a slot references leaves a dangling reference that is cleared on the next launch attempt.
+Switching between Workspace and Session view never stops playback. Transport controls hand over between the two: pressing **play** in one view while the other is playing stops the current playback and starts the pressed view's playback, while **pause** and **stop** pressed in either view stop whatever is playing.
+
+Session data is stored in `session.json` inside the session directory and includes the scene list and slot references. The arrangement (`<branch>.json`) is the source of truth for clip content; removing an arrangement clip that a slot references moves the clip to the unused pool, and the slot keeps playing it from there until the slot is cleared or the clip is deleted via **File → Delete unused files**.
 
 Commands:
 
-- **Launch/Stop slot**: click a slot, or press `Return` on the selected slot.
-- **Launch scene**: click a scene header. If the scene has a per-scene tempo set, the global tempo changes when the scene launches.
+- **Launch/Stop slot**: click a slot, or press `Return` on the selected slot. Each slot carries a play mark, a stop mark, or neither (right-click clears the mark); marked slots launch or stop their track on scene changes.
+- **Launch scene**: click a scene slot in the Master column. Clicking always selects that scene: while the live session is stopped, the selected scene (shown with a blue border) is the one the play button starts; while the live session is playing, the selected scene launches when the longest currently playing clip finishes its current pass. Clicking a different scene slot simply moves the selection, replacing any pending launch — clicking the currently playing scene re-triggers it at the end of its pass. On the switch, each track follows its slot in the new scene — play-marked slots launch, stop-marked slots stop — and a slot with neither mark inherits from the same track's slot in the previously playing scene (play if that slot was play-marked — the previous scene's clip keeps playing, or starts when the track is silent — stop if it was stop-marked, and keeps doing whatever it was doing when that slot is also unmarked). The currently playing scene's slot is filled green with a green border. If the scene has a per-scene tempo set, the global tempo changes when the scene launches (immediate launches only).
 - **Stop all clips**: press `Shift+Space`, click the **Stop All** button in the master column, or use the slot context menu.
 - **Stop track clips**: click the stop square in the master column for that track row.
 - **Move slot reference**: drag a slot that references a clip onto another slot in the grid. This moves the clip reference; the arrangement clip itself is not affected.
@@ -279,7 +281,7 @@ Maolan can collect external media files into the session directory and update pl
 
 - **File → Consolidate** copies imported audio/MIDI files and any CLAP/LV2 plugin file references into the session's `data/` directory.
 - Consolidation updates plugin file references to absolute paths immediately, and saved plugin state is rewritten to relative `data/` paths on save.
-- **File → Delete unused files** scans `audio/`, `midi/`, `peaks/`, and `pitch/` and removes files not referenced by the current session or any non-hidden branch JSON.
+- **File → Delete unused files** scans `audio/`, `midi/`, `peaks/`, and `pitch/` and removes files not referenced by the current session or any non-hidden branch JSON. Unused clips (deleted from tracks but kept in the Clips pane's Unused section) are permanently removed first when no session slot of the current branch references them and no other branch file references their media; clips still used in the live or edit view of any session file stay in the Unused section.
 - Consolidation makes it safer to move or share a session directory.
 
 ## Pitch Correction Caching and Rendering
