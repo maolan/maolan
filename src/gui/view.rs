@@ -312,23 +312,11 @@ impl Maolan {
                         format!("Clip: {}", clip_label)
                     });
                     let clips_pane = if self.clips_pane_visible {
-                        let live_ids = state.session.slot_referenced_clip_ids();
-                        let unused_audio: Vec<_> = state
-                            .unused_audio_clips
-                            .iter()
-                            .filter(|clip| !live_ids.contains(&clip.id))
-                            .cloned()
-                            .collect();
-                        let unused_midi: Vec<_> = state
-                            .unused_midi_clips
-                            .iter()
-                            .filter(|clip| !live_ids.contains(&clip.id))
-                            .cloned()
-                            .collect();
                         Some(ClipsPane::view(
                             &state.tracks,
-                            &unused_audio,
-                            &unused_midi,
+                            &state.session,
+                            &state.unused_audio_clips,
+                            &state.unused_midi_clips,
                             &state.selected,
                         ))
                     } else {

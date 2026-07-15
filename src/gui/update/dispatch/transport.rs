@@ -138,6 +138,11 @@ impl Maolan {
             Message::PlaybackTick => {
                 if tokio::runtime::Handle::try_current().is_ok() {
                     if let Some(snapshot) = CLIENT.session_runtime_snapshot() {
+                        if self.live_session_playing && self.record_armed {
+                            self.capture_completed_live_session_clip_passes(
+                                &snapshot.completed_clip_passes,
+                            );
+                        }
                         let mut state = self.state.blocking_write();
                         state.current_scene = snapshot.current_scene;
                         let mut active_slots = HashSet::with_capacity(snapshot.slots.len());

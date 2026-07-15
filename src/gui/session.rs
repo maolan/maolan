@@ -548,6 +548,8 @@ impl Maolan {
                 "punch_enabled": self.punch_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
+                "hw_out_level": state.hw_out_level,
+                "hw_out_balance": state.hw_out_balance,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -1791,6 +1793,8 @@ impl Maolan {
                 "punch_enabled": self.punch_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
+                "hw_out_level": state.hw_out_level,
+                "hw_out_balance": state.hw_out_balance,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -2414,11 +2418,31 @@ impl Maolan {
         if let Some(v) = loaded_period_frames {
             self.state.blocking_write().oss_period_frames = v;
         }
+        let loaded_hw_out_level = transport
+            .get("hw_out_level")
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite())
+            .map(|v| (v as f32).clamp(-90.0, 20.0))
+            .unwrap_or(0.0);
+        let loaded_hw_out_balance = transport
+            .get("hw_out_balance")
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite())
+            .map(|v| (v as f32).clamp(-1.0, 1.0))
+            .unwrap_or(0.0);
 
         restore_actions.push(Action::SetLoopRange(loaded_loop_range));
         restore_actions.push(Action::SetLoopEnabled(loaded_loop_enabled));
         restore_actions.push(Action::SetPunchRange(loaded_punch_range));
         restore_actions.push(Action::SetPunchEnabled(loaded_punch_enabled));
+        restore_actions.push(Action::TrackLevel(
+            "hw:out".to_string(),
+            loaded_hw_out_level,
+        ));
+        restore_actions.push(Action::TrackBalance(
+            "hw:out".to_string(),
+            loaded_hw_out_balance,
+        ));
 
         if let Some(session_rate_hz) = loaded_sample_rate_hz {
             let (hw_loaded, hw_rate_hz) = {
@@ -2567,6 +2591,8 @@ impl Maolan {
             state.time_signature_denom = loaded_denom;
             state.tempo_points = loaded_tempo_points;
             state.time_signature_points = loaded_time_signature_points;
+            state.hw_out_level = loaded_hw_out_level;
+            state.hw_out_balance = loaded_hw_out_balance;
         }
 
         {
