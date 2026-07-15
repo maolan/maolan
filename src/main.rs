@@ -12,6 +12,8 @@ mod audio_defaults;
 #[cfg(not(miri))]
 mod clip_rename;
 #[cfg(not(miri))]
+mod clips_pane;
+#[cfg(not(miri))]
 mod config;
 #[cfg(not(miri))]
 mod connections;

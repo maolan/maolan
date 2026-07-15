@@ -17,6 +17,11 @@ impl Maolan {
                     return Some(self.start_live_session_play());
                 }
                 if self.playing && !self.paused {
+                    let stop_live = if self.live_session_playing {
+                        self.stop_live_session_play()
+                    } else {
+                        Task::none()
+                    };
                     self.toolbar.update(message);
                     self.playing = false;
                     self.paused = false;
@@ -26,11 +31,18 @@ impl Maolan {
                     self.touch_active_keys.clear();
                     self.latch_automation_overrides.clear();
                     self.stop_recording_preview();
-                    return Some(Task::batch(vec![
+                    return Some(stop_live.chain(Task::batch(vec![
                         self.send(Action::SetClipPlaybackEnabled(true)),
                         self.send(Action::Stop),
-                    ]));
+                    ])));
                 }
+                // Toggling editor playback on while the live session is
+                // playing hands over: live playback stops first.
+                let stop_live = if self.live_session_playing {
+                    self.stop_live_session_play()
+                } else {
+                    Task::none()
+                };
                 let was_playing = self.playing;
                 self.toolbar.update(message);
                 self.playing = true;
@@ -43,7 +55,7 @@ impl Maolan {
                 if !was_playing {
                     tasks.push(self.send(Action::Play));
                 }
-                Some(Task::batch(tasks))
+                Some(stop_live.chain(Task::batch(tasks)))
             }
             Message::ToggleLoop => {
                 if self.loop_range_samples.is_none() {

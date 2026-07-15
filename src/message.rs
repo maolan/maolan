@@ -901,8 +901,6 @@ pub enum Message {
         hovered: bool,
     },
     TracksResizeStart,
-    LiveViewTracksResizeStart,
-    LiveViewLeftSplitResizeStart,
     MixerResizeStart,
     MixerLevelEditStart(String),
     MixerLevelEditInput(String),
@@ -968,10 +966,7 @@ pub enum Message {
     PianoScrollYChanged(f32),
     PianoSysExScrollYChanged(f32),
     TracksResizeHover(bool),
-    LiveViewTracksResizeHover(bool),
-    LiveViewLeftSplitResizeHover(bool),
     MixerResizeHover(bool),
-    LiveViewLeftTabSelect(crate::state::LiveViewLeftTab),
 
     OpenFileImporter,
     DeleteUnusedSessionMediaFiles,
@@ -1090,6 +1085,7 @@ pub enum Message {
     ToggleLogVisibility,
     ToggleShortcutsPane,
     ToggleModulatorsPane,
+    ToggleClipsPane,
     ToggleSelectedPluginBypass,
     ModulatorAdd,
     ModulatorRemove(usize),
@@ -1534,7 +1530,7 @@ pub enum Message {
         position: Point,
     },
     SessionClipDragStart {
-        source_track_name: String,
+        source_track_name: Option<String>,
         clip_id: String,
         kind: maolan_engine::kind::Kind,
     },
@@ -1542,6 +1538,15 @@ pub enum Message {
         point: Point,
     },
     SessionClipHandleZones(Vec<(Id, Rectangle)>),
+    PaneClipDragStart {
+        source_track_name: Option<String>,
+        clip_id: String,
+        kind: maolan_engine::kind::Kind,
+    },
+    PaneClipDropped {
+        point: Point,
+    },
+    HandlePaneClipDropZones(Vec<(Id, Rectangle)>),
     SessionSlotDropped {
         track_name: String,
         scene_index: usize,

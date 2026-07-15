@@ -200,8 +200,6 @@ struct TrackNodeViewArgs<'a> {
     session_root: Option<&'a PathBuf>,
     pixels_per_sample: f32,
     samples_per_bar: f32,
-    snap_mode: SnapMode,
-    samples_per_beat: f64,
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
     active_target_valid: bool,
@@ -223,8 +221,6 @@ fn view_track_node(
         session_root: args.session_root,
         pixels_per_sample: args.pixels_per_sample,
         samples_per_bar: args.samples_per_bar,
-        snap_mode: args.snap_mode,
-        samples_per_beat: args.samples_per_beat,
         active_clip_drag: args.active_clip_drag,
         active_target_track: args.active_target_track,
         active_target_valid: args.active_target_valid,
@@ -246,8 +242,6 @@ struct TrackElementViewArgs<'a> {
     session_root: Option<&'a PathBuf>,
     pixels_per_sample: f32,
     samples_per_bar: f32,
-    snap_mode: SnapMode,
-    samples_per_beat: f64,
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
     active_target_valid: bool,
@@ -488,8 +482,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         session_root,
         pixels_per_sample,
         samples_per_bar,
-        snap_mode,
-        samples_per_beat,
         active_clip_drag,
         active_target_track,
         active_target_valid,
@@ -498,15 +490,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         recording_preview_bounds,
         recording_preview_peaks,
         midi_clip_previews,
+        ..
     } = args;
-    let snap_sample = |sample: f32, delta_samples: f32| -> f32 {
-        snap_mode.snap_sample_drag(
-            sample as f64,
-            delta_samples as f64,
-            samples_per_beat,
-            samples_per_bar as f64,
-        ) as f32
-    };
     let clip_snap_outline = |clip_width: f32, clip_height: f32, radius: f32| {
         container("")
             .width(Length::Fixed(clip_width))
@@ -660,8 +645,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .filter(|d| !d.copy && !show_preview_in_this_track)
                 .map(|d| {
                     let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                    snap_sample(clip.start as f32 + delta_samples, delta_samples)
-                        + active_clip_snap_adjust_samples
+                    clip.start as f32 + delta_samples + active_clip_snap_adjust_samples
                 })
                 .unwrap_or(clip.start as f32);
 
@@ -799,8 +783,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
             if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
                 let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-                let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples)
-                    + active_clip_snap_adjust_samples;
+                let preview_start =
+                    clip.start as f32 + delta_samples + active_clip_snap_adjust_samples;
                 let preview_fill = if active_target_valid {
                     Background::Color(Color {
                         r: 0.72,
@@ -889,8 +873,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .filter(|d| !d.copy && !show_preview_in_this_track)
                 .map(|d| {
                     let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                    snap_sample(clip.start as f32 + delta_samples, delta_samples)
-                        + active_clip_snap_adjust_samples
+                    clip.start as f32 + delta_samples + active_clip_snap_adjust_samples
                 })
                 .unwrap_or(clip.start as f32);
             let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
@@ -999,8 +982,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
             if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
                 let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-                let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples)
-                    + active_clip_snap_adjust_samples;
+                let preview_start =
+                    clip.start as f32 + delta_samples + active_clip_snap_adjust_samples;
                 let preview_fill = if active_target_valid {
                     MIDIClipWidget::<Message>::two_edge_gradient(
                         MIDI_CLIP_SELECTED_BASE,
@@ -1128,9 +1111,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = (layout.lane_height_for(Kind::Audio, 0) - 2.0).max(8.0);
                         let lane_top = track.lane_top(Kind::Audio, 0) + 1.0;
-                        let preview_start =
-                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
-                                + active_clip_snap_adjust_samples;
+                        let preview_start = source_clip.start as f32
+                            + delta_samples
+                            + active_clip_snap_adjust_samples;
                         let display_clip_label = AudioClipWidget::<Message>::label_for_width(
                             &AudioClipWidget::<Message>::clean_name(&source_clip.name),
                             clip_width,
@@ -1216,9 +1199,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             .input_channel
                             .min(track.midi.ins.saturating_sub(1));
                         let lane_top = track.lane_top(Kind::MIDI, lane) + 1.0;
-                        let preview_start =
-                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
-                                + active_clip_snap_adjust_samples;
+                        let preview_start = source_clip.start as f32
+                            + delta_samples
+                            + active_clip_snap_adjust_samples;
                         let display_clip_label = MIDIClipWidget::<Message>::label_for_width(
                             &MIDIClipWidget::<Message>::clean_name(&source_clip.name),
                             clip_width,
@@ -1598,8 +1581,6 @@ pub struct OwnedEditorViewArgs {
     pub session_root: Option<PathBuf>,
     pub pixels_per_sample: f32,
     pub samples_per_bar: f32,
-    pub snap_mode: SnapMode,
-    pub samples_per_beat: f64,
     pub active_clip_drag: Option<DraggedClip>,
     pub active_target_track: Option<String>,
     pub active_target_valid: bool,
@@ -1773,8 +1754,6 @@ impl Editor {
             session_root,
             pixels_per_sample,
             samples_per_bar,
-            snap_mode,
-            samples_per_beat,
             active_clip_drag,
             active_target_track,
             active_target_valid,
@@ -1813,8 +1792,6 @@ impl Editor {
                 session_root: session_root_ref,
                 pixels_per_sample,
                 samples_per_bar,
-                snap_mode,
-                samples_per_beat,
                 active_clip_drag: active_clip_drag_ref,
                 active_target_track: active_target_track_ref,
                 active_target_valid,

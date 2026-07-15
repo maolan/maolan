@@ -64,6 +64,13 @@ impl Maolan {
                         enabled: icon == Some(true),
                     },
                 ));
+                let _ = CLIENT.sender.try_send(EngineMessage::Request(
+                    Action::TrackSetSessionSlotStopEnabled {
+                        track_name: track_name.clone(),
+                        scene_index,
+                        enabled: icon == Some(false),
+                    },
+                ));
                 if self.live_session_playing {
                     if icon == Some(true) {
                         self.launch_session_slot(&track_name, scene_index);
@@ -111,7 +118,23 @@ impl Maolan {
                 None
             }
             Message::SessionScenePressed(scene_index) => {
-                Some(self.launch_session_scene(scene_index, false))
+                // Clicking a Master slot selects the scene. While the live
+                // session is playing it also becomes the next scene to
+                // launch; while stopped it is the scene Play will start.
+                {
+                    let mut state = self.state.blocking_write();
+                    if scene_index < state.session.scenes.len() {
+                        state.selected_scene = Some(scene_index);
+                    } else {
+                        return None;
+                    }
+                }
+                if self.live_session_playing {
+                    return Some(
+                        self.send(Action::Session(SessionAction::QueueScene { scene_index })),
+                    );
+                }
+                None
             }
             Message::SessionSceneReleased(_) => None,
             Message::SessionSceneRightClick { scene_index, .. } => {
@@ -313,61 +336,77 @@ impl Maolan {
                     if let Some((target_track_name, scene_index)) = target {
                         let (valid, same_track) = {
                             let state = self.state.blocking_read();
-                            let source_track = state
-                                .tracks
-                                .iter()
-                                .find(|t| t.name == dragged.source_track_name);
+                            let source_track = dragged
+                                .source_track_name
+                                .as_ref()
+                                .and_then(|name| state.tracks.iter().find(|t| &t.name == name));
                             let target_track =
                                 state.tracks.iter().find(|t| t.name == target_track_name);
-                            let valid = if let (Some(source), Some(target)) =
-                                (source_track, target_track)
-                            {
+                            let valid = if let Some(target) = target_track {
                                 !target.is_master
                                     && !target.is_folder
                                     && match dragged.kind {
-                                        maolan_engine::kind::Kind::Audio => {
-                                            source.audio.outs > 0
-                                                && target.audio.outs == source.audio.outs
-                                        }
+                                        maolan_engine::kind::Kind::Audio => match source_track {
+                                            Some(source) => {
+                                                source.audio.outs > 0
+                                                    && target.audio.outs == source.audio.outs
+                                            }
+                                            None => target.audio.ins > 0,
+                                        },
                                         maolan_engine::kind::Kind::MIDI => target.midi.ins > 0,
                                     }
                             } else {
                                 false
                             };
-                            let same_track = dragged.source_track_name == target_track_name;
+                            let same_track =
+                                dragged.source_track_name.as_ref() == Some(&target_track_name);
                             (valid, same_track)
                         };
                         if valid {
                             let source_clip_name = {
                                 let state = self.state.blocking_read();
-                                let source_track = state
-                                    .tracks
-                                    .iter()
-                                    .find(|t| t.name == dragged.source_track_name);
-                                source_track.and_then(|source| match dragged.kind {
-                                    maolan_engine::kind::Kind::Audio => source
-                                        .audio
-                                        .clips
+                                match &dragged.source_track_name {
+                                    Some(source_track_name) => state
+                                        .tracks
                                         .iter()
-                                        .find(|c| c.id == dragged.clip_id)
-                                        .map(|clip| clip.name.clone()),
-                                    maolan_engine::kind::Kind::MIDI => source
-                                        .midi
-                                        .clips
-                                        .iter()
-                                        .find(|c| c.id == dragged.clip_id)
-                                        .map(|clip| clip.name.clone()),
-                                })
+                                        .find(|t| &t.name == source_track_name)
+                                        .and_then(|source| match dragged.kind {
+                                            maolan_engine::kind::Kind::Audio => source
+                                                .audio
+                                                .clips
+                                                .iter()
+                                                .find(|c| c.id == dragged.clip_id)
+                                                .map(|clip| clip.name.clone()),
+                                            maolan_engine::kind::Kind::MIDI => source
+                                                .midi
+                                                .clips
+                                                .iter()
+                                                .find(|c| c.id == dragged.clip_id)
+                                                .map(|clip| clip.name.clone()),
+                                        }),
+                                    None => match dragged.kind {
+                                        maolan_engine::kind::Kind::Audio => state
+                                            .unused_audio_clips
+                                            .iter()
+                                            .find(|c| c.id == dragged.clip_id)
+                                            .map(|clip| clip.name.clone()),
+                                        maolan_engine::kind::Kind::MIDI => state
+                                            .unused_midi_clips
+                                            .iter()
+                                            .find(|c| c.id == dragged.clip_id)
+                                            .map(|clip| clip.name.clone()),
+                                    },
+                                }
                             };
                             let clip_id = if same_track {
                                 dragged.clip_id.clone()
-                            } else {
+                            } else if dragged.source_track_name.is_some() {
                                 let new_id = crate::state::generate_clip_id();
                                 let state = self.state.blocking_read();
-                                let source_track = state
-                                    .tracks
-                                    .iter()
-                                    .find(|t| t.name == dragged.source_track_name);
+                                let source_track = dragged
+                                    .source_track_name
+                                    .as_ref()
+                                    .and_then(|name| state.tracks.iter().find(|t| &t.name == name));
                                 if let Some(source) = source_track {
                                     let add_clip = match dragged.kind {
                                         maolan_engine::kind::Kind::Audio => source
@@ -375,79 +414,26 @@ impl Maolan {
                                             .clips
                                             .iter()
                                             .find(|c| c.id == dragged.clip_id)
-                                            .map(|clip| maolan_engine::message::Action::AddClip {
-                                                clip_id: new_id.clone(),
-                                                name: clip.name.clone(),
-                                                track_name: target_track_name.clone(),
-                                                start: clip.start,
-                                                length: clip.length,
-                                                offset: clip.offset,
-                                                input_channel: clip.input_channel,
-                                                muted: clip.muted,
-                                                peaks_file: clip.peaks_file.clone(),
-                                                kind: maolan_engine::kind::Kind::Audio,
-                                                fade_enabled: clip.fade_enabled,
-                                                fade_in_samples: clip.fade_in_samples,
-                                                fade_out_samples: clip.fade_out_samples,
-                                                source_name: clip
-                                                    .pitch_correction_source_name
-                                                    .clone(),
-                                                source_offset: clip.pitch_correction_source_offset,
-                                                source_length: clip.pitch_correction_source_length,
-                                                preview_name: clip
-                                                    .pitch_correction_preview_name
-                                                    .clone(),
-                                                pitch_correction_points: clip
-                                                    .pitch_correction_points
-                                                    .iter()
-                                                    .map(|point| {
-                                                        maolan_engine::message::PitchCorrectionPointData {
-                                                            start_sample: point.start_sample,
-                                                            length_samples: point.length_samples,
-                                                            detected_midi_pitch: point
-                                                                .detected_midi_pitch,
-                                                            target_midi_pitch: point
-                                                                .target_midi_pitch,
-                                                            clarity: point.clarity,
-                                                        }
-                                                    })
-                                                    .collect(),
-                                                pitch_correction_frame_likeness: clip
-                                                    .pitch_correction_frame_likeness,
-                                                pitch_correction_inertia_ms: clip
-                                                    .pitch_correction_inertia_ms,
-                                                pitch_correction_formant_compensation: clip
-                                                    .pitch_correction_formant_compensation,
-                                                plugin_graph_json: clip.plugin_graph_json.clone(),
+                                            .map(|clip| {
+                                                Self::audio_clip_add_action(
+                                                    &new_id,
+                                                    &target_track_name,
+                                                    clip,
+                                                    clip.start,
+                                                )
                                             }),
                                         maolan_engine::kind::Kind::MIDI => source
                                             .midi
                                             .clips
                                             .iter()
                                             .find(|c| c.id == dragged.clip_id)
-                                            .map(|clip| maolan_engine::message::Action::AddClip {
-                                                clip_id: new_id.clone(),
-                                                name: clip.name.clone(),
-                                                track_name: target_track_name.clone(),
-                                                start: clip.start,
-                                                length: clip.length,
-                                                offset: clip.offset,
-                                                input_channel: clip.input_channel,
-                                                muted: clip.muted,
-                                                peaks_file: None,
-                                                kind: maolan_engine::kind::Kind::MIDI,
-                                                fade_enabled: true,
-                                                fade_in_samples: 240,
-                                                fade_out_samples: 240,
-                                                source_name: None,
-                                                source_offset: None,
-                                                source_length: None,
-                                                preview_name: None,
-                                                pitch_correction_points: vec![],
-                                                pitch_correction_frame_likeness: None,
-                                                pitch_correction_inertia_ms: None,
-                                                pitch_correction_formant_compensation: None,
-                                                plugin_graph_json: None,
+                                            .map(|clip| {
+                                                Self::midi_clip_add_action(
+                                                    &new_id,
+                                                    &target_track_name,
+                                                    clip,
+                                                    clip.start,
+                                                )
                                             }),
                                     };
                                     drop(state);
@@ -455,6 +441,63 @@ impl Maolan {
                                         let _ =
                                             CLIENT.sender.try_send(EngineMessage::Request(action));
                                     }
+                                }
+                                new_id
+                            } else {
+                                // Dragged from the unused pool: move the clip onto the
+                                // target track keeping its id, which also removes it
+                                // from the pool.
+                                let new_id = dragged.clip_id.clone();
+                                let state = self.state.blocking_read();
+                                let add_clip = match dragged.kind {
+                                    maolan_engine::kind::Kind::Audio => state
+                                        .unused_audio_clips
+                                        .iter()
+                                        .find(|c| c.id == dragged.clip_id)
+                                        .map(|clip| {
+                                            if clip.is_group() {
+                                                Action::AddGroupedClip {
+                                                    track_name: target_track_name.clone(),
+                                                    kind: maolan_engine::kind::Kind::Audio,
+                                                    audio_clip: Some(Self::audio_clip_to_data(
+                                                        clip,
+                                                    )),
+                                                    midi_clip: None,
+                                                }
+                                            } else {
+                                                Self::audio_clip_add_action(
+                                                    &new_id,
+                                                    &target_track_name,
+                                                    clip,
+                                                    clip.start,
+                                                )
+                                            }
+                                        }),
+                                    maolan_engine::kind::Kind::MIDI => state
+                                        .unused_midi_clips
+                                        .iter()
+                                        .find(|c| c.id == dragged.clip_id)
+                                        .map(|clip| {
+                                            if clip.is_group() {
+                                                Action::AddGroupedClip {
+                                                    track_name: target_track_name.clone(),
+                                                    kind: maolan_engine::kind::Kind::MIDI,
+                                                    audio_clip: None,
+                                                    midi_clip: Some(Self::midi_clip_to_data(clip)),
+                                                }
+                                            } else {
+                                                Self::midi_clip_add_action(
+                                                    &new_id,
+                                                    &target_track_name,
+                                                    clip,
+                                                    clip.start,
+                                                )
+                                            }
+                                        }),
+                                };
+                                drop(state);
+                                if let Some(action) = add_clip {
+                                    let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
                                 }
                                 new_id
                             };
@@ -949,8 +992,15 @@ impl Maolan {
             return Task::none();
         }
         self.live_session_playing = true;
+        let scene = {
+            let state = self.state.blocking_read();
+            state
+                .selected_scene
+                .filter(|scene| *scene < state.session.scenes.len())
+                .unwrap_or(0)
+        };
         self.stop_workspace_playback(true)
-            .chain(self.launch_session_scene(0, true))
+            .chain(self.launch_session_scene(scene, true))
     }
 
     pub(super) fn stop_live_session_play(&mut self) -> Task<Message> {
@@ -1348,7 +1398,7 @@ fn slot_zone_id(track_name: &str, scene_index: usize) -> String {
     format!("session-slot:{}:{}", track_name, scene_index)
 }
 
-fn build_slot_zone_map(
+pub(super) fn build_slot_zone_map(
     tracks: &[crate::state::Track],
     session: &crate::state::SessionMatrix,
 ) -> std::collections::HashMap<Id, (String, usize)> {

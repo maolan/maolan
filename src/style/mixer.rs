@@ -22,6 +22,8 @@ pub fn darken(color: Color, amount: f32) -> Color {
     }
 }
 
+pub const STRIP_CORNER_RADIUS: f32 = 7.0;
+
 pub fn strip(selected: bool, color: Option<iced::Color>) -> container::Style {
     let border_color = if selected {
         rgb(114, 170, 240)
@@ -43,7 +45,7 @@ pub fn strip(selected: bool, color: Option<iced::Color>) -> container::Style {
         border: Border {
             color: border_color,
             width: if selected { 1.5 } else { 1.0 },
-            radius: 7.0.into(),
+            radius: STRIP_CORNER_RADIUS.into(),
         },
         ..container::Style::default()
     }
@@ -56,6 +58,42 @@ pub fn slot() -> container::Style {
             width: 1.0,
             radius: 4.0.into(),
         },
+        ..container::Style::default()
+    }
+}
+
+/// Master-track slot for the selected scene: border-only highlight in the
+/// selection color. Applies both while stopped (the scene Play will start)
+/// and while playing (the scene that launches next).
+pub fn slot_queued() -> container::Style {
+    container::Style {
+        border: Border {
+            color: rgb(114, 170, 240),
+            width: 1.5,
+            radius: 4.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Master-track slot whose scene is currently playing.
+pub fn slot_playing() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(rgb(38, 78, 52))),
+        border: Border {
+            color: rgb(96, 200, 130),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Top/bottom edge highlight for strips whose immediate parent folder is
+/// selected. Matches the selection border color.
+pub fn strip_parent_edge_highlight() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(rgb(114, 170, 240))),
         ..container::Style::default()
     }
 }

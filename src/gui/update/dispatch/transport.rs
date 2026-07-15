@@ -33,6 +33,13 @@ impl Maolan {
                 if session_view_active {
                     return self.start_live_session_play();
                 }
+                // Starting editor playback while the live session is playing
+                // hands over: live playback stops, editor playback starts.
+                let stop_live = if self.live_session_playing {
+                    self.stop_live_session_play()
+                } else {
+                    Task::none()
+                };
                 self.toolbar.update(&message);
                 let was_playing = self.playing;
                 self.playing = true;
@@ -46,14 +53,24 @@ impl Maolan {
                 if !was_playing {
                     tasks.push(self.send(Action::Play));
                 }
-                Task::batch(tasks)
+                stop_live.chain(Task::batch(tasks))
             }
             Message::TransportPause => {
                 if session_view_active {
                     if self.live_session_playing {
                         return self.stop_live_session_play();
                     }
+                    // Pause pressed in live view while the editor is playing
+                    // stops editor playback.
+                    if self.playing {
+                        return self.stop_workspace_playback(false);
+                    }
                     return Task::none();
+                }
+                if self.live_session_playing {
+                    // Pause pressed in the editor while the live session is
+                    // playing stops it (and any editor playback).
+                    return self.stop_live_session_play();
                 }
                 self.toolbar.update(&message);
                 let was_playing = self.playing;
@@ -70,6 +87,11 @@ impl Maolan {
             }
             Message::TransportStop => {
                 if session_view_active {
+                    return self.stop_live_session_play();
+                }
+                if self.live_session_playing {
+                    // Stop pressed in the editor while the live session is
+                    // playing stops it (and any editor playback).
                     return self.stop_live_session_play();
                 }
                 self.stop_workspace_playback(false)
@@ -117,6 +139,7 @@ impl Maolan {
                 if tokio::runtime::Handle::try_current().is_ok() {
                     if let Some(snapshot) = CLIENT.session_runtime_snapshot() {
                         let mut state = self.state.blocking_write();
+                        state.current_scene = snapshot.current_scene;
                         let mut active_slots = HashSet::with_capacity(snapshot.slots.len());
                         for slot in snapshot.slots {
                             let key = (slot.track_name, slot.scene_index);

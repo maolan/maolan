@@ -510,6 +510,7 @@ impl Mixer {
         ctx: &RenderContext<'a>,
         selected: &HashSet<String>,
         upstream_track_names: &HashSet<String>,
+        last_child_of_parent: bool,
     ) -> Element<'a, Message> {
         let track = spec.track;
         let pan = if track.audio.outs == 2 {
@@ -542,7 +543,8 @@ impl Mixer {
             children_by_parent.get(&track.name).map(|indices| {
                 let child_elements: Vec<Element<'a, Message>> = indices
                     .iter()
-                    .map(|&i| {
+                    .enumerate()
+                    .map(|(pos, &i)| {
                         Self::render_track_strip(
                             &all_specs[i],
                             children_by_parent,
@@ -550,6 +552,7 @@ impl Mixer {
                             ctx,
                             selected,
                             upstream_track_names,
+                            pos + 1 == indices.len(),
                         )
                     })
                     .collect();
@@ -571,7 +574,11 @@ impl Mixer {
         } else {
             None
         };
-        mouse_area(Self::strip_shell(
+        let parent_selected = track
+            .parent_track
+            .as_deref()
+            .is_some_and(|parent| selected.contains(parent));
+        let shell: Element<'a, Message> = Self::strip_shell(
             track.name.clone(),
             selected.contains(track.name.as_str()),
             track.color,
@@ -587,14 +594,51 @@ impl Mixer {
             },
             Self::strip_controls(track, solo_upstream),
             children,
-        ))
-        .on_press(Message::SelectTrackFromMixer(track.name.clone()))
-        .on_double_click(if track.is_folder {
-            Message::OpenFolderConnections(track.name.clone())
+        );
+        // iced borders are uniform on all sides, so highlight only the top
+        // and bottom edges of a strip whose immediate parent folder is
+        // selected with flush bars above and below the strip. The far-right
+        // child additionally gets a right-edge bar. It is overlaid with a
+        // Stack because the folder's children row is shrink-wrapped
+        // vertically and a sibling Fill bar would collapse to zero height;
+        // it is inset by the corner radius so it clears the rounded corners.
+        let shell: Element<'a, Message> = if parent_selected {
+            let bar = || {
+                container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+                    .width(Length::Fill)
+                    .style(|_| style::mixer::strip_parent_edge_highlight())
+            };
+            let with_hbars: Element<'a, Message> =
+                column![bar(), shell, bar()].height(Length::Fill).into();
+            if last_child_of_parent {
+                let right_edge = container(
+                    column![
+                        Space::new().height(Length::Fixed(style::mixer::STRIP_CORNER_RADIUS)),
+                        container(Space::new().width(Length::Fixed(2.0)).height(Length::Fill))
+                            .height(Length::Fill)
+                            .style(|_| style::mixer::strip_parent_edge_highlight()),
+                        Space::new().height(Length::Fixed(style::mixer::STRIP_CORNER_RADIUS)),
+                    ]
+                    .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::End);
+                Stack::new().push(with_hbars).push(right_edge).into()
+            } else {
+                with_hbars
+            }
         } else {
-            Message::OpenTrackPlugins(track.name.clone())
-        })
-        .into()
+            shell
+        };
+        mouse_area(shell)
+            .on_press(Message::SelectTrackFromMixer(track.name.clone()))
+            .on_double_click(if track.is_folder {
+                Message::OpenFolderConnections(track.name.clone())
+            } else {
+                Message::OpenTrackPlugins(track.name.clone())
+            })
+            .into()
     }
 
     fn strip_controls(track: &Track, solo_upstream: bool) -> Option<Element<'static, Message>> {
@@ -911,6 +955,7 @@ impl Mixer {
                 &ctx,
                 &state.selected,
                 &upstream_track_names,
+                false,
             ));
         }
         if left_spacer > 0.0 {

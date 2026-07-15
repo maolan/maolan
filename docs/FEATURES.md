@@ -22,7 +22,7 @@ Last updated: 2026-07-09
 - Clip drag-and-drop move/copy across tracks
 - Clip group / ungroup on same-track, same-type selections
 - Nested clip groups preserved on save/load and restore on ungroup
-- Clip edge resize (left/right)
+- Clip edge resize (left/right); MIDI clips can be extended past their content length (empty tail), audio clips are bounded by source length
 - Clip fade-in/fade-out resize
 - Clip mute/unmute
 - Clip rename
@@ -57,6 +57,7 @@ Last updated: 2026-07-09
 - Collapsible/expandable folder view in the track list
 - Child tracks route through the folder track and are connectable to folder plugins
 - Folder track plugin graph for processing the summed child output
+- Child strips in the mixer and live view show highlighted top and bottom edges when their immediate parent folder is selected; the far-right child also gets a highlighted right edge
 - Track-to-folder plugin connections and disabled folder-output feeds
 - Folder track templates that save the full child subtree recursively
 
@@ -147,10 +148,13 @@ Last updated: 2026-07-09
 - Each row is a track; each column is a scene
 - Slots reference arrangement clips by stable clip ID
 - Launch/stop slots with click or `Return`
-- Launch scenes by clicking scene headers; per-scene tempo changes on launch
+- Launch scenes by clicking the Master column scene slots; the clicked scene is selected (while stopped, it starts on the next play; while playing, it launches when the current scene finishes)
+- Per-scene tempo changes on launch
 - Stop all clips with `Shift+Space` or the master stop column
 - Move, duplicate, and copy slot references between slots and the arrangement
 - Assign arrangement clips to session slots
+- Clear a slot's clip with middle-click on the slot
+- Child strips show highlighted top and bottom edges when their immediate parent folder is selected; the far-right child also gets a highlighted right edge (same cue as the mixer)
 - Import the arrangement into the session grid
 - Record session clips into the arrangement (`Rec to Arr`)
 - Record directly into a slot
@@ -247,6 +251,7 @@ Last updated: 2026-07-09
 ## Media Management and File References
 - Collect/consolidate external media and plugin file references into the session's `data/` directory
 - Delete unused session media files from `audio/`, `midi/`, `peaks/`, and `pitch/`
+- Clips deleted from tracks are kept in a session-level unused pool (shown in the Clips pane) until **File → Delete unused files** removes them permanently
 - CLAP and LV2 file-reference support: plugins can declare external file references and Maolan updates them to session-relative `data/` paths on consolidate
 - Consolidation makes sessions safer to move or share
 

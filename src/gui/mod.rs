@@ -522,6 +522,7 @@ struct AudioClipKey {
 struct SessionMediaCleanupReport {
     deleted_files: Vec<String>,
     failed_files: Vec<String>,
+    deleted_clips: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -729,8 +730,6 @@ pub struct Maolan {
     editor_scroll_y: f32,
     mixer_scroll_x: f32,
     tracks_resize_hovered: bool,
-    live_view_tracks_resize_hovered: bool,
-    live_view_left_split_resize_hovered: bool,
     mixer_resize_hovered: bool,
     tracks_visible: bool,
     editor_visible: bool,
@@ -739,6 +738,7 @@ pub struct Maolan {
     show_log_window: bool,
     shortcuts_pane_visible: bool,
     modulators_pane_visible: bool,
+    clips_pane_visible: bool,
     pub modulators: Vec<crate::state::Modulator>,
     pub selected_modulator_id: Option<usize>,
     hw_mixer: mixosc::app::MixOscApp,
@@ -825,6 +825,7 @@ pub struct Maolan {
     pending_branch_input: String,
     dragging_session_slot: Option<(String, usize)>,
     dragging_session_clip: Option<crate::state::DraggedSessionClip>,
+    dragging_pane_clip: Option<crate::state::DraggedSessionClip>,
     session_slot_record_target: Option<(String, usize)>,
     prefs_osc_enabled: bool,
     prefs_export_sample_rate_hz: u32,
@@ -1036,8 +1037,6 @@ impl Default for Maolan {
             editor_scroll_y: 0.0,
             mixer_scroll_x: 0.0,
             tracks_resize_hovered: false,
-            live_view_tracks_resize_hovered: false,
-            live_view_left_split_resize_hovered: false,
             mixer_resize_hovered: false,
             tracks_visible: true,
             editor_visible: true,
@@ -1046,6 +1045,7 @@ impl Default for Maolan {
             show_log_window: false,
             shortcuts_pane_visible: false,
             modulators_pane_visible: false,
+            clips_pane_visible: false,
             modulators: vec![],
             selected_modulator_id: None,
             hw_mixer: mixosc::app::MixOscApp::default(),
@@ -1134,6 +1134,7 @@ impl Default for Maolan {
             pending_branch_input: String::new(),
             dragging_session_slot: None,
             dragging_session_clip: None,
+            dragging_pane_clip: None,
             session_slot_record_target: None,
             prefs_osc_enabled: prefs.osc_enabled,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
@@ -2468,23 +2469,58 @@ impl Maolan {
         referenced
     }
 
+    fn insert_referenced_unused_clip_paths(
+        referenced: &mut HashSet<String>,
+        audio_clips: &[crate::state::AudioClip],
+        midi_clips: &[crate::state::MIDIClip],
+    ) {
+        for clip in audio_clips {
+            Self::insert_referenced_session_media_path(referenced, &clip.name);
+            if let Some(source_name) = clip.pitch_correction_source_name.as_deref() {
+                Self::insert_referenced_session_media_path(referenced, source_name);
+            }
+            if let Some(peaks_file) = clip.peaks_file.as_deref() {
+                Self::insert_referenced_session_media_path(referenced, peaks_file);
+            }
+            Self::insert_pitch_correction_cache_reference(referenced, clip);
+        }
+        for clip in midi_clips {
+            Self::insert_referenced_session_media_path(referenced, &clip.name);
+        }
+    }
+
+    #[cfg(test)]
     fn referenced_session_media_paths(state: &crate::state::StateData) -> HashSet<String> {
-        Self::referenced_session_media_paths_from_tracks(&state.tracks)
+        let mut referenced = Self::referenced_session_media_paths_from_tracks(&state.tracks);
+        Self::insert_referenced_unused_clip_paths(
+            &mut referenced,
+            &state.unused_audio_clips,
+            &state.unused_midi_clips,
+        );
+        referenced
     }
 
     fn referenced_session_media_paths_from_file(path: &Path) -> io::Result<HashSet<String>> {
         #[derive(serde::Deserialize)]
         struct SessionFileTracks {
             tracks: Vec<crate::state::Track>,
+            #[serde(default)]
+            unused_audio_clips: Vec<crate::state::AudioClip>,
+            #[serde(default)]
+            unused_midi_clips: Vec<crate::state::MIDIClip>,
         }
 
         let file = std::fs::File::open(path)?;
         let reader = std::io::BufReader::new(file);
         let session: SessionFileTracks = serde_json::from_reader(reader)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        Ok(Self::referenced_session_media_paths_from_tracks(
-            &session.tracks,
-        ))
+        let mut referenced = Self::referenced_session_media_paths_from_tracks(&session.tracks);
+        Self::insert_referenced_unused_clip_paths(
+            &mut referenced,
+            &session.unused_audio_clips,
+            &session.unused_midi_clips,
+        );
+        Ok(referenced)
     }
 
     fn collect_cleanup_candidate_files(
@@ -2527,11 +2563,35 @@ impl Maolan {
         &self,
         session_root: &Path,
     ) -> Result<SessionMediaCleanupReport, String> {
+        let report = Self::delete_unused_session_media_files_for(
+            &self.state,
+            &self.session_branch,
+            session_root,
+        )?;
+        if !report.deleted_clips.is_empty() {
+            let _ = CLIENT
+                .sender
+                .try_send(EngineMessage::Request(Action::DeleteUnusedClips {
+                    clip_ids: report.deleted_clips.clone(),
+                }));
+        }
+        Ok(report)
+    }
+
+    fn delete_unused_session_media_files_for(
+        state: &crate::state::State,
+        session_branch: &str,
+        session_root: &Path,
+    ) -> Result<SessionMediaCleanupReport, String> {
+        // Track-only references from the in-memory current branch.
         let mut referenced = {
-            let state = self.state.blocking_read();
-            Self::referenced_session_media_paths(&state)
+            let state = state.blocking_read();
+            Self::referenced_session_media_paths_from_tracks(&state.tracks)
         };
 
+        // Other branch files contribute track and unused-pool references. The
+        // current branch file is skipped: in-memory state is authoritative.
+        let current_branch_file = format!("{session_branch}.json");
         if let Ok(entries) = std::fs::read_dir(session_root) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -2549,11 +2609,67 @@ impl Maolan {
                 {
                     continue;
                 }
+                if path.file_name().and_then(|s| s.to_str()) == Some(current_branch_file.as_str()) {
+                    continue;
+                }
                 match Self::referenced_session_media_paths_from_file(&path) {
                     Ok(refs) => referenced.extend(refs),
                     Err(_e) => {}
                 }
             }
+        }
+
+        // Unused clips whose main media path is not referenced anywhere else
+        // can be deleted completely. Clips still referenced by a live-view
+        // session slot are in use and must survive.
+        let mut deletable: Vec<String> = Vec::new();
+        {
+            let state = state.blocking_read();
+            let live_ids = state.session.slot_referenced_clip_ids();
+            for clip in &state.unused_audio_clips {
+                if live_ids.contains(&clip.id) {
+                    continue;
+                }
+                if Self::normalize_session_media_rel(&clip.name)
+                    .is_some_and(|rel| !referenced.contains(&rel))
+                {
+                    deletable.push(clip.id.clone());
+                }
+            }
+            for clip in &state.unused_midi_clips {
+                if live_ids.contains(&clip.id) {
+                    continue;
+                }
+                if Self::normalize_session_media_rel(&clip.name)
+                    .is_some_and(|rel| !referenced.contains(&rel))
+                {
+                    deletable.push(clip.id.clone());
+                }
+            }
+        }
+
+        let mut report = SessionMediaCleanupReport::default();
+        if !deletable.is_empty() {
+            {
+                let mut state = state.blocking_write();
+                state
+                    .unused_audio_clips
+                    .retain(|clip| !deletable.contains(&clip.id));
+                state
+                    .unused_midi_clips
+                    .retain(|clip| !deletable.contains(&clip.id));
+            }
+            report.deleted_clips = deletable;
+        }
+
+        // Surviving unused clips keep their media referenced.
+        {
+            let state = state.blocking_read();
+            Self::insert_referenced_unused_clip_paths(
+                &mut referenced,
+                &state.unused_audio_clips,
+                &state.unused_midi_clips,
+            );
         }
 
         let mut candidates = Vec::new();
@@ -2587,7 +2703,6 @@ impl Maolan {
         .map_err(|e| format!("Failed to scan pitch/: {e}"))?;
         candidates.sort_by(|a, b| a.1.cmp(&b.1));
 
-        let mut report = SessionMediaCleanupReport::default();
         for (path, rel) in candidates {
             match fs::remove_file(&path) {
                 Ok(()) => report.deleted_files.push(rel),
@@ -8680,6 +8795,78 @@ mod tests {
     }
 
     #[test]
+    fn delete_unused_session_media_files_keeps_clip_referenced_by_other_branch() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_test_cleanup_{unique}"));
+        fs::create_dir_all(session_root.join("audio")).expect("create temp audio dir");
+        fs::write(session_root.join("audio/keep.wav"), b"x").expect("seed media");
+
+        let mut data = crate::state::StateData::default();
+        data.unused_audio_clips.push(crate::state::AudioClip {
+            id: "clip-1".to_string(),
+            name: "audio/keep.wav".to_string(),
+            ..Default::default()
+        });
+        let state: crate::state::State = std::sync::Arc::new(tokio::sync::RwLock::new(data));
+
+        let mut other_track = crate::state::Track::new("Other".to_string(), 0.0, 1, 1, 1, 1);
+        other_track.audio.clips.push(crate::state::AudioClip {
+            name: "audio/keep.wav".to_string(),
+            ..Default::default()
+        });
+        let other_branch = serde_json::json!({
+            "tracks": serde_json::to_value(vec![&other_track]).expect("serialize track"),
+        });
+        fs::write(
+            session_root.join("other.json"),
+            serde_json::to_string(&other_branch).expect("serialize branch"),
+        )
+        .expect("write other branch");
+
+        let report = Maolan::delete_unused_session_media_files_for(&state, "main", &session_root)
+            .expect("cleanup");
+
+        assert!(report.deleted_clips.is_empty());
+        assert!(report.deleted_files.is_empty());
+        assert!(session_root.join("audio/keep.wav").exists());
+        assert_eq!(state.blocking_read().unused_audio_clips.len(), 1);
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn delete_unused_session_media_files_removes_unreferenced_clip_and_media() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_test_cleanup_{unique}"));
+        fs::create_dir_all(session_root.join("audio")).expect("create temp audio dir");
+        fs::write(session_root.join("audio/gone.wav"), b"x").expect("seed media");
+
+        let mut data = crate::state::StateData::default();
+        data.unused_audio_clips.push(crate::state::AudioClip {
+            id: "clip-2".to_string(),
+            name: "audio/gone.wav".to_string(),
+            ..Default::default()
+        });
+        let state: crate::state::State = std::sync::Arc::new(tokio::sync::RwLock::new(data));
+
+        let report = Maolan::delete_unused_session_media_files_for(&state, "main", &session_root)
+            .expect("cleanup");
+
+        assert_eq!(report.deleted_clips, vec!["clip-2".to_string()]);
+        assert!(report.deleted_files.contains(&"audio/gone.wav".to_string()));
+        assert!(!session_root.join("audio/gone.wav").exists());
+        assert!(state.blocking_read().unused_audio_clips.is_empty());
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
     fn insert_referenced_session_media_path_ignores_unsafe_inputs() {
         let mut referenced = HashSet::new();
 
@@ -9135,6 +9322,84 @@ mod tests {
         let _ = app.update(Message::TransportPlay);
 
         assert!(app.live_session_playing);
+    }
+
+    #[test]
+    fn session_scene_pressed_selects_scene_while_live_playing() {
+        let mut app = Maolan {
+            live_session_playing: true,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::SessionScenePressed(0));
+        assert_eq!(app.state.blocking_read().selected_scene, Some(0));
+
+        // Pressing the selected scene again keeps the selection (the engine
+        // re-triggers it at the end of the current pass).
+        let _ = app.update(Message::SessionScenePressed(0));
+        assert_eq!(app.state.blocking_read().selected_scene, Some(0));
+    }
+
+    #[test]
+    fn session_scene_pressed_while_stopped_selects_scene() {
+        let mut app = Maolan::default();
+        // The default session has one scene; add a second so index 1 exists.
+        app.state.blocking_write().session.add_scene();
+
+        let _ = app.update(Message::SessionScenePressed(1));
+        assert_eq!(app.state.blocking_read().selected_scene, Some(1));
+
+        let _ = app.update(Message::SessionScenePressed(0));
+        assert_eq!(app.state.blocking_read().selected_scene, Some(0));
+    }
+
+    #[test]
+    fn transport_play_in_session_view_starts_selected_scene() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.view = crate::state::View::Session;
+            state.session.add_scene();
+            state.tracks.push(crate::state::Track::new(
+                "Track 1".to_string(),
+                0.0,
+                2,
+                2,
+                0,
+                0,
+            ));
+            state.session.ensure_track_slots("Track 1");
+            let slot = state
+                .session
+                .slot_mut("Track 1", 1)
+                .expect("scene 1 slot exists");
+            slot.clip = Some(crate::state::SlotClipRef {
+                clip_id: "clip-1".to_string(),
+                launch_mode: crate::state::LaunchMode::default(),
+                launch_quantization: crate::state::LaunchQuantization::default(),
+                loop_enabled: true,
+                loop_start_samples: 0,
+                loop_end_samples: 0,
+            });
+            slot.play_stop_icon = Some(true);
+            state.selected_scene = Some(1);
+        }
+
+        let _ = app.update(Message::TransportPlay);
+
+        assert!(app.live_session_playing);
+        let state = app.state.blocking_read();
+        let runtime = state
+            .slot_runtimes
+            .get(&("Track 1".to_string(), 1))
+            .expect("scene 1 slot queued");
+        assert_eq!(runtime.state, crate::state::SlotPlayState::Queued);
+        assert!(
+            !state
+                .slot_runtimes
+                .contains_key(&("Track 1".to_string(), 0)),
+            "scene 0 must not start when scene 1 is selected"
+        );
     }
 
     #[test]

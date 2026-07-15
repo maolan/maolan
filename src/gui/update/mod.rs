@@ -549,6 +549,80 @@ impl Maolan {
         clip
     }
 
+    pub(crate) fn audio_clip_add_action(
+        clip_id: &str,
+        track_name: &str,
+        clip: &crate::state::AudioClip,
+        start: usize,
+    ) -> maolan_engine::message::Action {
+        maolan_engine::message::Action::AddClip {
+            clip_id: clip_id.to_string(),
+            name: clip.name.clone(),
+            track_name: track_name.to_string(),
+            start,
+            length: clip.length,
+            offset: clip.offset,
+            input_channel: clip.input_channel,
+            muted: clip.muted,
+            peaks_file: clip.peaks_file.clone(),
+            kind: Kind::Audio,
+            fade_enabled: clip.fade_enabled,
+            fade_in_samples: clip.fade_in_samples,
+            fade_out_samples: clip.fade_out_samples,
+            source_name: clip.pitch_correction_source_name.clone(),
+            source_offset: clip.pitch_correction_source_offset,
+            source_length: clip.pitch_correction_source_length,
+            preview_name: clip.pitch_correction_preview_name.clone(),
+            pitch_correction_points: clip
+                .pitch_correction_points
+                .iter()
+                .map(|point| maolan_engine::message::PitchCorrectionPointData {
+                    start_sample: point.start_sample,
+                    length_samples: point.length_samples,
+                    detected_midi_pitch: point.detected_midi_pitch,
+                    target_midi_pitch: point.target_midi_pitch,
+                    clarity: point.clarity,
+                })
+                .collect(),
+            pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+            pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+            pitch_correction_formant_compensation: clip.pitch_correction_formant_compensation,
+            plugin_graph_json: clip.plugin_graph_json.clone(),
+        }
+    }
+
+    pub(crate) fn midi_clip_add_action(
+        clip_id: &str,
+        track_name: &str,
+        clip: &crate::state::MIDIClip,
+        start: usize,
+    ) -> maolan_engine::message::Action {
+        maolan_engine::message::Action::AddClip {
+            clip_id: clip_id.to_string(),
+            name: clip.name.clone(),
+            track_name: track_name.to_string(),
+            start,
+            length: clip.length,
+            offset: clip.offset,
+            input_channel: clip.input_channel,
+            muted: clip.muted,
+            peaks_file: None,
+            kind: Kind::MIDI,
+            fade_enabled: true,
+            fade_in_samples: 240,
+            fade_out_samples: 240,
+            source_name: None,
+            source_offset: None,
+            source_length: None,
+            preview_name: None,
+            pitch_correction_points: vec![],
+            pitch_correction_frame_likeness: None,
+            pitch_correction_inertia_ms: None,
+            pitch_correction_formant_compensation: None,
+            plugin_graph_json: None,
+        }
+    }
+
     #[allow(dead_code)]
     fn open_clip_plugin_view(&mut self, track_name: String, clip_idx: usize) -> Task<Message> {
         let (graph_json, track_audio_ins, track_audio_outs, vst3_plugins, clap_plugins) = {
