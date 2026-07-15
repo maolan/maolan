@@ -412,6 +412,45 @@ fn clip_length_for_slot(
         })
 }
 
+fn clip_name_for_slot(
+    track: &Track,
+    input: &SessionViewInput,
+    scene_index: usize,
+) -> Option<String> {
+    let slots = input.session.slots.get(&track.name)?;
+    let slot = slots.get(scene_index)?;
+    let clip_ref = slot.clip.as_ref()?;
+    track
+        .audio
+        .clips
+        .iter()
+        .find(|c| c.id == clip_ref.clip_id)
+        .map(|c| c.name.clone())
+        .or_else(|| {
+            track
+                .midi
+                .clips
+                .iter()
+                .find(|c| c.id == clip_ref.clip_id)
+                .map(|c| c.name.clone())
+        })
+        .or_else(|| {
+            input
+                .unused_audio_clips
+                .iter()
+                .find(|c| c.id == clip_ref.clip_id)
+                .map(|c| c.name.clone())
+        })
+        .or_else(|| {
+            input
+                .unused_midi_clips
+                .iter()
+                .find(|c| c.id == clip_ref.clip_id)
+                .map(|c| c.name.clone())
+        })
+        .or_else(|| slot.clip_name.clone())
+}
+
 fn scene_cycle_length(input: &SessionViewInput, scene_index: usize) -> usize {
     input
         .tracks
@@ -745,8 +784,8 @@ fn slot_state(track: &Track, args: &SessionViewInput, scene_index: usize) -> Slo
     let slot = slots.and_then(|s| s.get(scene_index));
     SlotState {
         play_stop_icon: slot.and_then(|s| s.play_stop_icon),
-        clip_name: slot
-            .and_then(|s| s.clip_name.as_deref())
+        clip_name: clip_name_for_slot(track, args, scene_index)
+            .as_deref()
             .map(display_clip_name),
     }
 }
