@@ -3524,6 +3524,42 @@ impl Maolan {
                                 }
                             }
                         }
+                        Action::SetClipIdentity {
+                            track_name,
+                            clip_index,
+                            kind,
+                            new_id,
+                            new_name,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            {
+                                match kind {
+                                    Kind::Audio => {
+                                        if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
+                                            clip.id = new_id.clone();
+                                            clip.name = new_name.clone();
+                                            clip.pitch_correction_preview_name = None;
+                                            clip.pitch_correction_source_name = None;
+                                            clip.pitch_correction_source_offset = None;
+                                            clip.pitch_correction_source_length = None;
+                                            clip.pitch_correction_points.clear();
+                                            clip.pitch_correction_frame_likeness = None;
+                                            clip.pitch_correction_inertia_ms = None;
+                                            clip.pitch_correction_formant_compensation = None;
+                                        }
+                                    }
+                                    Kind::MIDI => {
+                                        if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
+                                            clip.id = new_id.clone();
+                                            clip.name = new_name.clone();
+                                        }
+                                        refresh_midi_clip_previews = true;
+                                    }
+                                }
+                            }
+                        }
                         Action::SetClipPitchCorrection {
                             track_name,
                             clip_index,
@@ -5930,94 +5966,47 @@ impl Maolan {
                     return Task::none();
                 }
 
-                let Some(session_dir) = &self.session_dir else {
+                let Some(session_dir) = self.session_dir.clone() else {
                     self.state.blocking_write().message = "No session loaded".to_string();
                     self.state.blocking_write().clip_rename_dialog = None;
                     return Task::none();
                 };
 
-                let mut state = self.state.blocking_write();
-                let Some(track) = state.tracks.iter().find(|t| t.name == dialog.track_idx) else {
-                    state.message = format!("Track {} not found", dialog.track_idx);
+                let Some((_id, old_name, matching_id_count, _used_names)) =
+                    self.clip_identity_context(&dialog.track_idx, dialog.clip_idx, dialog.kind)
+                else {
+                    let mut state = self.state.blocking_write();
+                    state.message = "Clip not found".to_string();
                     state.clip_rename_dialog = None;
                     return Task::none();
                 };
+                let new_file_name =
+                    Self::clip_file_name_for_rename(dialog.kind, &old_name, &new_name);
+                let new_path = session_dir.join(&new_file_name);
+                if new_path.exists() {
+                    let mut state = self.state.blocking_write();
+                    state.message = format!("File '{}' already exists", new_file_name);
+                    state.clip_rename_dialog = None;
+                    return Task::none();
+                }
 
-                let old_name = match dialog.kind {
-                    Kind::Audio => {
-                        if dialog.clip_idx >= track.audio.clips.len() {
-                            state.message = "Clip not found".to_string();
-                            state.clip_rename_dialog = None;
-                            return Task::none();
-                        }
-                        track.audio.clips[dialog.clip_idx].name.clone()
-                    }
-                    Kind::MIDI => {
-                        if dialog.clip_idx >= track.midi.clips.len() {
-                            state.message = "Clip not found".to_string();
-                            state.clip_rename_dialog = None;
-                            return Task::none();
-                        }
-                        track.midi.clips[dialog.clip_idx].name.clone()
-                    }
-                };
-
-                let midi_ext = std::path::Path::new(&old_name)
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|s| s.to_ascii_lowercase())
-                    .filter(|ext| ext == "mid" || ext == "midi")
-                    .unwrap_or_else(|| "mid".to_string());
-                let new_file_name = match dialog.kind {
-                    Kind::Audio => format!("audio/{}.wav", new_name),
-                    Kind::MIDI => format!("midi/{}.{}", new_name, midi_ext),
-                };
-
-                if dialog.kind == Kind::Audio {
-                    let new_path = session_dir.join(&new_file_name);
-                    if new_path.exists() {
-                        state.message = format!("File '{}' already exists", new_file_name);
-                        state.clip_rename_dialog = None;
-                        return Task::none();
-                    }
-
+                if dialog.kind == Kind::Audio && matching_id_count <= 1 {
                     let old_path = session_dir.join(&old_name);
                     if old_path.exists()
                         && let Err(e) = std::fs::rename(&old_path, &new_path)
                     {
+                        let mut state = self.state.blocking_write();
                         state.message = format!("Failed to rename file: {}", e);
                         state.clip_rename_dialog = None;
                         return Task::none();
                     }
                 }
 
-                for track in &mut state.tracks {
-                    match dialog.kind {
-                        Kind::Audio => {
-                            for clip in &mut track.audio.clips {
-                                if clip.name == old_name {
-                                    clip.name = new_file_name.clone();
-                                }
-                                if clip.pitch_correction_source_name.as_deref()
-                                    == Some(old_name.as_str())
-                                {
-                                    clip.pitch_correction_source_name = Some(new_file_name.clone());
-                                }
-                            }
-                        }
-                        Kind::MIDI => {
-                            for clip in &mut track.midi.clips {
-                                if clip.name == old_name {
-                                    clip.name = new_file_name.clone();
-                                }
-                            }
-                        }
-                    }
+                {
+                    let mut state = self.state.blocking_write();
+                    state.message = format!("Renamed to '{}'", new_name);
+                    state.clip_rename_dialog = None;
                 }
-
-                state.message = format!("Renamed to '{}'", new_name);
-                state.clip_rename_dialog = None;
-                drop(state);
 
                 return self.send(Action::RenameClip {
                     track_name: dialog.track_idx,
@@ -8124,11 +8113,7 @@ impl Maolan {
                                     .map(|clip| {
                                         if clip.is_group() {
                                             let mut data = Self::audio_clip_to_data(clip);
-                                            data.id = crate::state::generate_clip_id();
                                             data.start = start;
-                                            for child in &mut data.grouped_clips {
-                                                child.id = crate::state::generate_clip_id();
-                                            }
                                             Action::AddGroupedClip {
                                                 track_name: target_track.clone(),
                                                 kind: Kind::Audio,
@@ -8137,7 +8122,7 @@ impl Maolan {
                                             }
                                         } else {
                                             Self::audio_clip_add_action(
-                                                &crate::state::generate_clip_id(),
+                                                &clip.id,
                                                 &target_track,
                                                 clip,
                                                 start,
@@ -8152,11 +8137,7 @@ impl Maolan {
                                     .map(|clip| {
                                         if clip.is_group() {
                                             let mut data = Self::midi_clip_to_data(clip);
-                                            data.id = crate::state::generate_clip_id();
                                             data.start = start;
-                                            for child in &mut data.grouped_clips {
-                                                child.id = crate::state::generate_clip_id();
-                                            }
                                             Action::AddGroupedClip {
                                                 track_name: target_track.clone(),
                                                 kind: Kind::MIDI,
@@ -8165,7 +8146,7 @@ impl Maolan {
                                             }
                                         } else {
                                             Self::midi_clip_add_action(
-                                                &crate::state::generate_clip_id(),
+                                                &clip.id,
                                                 &target_track,
                                                 clip,
                                                 start,

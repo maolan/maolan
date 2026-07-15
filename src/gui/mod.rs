@@ -6719,6 +6719,7 @@ impl Maolan {
     }
 
     fn send(&self, action: Action) -> Task<Message> {
+        let action = self.action_with_clip_identity_fork(action);
         tracing::info!("GUI sending request: {:?}", std::mem::discriminant(&action));
         Task::perform(
             async move { CLIENT.send(EngineMessage::Request(action)).await },
