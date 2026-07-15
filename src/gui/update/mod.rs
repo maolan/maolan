@@ -623,6 +623,268 @@ impl Maolan {
         }
     }
 
+    fn clip_name_with_incremented_suffix(name: &str) -> String {
+        let path = std::path::Path::new(name);
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(name);
+        let extension = path.extension().and_then(|extension| extension.to_str());
+        let digit_start = stem
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| (!ch.is_ascii_digit()).then_some(idx + ch.len_utf8()))
+            .unwrap_or(0);
+        let next_stem = if digit_start < stem.len() {
+            let prefix = &stem[..digit_start];
+            let number = stem[digit_start..].parse::<usize>().unwrap_or(0);
+            format!("{prefix}{}", number.saturating_add(1))
+        } else {
+            format!("{stem}_1")
+        };
+
+        let mut file_name = next_stem;
+        if let Some(extension) = extension {
+            file_name.push('.');
+            file_name.push_str(extension);
+        }
+        parent
+            .map(|parent| parent.join(&file_name).to_string_lossy().to_string())
+            .unwrap_or(file_name)
+    }
+
+    fn unique_clip_name_from_used(base_name: &str, used_names: &HashSet<String>) -> String {
+        let mut candidate = Self::clip_name_with_incremented_suffix(base_name);
+        while used_names.contains(&candidate) {
+            candidate = Self::clip_name_with_incremented_suffix(&candidate);
+        }
+        candidate
+    }
+
+    fn clip_file_name_for_rename(kind: Kind, old_name: &str, new_name: &str) -> String {
+        match kind {
+            Kind::Audio => format!("audio/{}.wav", new_name),
+            Kind::MIDI => {
+                let ext = std::path::Path::new(old_name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|s| s.to_ascii_lowercase())
+                    .filter(|ext| ext == "mid" || ext == "midi")
+                    .unwrap_or_else(|| "mid".to_string());
+                format!("midi/{}.{}", new_name, ext)
+            }
+        }
+    }
+
+    fn resolve_session_clip_path(&self, name: &str) -> Option<std::path::PathBuf> {
+        let path = std::path::Path::new(name);
+        if path.is_absolute() {
+            Some(path.to_path_buf())
+        } else {
+            self.session_dir.as_ref().map(|session| session.join(path))
+        }
+    }
+
+    fn copy_clip_backing_file_if_present(&self, old_name: &str, new_name: &str) -> io::Result<()> {
+        let Some(old_path) = self.resolve_session_clip_path(old_name) else {
+            return Ok(());
+        };
+        let Some(new_path) = self.resolve_session_clip_path(new_name) else {
+            return Ok(());
+        };
+        if old_path == new_path || !old_path.exists() || new_path.exists() {
+            return Ok(());
+        }
+        if let Some(parent) = new_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(old_path, new_path).map(|_| ())
+    }
+
+    fn clip_identity_context(
+        &self,
+        track_name: &str,
+        clip_index: usize,
+        kind: Kind,
+    ) -> Option<(String, String, usize, HashSet<String>)> {
+        let state = self.state.blocking_read();
+        let mut id = None;
+        let mut name = None;
+        let mut matching_id_count = 0usize;
+        let mut used_names = HashSet::new();
+
+        for track in &state.tracks {
+            match kind {
+                Kind::Audio => {
+                    for (idx, clip) in track.audio.clips.iter().enumerate() {
+                        used_names.insert(clip.name.clone());
+                        if track.name == track_name && idx == clip_index {
+                            id = Some(clip.id.clone());
+                            name = Some(clip.name.clone());
+                        }
+                    }
+                }
+                Kind::MIDI => {
+                    for (idx, clip) in track.midi.clips.iter().enumerate() {
+                        used_names.insert(clip.name.clone());
+                        if track.name == track_name && idx == clip_index {
+                            id = Some(clip.id.clone());
+                            name = Some(clip.name.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let id = id?;
+        let name = name?;
+        for track in &state.tracks {
+            matching_id_count += match kind {
+                Kind::Audio => track
+                    .audio
+                    .clips
+                    .iter()
+                    .filter(|clip| clip.id == id)
+                    .count(),
+                Kind::MIDI => track.midi.clips.iter().filter(|clip| clip.id == id).count(),
+            };
+        }
+        matching_id_count += match kind {
+            Kind::Audio => state
+                .unused_audio_clips
+                .iter()
+                .filter(|clip| clip.id == id)
+                .count(),
+            Kind::MIDI => state
+                .unused_midi_clips
+                .iter()
+                .filter(|clip| clip.id == id)
+                .count(),
+        };
+
+        Some((id, name, matching_id_count, used_names))
+    }
+
+    pub(super) fn action_with_clip_identity_fork(&self, action: Action) -> Action {
+        if let Action::ApplyGroupedActions(actions) = action {
+            let mut forked_actions = Vec::new();
+            for action in actions {
+                match self.action_with_clip_identity_fork(action) {
+                    Action::ApplyGroupedActions(actions) => forked_actions.extend(actions),
+                    action => forked_actions.push(action),
+                }
+            }
+            return Action::ApplyGroupedActions(forked_actions);
+        }
+
+        let Some((track_name, clip_index, kind, length_change, rename_name)) = (match &action {
+            Action::SetClipBounds {
+                track_name,
+                clip_index,
+                kind,
+                length,
+                ..
+            } => Some((track_name.clone(), *clip_index, *kind, Some(*length), None)),
+            Action::RenameClip {
+                track_name,
+                clip_index,
+                kind,
+                new_name,
+            } => Some((
+                track_name.clone(),
+                *clip_index,
+                *kind,
+                None,
+                Some(new_name.clone()),
+            )),
+            Action::ModifyMidiNotes {
+                track_name,
+                clip_index,
+                ..
+            }
+            | Action::ModifyMidiControllers {
+                track_name,
+                clip_index,
+                ..
+            }
+            | Action::DeleteMidiControllers {
+                track_name,
+                clip_index,
+                ..
+            }
+            | Action::InsertMidiControllers {
+                track_name,
+                clip_index,
+                ..
+            }
+            | Action::DeleteMidiNotes {
+                track_name,
+                clip_index,
+                ..
+            }
+            | Action::InsertMidiNotes {
+                track_name,
+                clip_index,
+                ..
+            } => Some((track_name.clone(), *clip_index, Kind::MIDI, None, None)),
+            _ => None,
+        }) else {
+            return action;
+        };
+
+        let Some((_old_id, old_name, matching_id_count, used_names)) =
+            self.clip_identity_context(&track_name, clip_index, kind)
+        else {
+            return action;
+        };
+        if matching_id_count <= 1 {
+            return action;
+        }
+        if let Some(new_length) = length_change {
+            let old_length = {
+                let state = self.state.blocking_read();
+                state
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == track_name)
+                    .and_then(|track| match kind {
+                        Kind::Audio => track.audio.clips.get(clip_index).map(|clip| clip.length),
+                        Kind::MIDI => track.midi.clips.get(clip_index).map(|clip| clip.length),
+                    })
+            };
+            if old_length.is_some_and(|old_length| old_length == new_length.max(1)) {
+                return action;
+            }
+        }
+
+        let new_name = rename_name
+            .as_deref()
+            .map(|new_name| Self::clip_file_name_for_rename(kind, &old_name, new_name))
+            .unwrap_or_else(|| Self::unique_clip_name_from_used(&old_name, &used_names));
+        if let Err(err) = self.copy_clip_backing_file_if_present(&old_name, &new_name) {
+            self.state.blocking_write().message =
+                format!("Failed to fork clip backing file '{}': {err}", old_name);
+            return action;
+        }
+
+        let identity_action = Action::SetClipIdentity {
+            track_name,
+            kind,
+            clip_index,
+            new_id: crate::state::generate_clip_id(),
+            new_name,
+        };
+
+        if rename_name.is_some() {
+            identity_action
+        } else {
+            Action::ApplyGroupedActions(vec![identity_action, action])
+        }
+    }
+
     #[allow(dead_code)]
     fn open_clip_plugin_view(&mut self, track_name: String, clip_idx: usize) -> Task<Message> {
         let (graph_json, track_audio_ins, track_audio_outs, vst3_plugins, clap_plugins) = {
