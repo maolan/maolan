@@ -401,7 +401,7 @@ impl Maolan {
                             let clip_id = if same_track {
                                 dragged.clip_id.clone()
                             } else if dragged.source_track_name.is_some() {
-                                let new_id = crate::state::generate_clip_id();
+                                let clip_id = dragged.clip_id.clone();
                                 let state = self.state.blocking_read();
                                 let source_track = dragged
                                     .source_track_name
@@ -416,7 +416,7 @@ impl Maolan {
                                             .find(|c| c.id == dragged.clip_id)
                                             .map(|clip| {
                                                 Self::audio_clip_add_action(
-                                                    &new_id,
+                                                    &clip_id,
                                                     &target_track_name,
                                                     clip,
                                                     clip.start,
@@ -429,7 +429,7 @@ impl Maolan {
                                             .find(|c| c.id == dragged.clip_id)
                                             .map(|clip| {
                                                 Self::midi_clip_add_action(
-                                                    &new_id,
+                                                    &clip_id,
                                                     &target_track_name,
                                                     clip,
                                                     clip.start,
@@ -442,7 +442,7 @@ impl Maolan {
                                             CLIENT.sender.try_send(EngineMessage::Request(action));
                                     }
                                 }
-                                new_id
+                                clip_id
                             } else {
                                 // Dragged from the unused pool: move the clip onto the
                                 // target track keeping its id, which also removes it
