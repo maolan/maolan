@@ -36,7 +36,7 @@ iced_fonts = { version = "0.3.0", features = ["lucide"] }
 maolan-generate = "0.0.8"
 maolan-engine = "0.2.33"
 maolan-plugin-host = { version = "0.0.5", path = "plugin-host" }
-maolan-widgets = "0.0.23"
+maolan-widgets = "0.0.24"
 mixosc = "0.0.9"
 midly = "0.5.3"
 ffmpeg-next = "8"
@@ -49,6 +49,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.50.0", features = ["full"] }
 toml = "1.1.2"
+timestretch = "0.8.0"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
 uuid = { version = "1.15", features = ["v4"] }

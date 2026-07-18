@@ -5056,7 +5056,7 @@ dependencies = [
  "maolan-engine",
  "maolan-generate",
  "maolan-plugin-host",
- "maolan-widgets 0.0.23",
+ "maolan-widgets 0.0.24",
  "midly",
  "mixosc",
  "nix 0.31.3",
@@ -5067,6 +5067,7 @@ dependencies = [
  "rubato",
  "serde",
  "serde_json",
+ "timestretch",
  "tokio",
  "toml",
  "tracing",
@@ -5175,9 +5176,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.0.23"
+version = "0.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7971017d4bb2782be71aaf027ceba205322e456ff27e4d0fe4f7766e1d3254d2"
+checksum = "62a2078f535bdebbe6ec3b99d3b567813f72dede923717ba2212c69cc9bdbbb2"
 dependencies = [
  "iced",
  "iced_fonts",
@@ -8525,6 +8526,18 @@ checksum = "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "timestretch"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "860ff13fca2d316aed4a1f6e7ac2ed0f92d6c2d2e916bd77f4eca84e5eb1b391"
+dependencies = [
+ "arc-swap",
+ "rustfft",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
