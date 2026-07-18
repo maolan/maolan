@@ -1,0 +1,8 @@
+# Maolan OSC command file example
+# Send with: maolan-osc --file commands.txt
+
+track add "Drums" 2 0 2 0
+track level "Drums" -6.0
+track solo "Drums" 1
+tempo 128.5
+play

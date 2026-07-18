@@ -306,13 +306,6 @@ type TrackFreezeRestore = (Vec<AudioClip>, Vec<MIDIClip>, Option<String>);
 
 pub(crate) const MIN_ZOOM_VISIBLE_BARS: f32 = 0.25;
 pub(crate) const MAX_ZOOM_VISIBLE_BARS: f32 = 256.0;
-pub(crate) static RUBBERBAND_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
-    Command::new("rubberband")
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-});
 
 pub(crate) fn zoom_slider_to_visible_bars(position: f32) -> f32 {
     let clamped = position.clamp(0.0, 1.0);
@@ -3630,7 +3623,35 @@ impl Maolan {
         Ok((rel, channels.max(1), frames.max(1), peaks))
     }
 
-    async fn stretch_audio_clip_with_rubberband(
+    fn timestretch_params(
+        stretch_ratio: f32,
+        sample_rate: u32,
+        channels: usize,
+        formant_compensation: bool,
+    ) -> io::Result<timestretch::StretchParams> {
+        if channels > 2 {
+            return Err(io::Error::other(format!(
+                "Time stretching supports mono or stereo clips, got {channels} channels"
+            )));
+        }
+
+        let mut params = timestretch::StretchParams::new(stretch_ratio.max(0.01) as f64)
+            .with_sample_rate(sample_rate)
+            .with_channels(channels.max(1) as u32);
+        if !formant_compensation {
+            params.envelope_preservation = false;
+            params.envelope_strength = 0.0;
+        }
+        Ok(params)
+    }
+
+    fn fit_interleaved_frames(mut samples: Vec<f32>, channels: usize, frames: usize) -> Vec<f32> {
+        let target_len = frames.saturating_mul(channels.max(1));
+        samples.resize(target_len, 0.0);
+        samples
+    }
+
+    async fn stretch_audio_clip_with_timestretch(
         src_path: &Path,
         session_root: &Path,
         clip_name: &str,
@@ -3658,40 +3679,17 @@ impl Maolan {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("audio");
-        let temp_rel =
-            Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_src"), "wav")?;
-        let temp_path = session_root.join(&temp_rel);
         let output_rel =
             Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_stretch"), "wav")?;
         let output_path = session_root.join(&output_rel);
 
-        Self::write_wav_f32_via_ffmpeg(&temp_path, segment_samples, channels, sample_rate)?;
+        let params = Self::timestretch_params(stretch_ratio, sample_rate, channels, true)?;
+        let stretched = timestretch::stretch(segment_samples, &params)
+            .map_err(|e| io::Error::other(format!("Failed to stretch audio clip: {e}")))?;
+        tokio::task::yield_now().await;
+        Self::write_wav_f32_via_ffmpeg(&output_path, &stretched, channels, sample_rate)?;
 
-        let command_result = tokio::process::Command::new("rubberband")
-            .arg("--quiet")
-            .arg("--fine")
-            .arg("--time")
-            .arg(format!("{:.6}", stretch_ratio.max(0.01)))
-            .arg(&temp_path)
-            .arg(&output_path)
-            .output()
-            .await;
-
-        let _ = fs::remove_file(&temp_path);
-
-        let output = command_result
-            .map_err(|e| io::Error::other(format!("Failed to launch Rubber Band: {e}")))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let _ = fs::remove_file(&output_path);
-            return Err(io::Error::other(if stderr.is_empty() {
-                "Rubber Band failed to stretch the clip".to_string()
-            } else {
-                format!("Rubber Band failed: {stderr}")
-            }));
-        }
-
-        let output_frames = Self::audio_clip_source_length(&output_path)?;
+        let output_frames = stretched.len() / channels;
         Ok((output_rel, output_frames.max(1)))
     }
 
@@ -3876,7 +3874,7 @@ impl Maolan {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn render_audio_clip_pitch_correction_with_rubberband<F>(
+    async fn render_audio_clip_pitch_correction_with_timestretch<F>(
         src_path: &Path,
         session_root: &Path,
         clip_name: &str,
@@ -3915,16 +3913,6 @@ impl Maolan {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("audio");
-        let temp_rel =
-            Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_src"), "wav")?;
-        let temp_path = session_root.join(&temp_rel);
-        let pitchmap_rel = Self::unique_import_rel_path(
-            session_root,
-            "audio",
-            &format!("{stem}_pitchmap"),
-            "txt",
-        )?;
-        let pitchmap_path = session_root.join(&pitchmap_rel);
         let output_rel = Self::unique_import_rel_path(
             session_root,
             "audio",
@@ -3933,11 +3921,9 @@ impl Maolan {
         )?;
         let output_path = session_root.join(&output_rel);
 
-        Self::write_wav_f32_via_ffmpeg(&temp_path, segment_samples, channels, sample_rate)?;
-
-        let mut pitchmap = String::new();
+        let mut pitch_events = Vec::new();
         if points.is_empty() {
-            pitchmap.push_str("0 0\n");
+            pitch_events.push((0, 0.0));
         } else {
             let mut sorted_points = points.to_vec();
             sorted_points.sort_by_key(|point| point.start_sample);
@@ -3945,73 +3931,69 @@ impl Maolan {
             let mut previous_shift =
                 sorted_points[0].target_midi_pitch - sorted_points[0].detected_midi_pitch;
             if sorted_points[0].start_sample > 0 {
-                pitchmap.push_str(&format!("0 {:.6}\n", previous_shift));
+                pitch_events.push((0, previous_shift));
             }
             for point in sorted_points {
                 let start_sample = point.start_sample.min(segment_frames.saturating_sub(1));
                 let target_shift = point.target_midi_pitch - point.detected_midi_pitch;
                 if inertia_frames == 0 || (target_shift - previous_shift).abs() <= f32::EPSILON {
-                    pitchmap.push_str(&format!("{start_sample} {:.6}\n", target_shift));
+                    pitch_events.push((start_sample, target_shift));
                 } else {
-                    pitchmap.push_str(&format!("{start_sample} {:.6}\n", previous_shift));
+                    pitch_events.push((start_sample, previous_shift));
                     let glide_end = start_sample
                         .saturating_add(inertia_frames)
                         .min(segment_frames.saturating_sub(1));
                     if glide_end > start_sample {
-                        pitchmap.push_str(&format!("{glide_end} {:.6}\n", target_shift));
+                        pitch_events.push((glide_end, target_shift));
                     } else {
-                        pitchmap.push_str(&format!("{start_sample} {:.6}\n", target_shift));
+                        pitch_events.push((start_sample, target_shift));
                     }
                 }
                 previous_shift = target_shift;
             }
         }
-        fs::write(&pitchmap_path, pitchmap).map_err(|e| {
-            io::Error::other(format!(
-                "Failed to write pitch map '{}': {e}",
-                pitchmap_path.display()
-            ))
-        })?;
-        progress_callback(0.60, Some("Writing pitch map".to_string()));
-        tokio::task::yield_now().await;
 
-        let command_result = tokio::process::Command::new("rubberband")
-            .args({
-                let mut args = vec![
-                    "--quiet".to_string(),
-                    "--fine".to_string(),
-                    "--pitch-hq".to_string(),
-                    "--pitch".to_string(),
-                    "0".to_string(),
-                    "--pitchmap".to_string(),
-                    pitchmap_path.to_string_lossy().to_string(),
-                    temp_path.to_string_lossy().to_string(),
-                    output_path.to_string_lossy().to_string(),
-                ];
-                if formant_compensation {
-                    args.insert(2, "--formant".to_string());
-                }
-                args
-            })
-            .output()
-            .await;
-        let _ = fs::remove_file(&temp_path);
-        let _ = fs::remove_file(&pitchmap_path);
-        progress_callback(0.90, Some("Rendering".to_string()));
-        tokio::task::yield_now().await;
-
-        let output = command_result
-            .map_err(|e| io::Error::other(format!("Failed to launch Rubber Band: {e}")))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let _ = fs::remove_file(&output_path);
-            return Err(io::Error::other(if stderr.is_empty() {
-                "Rubber Band failed to render pitch correction".to_string()
-            } else {
-                format!("Rubber Band failed: {stderr}")
-            }));
+        pitch_events.sort_by_key(|(sample, _)| *sample);
+        pitch_events.dedup_by_key(|(sample, _)| *sample);
+        if pitch_events.first().is_none_or(|(sample, _)| *sample != 0) {
+            pitch_events.insert(0, (0, 0.0));
         }
-        let output_frames = Self::audio_clip_source_length(&output_path)?;
+        progress_callback(0.60, Some("Rendering".to_string()));
+        tokio::task::yield_now().await;
+
+        let base_params =
+            Self::timestretch_params(1.0, sample_rate, channels, formant_compensation)?;
+        let mut rendered = Vec::with_capacity(segment_samples.len());
+        for (index, (event_start, semitones)) in pitch_events.iter().copied().enumerate() {
+            let event_end = pitch_events
+                .get(index + 1)
+                .map(|(sample, _)| *sample)
+                .unwrap_or(segment_frames)
+                .min(segment_frames);
+            if event_end <= event_start {
+                continue;
+            }
+            let chunk_start = event_start * channels;
+            let chunk_frames = event_end - event_start;
+            let chunk_end = chunk_start + chunk_frames * channels;
+            let chunk = &segment_samples[chunk_start..chunk_end];
+            let corrected = if semitones.abs() <= f32::EPSILON {
+                chunk.to_vec()
+            } else {
+                let pitch_factor = 2.0_f64.powf(semitones as f64 / 12.0);
+                timestretch::pitch_shift(chunk, &base_params, pitch_factor).map_err(|e| {
+                    io::Error::other(format!("Failed to render pitch correction: {e}"))
+                })?
+            };
+            rendered.extend(Self::fit_interleaved_frames(
+                corrected,
+                channels,
+                chunk_frames,
+            ));
+        }
+
+        Self::write_wav_f32_via_ffmpeg(&output_path, &rendered, channels, sample_rate)?;
+        let output_frames = rendered.len() / channels;
         progress_callback(0.95, Some("Calculating peaks".to_string()));
         tokio::task::yield_now().await;
         let peaks = Self::compute_audio_clip_peaks(&output_path)?;
@@ -4853,7 +4835,7 @@ impl Maolan {
                     let formant = clip.pitch_correction_formant_compensation.unwrap_or(true);
                     let session_root = session_root.to_path_buf();
                     handles.push(tokio::spawn(async move {
-                        let result = Maolan::render_audio_clip_pitch_correction_with_rubberband(
+                        let result = Maolan::render_audio_clip_pitch_correction_with_timestretch(
                             &source_path,
                             &session_root,
                             &clip_name,

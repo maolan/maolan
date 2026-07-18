@@ -49,7 +49,7 @@ Last updated: 2026-07-09
   - Apply pitch correction from full clip or selected source offset/length window
   - Non-destructive clip workflow: edits stay local to the editor until Apply writes them back to the clip
   - Real-time pitch-shift playback after Apply
-  - Offline pitch-corrected freeze preparation using Rubber Band preview renders
+  - Offline pitch-corrected freeze preparation using timestretch preview renders
 - Audio warp markers with reset / half-speed / double-speed helpers
 
 ## Folder Tracks
