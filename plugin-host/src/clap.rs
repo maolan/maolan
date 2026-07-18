@@ -1273,6 +1273,8 @@ unsafe extern "C" fn host_get_extension(
         b"clap.audio-ports" => &CLAP_HOST_AUDIO_PORTS as *const _ as *const c_void,
         b"clap.latency" => &CLAP_HOST_LATENCY as *const _ as *const c_void,
         b"clap.thread-pool" => &CLAP_HOST_THREAD_POOL as *const _ as *const c_void,
+        b"clap.gui" => &CLAP_HOST_GUI as *const _ as *const c_void,
+        // Legacy alias kept for binaries built against the pre-fix naming.
         b"clap.host.gui" => &CLAP_HOST_GUI as *const _ as *const c_void,
         b"clap.thread-check" => &CLAP_HOST_THREAD_CHECK as *const _ as *const c_void,
         b"clap.log" => &CLAP_HOST_LOG as *const _ as *const c_void,

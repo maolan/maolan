@@ -95,8 +95,6 @@ sudo apt-get install -y \
     liblilv-dev \
     libsuil-dev \
     libgtk2.0-dev \
-    librubberband-dev \
-    rubberband-cli \
     libavcodec-dev \
     libavdevice-dev \
     libavfilter-dev \
@@ -222,7 +220,7 @@ Version: $PKG_VERSION
 Section: sound
 Priority: optional
 Architecture: $DEB_ARCH
-Depends: libjack-jackd2-0, libasound2t64, liblilv-0-0, libsuil-0-0, libgtk2.0-0t64, librubberband3, rubberband-cli, libavcodec61, libavdevice61, libavfilter10, libavformat61, libavutil59, libswresample5
+Depends: libjack-jackd2-0, libasound2t64, liblilv-0-0, libsuil-0-0, libgtk2.0-0t64, libavcodec61, libavdevice61, libavfilter10, libavformat61, libavutil59, libswresample5
 Maintainer: Maolan Team <maolan@github.io>
 Description: Rust Digital Audio Workstation
  Maolan is a Rust DAW focused on recording, editing, routing,

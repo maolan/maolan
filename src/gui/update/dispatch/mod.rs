@@ -5133,7 +5133,7 @@ impl Maolan {
                                             session_root.join(&source_name)
                                         };
                                     let rendered =
-                                        Self::render_audio_clip_pitch_correction_with_rubberband(
+                                        Self::render_audio_clip_pitch_correction_with_timestretch(
                                             &source_path,
                                             &session_root,
                                             &clip.name,
@@ -6849,10 +6849,6 @@ impl Maolan {
             Message::ClipResizeStart(ref kind, ref track_name, clip_index, is_right_side) => {
                 self.clip = None;
                 let mut state = self.state.blocking_write();
-                let stretch_unavailable = state.shift && !*super::RUBBERBAND_AVAILABLE;
-                if stretch_unavailable {
-                    state.message = "Clip stretching is unavailable because 'rubberband' is not installed or not on PATH".to_string();
-                }
                 if let Some(track) = state.tracks.iter().find(|t| t.name == *track_name) {
                     match kind {
                         Kind::Audio => {
@@ -6862,7 +6858,7 @@ impl Maolan {
                             if clip.take_lane_locked {
                                 return Task::none();
                             }
-                            let stretch_mode = state.shift && *super::RUBBERBAND_AVAILABLE;
+                            let stretch_mode = state.shift;
                             let clip_start = clip.start;
                             let clip_length = clip.length.max(1);
                             let clip_offset = clip.offset;

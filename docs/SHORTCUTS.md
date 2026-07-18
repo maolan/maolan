@@ -58,7 +58,7 @@ Last updated: 2026-07-09
 - `Left drag clip`: Drag/move clip (or group if multi-selected)
 - `Ctrl + drag clip`: Copy clip while dragging
 - `Drag clip left/right edge`: Resize clip bounds
-- `Shift + drag clip left/right edge`: Stretch audio clip with Rubber Band on drop, when `rubberband` is available on `PATH`
+- `Shift + drag clip left/right edge`: Stretch audio clip with the built-in timestretch renderer on drop
 - Snapping is applied during drag-and-drop based on the current snap mode; the "Clips" snap mode enables snapping to other clip start/end positions
 - `Drag clip fade handles`: Resize fade-in/fade-out
 - `Middle click clip`: Split clip at current cursor/snap position
@@ -153,7 +153,7 @@ Deleting a clip from a track does not discard it: the clip moves to the "Unused"
 - Some actions are context-dependent (current view/tool/selection state).
 - The `Q` / `H` / `G` piano shortcuts act on the current piano-roll note selection.
 - In pitch-correction view, undo/redo applies to the local correction editor instead of global engine history until you leave the view or press `Apply`.
-- Audio clip stretching is only available when the `rubberband` executable can be found on `PATH`.
+- Audio clip stretching is rendered in-process with the timestretch library.
 - The main editor zoom is geometric rather than linear, so equal slider movement produces equal zoom-ratio changes.
 - `Group` is only enabled when the current selection contains two or more non-group clips from the same track and clip type.
 - `Split` is blocked for grouped clips; ungroup first.

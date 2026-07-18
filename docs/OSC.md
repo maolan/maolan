@@ -397,7 +397,16 @@ The repository includes a command-line helper:
 ```bash
 maolan-osc --target 127.0.0.1:9000 play
 maolan-osc --host 192.168.1.10 --port 9000 stop
+maolan-osc --file commands.txt
 ```
+
+`--file <path>` reads commands from a file, one per line, using the same
+syntax as the command line. Blank lines and lines starting with `#` are
+ignored, and single or double quotes group arguments that contain
+whitespace (track names, JSON payloads). The whole file is parsed first
+and every error is reported with its line number; packets are sent only
+when the file parses without errors. An example command file is available
+at `docs/commands.txt`.
 
 ### Examples
 

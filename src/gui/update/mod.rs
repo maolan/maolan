@@ -1,6 +1,6 @@
 use super::{
     AUDIO_PEAK_UPDATES, AutomationWriteKey, CLIENT, MIN_CLIP_WIDTH_PX, Maolan,
-    RUBBERBAND_AVAILABLE, TouchAutomationOverride, platform,
+    TouchAutomationOverride, platform,
 };
 mod autosave;
 mod dispatch;
@@ -3653,12 +3653,6 @@ impl Maolan {
         session_root: std::path::PathBuf,
         source_path: std::path::PathBuf,
     ) -> Task<Message> {
-        if !*RUBBERBAND_AVAILABLE {
-            self.state.blocking_write().message =
-                "Clip stretching is unavailable because 'rubberband' is not installed or not on PATH"
-                    .to_string();
-            return Task::none();
-        }
         if !source_path.exists() {
             self.state.blocking_write().message =
                 format!("Audio clip source is missing: {}", source_path.display());
@@ -3666,7 +3660,7 @@ impl Maolan {
         }
         Task::perform(
             async move {
-                let result = Self::stretch_audio_clip_with_rubberband(
+                let result = Self::stretch_audio_clip_with_timestretch(
                     &source_path,
                     &session_root,
                     &request.clip_name,

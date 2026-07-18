@@ -5,6 +5,7 @@ const OSC_TARGET_ADDR: &str = "127.0.0.1:9000";
 #[derive(Debug, Clone)]
 struct Args {
     target: String,
+    file: Option<String>,
     command: Vec<String>,
 }
 
@@ -12,6 +13,7 @@ impl Args {
     fn parse() -> Result<Self, String> {
         let mut args = std::env::args().skip(1);
         let mut target: Option<(String, String)> = None;
+        let mut file = None;
         let mut command = Vec::new();
         while let Some(arg) = args.next() {
             if arg == "--host" {
@@ -31,6 +33,9 @@ impl Args {
             } else if arg == "--target" {
                 let value = args.next().ok_or("--target requires a value")?;
                 target = Some(parse_target_parts(&value)?);
+            } else if arg == "--file" {
+                let value = args.next().ok_or("--file requires a value")?;
+                file = Some(value);
             } else {
                 command.push(arg);
             }
@@ -39,10 +44,17 @@ impl Args {
             Some((host, port)) => format!("{host}:{port}"),
             None => OSC_TARGET_ADDR.to_string(),
         };
-        if command.is_empty() {
+        if file.is_some() && !command.is_empty() {
+            return Err("--file cannot be combined with a command".to_string());
+        }
+        if command.is_empty() && file.is_none() {
             return Err("Missing command. See --help.".to_string());
         }
-        Ok(Self { target, command })
+        Ok(Self {
+            target,
+            file,
+            command,
+        })
     }
 }
 
@@ -64,9 +76,111 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", usage());
         return Ok(());
     }
+    if let Some(file) = &args.file {
+        return run_command_file(&args.target, file);
+    }
     let packet = build_packet(&args.command)?;
     send_packet(&args.target, &packet)?;
     Ok(())
+}
+
+fn run_command_file(target: &str, file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let content =
+        std::fs::read_to_string(file).map_err(|err| format!("Failed to read '{file}': {err}"))?;
+    match parse_command_file(&content) {
+        Ok(packets) => {
+            for packet in &packets {
+                send_packet(target, packet)?;
+            }
+            println!("Sent {} command(s) from {file}", packets.len());
+            Ok(())
+        }
+        Err(errors) => {
+            for error in &errors {
+                eprintln!("{file}:{}: {}: {}", error.line, error.error, error.text);
+            }
+            eprintln!("{} error(s); nothing was sent", errors.len());
+            std::process::exit(1);
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct LineError {
+    line: usize,
+    text: String,
+    error: String,
+}
+
+/// Parses one command per line, collecting every error instead of
+/// stopping at the first one. Packets are returned only when the
+/// whole file parses cleanly.
+fn parse_command_file(content: &str) -> Result<Vec<Vec<u8>>, Vec<LineError>> {
+    let mut packets = Vec::new();
+    let mut errors = Vec::new();
+    for (index, raw) in content.lines().enumerate() {
+        let text = raw.trim();
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        let result = tokenize_line(text).and_then(|tokens| build_packet(&tokens));
+        match result {
+            Ok(packet) => packets.push(packet),
+            Err(error) => errors.push(LineError {
+                line: index + 1,
+                text: text.to_string(),
+                error,
+            }),
+        }
+    }
+    if errors.is_empty() {
+        Ok(packets)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Splits a line into command arguments, honoring single and double
+/// quotes so track names and JSON payloads can contain whitespace.
+fn tokenize_line(line: &str) -> Result<Vec<String>, String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut in_token = false;
+    for c in line.chars() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                } else {
+                    current.push(c);
+                }
+            }
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    in_token = true;
+                }
+                c if c.is_whitespace() => {
+                    if in_token {
+                        tokens.push(std::mem::take(&mut current));
+                        in_token = false;
+                    }
+                }
+                _ => {
+                    current.push(c);
+                    in_token = true;
+                }
+            },
+        }
+    }
+    if quote.is_some() {
+        return Err("Unterminated quote".to_string());
+    }
+    if in_token {
+        tokens.push(current);
+    }
+    Ok(tokens)
 }
 
 fn usage() -> &'static str {
@@ -78,7 +192,21 @@ Options:
   --target <host:port>  OSC target address (default: 127.0.0.1:9000)
   --host <host>         OSC target host
   --port <port>         OSC target port
+  --file <path>         Read commands from a file, one per line
   -h, --help            Show this help
+
+Command files (--file):
+  One command per line, same syntax as the command line. Blank lines and
+  lines starting with '#' are ignored. Single and double quotes group
+  arguments containing whitespace (track names, JSON). The whole file is
+  parsed first and all errors are reported; commands are sent only when
+  the file parses without errors.
+
+  Example:
+    # set up a mix
+    track level "Drums" -6.0
+    track mute "Drums" 1
+    tempo 128.5
 
 Transport:
   play                                /transport/play
@@ -1547,7 +1675,9 @@ enum OscArg {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_packet, parse_bool, parse_float, parse_int};
+    use super::{
+        build_packet, parse_bool, parse_command_file, parse_float, parse_int, tokenize_line,
+    };
 
     fn packet_starts_with_address(packet: &[u8], address: &str) -> bool {
         packet.starts_with(address.as_bytes()) && packet[address.len()] == 0
@@ -1700,5 +1830,50 @@ mod tests {
         ])
         .unwrap();
         assert!(packet_starts_with_address(&packet, "/vst3/connect_audio"));
+    }
+
+    #[test]
+    fn tokenizes_command_file_lines() {
+        assert_eq!(
+            tokenize_line("track rename Vocals \"Lead Vocals\"").unwrap(),
+            vec!["track", "rename", "Vocals", "Lead Vocals"]
+        );
+        assert_eq!(
+            tokenize_line("midi_learn bind_global volume '{\"device\":\"X-Touch\"}'").unwrap(),
+            vec![
+                "midi_learn",
+                "bind_global",
+                "volume",
+                r#"{"device":"X-Touch"}"#
+            ]
+        );
+        assert_eq!(
+            tokenize_line("track session_slot Drums 0 \"\"").unwrap(),
+            vec!["track", "session_slot", "Drums", "0", ""]
+        );
+        assert_eq!(tokenize_line("  play\t  ").unwrap(), vec!["play"]);
+        assert!(tokenize_line("track rename \"Vocals").is_err());
+    }
+
+    #[test]
+    fn parses_command_files() {
+        let packets =
+            parse_command_file("# set up a mix\n\ntempo 128.5\ntrack mute \"Drums\" 1\n").unwrap();
+        assert_eq!(packets.len(), 2);
+        assert!(packet_starts_with_address(&packets[0], "/transport/tempo"));
+        assert!(packet_starts_with_address(&packets[1], "/track/mute"));
+    }
+
+    #[test]
+    fn collects_all_command_file_errors() {
+        let errors =
+            parse_command_file("tempo nope\nplay\ntrack mute\nunknown_command\nposition 44100\n")
+                .unwrap_err();
+        assert_eq!(errors.len(), 3);
+        assert_eq!(errors[0].line, 1);
+        assert_eq!(errors[0].text, "tempo nope");
+        assert_eq!(errors[1].line, 3);
+        assert_eq!(errors[2].line, 4);
+        assert!(errors[2].error.contains("Unknown command"));
     }
 }
