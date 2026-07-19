@@ -5,7 +5,7 @@ mod cli;
 
 use cli::config::{CliConfig, load_session_end_sample};
 use cli::export::{
-    EXPORT_MP3_BITRATES_KBPS, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
+    EXPORT_DITHER_ALL, EXPORT_MP3_BITRATES_KBPS, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
     EXPORT_RENDER_MODE_ALL, ExportBitDepth, ExportFormat, ExportNormalizeMode, ExportRenderMode,
     ExportSettings, STANDARD_EXPORT_SAMPLE_RATES, default_export_base_path,
     export_bit_depth_options, export_session, validate_export_settings,
@@ -107,6 +107,7 @@ enum ExportField {
     FormatFlac,
     SampleRate,
     BitDepth,
+    Dither,
     Mp3Mode,
     Mp3Bitrate,
     OggQuality,
@@ -752,6 +753,7 @@ impl App {
             .any(|format| matches!(format, ExportFormat::Wav | ExportFormat::Flac))
         {
             fields.push(ExportField::BitDepth);
+            fields.push(ExportField::Dither);
         }
         if export_ui.settings.format_mp3 {
             fields.push(ExportField::Mp3Mode);
@@ -822,6 +824,9 @@ impl App {
             ExportField::BitDepth => {
                 let options = export_bit_depth_options(&export_ui.settings.selected_formats());
                 cycle_copy(&mut export_ui.settings.bit_depth, &options, delta);
+            }
+            ExportField::Dither => {
+                cycle_copy(&mut export_ui.settings.dither, &EXPORT_DITHER_ALL, delta);
             }
             ExportField::Mp3Mode => cycle_copy(
                 &mut export_ui.settings.mp3_mode,
@@ -1002,6 +1007,7 @@ impl App {
             ExportField::FormatFlac => format!("[{}] FLAC", mark(settings.format_flac)),
             ExportField::SampleRate => format!("Sample rate: {}", settings.sample_rate_hz),
             ExportField::BitDepth => format!("Bit depth: {}", settings.bit_depth),
+            ExportField::Dither => format!("Dither: {}", settings.dither),
             ExportField::Mp3Mode => format!("MP3 mode: {}", settings.mp3_mode),
             ExportField::Mp3Bitrate => format!("MP3 bitrate: {} kbps", settings.mp3_bitrate_kbps),
             ExportField::OggQuality => format!("OGG quality: {:.1}", settings.ogg_quality),

@@ -618,6 +618,23 @@ impl fmt::Display for ExportBitDepth {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportDither {
+    None,
+    Rectangular,
+    Triangular,
+}
+
+impl fmt::Display for ExportDither {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportDither::None => write!(f, "None"),
+            ExportDither::Rectangular => write!(f, "Rectangular"),
+            ExportDither::Triangular => write!(f, "Triangular"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AddTrack {
     Name(String),
@@ -853,6 +870,7 @@ pub enum Message {
     ExportHwOutPortToggled(usize, bool),
     ExportRealtimeFallbackToggled(bool),
     ExportBitDepthSelected(ExportBitDepth),
+    ExportDitherSelected(ExportDither),
     ExportNormalizeToggled(bool),
     ExportNormalizeModeSelected(ExportNormalizeMode),
     ExportNormalizeDbfsInput(String),

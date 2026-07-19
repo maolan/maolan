@@ -13,14 +13,14 @@ use crate::{
         MAX_RECENT_SESSIONS, STANDARD_EXPORT_SAMPLE_RATES,
     },
     consts::message_lists::{
-        EXPORT_BIT_DEPTH_ALL, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
+        EXPORT_BIT_DEPTH_ALL, EXPORT_DITHER_ALL, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
         EXPORT_RENDER_MODE_ALL, SNAP_MODE_ALL,
     },
     consts::state_ids::METRONOME_TRACK_ID,
     consts::widget_piano::PITCH_MAX,
     hw, menu,
     message::{
-        BurnBackendOption, DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode,
+        BurnBackendOption, DraggedClip, ExportBitDepth, ExportDither, ExportFormat, ExportMp3Mode,
         ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message,
         PreferencesDeviceOption, Show, SnapMode, TrackAutomationTarget,
     },
@@ -345,6 +345,7 @@ struct ExportSessionOptions {
     selected_hw_out_ports: Vec<usize>,
     realtime_fallback: bool,
     bit_depth: ExportBitDepth,
+    dither: ExportDither,
     mp3_mode: ExportMp3Mode,
     mp3_bitrate_kbps: u16,
     ogg_quality: f32,
@@ -387,6 +388,7 @@ struct ExportWriteRequest<'a> {
     sample_rate: i32,
     output_channels: usize,
     bit_depth: ExportBitDepth,
+    dither: ExportDither,
     format: ExportFormat,
     codec: ExportCodecSettings,
     metadata: &'a ExportMetadata,
@@ -783,6 +785,7 @@ pub struct Maolan {
     export_format_ogg: bool,
     export_format_flac: bool,
     export_bit_depth: ExportBitDepth,
+    export_dither: ExportDither,
     export_mp3_mode: ExportMp3Mode,
     export_mp3_bitrate_kbps: u16,
     export_ogg_quality_input: String,
@@ -1094,6 +1097,7 @@ impl Default for Maolan {
             export_format_ogg: false,
             export_format_flac: false,
             export_bit_depth: ExportBitDepth::Int24,
+            export_dither: ExportDither::Triangular,
             export_mp3_mode: ExportMp3Mode::Cbr,
             export_mp3_bitrate_kbps: 320,
             export_ogg_quality_input: "0.6".to_string(),
@@ -2246,7 +2250,14 @@ impl Maolan {
         channels: usize,
         sample_rate: u32,
     ) -> io::Result<()> {
-        Self::write_wav_via_ffmpeg_codec(path, samples, channels, sample_rate, "pcm_f32le")
+        Self::write_wav_via_ffmpeg_codec(
+            path,
+            samples,
+            channels,
+            sample_rate,
+            "pcm_f32le",
+            ExportDither::None,
+        )
     }
 
     fn write_wav_via_ffmpeg_codec(
@@ -2255,6 +2266,7 @@ impl Maolan {
         channels: usize,
         sample_rate: u32,
         codec: &str,
+        dither: ExportDither,
     ) -> io::Result<()> {
         let bits_per_sample = match codec {
             "pcm_s16le" => 16u16,
@@ -2273,6 +2285,7 @@ impl Maolan {
             sample_rate,
             bits_per_sample,
             is_float,
+            dither,
         )
     }
 
@@ -2283,6 +2296,7 @@ impl Maolan {
         sample_rate: u32,
         bits_per_sample: u16,
         is_float: bool,
+        dither: ExportDither,
     ) -> io::Result<()> {
         let bytes_per_sample = usize::from(bits_per_sample / 8);
         let block_align = (channels * bytes_per_sample) as u16;
@@ -2311,21 +2325,53 @@ impl Maolan {
         file.write_all(b"data")?;
         file.write_all(&data_size.to_le_bytes())?;
 
+        let mut rng = Self::dither_rng(0x1234_5678_9abc_defe);
+        let apply_dither = !is_float
+            && Self::dither_is_applicable(
+                match bits_per_sample {
+                    16 => ExportBitDepth::Int16,
+                    24 => ExportBitDepth::Int24,
+                    32 => ExportBitDepth::Int32,
+                    _ => ExportBitDepth::Float32,
+                },
+                dither,
+            );
         for &sample in samples {
             let s = sample.clamp(-1.0, 1.0);
             match (is_float, bits_per_sample) {
                 (true, 32) => file.write_all(&s.to_le_bytes())?,
                 (false, 16) => {
-                    let q = (s * i16::MAX as f32).round() as i16;
+                    let scale = i16::MAX as f32;
+                    let q = if apply_dither {
+                        Self::quantize_with_dither(s, scale, &mut rng, dither)
+                    } else {
+                        s * scale
+                    }
+                    .round()
+                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
                     file.write_all(&q.to_le_bytes())?;
                 }
                 (false, 24) => {
-                    let q = (s * 8_388_607.0).round() as i32;
+                    let scale = 8_388_607.0;
+                    let q = if apply_dither {
+                        Self::quantize_with_dither(s, scale, &mut rng, dither)
+                    } else {
+                        s * scale
+                    }
+                    .round()
+                    .clamp(-8_388_608.0, 8_388_607.0) as i32;
                     let b = q.to_le_bytes();
                     file.write_all(&b[..3])?;
                 }
                 (false, 32) => {
-                    let q = (s * i32::MAX as f32).round() as i32;
+                    let scale = i32::MAX as f32;
+                    let q = if apply_dither {
+                        Self::quantize_with_dither(s, scale, &mut rng, dither)
+                    } else {
+                        s * scale
+                    }
+                    .round()
+                    .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
                     file.write_all(&q.to_le_bytes())?;
                 }
                 _ => return Err(io::Error::other("Unsupported WAV format")),
@@ -4001,12 +4047,47 @@ impl Maolan {
         Ok((output_rel, output_frames.max(1), peaks))
     }
 
+    /// Tiny deterministic PRNG used for export dither.
+    fn dither_rng(seed: u64) -> impl Iterator<Item = u64> {
+        let mut state = seed.max(1);
+        std::iter::from_fn(move || {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state = state.wrapping_mul(0x2545_f491_4f6c_dd1d);
+            Some(state)
+        })
+    }
+
+    fn dither_is_applicable(bit_depth: ExportBitDepth, dither: ExportDither) -> bool {
+        !matches!(dither, ExportDither::None) && !matches!(bit_depth, ExportBitDepth::Float32)
+    }
+
+    fn quantize_with_dither(
+        sample: f32,
+        scale: f32,
+        rng: &mut impl Iterator<Item = u64>,
+        dither: ExportDither,
+    ) -> f32 {
+        let mut uniform_half = || {
+            let u = rng.next().unwrap_or(0) >> 32;
+            (u as f32 / 4_294_967_296.0) - 0.5
+        };
+        let d = match dither {
+            ExportDither::None => 0.0,
+            ExportDither::Rectangular => uniform_half(),
+            ExportDither::Triangular => uniform_half() + uniform_half(),
+        };
+        (sample + d / scale).clamp(-1.0, 1.0) * scale
+    }
+
     fn write_wav_with_bit_depth(
         export_path: &Path,
         mixed_buffer: &[f32],
         sample_rate: i32,
         output_channels: usize,
         bit_depth: ExportBitDepth,
+        dither: ExportDither,
     ) -> io::Result<()> {
         let codec = match bit_depth {
             ExportBitDepth::Int16 => "pcm_s16le",
@@ -4020,12 +4101,14 @@ impl Maolan {
             output_channels,
             sample_rate as u32,
             codec,
+            dither,
         )
     }
 
     fn quantize_samples_for_bit_depth(
         mixed_buffer: &[f32],
         bit_depth: ExportBitDepth,
+        dither: ExportDither,
     ) -> (Vec<i32>, u8) {
         let (scale, min, max, bps) = match bit_depth {
             ExportBitDepth::Int16 => (i16::MAX as f32, i16::MIN as f32, i16::MAX as f32, 16),
@@ -4033,6 +4116,19 @@ impl Maolan {
             ExportBitDepth::Int32 => (i32::MAX as f32, i32::MIN as f32, i32::MAX as f32, 32),
             ExportBitDepth::Float32 => (8_388_607.0_f32, -8_388_608.0_f32, 8_388_607.0_f32, 24),
         };
+
+        if Self::dither_is_applicable(bit_depth, dither) {
+            let mut rng = Self::dither_rng(0x1234_5678_9abc_defe);
+            let samples = mixed_buffer
+                .iter()
+                .map(|s| {
+                    Self::quantize_with_dither(s.clamp(-1.0, 1.0), scale, &mut rng, dither)
+                        .round()
+                        .clamp(min, max) as i32
+                })
+                .collect();
+            return (samples, bps);
+        }
 
         #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
         {
@@ -4079,9 +4175,10 @@ impl Maolan {
         sample_rate: i32,
         output_channels: usize,
         bit_depth: ExportBitDepth,
+        dither: ExportDither,
     ) -> io::Result<()> {
         let (quantized, bits_per_sample) =
-            Self::quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
+            Self::quantize_samples_for_bit_depth(mixed_buffer, bit_depth, dither);
         let use_i16 = bits_per_sample <= 16;
 
         Self::ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
@@ -4490,6 +4587,7 @@ impl Maolan {
                 req.sample_rate,
                 req.output_channels,
                 req.bit_depth,
+                req.dither,
             ),
             ExportFormat::Flac => Self::write_flac_with_bit_depth(
                 &tmp_path,
@@ -4497,6 +4595,7 @@ impl Maolan {
                 req.sample_rate,
                 req.output_channels,
                 req.bit_depth,
+                req.dither,
             ),
             ExportFormat::Mp3 => Self::write_mp3(
                 &tmp_path,
@@ -4742,6 +4841,7 @@ impl Maolan {
         let sample_rate = options.sample_rate;
         let export_formats = options.formats.clone();
         let bit_depth = options.bit_depth;
+        let dither = options.dither;
         let mp3_mode = options.mp3_mode;
         let mp3_bitrate_kbps = options.mp3_bitrate_kbps;
         let ogg_quality = options.ogg_quality;
@@ -5211,6 +5311,7 @@ impl Maolan {
                     sample_rate,
                     output_channels,
                     bit_depth,
+                    dither,
                     format: *format,
                     codec,
                     metadata: &metadata,
@@ -5361,6 +5462,7 @@ impl Maolan {
                     sample_rate,
                     output_channels,
                     bit_depth,
+                    dither,
                     format: *format,
                     codec,
                     metadata: &metadata,
@@ -6881,6 +6983,13 @@ impl Maolan {
                                     Message::ExportBitDepthSelected
                                 )
                                 .placeholder("Choose bit depth"),
+                                text("Dither:"),
+                                pick_list(
+                                    EXPORT_DITHER_ALL.to_vec(),
+                                    Some(self.export_dither),
+                                    Message::ExportDitherSelected
+                                )
+                                .placeholder("Choose dither"),
                             ]
                             .spacing(10)
                             .align_y(iced::Alignment::Center)

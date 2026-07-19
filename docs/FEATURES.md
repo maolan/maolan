@@ -213,6 +213,10 @@ Last updated: 2026-07-09
   - MP3 (via ffmpeg)
   - OGG (Vorbis, via ffmpeg)
   - FLAC
+- Dither options for integer PCM export:
+  - None
+  - Rectangular
+  - Triangular (default)
 - Codec settings:
   - MP3 mode (CBR/VBR) + bitrate
   - OGG quality

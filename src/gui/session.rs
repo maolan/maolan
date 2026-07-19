@@ -132,6 +132,26 @@ impl Maolan {
         }
     }
 
+    fn export_dither_to_json(dither: crate::message::ExportDither) -> Value {
+        Value::String(
+            match dither {
+                crate::message::ExportDither::None => "none",
+                crate::message::ExportDither::Rectangular => "rectangular",
+                crate::message::ExportDither::Triangular => "triangular",
+            }
+            .to_string(),
+        )
+    }
+
+    fn export_dither_from_json(value: Option<&Value>) -> crate::message::ExportDither {
+        match value.and_then(Value::as_str) {
+            Some("none") => crate::message::ExportDither::None,
+            Some("rectangular") => crate::message::ExportDither::Rectangular,
+            Some("triangular") => crate::message::ExportDither::Triangular,
+            _ => crate::message::ExportDither::Triangular,
+        }
+    }
+
     fn export_mp3_mode_to_json(mode: crate::message::ExportMp3Mode) -> Value {
         Value::String(
             match mode {
@@ -584,6 +604,7 @@ impl Maolan {
                 "format_ogg": self.export_format_ogg,
                 "format_flac": self.export_format_flac,
                 "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
+                "dither": Self::export_dither_to_json(self.export_dither),
                 "mp3_mode": Self::export_mp3_mode_to_json(self.export_mp3_mode),
                 "mp3_bitrate_kbps": self.export_mp3_bitrate_kbps,
                 "ogg_quality_input": self.export_ogg_quality_input,
@@ -1829,6 +1850,7 @@ impl Maolan {
                 "format_ogg": self.export_format_ogg,
                 "format_flac": self.export_format_flac,
                 "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
+                "dither": Self::export_dither_to_json(self.export_dither),
                 "mp3_mode": Self::export_mp3_mode_to_json(self.export_mp3_mode),
                 "mp3_bitrate_kbps": self.export_mp3_bitrate_kbps,
                 "ogg_quality_input": self.export_ogg_quality_input,
@@ -2275,6 +2297,7 @@ impl Maolan {
                 .and_then(Value::as_bool)
                 .unwrap_or(self.export_format_flac);
             self.export_bit_depth = Self::export_bit_depth_from_json(export.get("bit_depth"));
+            self.export_dither = Self::export_dither_from_json(export.get("dither"));
             self.export_mp3_mode = Self::export_mp3_mode_from_json(export.get("mp3_mode"));
             self.export_mp3_bitrate_kbps = export
                 .get("mp3_bitrate_kbps")
@@ -3971,6 +3994,42 @@ mod tests {
         assert!(matches!(result, crate::message::ExportBitDepth::Int24));
         let result = Maolan::export_bit_depth_from_json(None);
         assert!(matches!(result, crate::message::ExportBitDepth::Int24));
+    }
+
+    #[test]
+    fn export_dither_to_json_none() {
+        let result = Maolan::export_dither_to_json(crate::message::ExportDither::None);
+        assert_eq!(result, json!("none"));
+    }
+
+    #[test]
+    fn export_dither_to_json_rectangular() {
+        let result = Maolan::export_dither_to_json(crate::message::ExportDither::Rectangular);
+        assert_eq!(result, json!("rectangular"));
+    }
+
+    #[test]
+    fn export_dither_to_json_triangular() {
+        let result = Maolan::export_dither_to_json(crate::message::ExportDither::Triangular);
+        assert_eq!(result, json!("triangular"));
+    }
+
+    #[test]
+    fn export_dither_from_json_parses_variants() {
+        let result = Maolan::export_dither_from_json(Some(&json!("none")));
+        assert!(matches!(result, crate::message::ExportDither::None));
+        let result = Maolan::export_dither_from_json(Some(&json!("rectangular")));
+        assert!(matches!(result, crate::message::ExportDither::Rectangular));
+        let result = Maolan::export_dither_from_json(Some(&json!("triangular")));
+        assert!(matches!(result, crate::message::ExportDither::Triangular));
+    }
+
+    #[test]
+    fn export_dither_from_json_defaults_to_triangular() {
+        let result = Maolan::export_dither_from_json(Some(&json!("unknown")));
+        assert!(matches!(result, crate::message::ExportDither::Triangular));
+        let result = Maolan::export_dither_from_json(None);
+        assert!(matches!(result, crate::message::ExportDither::Triangular));
     }
 
     #[test]
