@@ -2126,9 +2126,6 @@ impl Maolan {
 
     fn expand_request_to_folder_children(&self, action: &Action) -> Option<Vec<Action>> {
         let (source_track, builder): (&str, fn(String, &Action) -> Action) = match action {
-            Action::TrackToggleMute(track_name) => {
-                (track_name.as_str(), |name, _| Action::TrackToggleMute(name))
-            }
             Action::TrackToggleSolo(track_name) => {
                 (track_name.as_str(), |name, _| Action::TrackToggleSolo(name))
             }

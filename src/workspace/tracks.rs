@@ -17,7 +17,10 @@ use iced::{
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc, settings};
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
-use maolan_widgets::horizontal_slider::horizontal_slider;
+use maolan_widgets::{
+    horizontal_meter::{horizontal_meter, total_height as meter_total_height},
+    horizontal_slider::horizontal_slider,
+};
 use std::{
     hash::{Hash, Hasher},
     sync::Arc,
@@ -176,6 +179,7 @@ struct TrackViewData {
     midi_lane_channels: Vec<Option<u8>>,
     level: f32,
     balance: f32,
+    meter_out_db: Option<Vec<f32>>,
     automation_mode: String,
     visible_automation_lanes: Vec<VisibleAutomationLane>,
     midi_learn_vol: bool,
@@ -709,6 +713,14 @@ impl Tracks {
         track.midi_lane_channels.hash(&mut hasher);
         track.level.to_bits().hash(&mut hasher);
         track.balance.to_bits().hash(&mut hasher);
+        if let Some(levels) = &track.meter_out_db {
+            1u8.hash(&mut hasher);
+            for level in levels {
+                level.to_bits().hash(&mut hasher);
+            }
+        } else {
+            0u8.hash(&mut hasher);
+        }
         track.automation_mode.hash(&mut hasher);
         track.midi_learn_vol.hash(&mut hasher);
         track.midi_learn_bal.hash(&mut hasher);
@@ -989,7 +1001,7 @@ impl Tracks {
             .width(Length::Fixed(22.0))
             .height(Length::Fixed(22.0))
             .padding(0)
-            .style(move |theme, _state| style::mute::style(theme, track.effective_muted))
+            .style(move |theme, _state| style::mute::style(theme, track.muted))
             .on_press(Message::Request(Action::TrackToggleMute(
                 track.name.clone(),
             )))
@@ -1054,6 +1066,16 @@ impl Tracks {
             .spacing(4)
             .align_y(Alignment::Center);
 
+        let (vol_min, vol_max) = TrackAutomationTarget::Volume.default_range();
+        let track_name_for_volume = track.name.clone();
+        let volume_slider = horizontal_slider(vol_min..=vol_max, track.level, move |value| {
+            Message::Request(Action::TrackLevel(track_name_for_volume.clone(), value))
+        })
+        .width(Length::Fill)
+        .height(Length::Fixed(12.0))
+        .fill_from_start()
+        .double_click_reset(0.0);
+
         let mut lane_rows: Column<'static, Message> = column![];
         for (lane_index, lane) in track.visible_automation_lanes.iter().enumerate() {
             let automation_row_h = layout.automation_lane_height(lane_index).max(12.0);
@@ -1081,12 +1103,16 @@ impl Tracks {
             );
         }
 
-        let body = row![controls].spacing(8).align_y(Alignment::Start);
-
-        let body_container_height = 22.0 + 6.0;
-        let buttons_bottom = TRACK_FOLDER_HEADER_HEIGHT + body_container_height;
+        let buttons_container_height = 22.0 + 6.0;
+        let slider_height_with_spacing = 12.0 + 4.0;
+        let buttons_bottom = TRACK_FOLDER_HEADER_HEIGHT + buttons_container_height;
+        let slider_bottom = buttons_bottom + slider_height_with_spacing;
         let resize_top = height - resize_handle_height;
         let show_buttons = track.is_folder || resize_top >= buttons_bottom;
+        let show_volume_slider = show_buttons && resize_top >= slider_bottom;
+        let show_meter = track.meter_out_db.is_some();
+
+        let body = row![controls].spacing(8).align_y(Alignment::Start);
 
         let is_resize_hovered = track.resize_hovered;
 
@@ -1360,6 +1386,29 @@ impl Tracks {
                 (visible_height - 8.0 - resize_handle_height).max(0.0),
             )));
         }
+        if show_meter {
+            let meter_height = meter_total_height(track.audio_outs.max(1));
+            let meter_top = slider_bottom + 4.0;
+            let meter = horizontal_meter(
+                track.audio_outs,
+                track.meter_out_db.as_deref().unwrap_or(&[]),
+            );
+            let meter_overlay = container(meter)
+                .width(Length::Fill)
+                .height(Length::Fixed(meter_height))
+                .padding([0, 6]);
+            track_ui = track_ui.push(pin(meter_overlay).position(Point::new(0.0, meter_top)));
+        }
+        if show_volume_slider {
+            let volume_overlay = container(volume_slider)
+                .width(Length::Fill)
+                .height(Length::Fixed(12.0))
+                .padding([0, 6]);
+            track_ui = track_ui.push(pin(volume_overlay).position(Point::new(
+                0.0,
+                TRACK_FOLDER_HEADER_HEIGHT + buttons_container_height + 4.0,
+            )));
+        }
         let track_ui = track_ui.height(Length::Fill);
 
         let track_body_content = container(row![track_ui.width(Length::Fill), setup_panel])
@@ -1581,6 +1630,32 @@ impl Tracks {
                             midi_lane_channels: track.midi_lane_channels.clone(),
                             level: track.level,
                             balance: track.balance,
+                            meter_out_db: {
+                                let resize_handle_height = 6.0_f32;
+                                let buttons_container_height = 22.0 + 6.0;
+                                let slider_height_with_spacing = 12.0 + 4.0;
+                                let buttons_bottom =
+                                    TRACK_FOLDER_HEADER_HEIGHT + buttons_container_height;
+                                let slider_bottom = buttons_bottom + slider_height_with_spacing;
+                                let resize_top = track.height - resize_handle_height;
+                                let show_buttons = track.is_folder || resize_top >= buttons_bottom;
+                                let show_volume_slider =
+                                    show_buttons && resize_top >= slider_bottom;
+                                let audio_outs = track.audio.outs;
+                                let show_meter = if audio_outs > 0 && show_volume_slider {
+                                    let meter_height = meter_total_height(audio_outs);
+                                    let meter_top = slider_bottom + 4.0;
+                                    let meter_bottom = meter_top + meter_height;
+                                    resize_top >= meter_bottom
+                                } else {
+                                    false
+                                };
+                                if show_meter {
+                                    Some(track.meter_out_db.clone())
+                                } else {
+                                    None
+                                }
+                            },
                             automation_mode: track.automation_mode.to_string(),
                             visible_automation_lanes: track
                                 .automation_lanes
