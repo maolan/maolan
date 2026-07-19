@@ -33,6 +33,12 @@ pub fn request_audio_ports_rescan() {
     AUDIO_PORTS_RESCAN_REQUESTED.store(true, Ordering::Release);
 }
 
+const SHM_LATENCY_SAMPLES_OFFSET: usize = 84;
+
+unsafe fn latency_samples_atomic(ptr: *mut u8) -> &'static std::sync::atomic::AtomicU32 {
+    unsafe { &*(ptr.add(SHM_LATENCY_SAMPLES_OFFSET) as *const std::sync::atomic::AtomicU32) }
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 fn close_x11_gui_window(window: &mut Option<crate::gui_x11::x11::ContainerWindow>) {
     if let Some(window) = window.take() {
@@ -563,6 +569,7 @@ impl HostRuntime {
                 midi_in_ports,
                 midi_out_ports,
             );
+            latency_samples_atomic(ptr).store(plugin.latency_samples(), Ordering::Release);
         }
 
         self.signal_ready();
@@ -1211,6 +1218,10 @@ impl HostRuntime {
 
             if let Err(_e) = process_result {
                 break;
+            }
+
+            unsafe {
+                latency_samples_atomic(ptr).store(plugin.latency_samples(), Ordering::Release);
             }
 
             steady_time += block_size as i64;

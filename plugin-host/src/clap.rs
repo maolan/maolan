@@ -301,6 +301,11 @@ pub struct ClapHostLatency {
 }
 
 #[repr(C)]
+pub struct ClapPluginLatency {
+    pub get: Option<unsafe extern "C" fn(*const ClapPlugin) -> u32>,
+}
+
+#[repr(C)]
 pub struct ClapHostThreadPool {
     pub request_exec: Option<unsafe extern "C" fn(*const ClapHost, u32) -> bool>,
 }
@@ -787,6 +792,22 @@ impl PluginInstance {
         if let Some(reset) = unsafe { (*self.plugin).reset } {
             unsafe { reset(self.plugin) };
         }
+    }
+
+    pub fn latency_samples(&self) -> u32 {
+        let ext = unsafe {
+            (*self.plugin)
+                .get_extension
+                .map(|f| f(self.plugin, CLAP_EXT_LATENCY.as_ptr()))
+        };
+        let Some(ext) = ext.filter(|ptr| !ptr.is_null()) else {
+            return 0;
+        };
+        let latency = unsafe { &*(ext as *const ClapPluginLatency) };
+        let Some(get) = latency.get else {
+            return 0;
+        };
+        unsafe { get(self.plugin) }
     }
 
     fn state_extension(&self) -> Result<*const ClapPluginState, String> {
