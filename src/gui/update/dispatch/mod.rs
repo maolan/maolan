@@ -3197,6 +3197,10 @@ impl Maolan {
                                     if let Some(mut clip_data) = clip_to_move {
                                         clip_data.start = to.sample_offset;
                                         clip_data.input_channel = to.input_channel;
+                                        Self::apply_audio_cross_section_fades(
+                                            &mut to_track.audio.clips,
+                                            &mut clip_data,
+                                        );
                                         to_track.audio.clips.push(clip_data);
                                     } else if let Some(mut midi_clip_data) = midi_clip_to_move {
                                         midi_clip_data.start = to.sample_offset;
@@ -3290,7 +3294,7 @@ impl Maolan {
                             {
                                 match kind {
                                     Kind::Audio => {
-                                        track.audio.clips.push(crate::state::AudioClip {
+                                        let mut clip = crate::state::AudioClip {
                                             id: clip_id.clone(),
                                             name: name.clone(),
                                             start: *start,
@@ -3330,7 +3334,12 @@ impl Maolan {
                                             take_lane_locked: false,
                                             plugin_graph_json: plugin_graph_json.clone(),
                                             grouped_clips: vec![],
-                                        });
+                                        };
+                                        Self::apply_audio_cross_section_fades(
+                                            &mut track.audio.clips,
+                                            &mut clip,
+                                        );
+                                        track.audio.clips.push(clip);
                                     }
                                     Kind::MIDI => {
                                         track.midi.clips.push(crate::state::MIDIClip {
@@ -3467,11 +3476,16 @@ impl Maolan {
                                                     source_length_samples = total_samples;
                                                 }
                                             }
-                                            track.audio.clips.push(Self::audio_clip_from_data(
+                                            let mut clip = Self::audio_clip_from_data(
                                                 clip,
                                                 max_length_samples,
                                                 source_length_samples,
-                                            ));
+                                            );
+                                            Self::apply_audio_cross_section_fades(
+                                                &mut track.audio.clips,
+                                                &mut clip,
+                                            );
+                                            track.audio.clips.push(clip);
                                         }
                                     }
                                     Kind::MIDI => {
@@ -3510,6 +3524,25 @@ impl Maolan {
                                         }
                                     }
                                 }
+                            }
+                        }
+                        Action::SetClipFade {
+                            track_name,
+                            clip_index,
+                            kind,
+                            fade_enabled,
+                            fade_in_samples,
+                            fade_out_samples,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                                && let Kind::Audio = kind
+                                && let Some(clip) = track.audio.clips.get_mut(*clip_index)
+                            {
+                                clip.fade_enabled = *fade_enabled;
+                                clip.fade_in_samples = *fade_in_samples;
+                                clip.fade_out_samples = *fade_out_samples;
                             }
                         }
                         Action::SetClipSourceName {
