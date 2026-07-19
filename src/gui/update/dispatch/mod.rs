@@ -6146,6 +6146,110 @@ impl Maolan {
             } => {
                 return self.open_clip_pitch_correction(track_idx.clone(), clip_idx);
             }
+            Message::ClipExportPitchCorrectionMidi {
+                ref track_idx,
+                clip_idx,
+            } => {
+                let Some(file_name) = ({
+                    let state = self.state.blocking_read();
+                    let clip = state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_idx)
+                        .and_then(|t| t.audio.clips.get(clip_idx));
+                    clip.and_then(|clip| {
+                        let has_points = !clip.pitch_correction_points.is_empty()
+                            || state.pitch_correction.as_ref().is_some_and(|pitch| {
+                                pitch.track_idx == *track_idx
+                                    && pitch.clip_index == clip_idx
+                                    && !pitch.points.is_empty()
+                            });
+                        has_points.then(|| {
+                            let stem = std::path::Path::new(&clip.name)
+                                .file_stem()
+                                .and_then(|stem| stem.to_str())
+                                .unwrap_or("pitch");
+                            format!("{stem}_pitch.mid")
+                        })
+                    })
+                }) else {
+                    self.state.blocking_write().message =
+                        "No pitch correction data to export".to_string();
+                    return Task::none();
+                };
+                let track_idx = track_idx.clone();
+                return Task::perform(
+                    async move {
+                        let path = AsyncFileDialog::new()
+                            .set_title("Export Pitch MIDI")
+                            .add_filter("MIDI", &["mid", "midi"])
+                            .set_file_name(file_name)
+                            .save_file()
+                            .await
+                            .map(|handle| handle.path().to_path_buf());
+                        (track_idx, clip_idx, path)
+                    },
+                    |(track_idx, clip_idx, path)| Message::ClipPitchCorrectionMidiFileSelected {
+                        track_idx,
+                        clip_idx,
+                        path,
+                    },
+                );
+            }
+            Message::ClipPitchCorrectionMidiFileSelected {
+                ref track_idx,
+                clip_idx,
+                path: Some(ref path),
+            } => {
+                let (clip_name, points) = {
+                    let state = self.state.blocking_read();
+                    let Some((clip_name, clip_points)) = state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_idx)
+                        .and_then(|t| t.audio.clips.get(clip_idx))
+                        .map(|clip| (clip.name.clone(), clip.pitch_correction_points.clone()))
+                    else {
+                        self.state.blocking_write().message = "Audio clip not found".to_string();
+                        return Task::none();
+                    };
+                    let points = state
+                        .pitch_correction
+                        .as_ref()
+                        .filter(|pitch| {
+                            pitch.track_idx == *track_idx && pitch.clip_index == clip_idx
+                        })
+                        .map(|pitch| pitch.points.clone())
+                        .filter(|points| !points.is_empty())
+                        .unwrap_or(clip_points);
+                    (clip_name, points)
+                };
+                if points.is_empty() {
+                    self.state.blocking_write().message =
+                        format!("No pitch correction data to export for '{clip_name}'");
+                    return Task::none();
+                }
+                match Self::write_pitch_correction_midi_file(
+                    path,
+                    self.playback_rate_hz.max(1.0) as u32,
+                    &points,
+                ) {
+                    Ok(note_count) => {
+                        self.state.blocking_write().message = format!(
+                            "Exported {note_count} pitch MIDI note(s): {}",
+                            path.display()
+                        );
+                    }
+                    Err(err) => {
+                        self.state.blocking_write().message =
+                            format!("Failed to export pitch MIDI for '{clip_name}': {err}");
+                    }
+                }
+                return Task::none();
+            }
+            Message::ClipPitchCorrectionMidiFileSelected { path: None, .. } => {
+                return Task::none();
+            }
             Message::ClipOpenPitchCorrectionProgress {
                 ref clip_name,
                 progress,

@@ -3734,6 +3734,82 @@ impl Maolan {
         )
     }
 
+    fn write_pitch_correction_midi_file(
+        path: &std::path::Path,
+        sample_rate: u32,
+        points: &[crate::state::PitchCorrectionPoint],
+    ) -> Result<usize, String> {
+        let ppq = 480_u16;
+        let ticks_per_second = 960_u64;
+        let sample_rate = sample_rate.max(1) as u64;
+        let mut midi_events = Vec::new();
+
+        for point in points {
+            if point.length_samples == 0 || !point.target_midi_pitch.is_finite() {
+                continue;
+            }
+            let key = point.target_midi_pitch.round().clamp(0.0, 127.0) as u8;
+            let velocity = (point.clarity.clamp(0.0, 1.0) * 126.0).round() as u8 + 1;
+            midi_events.push((point.start_sample as u64, false, key, velocity));
+            midi_events.push((
+                point.start_sample.saturating_add(point.length_samples) as u64,
+                true,
+                key,
+                0,
+            ));
+        }
+
+        midi_events.sort_by_key(|(sample, note_off, key, _)| (*sample, !*note_off, *key));
+
+        let mut track_events = vec![midly::TrackEvent {
+            delta: midly::num::u28::new(0),
+            kind: midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(midly::num::u24::new(
+                500_000,
+            ))),
+        }];
+        let mut prev_ticks = 0_u64;
+        let mut note_count = 0usize;
+        for (sample, note_off, key, velocity) in midi_events {
+            let ticks = sample.saturating_mul(ticks_per_second) / sample_rate;
+            let delta = ticks.saturating_sub(prev_ticks).min(u32::MAX as u64) as u32;
+            prev_ticks = ticks;
+            let message = if note_off {
+                midly::MidiMessage::NoteOff {
+                    key: midly::num::u7::new(key),
+                    vel: midly::num::u7::new(0),
+                }
+            } else {
+                note_count += 1;
+                midly::MidiMessage::NoteOn {
+                    key: midly::num::u7::new(key),
+                    vel: midly::num::u7::new(velocity),
+                }
+            };
+            track_events.push(midly::TrackEvent {
+                delta: midly::num::u28::new(delta),
+                kind: midly::TrackEventKind::Midi {
+                    channel: midly::num::u4::new(0),
+                    message,
+                },
+            });
+        }
+        track_events.push(midly::TrackEvent {
+            delta: midly::num::u28::new(0),
+            kind: midly::TrackEventKind::Meta(midly::MetaMessage::EndOfTrack),
+        });
+
+        let smf = midly::Smf {
+            header: midly::Header::new(
+                midly::Format::SingleTrack,
+                midly::Timing::Metrical(midly::num::u15::new(ppq)),
+            ),
+            tracks: vec![track_events],
+        };
+        let mut file = fs::File::create(path).map_err(|e| e.to_string())?;
+        smf.write_std(&mut file).map_err(|e| e.to_string())?;
+        Ok(note_count)
+    }
+
     fn current_pitch_correction_action(&self) -> Option<Action> {
         let (
             preview_name,
@@ -4611,5 +4687,43 @@ mod tests {
         Maolan::apply_audio_cross_section_fades(&mut same_end, &mut inserted_same_end);
         assert_eq!(same_end[0].fade_out_samples, 240);
         assert_eq!(inserted_same_end.fade_out_samples, 240);
+    }
+
+    #[test]
+    fn pitch_correction_midi_export_writes_note_events() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("maolan_pitch_export_{unique}.mid"));
+        let points = vec![PitchCorrectionPoint {
+            start_sample: 0,
+            length_samples: 48_000,
+            detected_midi_pitch: 60.2,
+            target_midi_pitch: 64.0,
+            clarity: 0.75,
+        }];
+
+        let written = Maolan::write_pitch_correction_midi_file(&path, 48_000, &points).unwrap();
+        assert_eq!(written, 1);
+
+        let bytes = std::fs::read(&path).unwrap();
+        let smf = midly::Smf::parse(&bytes).unwrap();
+        let midi_events = smf.tracks[0]
+            .iter()
+            .filter_map(|event| match event.kind {
+                midly::TrackEventKind::Midi { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            midi_events.as_slice(),
+            [
+                midly::MidiMessage::NoteOn { key, .. },
+                midly::MidiMessage::NoteOff { key: off_key, .. }
+            ] if key.as_int() == 64 && off_key.as_int() == 64
+        ));
+
+        let _ = std::fs::remove_file(path);
     }
 }

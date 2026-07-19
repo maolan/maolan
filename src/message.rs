@@ -1423,6 +1423,15 @@ pub enum Message {
         track_idx: String,
         clip_idx: usize,
     },
+    ClipExportPitchCorrectionMidi {
+        track_idx: String,
+        clip_idx: usize,
+    },
+    ClipPitchCorrectionMidiFileSelected {
+        track_idx: String,
+        clip_idx: usize,
+        path: Option<PathBuf>,
+    },
     ClipOpenPitchCorrectionFinished {
         request: ClipPitchCorrectionRequest,
         result: Result<crate::state::PitchCorrectionData, String>,
