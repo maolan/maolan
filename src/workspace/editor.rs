@@ -1456,6 +1456,15 @@ pub(super) fn clip_context_menu_overlay(
                         clip_idx,
                     }),
                 ),
+                crate::menu::menu_item_maybe(
+                    "Export Pitch MIDI",
+                    (!clip_ref.pitch_correction_points.is_empty()).then_some(
+                        Message::ClipExportPitchCorrectionMidi {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                        },
+                    ),
+                ),
                 crate::menu::menu_item(
                     if fade_enabled {
                         "Disable Fade"

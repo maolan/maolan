@@ -13,7 +13,7 @@ use crate::{
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
-        canvas,
+        button, canvas,
         canvas::{Action as CanvasAction, Frame, Geometry, Path, Program},
         checkbox, column, container, pin, row, slider, text, vertical_slider,
     },
@@ -188,6 +188,10 @@ impl PitchCorrection {
                 checkbox(formant_compensation)
                     .label("Formant compensation")
                     .on_toggle(Message::PitchCorrectionFormantCompensationChanged),
+                button("Export MIDI").on_press(Message::ClipExportPitchCorrectionMidi {
+                    track_idx: roll.track_idx.clone(),
+                    clip_idx: roll.clip_index,
+                }),
             ]
             .spacing(8)
             .width(Length::Fill),
