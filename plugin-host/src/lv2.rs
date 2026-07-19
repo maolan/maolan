@@ -176,6 +176,7 @@ pub struct Lv2Processor {
     time_beat_unit_urid: LV2Urid,
     midi_inputs: usize,
     midi_outputs: usize,
+    latency_port_index: Option<usize>,
     has_worker_interface: bool,
     control_ports: Vec<ControlPortInfo>,
     midnam_note_names: SimpleMutex<HashMap<u8, String>>,
@@ -471,6 +472,7 @@ impl Lv2Processor {
             .iter_ports()
             .filter(|port| port.is_a(&audio_port) && port.is_a(&output_port))
             .count();
+        let latency_port_index = plugin.latency_port_index();
         let main_audio_inputs = count_main_audio_ports(
             &plugin,
             &main_input_group_predicate,
@@ -625,6 +627,7 @@ impl Lv2Processor {
             time_beat_unit_urid,
             midi_inputs,
             midi_outputs,
+            latency_port_index,
             has_worker_interface,
             control_ports,
             midnam_note_names: SimpleMutex::new(HashMap::new()),
@@ -735,6 +738,15 @@ impl Lv2Processor {
 
     pub fn is_bypassed(&self) -> bool {
         self.bypassed.load(Ordering::Relaxed)
+    }
+
+    pub fn latency_samples(&self) -> u32 {
+        self.latency_port_index
+            .and_then(|index| self.scalar_values.get(index))
+            .copied()
+            .unwrap_or(0.0)
+            .max(0.0)
+            .round() as u32
     }
 
     fn bypass_copy_inputs_to_outputs(&self) {

@@ -331,6 +331,16 @@ impl Vst3Processor {
         self.bypassed.load(Ordering::Relaxed)
     }
 
+    pub fn latency_samples(&self) -> u32 {
+        use vst3::Steinberg::Vst::IAudioProcessorTrait;
+
+        self.instance
+            .audio_processor
+            .as_ref()
+            .map(|processor| unsafe { processor.getLatencySamples() })
+            .unwrap_or(0)
+    }
+
     fn bypass_copy_inputs_to_outputs(&self) {
         for (input, output) in self.audio_inputs.iter().zip(self.audio_outputs.iter()) {
             let src = input.buffer.lock();

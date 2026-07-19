@@ -8,6 +8,12 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+const SHM_LATENCY_SAMPLES_OFFSET: usize = 84;
+
+unsafe fn latency_samples_atomic(ptr: *mut u8) -> &'static std::sync::atomic::AtomicU32 {
+    unsafe { &*(ptr.add(SHM_LATENCY_SAMPLES_OFFSET) as *const std::sync::atomic::AtomicU32) }
+}
+
 #[cfg(windows)]
 struct ComInitGuard {
     initialized: bool,
@@ -672,6 +678,9 @@ pub fn run_vst3(args: Vst3RunArgs) {
     header
         .midi_out_port_count
         .store(processor.midi_output_count() as u32, Ordering::Release);
+    unsafe {
+        latency_samples_atomic(ptr).store(processor.latency_samples(), Ordering::Release);
+    }
     header.ready.store(1, Ordering::Release);
 
     let mut vst3_param_cache = HashMap::new();
@@ -821,6 +830,9 @@ pub fn run_vst3(args: Vst3RunArgs) {
             processor.process_with_audio_io(block_size);
             Vec::new()
         };
+        unsafe {
+            latency_samples_atomic(ptr).store(processor.latency_samples(), Ordering::Release);
+        }
 
         write_vst3_echo_ring(&processor, ptr, &mut vst3_param_cache);
 
@@ -1351,6 +1363,9 @@ pub fn run_lv2(
     header
         .midi_out_port_count
         .store(processor.midi_output_count() as u32, Ordering::Release);
+    unsafe {
+        latency_samples_atomic(ptr).store(processor.latency_samples(), Ordering::Release);
+    }
     header.ready.store(1, Ordering::Release);
 
     let mut lv2_param_cache = HashMap::new();
@@ -1483,6 +1498,9 @@ pub fn run_lv2(
         };
 
         let midi_out = processor.process_with_audio_io(block_size, &midi_per_port, transport);
+        unsafe {
+            latency_samples_atomic(ptr).store(processor.latency_samples(), Ordering::Release);
+        }
 
         write_lv2_echo_ring(&processor, ptr, &mut lv2_param_cache);
 

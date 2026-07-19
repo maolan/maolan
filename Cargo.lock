@@ -5081,9 +5081,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.33"
+version = "0.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "147c3e8aa320379b8da3c980cb4a4c0845e564fac16285c63db7d60e7906dfe5"
+checksum = "35d286dbccbbd0ec82a486bbb5d9eee6a8337e325ff001cf2e48db1c3adbaa2a"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5154,9 +5154,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-protocol"
-version = "0.0.12"
+version = "0.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4751945440022c5738218b6c8dd725892ecbd2644aa589ec8cd6047037aeb25b"
+checksum = "b0d52ff68f45bd6ba96489d79f4b047f42e9f81a407289c773cace7890562992"
 dependencies = [
  "libc",
  "tracing",
