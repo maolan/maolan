@@ -238,8 +238,8 @@ pub mod state_platform_freebsd_lists {
 
 pub mod message_lists {
     use crate::message::{
-        ExportBitDepth, ExportMp3Mode, ExportNormalizeMode, ExportRenderMode, PianoChordKind,
-        PianoNrpnKind, PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
+        ExportBitDepth, ExportDither, ExportMp3Mode, ExportNormalizeMode, ExportRenderMode,
+        PianoChordKind, PianoNrpnKind, PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
     };
 
     pub const SNAP_MODE_ALL: [SnapMode; 8] = [
@@ -300,6 +300,11 @@ pub mod message_lists {
         ExportBitDepth::Int24,
         ExportBitDepth::Int32,
         ExportBitDepth::Float32,
+    ];
+    pub const EXPORT_DITHER_ALL: [ExportDither; 3] = [
+        ExportDither::None,
+        ExportDither::Rectangular,
+        ExportDither::Triangular,
     ];
 }
 

@@ -254,7 +254,8 @@ Current bundle contents:
 - Stem export writes one file per eligible selected track into `<base>_stems/`.
 - Multiple output formats can be written in one export run.
 - MP3 export supports only mono or stereo output.
-- Normalization and master-limiter settings are persisted in the session file.
+- Normalization, master-limiter, and dither settings are persisted in the session file.
+- Dither is applied when exporting to integer PCM formats (WAV/FLAC at 16/24/32-bit). It is skipped for 32-bit float and for lossy formats (MP3/OGG).
 
 ## HeartMuLa Generation Operations
 

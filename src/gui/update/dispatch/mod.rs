@@ -9254,6 +9254,7 @@ impl Maolan {
 
                 let sample_rate = self.export_sample_rate_hz as i32;
                 let export_bit_depth = self.export_bit_depth;
+                let export_dither = self.export_dither;
                 let export_normalize = self.export_normalize;
                 let normalize_mode = self.export_normalize_mode;
                 let normalize_target_dbfs = self
@@ -9379,6 +9380,7 @@ impl Maolan {
                                 selected_hw_out_ports,
                                 realtime_fallback: export_realtime_fallback,
                                 bit_depth: export_bit_depth,
+                                dither: export_dither,
                                 mp3_mode: export_mp3_mode,
                                 mp3_bitrate_kbps: export_mp3_bitrate_kbps,
                                 ogg_quality: export_ogg_quality,

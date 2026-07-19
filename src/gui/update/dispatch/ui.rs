@@ -70,6 +70,10 @@ impl Maolan {
                 self.export_bit_depth = *bit_depth;
                 true
             }
+            Message::ExportDitherSelected(dither) => {
+                self.export_dither = *dither;
+                true
+            }
             Message::ExportRenderModeSelected(mode) => {
                 self.export_render_mode = *mode;
                 if !matches!(mode, ExportRenderMode::Mixdown) {
