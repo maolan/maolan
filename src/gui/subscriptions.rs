@@ -109,6 +109,7 @@ impl Maolan {
                                             EngineAction::MeterSnapshot {
                                                 hw_out_db,
                                                 track_meters,
+                                                ..
                                             } => {
                                                 // Always forward meter snapshots so the GUI can
                                                 // keep smoothing levels down even when the engine

@@ -270,6 +270,7 @@ impl Maolan {
                 if let Some(snapshot) = CLIENT.meter_snapshot() {
                     let action = Action::MeterSnapshot {
                         hw_out_db: std::sync::Arc::new(snapshot.hw_out_db),
+                        hw_out_lufs: snapshot.hw_out_lufs,
                         track_meters: std::sync::Arc::new(snapshot.track_meters),
                     };
                     self.handle_response_freeze_meter_action(&action)

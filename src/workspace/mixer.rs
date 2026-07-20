@@ -113,6 +113,36 @@ impl Mixer {
         BALANCE_LABELS[idx]
     }
 
+    fn format_lufs(value: f32) -> String {
+        if value <= maolan_engine::LoudnessValues::SILENCE + 0.1 {
+            "-inf".to_string()
+        } else {
+            format!("{:.1}", value)
+        }
+    }
+
+    fn lufs_readout(lufs: Option<maolan_engine::LoudnessValues>) -> Element<'static, Message> {
+        let (momentary, short_term, integrated) = lufs.map_or(
+            (
+                maolan_engine::LoudnessValues::SILENCE,
+                maolan_engine::LoudnessValues::SILENCE,
+                maolan_engine::LoudnessValues::SILENCE,
+            ),
+            |l| (l.momentary, l.short_term, l.integrated),
+        );
+        container(
+            row![
+                text(Self::format_lufs(momentary).to_string()).size(10),
+                text(Self::format_lufs(short_term).to_string()).size(10),
+                text(Self::format_lufs(integrated).to_string()).size(10),
+            ]
+            .spacing(6),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .into()
+    }
+
     fn value_pill<'a>(
         track_name: String,
         content: &'static str,
@@ -594,6 +624,7 @@ impl Mixer {
             },
             Self::strip_controls(track, solo_upstream),
             children,
+            None,
         );
         // iced borders are uniform on all sides, so highlight only the top
         // and bottom edges of a strip whose immediate parent folder is
@@ -736,9 +767,32 @@ impl Mixer {
         readout: StripReadout<'a>,
         controls: Option<Element<'static, Message>>,
         children: Option<Element<'a, Message>>,
+        loudness_section: Option<Element<'static, Message>>,
     ) -> Element<'a, Message> {
+        let has_loudness = loudness_section.is_some();
         let mut left_content = column![].spacing(8).width(Length::Fill);
-        left_content = left_content.push(pan_section.unwrap_or_else(Self::pan_placeholder));
+        if let Some(loudness_section) = loudness_section {
+            left_content = left_content.push(container(loudness_section).padding(Padding {
+                top: 8.0,
+                right: 0.0,
+                bottom: 8.0,
+                left: 0.0,
+            }));
+        }
+        if let Some(pan) = pan_section {
+            if !has_loudness {
+                left_content = left_content.push(container(pan).padding(Padding {
+                    top: 8.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                }));
+            } else {
+                left_content = left_content.push(pan);
+            }
+        } else if !has_loudness {
+            left_content = left_content.push(Self::pan_placeholder());
+        }
         left_content = left_content.push(bay).push(Self::value_pill_cached(
             readout.track_name,
             readout.level_label,
@@ -748,12 +802,24 @@ impl Mixer {
         if let Some(controls) = controls {
             left_content = left_content.push(controls);
         }
-        left_content = left_content.push(Self::strip_name_cached(name, left_width));
+        left_content = left_content.push(
+            container(Self::strip_name_cached(name, left_width)).padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 8.0,
+                left: 0.0,
+            }),
+        );
 
         let left = container(left_content)
             .width(Length::Fixed(left_width))
             .height(Length::Fill)
-            .padding([8, 6]);
+            .padding(Padding {
+                top: 0.0,
+                right: 6.0,
+                bottom: 0.0,
+                left: 6.0,
+            });
 
         let content: Element<'a, Message> = if let Some(children) = children {
             let right = container(children)
@@ -938,6 +1004,7 @@ impl Mixer {
                     },
                     None,
                     None,
+                    None,
                 ))
                 .on_press(Message::SelectTrackFromMixer(track.name.clone()))
                 .into(),
@@ -1009,6 +1076,7 @@ impl Mixer {
             },
             None,
             None,
+            Some(Self::lufs_readout(state.hw_out_lufs)),
         ))
         .on_press(Message::SelectTrackFromMixer("hw:out".to_string()))
         .into();

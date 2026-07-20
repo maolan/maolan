@@ -5996,16 +5996,7 @@ impl Maolan {
                     })
                     .unwrap_or_default();
 
-                let clean_name = {
-                    let mut cleaned = current_name.clone();
-                    if let Some(stripped) = cleaned.strip_prefix("audio/") {
-                        cleaned = stripped.to_string();
-                    }
-                    if let Some(stripped) = cleaned.strip_suffix(".wav") {
-                        cleaned = stripped.to_string();
-                    }
-                    cleaned
-                };
+                let clean_name = crate::clip_rename::clean_clip_name(&current_name);
 
                 state.clip_rename_dialog = Some(crate::state::ClipRenameDialog {
                     track_idx: track_idx.clone(),
