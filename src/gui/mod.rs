@@ -71,11 +71,13 @@ use std::{
     io::{self, BufReader, Write},
     ops::Range,
     path::{Path, PathBuf},
-    process::Command,
     sync::atomic::AtomicBool,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
+#[cfg(unix)]
+use std::process::Command;
+
 use tokio::sync::RwLock;
 
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};

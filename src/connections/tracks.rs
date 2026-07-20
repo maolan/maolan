@@ -1563,10 +1563,7 @@ impl canvas::Program<Message> for Graph {
                             {
                                 data.connections_last_track_click = None;
                                 return Some(Action::publish(
-                                    if matches!(
-                                        data.selected_backend,
-                                        crate::state::AudioBackendOption::Jack
-                                    ) {
+                                    if data.selected_backend.is_jack() {
                                         Message::OpenJackConnections
                                     } else {
                                         Message::OpenHwPorts { input: true }
@@ -1607,10 +1604,7 @@ impl canvas::Program<Message> for Graph {
                             {
                                 data.connections_last_track_click = None;
                                 return Some(Action::publish(
-                                    if matches!(
-                                        data.selected_backend,
-                                        crate::state::AudioBackendOption::Jack
-                                    ) {
+                                    if data.selected_backend.is_jack() {
                                         Message::OpenJackConnections
                                     } else {
                                         Message::OpenHwPorts { input: false }

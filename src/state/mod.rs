@@ -704,6 +704,15 @@ impl std::fmt::Display for AudioBackendOption {
     }
 }
 
+impl AudioBackendOption {
+    pub fn is_jack(&self) -> bool {
+        #[cfg(unix)]
+        return matches!(self, Self::Jack);
+        #[cfg(not(unix))]
+        return false;
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 #[derive(Clone, Debug)]
 pub struct AudioDeviceOption {
