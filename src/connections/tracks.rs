@@ -1562,13 +1562,11 @@ impl canvas::Program<Message> for Graph {
                                 && now.duration_since(*last_time) <= DOUBLE_CLICK
                             {
                                 data.connections_last_track_click = None;
-                                return Some(Action::publish(
-                                    if data.selected_backend.is_jack() {
-                                        Message::OpenJackConnections
-                                    } else {
-                                        Message::OpenHwPorts { input: true }
-                                    },
-                                ));
+                                return Some(Action::publish(if data.selected_backend.is_jack() {
+                                    Message::OpenJackConnections
+                                } else {
+                                    Message::OpenHwPorts { input: true }
+                                }));
                             }
                             data.connections_last_track_click = Some((HW_IN_ID.to_string(), now));
                             return Some(Action::capture());
@@ -1603,13 +1601,11 @@ impl canvas::Program<Message> for Graph {
                                 && now.duration_since(*last_time) <= DOUBLE_CLICK
                             {
                                 data.connections_last_track_click = None;
-                                return Some(Action::publish(
-                                    if data.selected_backend.is_jack() {
-                                        Message::OpenJackConnections
-                                    } else {
-                                        Message::OpenHwPorts { input: false }
-                                    },
-                                ));
+                                return Some(Action::publish(if data.selected_backend.is_jack() {
+                                    Message::OpenJackConnections
+                                } else {
+                                    Message::OpenHwPorts { input: false }
+                                }));
                             }
                             data.connections_last_track_click = Some((HW_OUT_ID.to_string(), now));
                             return Some(Action::capture());

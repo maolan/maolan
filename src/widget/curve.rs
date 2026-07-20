@@ -1,9 +1,7 @@
 use crate::message::Message;
 use iced::{
     Color, Point, Rectangle, Renderer, Size, Theme, mouse,
-    widget::{
-        canvas::Cache, canvas::Frame, canvas::Geometry, canvas::Path, canvas::Program,
-    },
+    widget::{canvas::Cache, canvas::Frame, canvas::Geometry, canvas::Path, canvas::Program},
 };
 use std::{
     cell::Cell,
