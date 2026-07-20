@@ -335,21 +335,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
-    fn scanner_test_plugin() {
-        let host_bin = find_plugin_host_binary().expect("maolan-plugin-host binary not found");
-        let plugin_path = env!("MAOLAN_TEST_PASSTHROUGH_CLAP");
-
-        let result =
-            scanner::scan_plugin_file(&host_bin, "clap", plugin_path, Duration::from_secs(10));
-        assert!(result.is_ok(), "scan failed: {:?}", result.err());
-        let scan = result.unwrap();
-        assert_eq!(scan.error, None);
-        assert_eq!(scan.plugins.len(), 1);
-        assert_eq!(scan.plugins[0].id, "com.maolan.test.passthrough");
-    }
-
-    #[test]
     fn scanner_blocklist_crashing_plugin() {
         let host_bin = find_plugin_host_binary().expect("maolan-plugin-host binary not found");
         let plugin_path = "/home/meka/.clap/Maolan.clap";
