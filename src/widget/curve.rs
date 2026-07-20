@@ -1,9 +1,8 @@
 use crate::message::Message;
 use iced::{
-    Color, Point, Rectangle, Renderer, Theme, mouse,
+    Color, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
         canvas::Cache, canvas::Frame, canvas::Geometry, canvas::Path, canvas::Program,
-        canvas::Stroke,
     },
 };
 use std::{
@@ -104,23 +103,15 @@ impl Program<Message> for CurveCanvas {
                 let mut sorted = self.points.clone();
                 sorted.sort_unstable_by_key(|point| point.sample);
 
-                let line = Path::new(|path| {
-                    let first = sorted[0].position(bounds, self.pixels_per_sample);
-                    path.move_to(first);
-                    for point in sorted.iter().skip(1) {
-                        path.line_to(point.position(bounds, self.pixels_per_sample));
-                    }
-                });
-                frame.stroke(
-                    &line,
-                    Stroke::default()
-                        .with_color(self.color)
-                        .with_width(self.line_width),
-                );
-
-                for point in sorted {
-                    let center = point.position(bounds, self.pixels_per_sample);
-                    let circle = Path::circle(center, self.dot_radius.max(0.0));
+                let bar_width = self.line_width.max(1.0);
+                for point in &sorted {
+                    let top = point.position(bounds, self.pixels_per_sample);
+                    let rect = Path::rectangle(
+                        Point::new(top.x - bar_width / 2.0, top.y),
+                        Size::new(bar_width, (bounds.height - top.y).max(1.0)),
+                    );
+                    frame.fill(&rect, self.color);
+                    let circle = Path::circle(top, self.dot_radius.max(0.0));
                     frame.fill(&circle, self.color);
                 }
             });
