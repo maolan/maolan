@@ -134,9 +134,12 @@ impl Maolan {
                     .iter_mut()
                     .find(|t| t.name == *name)
                 {
-                    // Folder tracks can never be master; ignore any engine echo
-                    // that would set the flag on a folder.
-                    if !track.is_folder {
+                    // Folder or child tracks can never be master; ignore any
+                    // engine echo that would set the flag on them. Already-master
+                    // tracks are still allowed to toggle off to recover from
+                    // invalid legacy states.
+                    let is_child = track.parent_track.is_some();
+                    if (!track.is_folder && !is_child) || track.is_master {
                         track.is_master = !track.is_master;
                     }
                 }
