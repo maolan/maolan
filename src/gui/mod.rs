@@ -64,6 +64,8 @@ use serde_json::Value;
 #[allow(unused_imports)]
 use serde_json::json;
 
+#[cfg(unix)]
+use std::process::Command;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
@@ -75,8 +77,6 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
-#[cfg(unix)]
-use std::process::Command;
 
 use tokio::sync::RwLock;
 
