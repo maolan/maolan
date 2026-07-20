@@ -4880,6 +4880,20 @@ impl Maolan {
                             break;
                         }
                     }
+
+                    // The master track cannot be made part of a folder.
+                    if state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_name)
+                        .is_some_and(|t| t.is_master)
+                    {
+                        state.message = format!(
+                            "Track '{}' is the master track and cannot be made part of a folder",
+                            track_name
+                        );
+                        return Task::none();
+                    }
                 }
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     track.parent_track = parent_name.clone();
@@ -8402,6 +8416,14 @@ impl Maolan {
                                     .any(|t| t.name == target_name && t.is_folder)
                                 {
                                     // Dropping onto a folder makes the dragged track a child.
+                                    if state.tracks[dragged_index].is_master {
+                                        state.message = format!(
+                                            "Track '{}' is the master track and cannot be made part of a folder",
+                                            dragged_name
+                                        );
+                                        self.track = None;
+                                        return Task::none();
+                                    }
                                     let mut current = target_name.as_str();
                                     let mut circular = false;
                                     while !circular {
