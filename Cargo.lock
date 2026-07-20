@@ -3633,7 +3633,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.18",
- "windows 0.62.2",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -3952,7 +3952,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -5082,8 +5082,7 @@ dependencies = [
 [[package]]
 name = "maolan-engine"
 version = "0.2.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f5415fd1fdeaf45b54b7ad057d2dab978ef6458aa470a40828307e5bfa72031"
+source = "git+https://github.com/maolan/engine#453fd5ef4448bdd14dcffbf7d0a53abd3bca8e10"
 dependencies = [
  "alsa",
  "arc-swap",

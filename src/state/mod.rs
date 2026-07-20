@@ -573,14 +573,6 @@ impl From<maolan_engine::modulator::ModulatorTarget> for ModulatorTarget {
                 min,
                 max,
             ),
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
-            maolan_engine::modulator::ModulatorTarget::Lv2Parameter {
-                track_name,
-                instance_id,
-                index,
-                min,
-                max,
-            } => (track_name, TrackAutomationTarget::Volume, min, max),
         };
         Self {
             track_name,

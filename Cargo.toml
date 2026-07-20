@@ -21,6 +21,7 @@ members = [".", "plugin-host"]
 
 [patch.crates-io]
 esaxx-rs = { git = "https://github.com/maolan/esaxx" }
+maolan-engine = { git = "https://github.com/maolan/engine" }
 
 [dependencies]
 chrono = "0.4"
