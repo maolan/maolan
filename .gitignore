@@ -4,3 +4,5 @@ logs/
 .codex
 dist/
 *.core
+*.clap
+*.so
