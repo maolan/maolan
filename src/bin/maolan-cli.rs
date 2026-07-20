@@ -505,6 +505,7 @@ impl App {
             EngineMessage::Response(Ok(Action::MeterSnapshot {
                 hw_out_db,
                 track_meters,
+                ..
             })) => {
                 self.hw_out_db = hw_out_db.as_ref().clone();
                 self.track_meters = track_meters.as_ref().clone();

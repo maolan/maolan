@@ -5081,9 +5081,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.34"
+version = "0.2.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35d286dbccbbd0ec82a486bbb5d9eee6a8337e325ff001cf2e48db1c3adbaa2a"
+checksum = "6f5415fd1fdeaf45b54b7ad057d2dab978ef6458aa470a40828307e5bfa72031"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5092,6 +5092,7 @@ dependencies = [
  "coreaudio-sys",
  "coremidi",
  "cpal",
+ "ebur128",
  "ffmpeg-next",
  "jack",
  "maolan-plugin-protocol",
