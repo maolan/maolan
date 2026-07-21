@@ -42,7 +42,9 @@ use iced::{
     },
 };
 use iced_aw::helpers::color_picker_with_change;
-use maolan_engine::audio_codec::{decode_audio_to_f32_interleaved_sync, write_flac, write_opus};
+use maolan_engine::audio_codec::{
+    AudioDither, AudioEncodeFormat, WavBitDepth, decode_audio_to_f32_interleaved_sync,
+};
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{
     Action, ConnectableConnection, ConnectableRef, Message as EngineMessage, OfflineAutomationLane,
@@ -65,7 +67,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
     hash::{DefaultHasher, Hash, Hasher},
-    io::{self, BufReader, Write},
+    io::{self, BufReader},
     ops::Range,
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
@@ -343,7 +345,6 @@ struct ExportSessionOptions {
     realtime_fallback: bool,
     bit_depth: ExportBitDepth,
     dither: ExportDither,
-    opus_bitrate_bps: i32,
     normalize: bool,
     normalize_target_dbfs: f32,
     normalize_mode: ExportNormalizeMode,
@@ -356,11 +357,6 @@ struct ExportSessionOptions {
     session_root: PathBuf,
 }
 
-#[derive(Clone, Copy)]
-struct ExportCodecSettings {
-    opus_bitrate_bps: i32,
-}
-
 struct ExportWriteRequest<'a> {
     export_path: &'a Path,
     mixed_buffer: &'a [f32],
@@ -369,7 +365,6 @@ struct ExportWriteRequest<'a> {
     bit_depth: ExportBitDepth,
     dither: ExportDither,
     format: ExportFormat,
-    opus_bitrate_bps: i32,
 }
 
 #[derive(Clone)]
@@ -760,10 +755,10 @@ pub struct Maolan {
     export_sample_rate_hz: u32,
     export_format_wav: bool,
     export_format_flac: bool,
-    export_format_opus: bool,
+    export_format_mp3: bool,
+    export_format_ogg: bool,
     export_bit_depth: ExportBitDepth,
     export_dither: ExportDither,
-    export_opus_bitrate_bps: i32,
     export_render_mode: ExportRenderMode,
     export_hw_out_ports: BTreeSet<usize>,
     export_realtime_fallback: bool,
@@ -1069,10 +1064,10 @@ impl Default for Maolan {
             export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             export_format_wav: true,
             export_format_flac: false,
-            export_format_opus: false,
+            export_format_mp3: false,
+            export_format_ogg: false,
             export_bit_depth: ExportBitDepth::Int24,
             export_dither: ExportDither::Triangular,
-            export_opus_bitrate_bps: 128_000,
             export_render_mode: ExportRenderMode::Mixdown,
             export_hw_out_ports: [0_usize, 1].into_iter().collect(),
             export_realtime_fallback: false,
@@ -2072,106 +2067,14 @@ impl Maolan {
         channels: usize,
         sample_rate: u32,
     ) -> io::Result<()> {
-        Self::write_wav_pcm(
+        maolan_engine::audio_codec::encode_audio_to_file(
             path,
             samples,
             channels.max(1),
             sample_rate,
-            32u16,
-            true,
-            ExportDither::None,
+            AudioEncodeFormat::Wav(WavBitDepth::Float32),
+            AudioDither::None,
         )
-    }
-
-    fn write_wav_pcm(
-        path: &Path,
-        samples: &[f32],
-        channels: usize,
-        sample_rate: u32,
-        bits_per_sample: u16,
-        is_float: bool,
-        dither: ExportDither,
-    ) -> io::Result<()> {
-        let bytes_per_sample = usize::from(bits_per_sample / 8);
-        let block_align = (channels * bytes_per_sample) as u16;
-        let byte_rate = sample_rate * u32::from(block_align);
-        let data_size = samples
-            .len()
-            .checked_mul(bytes_per_sample)
-            .ok_or_else(|| io::Error::other("WAV data too large"))? as u32;
-        let riff_size = 36u32
-            .checked_add(data_size)
-            .ok_or_else(|| io::Error::other("WAV file too large"))?;
-
-        let mut file = File::create(path)?;
-        file.write_all(b"RIFF")?;
-        file.write_all(&riff_size.to_le_bytes())?;
-        file.write_all(b"WAVE")?;
-        file.write_all(b"fmt ")?;
-        file.write_all(&16u32.to_le_bytes())?;
-        let audio_format: u16 = if is_float { 3 } else { 1 };
-        file.write_all(&audio_format.to_le_bytes())?;
-        file.write_all(&(channels as u16).to_le_bytes())?;
-        file.write_all(&sample_rate.to_le_bytes())?;
-        file.write_all(&byte_rate.to_le_bytes())?;
-        file.write_all(&block_align.to_le_bytes())?;
-        file.write_all(&bits_per_sample.to_le_bytes())?;
-        file.write_all(b"data")?;
-        file.write_all(&data_size.to_le_bytes())?;
-
-        let mut rng = Self::dither_rng(0x1234_5678_9abc_defe);
-        let apply_dither = !is_float
-            && Self::dither_is_applicable(
-                match bits_per_sample {
-                    16 => ExportBitDepth::Int16,
-                    24 => ExportBitDepth::Int24,
-                    32 => ExportBitDepth::Int32,
-                    _ => ExportBitDepth::Float32,
-                },
-                dither,
-            );
-        for &sample in samples {
-            let s = sample.clamp(-1.0, 1.0);
-            match (is_float, bits_per_sample) {
-                (true, 32) => file.write_all(&s.to_le_bytes())?,
-                (false, 16) => {
-                    let scale = i16::MAX as f32;
-                    let q = if apply_dither {
-                        Self::quantize_with_dither(s, scale, &mut rng, dither)
-                    } else {
-                        s * scale
-                    }
-                    .round()
-                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-                    file.write_all(&q.to_le_bytes())?;
-                }
-                (false, 24) => {
-                    let scale = 8_388_607.0;
-                    let q = if apply_dither {
-                        Self::quantize_with_dither(s, scale, &mut rng, dither)
-                    } else {
-                        s * scale
-                    }
-                    .round()
-                    .clamp(-8_388_608.0, 8_388_607.0) as i32;
-                    let b = q.to_le_bytes();
-                    file.write_all(&b[..3])?;
-                }
-                (false, 32) => {
-                    let scale = i32::MAX as f32;
-                    let q = if apply_dither {
-                        Self::quantize_with_dither(s, scale, &mut rng, dither)
-                    } else {
-                        s * scale
-                    }
-                    .round()
-                    .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-                    file.write_all(&q.to_le_bytes())?;
-                }
-                _ => return Err(io::Error::other("Unsupported WAV format")),
-            }
-        }
-        Ok(())
     }
 
     fn file_extension_lower(path: &Path) -> Option<String> {
@@ -3014,7 +2917,7 @@ impl Maolan {
     fn is_import_audio_path(path: &Path) -> bool {
         matches!(
             Self::file_extension_lower(path).as_deref(),
-            Some("wav" | "flac" | "opus")
+            Some("wav" | "flac")
         )
     }
 
@@ -3658,88 +3561,6 @@ impl Maolan {
         Ok((output_rel, output_frames.max(1), peaks))
     }
 
-    /// Tiny deterministic PRNG used for export dither.
-    fn dither_rng(seed: u64) -> impl Iterator<Item = u64> {
-        let mut state = seed.max(1);
-        std::iter::from_fn(move || {
-            state ^= state >> 12;
-            state ^= state << 25;
-            state ^= state >> 27;
-            state = state.wrapping_mul(0x2545_f491_4f6c_dd1d);
-            Some(state)
-        })
-    }
-
-    fn dither_is_applicable(bit_depth: ExportBitDepth, dither: ExportDither) -> bool {
-        !matches!(dither, ExportDither::None) && !matches!(bit_depth, ExportBitDepth::Float32)
-    }
-
-    fn quantize_with_dither(
-        sample: f32,
-        scale: f32,
-        rng: &mut impl Iterator<Item = u64>,
-        dither: ExportDither,
-    ) -> f32 {
-        let mut uniform_half = || {
-            let u = rng.next().unwrap_or(0) >> 32;
-            (u as f32 / 4_294_967_296.0) - 0.5
-        };
-        let d = match dither {
-            ExportDither::None => 0.0,
-            ExportDither::Rectangular => uniform_half(),
-            ExportDither::Triangular => uniform_half() + uniform_half(),
-        };
-        (sample + d / scale).clamp(-1.0, 1.0) * scale
-    }
-
-    fn write_wav_with_bit_depth(
-        export_path: &Path,
-        mixed_buffer: &[f32],
-        sample_rate: i32,
-        output_channels: usize,
-        bit_depth: ExportBitDepth,
-        dither: ExportDither,
-    ) -> io::Result<()> {
-        let (bits_per_sample, is_float) = match bit_depth {
-            ExportBitDepth::Int16 => (16u16, false),
-            ExportBitDepth::Int24 => (24u16, false),
-            ExportBitDepth::Int32 => (32u16, false),
-            ExportBitDepth::Float32 => (32u16, true),
-        };
-        Self::write_wav_pcm(
-            export_path,
-            mixed_buffer,
-            output_channels.max(1),
-            sample_rate as u32,
-            bits_per_sample,
-            is_float,
-            dither,
-        )
-    }
-
-    fn write_flac_with_bit_depth(
-        export_path: &Path,
-        mixed_buffer: &[f32],
-        sample_rate: i32,
-        output_channels: usize,
-        bit_depth: ExportBitDepth,
-        _dither: ExportDither,
-    ) -> io::Result<()> {
-        let bits_per_sample = match bit_depth {
-            ExportBitDepth::Int16 => 16u16,
-            ExportBitDepth::Int24 => 24u16,
-            ExportBitDepth::Int32 => 32u16,
-            ExportBitDepth::Float32 => 24u16,
-        };
-        write_flac(
-            export_path,
-            mixed_buffer,
-            output_channels.max(1),
-            sample_rate as u32,
-            bits_per_sample,
-        )
-    }
-
     fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
         let export_path = req.export_path;
         let tmp_path = export_path.with_extension(format!(
@@ -3749,35 +3570,62 @@ impl Maolan {
                 .and_then(|e| e.to_str())
                 .unwrap_or("export")
         ));
-        let result = match req.format {
-            ExportFormat::Wav => Self::write_wav_with_bit_depth(
-                &tmp_path,
-                req.mixed_buffer,
-                req.sample_rate,
-                req.output_channels,
-                req.bit_depth,
-                req.dither,
-            ),
-            ExportFormat::Flac => Self::write_flac_with_bit_depth(
-                &tmp_path,
-                req.mixed_buffer,
-                req.sample_rate,
-                req.output_channels,
-                req.bit_depth,
-                req.dither,
-            ),
-            ExportFormat::Opus => write_opus(
-                &tmp_path,
-                req.mixed_buffer,
-                req.output_channels,
-                req.sample_rate as u32,
-                req.opus_bitrate_bps,
-            ),
-        };
+        let format = Self::export_format_to_engine(req.format, req.bit_depth);
+        let dither = Self::export_dither_to_engine(req.dither);
+        let result = maolan_engine::audio_codec::encode_audio_to_file(
+            &tmp_path,
+            req.mixed_buffer,
+            req.output_channels.max(1),
+            req.sample_rate as u32,
+            format,
+            dither,
+        );
         if result.is_ok() {
             fs::rename(&tmp_path, export_path)?;
         }
         result
+    }
+
+    fn export_format_to_engine(
+        format: ExportFormat,
+        bit_depth: ExportBitDepth,
+    ) -> AudioEncodeFormat {
+        match format {
+            ExportFormat::Wav => AudioEncodeFormat::Wav(Self::export_bit_depth_to_wav(bit_depth)),
+            ExportFormat::Flac => {
+                AudioEncodeFormat::Flac(Self::export_bit_depth_to_flac_bits(bit_depth))
+            }
+            ExportFormat::Ogg => {
+                AudioEncodeFormat::OggFlac(Self::export_bit_depth_to_flac_bits(bit_depth))
+            }
+            ExportFormat::Mp3 => AudioEncodeFormat::Mp3,
+        }
+    }
+
+    fn export_bit_depth_to_wav(bit_depth: ExportBitDepth) -> WavBitDepth {
+        match bit_depth {
+            ExportBitDepth::Int16 => WavBitDepth::Int16,
+            ExportBitDepth::Int24 => WavBitDepth::Int24,
+            ExportBitDepth::Int32 => WavBitDepth::Int32,
+            ExportBitDepth::Float32 => WavBitDepth::Float32,
+        }
+    }
+
+    fn export_bit_depth_to_flac_bits(bit_depth: ExportBitDepth) -> u16 {
+        match bit_depth {
+            ExportBitDepth::Int16 => 16,
+            ExportBitDepth::Int24 => 24,
+            ExportBitDepth::Int32 => 32,
+            ExportBitDepth::Float32 => 24,
+        }
+    }
+
+    fn export_dither_to_engine(dither: ExportDither) -> AudioDither {
+        match dither {
+            ExportDither::None => AudioDither::None,
+            ExportDither::Rectangular => AudioDither::Rectangular,
+            ExportDither::Triangular => AudioDither::Triangular,
+        }
     }
 
     fn measure_lufs_and_true_peak(
@@ -3983,7 +3831,6 @@ impl Maolan {
         let export_formats = options.formats.clone();
         let bit_depth = options.bit_depth;
         let dither = options.dither;
-        let opus_bitrate_bps = options.opus_bitrate_bps;
         let realtime_fallback = options.realtime_fallback;
         let normalize = options.normalize;
         let normalize_target_dbfs = options.normalize_target_dbfs;
@@ -3993,7 +3840,6 @@ impl Maolan {
         let normalize_tp_limiter = options.normalize_tp_limiter;
         let master_limiter = options.master_limiter;
         let master_limiter_ceiling_dbtp = options.master_limiter_ceiling_dbtp;
-        let codec = ExportCodecSettings { opus_bitrate_bps };
         let render_mode = options.render_mode;
         let selected_hw_out_ports = options.selected_hw_out_ports.clone();
         let state = options.state.clone();
@@ -4436,7 +4282,6 @@ impl Maolan {
                     bit_depth,
                     dither,
                     format: *format,
-                    opus_bitrate_bps: codec.opus_bitrate_bps,
                 })?;
             }
             progress_callback(1.0, Some("Complete".to_string()));
@@ -4586,7 +4431,6 @@ impl Maolan {
                     bit_depth,
                     dither,
                     format: *format,
-                    opus_bitrate_bps: codec.opus_bitrate_bps,
                 })?;
             }
             if realtime_fallback {
@@ -5971,28 +5815,25 @@ impl Maolan {
         if self.export_format_flac {
             formats.push(ExportFormat::Flac);
         }
-        if self.export_format_opus {
-            formats.push(ExportFormat::Opus);
+        if self.export_format_mp3 {
+            formats.push(ExportFormat::Mp3);
+        }
+        if self.export_format_ogg {
+            formats.push(ExportFormat::Ogg);
         }
         formats
     }
 
-    fn export_bit_depth_options(formats: &[ExportFormat]) -> Vec<ExportBitDepth> {
-        if formats
-            .iter()
-            .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
-        {
-            EXPORT_BIT_DEPTH_ALL.to_vec()
-        } else {
-            vec![ExportBitDepth::Float32]
-        }
+    fn export_bit_depth_options(_formats: &[ExportFormat]) -> Vec<ExportBitDepth> {
+        EXPORT_BIT_DEPTH_ALL.to_vec()
     }
 
     fn export_format_extension(format: ExportFormat) -> &'static str {
         match format {
             ExportFormat::Wav => "wav",
             ExportFormat::Flac => "flac",
-            ExportFormat::Opus => "opus",
+            ExportFormat::Mp3 => "mp3",
+            ExportFormat::Ogg => "ogg",
         }
     }
 
@@ -6001,7 +5842,7 @@ impl Maolan {
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
-            .is_some_and(|e| matches!(e.as_str(), "wav" | "flac" | "opus"));
+            .is_some_and(|e| matches!(e.as_str(), "wav" | "flac" | "mp3" | "ogg"));
         if known_ext {
             path.with_extension("")
         } else {
@@ -6062,9 +5903,12 @@ impl Maolan {
                             checkbox(self.export_format_flac)
                                 .label("FLAC")
                                 .on_toggle(Message::ExportFormatFlacToggled),
-                            checkbox(self.export_format_opus)
-                                .label("OPUS")
-                                .on_toggle(Message::ExportFormatOpusToggled),
+                            checkbox(self.export_format_mp3)
+                                .label("MP3")
+                                .on_toggle(Message::ExportFormatMp3Toggled),
+                            checkbox(self.export_format_ogg)
+                                .label("OGG")
+                                .on_toggle(Message::ExportFormatOggToggled),
                         ]
                         .spacing(10)
                         .align_y(iced::Alignment::Center),
@@ -6080,47 +5924,24 @@ impl Maolan {
                         ]
                         .spacing(10)
                         .align_y(iced::Alignment::Center),
-                        if selected_formats
-                            .iter()
-                            .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
-                        {
-                            row![
-                                text("Bit depth:"),
-                                pick_list(
-                                    bit_depth_options,
-                                    Some(selected_bit_depth),
-                                    Message::ExportBitDepthSelected
-                                )
-                                .placeholder("Choose bit depth"),
-                                text("Dither:"),
-                                pick_list(
-                                    EXPORT_DITHER_ALL.to_vec(),
-                                    Some(self.export_dither),
-                                    Message::ExportDitherSelected
-                                )
-                                .placeholder("Choose dither"),
-                            ]
-                            .spacing(10)
-                            .align_y(iced::Alignment::Center)
-                        } else {
-                            row![text("Bit depth: codec-managed (lossy formats)")]
-                                .spacing(10)
-                                .align_y(iced::Alignment::Center)
-                        },
-                        if self.export_format_opus {
-                            row![
-                                text("Opus bitrate (bps):"),
-                                number_input(
-                                    &self.export_opus_bitrate_bps,
-                                    0..=i32::MAX,
-                                    Message::ExportOpusBitrateSelected
-                                ),
-                            ]
-                            .spacing(10)
-                            .align_y(iced::Alignment::Center)
-                        } else {
-                            row![text("")].spacing(10).align_y(iced::Alignment::Center)
-                        },
+                        row![
+                            text("Bit depth:"),
+                            pick_list(
+                                bit_depth_options,
+                                Some(selected_bit_depth),
+                                Message::ExportBitDepthSelected
+                            )
+                            .placeholder("Choose bit depth"),
+                            text("Dither:"),
+                            pick_list(
+                                EXPORT_DITHER_ALL.to_vec(),
+                                Some(self.export_dither),
+                                Message::ExportDitherSelected
+                            )
+                            .placeholder("Choose dither"),
+                        ]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center),
                         row![
                             text("Render mode:"),
                             pick_list(
@@ -7793,8 +7614,8 @@ mod tests {
                 "sample_rate_hz": 48000,
                 "format_wav": true,
                 "format_flac": false,
-                "format_opus": false,
-                "opus_bitrate_bps": 128000,
+                "format_mp3": false,
+                "format_ogg": false,
                 "bit_depth": "int24",
                 "render_mode": "mixdown",
                 "hw_out_ports": [],
@@ -7884,9 +7705,6 @@ mod tests {
     fn import_path_helpers_accept_case_insensitive_extensions() {
         assert!(Maolan::is_import_audio_path(std::path::Path::new(
             "take.FLAC"
-        )));
-        assert!(Maolan::is_import_audio_path(std::path::Path::new(
-            "take.Opus"
         )));
         assert!(Maolan::is_import_audio_path(std::path::Path::new(
             "take.WAV"
@@ -8647,21 +8465,9 @@ mod tests {
     }
 
     #[test]
-    fn simple_ui_opus_toggle_has_no_channel_limit() {
-        let mut app = Maolan {
-            export_render_mode: ExportRenderMode::Mixdown,
-            export_hw_out_ports: BTreeSet::from([0, 1, 2]),
-            ..Maolan::default()
-        };
-
-        let _ = app.update(Message::ExportFormatOpusToggled(true));
-        assert!(app.export_format_opus);
-    }
-
-    #[test]
     fn simple_ui_render_mode_disables_normalize() {
         let mut app = Maolan {
-            export_format_opus: true,
+            export_format_flac: true,
             export_normalize: true,
             ..Maolan::default()
         };
@@ -8676,7 +8482,7 @@ mod tests {
             ExportRenderMode::StemsPostFader,
         ));
         assert!(!app.export_normalize);
-        assert!(app.export_format_opus);
+        assert!(app.export_format_flac);
     }
 
     #[test]
@@ -9363,7 +9169,8 @@ mod tests {
     fn export_format_extension_returns_correct_extensions() {
         assert_eq!(Maolan::export_format_extension(ExportFormat::Wav), "wav");
         assert_eq!(Maolan::export_format_extension(ExportFormat::Flac), "flac");
-        assert_eq!(Maolan::export_format_extension(ExportFormat::Opus), "opus");
+        assert_eq!(Maolan::export_format_extension(ExportFormat::Mp3), "mp3");
+        assert_eq!(Maolan::export_format_extension(ExportFormat::Ogg), "ogg");
     }
 
     #[test]

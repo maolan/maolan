@@ -1,9 +1,12 @@
 use crate::cli::support::{ExportSessionData, ExportTrack};
-use maolan_engine::{kind::Kind, message::AudioClipData};
+use maolan_engine::{
+    audio_codec::{AudioDither, AudioEncodeFormat, WavBitDepth},
+    kind::Kind,
+    message::AudioClipData,
+};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, fs, io,
-    io::Write,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -17,7 +20,8 @@ pub const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
 pub enum ExportFormat {
     Wav,
     Flac,
-    Opus,
+    Mp3,
+    Ogg,
 }
 
 impl fmt::Display for ExportFormat {
@@ -25,7 +29,8 @@ impl fmt::Display for ExportFormat {
         match self {
             Self::Wav => write!(f, "WAV"),
             Self::Flac => write!(f, "FLAC"),
-            Self::Opus => write!(f, "OPUS"),
+            Self::Mp3 => write!(f, "MP3"),
+            Self::Ogg => write!(f, "OGG"),
         }
     }
 }
@@ -122,10 +127,10 @@ pub struct ExportSettings {
     pub sample_rate_hz: u32,
     pub format_wav: bool,
     pub format_flac: bool,
-    pub format_opus: bool,
+    pub format_mp3: bool,
+    pub format_ogg: bool,
     pub bit_depth: ExportBitDepth,
     pub dither: ExportDither,
-    pub opus_bitrate_bps: i32,
     pub render_mode: ExportRenderMode,
     pub hw_out_ports: BTreeSet<usize>,
     pub realtime_fallback: bool,
@@ -145,10 +150,10 @@ impl ExportSettings {
             sample_rate_hz: default_sample_rate_hz,
             format_wav: true,
             format_flac: false,
-            format_opus: false,
+            format_mp3: false,
+            format_ogg: false,
             bit_depth: ExportBitDepth::Int24,
             dither: ExportDither::Triangular,
-            opus_bitrate_bps: 128_000,
             render_mode: ExportRenderMode::Mixdown,
             hw_out_ports: default_hw_out_ports(hw_output_channels),
             realtime_fallback: false,
@@ -171,8 +176,11 @@ impl ExportSettings {
         if self.format_flac {
             formats.push(ExportFormat::Flac);
         }
-        if self.format_opus {
-            formats.push(ExportFormat::Opus);
+        if self.format_mp3 {
+            formats.push(ExportFormat::Mp3);
+        }
+        if self.format_ogg {
+            formats.push(ExportFormat::Ogg);
         }
         formats
     }
@@ -190,15 +198,8 @@ fn default_hw_out_ports(hw_output_channels: usize) -> BTreeSet<usize> {
     (0..hw_output_channels).take(2).collect()
 }
 
-pub fn export_bit_depth_options(formats: &[ExportFormat]) -> Vec<ExportBitDepth> {
-    if formats
-        .iter()
-        .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
-    {
-        EXPORT_BIT_DEPTH_ALL.to_vec()
-    } else {
-        vec![ExportBitDepth::Float32]
-    }
+pub fn export_bit_depth_options(_formats: &[ExportFormat]) -> Vec<ExportBitDepth> {
+    EXPORT_BIT_DEPTH_ALL.to_vec()
 }
 
 pub fn validate_export_settings(
@@ -377,7 +378,6 @@ where
                 bit_depth: settings.bit_depth,
                 dither: settings.dither,
                 format: *format,
-                opus_bitrate_bps: settings.opus_bitrate_bps,
             })?;
             written.push(out_path);
         }
@@ -456,7 +456,6 @@ where
                 bit_depth: settings.bit_depth,
                 dither: settings.dither,
                 format: *format,
-                opus_bitrate_bps: settings.opus_bitrate_bps,
             })?;
             written.push(stem_file);
         }
@@ -605,7 +604,8 @@ fn export_format_extension(format: ExportFormat) -> &'static str {
     match format {
         ExportFormat::Wav => "wav",
         ExportFormat::Flac => "flac",
-        ExportFormat::Opus => "opus",
+        ExportFormat::Mp3 => "mp3",
+        ExportFormat::Ogg => "ogg",
     }
 }
 
@@ -633,7 +633,6 @@ struct ExportWriteRequest<'a> {
     bit_depth: ExportBitDepth,
     dither: ExportDither,
     format: ExportFormat,
-    opus_bitrate_bps: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -647,57 +646,6 @@ struct ExportNormalizeParams {
     output_channels: usize,
 }
 
-/// Tiny deterministic PRNG used for export dither.
-struct DitherRng {
-    state: u64,
-}
-
-impl DitherRng {
-    fn new(seed: u64) -> Self {
-        Self { state: seed.max(1) }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        // xorshift64* — good enough for uncorrelated audio dither.
-        self.state ^= self.state >> 12;
-        self.state ^= self.state << 25;
-        self.state ^= self.state >> 27;
-        self.state.wrapping_mul(0x2545_f491_4f6c_dd1d)
-    }
-
-    /// Uniform random value in [-0.5, 0.5).
-    fn uniform_half(&mut self) -> f32 {
-        let u = self.next_u64() >> 32;
-        (u as f32 / 4_294_967_296.0) - 0.5
-    }
-
-    /// Triangular-PDF dither in [-1.0, 1.0) quantization steps.
-    fn triangular(&mut self) -> f32 {
-        self.uniform_half() + self.uniform_half()
-    }
-
-    /// Rectangular-PDF dither in [-0.5, 0.5) quantization steps.
-    fn rectangular(&mut self) -> f32 {
-        self.uniform_half()
-    }
-}
-
-/// Returns true when the selected bit depth is an integer format that benefits from dither.
-fn dither_is_applicable(bit_depth: ExportBitDepth, dither: ExportDither) -> bool {
-    !matches!(dither, ExportDither::None) && !matches!(bit_depth, ExportBitDepth::Float32)
-}
-
-/// Applies dither in the float domain before quantization. The returned value is already
-/// clamped to [-1.0, 1.0] and scaled by `scale`, suitable for `round()`.
-fn quantize_with_dither(sample: f32, scale: f32, rng: &mut DitherRng, dither: ExportDither) -> f32 {
-    let d = match dither {
-        ExportDither::None => 0.0,
-        ExportDither::Rectangular => rng.rectangular(),
-        ExportDither::Triangular => rng.triangular(),
-    };
-    (sample + d / scale).clamp(-1.0, 1.0) * scale
-}
-
 fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
     let export_path = req.export_path;
     let tmp_path = export_path.with_extension(format!(
@@ -707,221 +655,41 @@ fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
             .and_then(|e| e.to_str())
             .unwrap_or("export")
     ));
-    let result = match req.format {
-        ExportFormat::Wav => write_wav_with_bit_depth(
-            &tmp_path,
-            req.mixed_buffer,
-            req.sample_rate,
-            req.output_channels,
-            req.bit_depth,
-            req.dither,
-        ),
-        ExportFormat::Flac => write_flac_with_bit_depth(
-            &tmp_path,
-            req.mixed_buffer,
-            req.sample_rate,
-            req.output_channels,
-            req.bit_depth,
-        ),
-        ExportFormat::Opus => maolan_engine::audio_codec::write_opus(
-            &tmp_path,
-            req.mixed_buffer,
-            req.output_channels,
-            req.sample_rate as u32,
-            req.opus_bitrate_bps,
-        ),
-    };
+    let format = export_format_to_engine(req.format, req.bit_depth);
+    let dither = export_dither_to_engine(req.dither);
+    let result = maolan_engine::audio_codec::encode_audio_to_file(
+        &tmp_path,
+        req.mixed_buffer,
+        req.output_channels.max(1),
+        req.sample_rate as u32,
+        format,
+        dither,
+    );
     if result.is_ok() {
         fs::rename(&tmp_path, export_path)?;
     }
     result
 }
 
-fn write_wav_with_bit_depth(
-    export_path: &Path,
-    mixed_buffer: &[f32],
-    sample_rate: i32,
-    output_channels: usize,
-    bit_depth: ExportBitDepth,
-    dither: ExportDither,
-) -> io::Result<()> {
-    let bits_per_sample = match bit_depth {
-        ExportBitDepth::Int16 => 16u16,
-        ExportBitDepth::Int24 => 24u16,
-        ExportBitDepth::Int32 => 32u16,
-        ExportBitDepth::Float32 => 32u16,
-    };
-    let is_float = matches!(bit_depth, ExportBitDepth::Float32);
-    write_wav_pcm(
-        export_path,
-        mixed_buffer,
-        output_channels.max(1),
-        sample_rate as u32,
-        bits_per_sample,
-        is_float,
-        dither,
-    )
-}
-
-fn write_wav_pcm(
-    path: &Path,
-    samples: &[f32],
-    channels: usize,
-    sample_rate: u32,
-    bits_per_sample: u16,
-    is_float: bool,
-    dither: ExportDither,
-) -> io::Result<()> {
-    let bytes_per_sample = usize::from(bits_per_sample / 8);
-    let block_align = (channels * bytes_per_sample) as u16;
-    let byte_rate = sample_rate * u32::from(block_align);
-    let data_size = samples
-        .len()
-        .checked_mul(bytes_per_sample)
-        .ok_or_else(|| io::Error::other("WAV data too large"))? as u32;
-    let riff_size = 36u32
-        .checked_add(data_size)
-        .ok_or_else(|| io::Error::other("WAV file too large"))?;
-
-    let mut file = fs::File::create(path)?;
-    file.write_all(b"RIFF")?;
-    file.write_all(&riff_size.to_le_bytes())?;
-    file.write_all(b"WAVE")?;
-    file.write_all(b"fmt ")?;
-    file.write_all(&16u32.to_le_bytes())?;
-    let audio_format: u16 = if is_float { 3 } else { 1 };
-    file.write_all(&audio_format.to_le_bytes())?;
-    file.write_all(&(channels as u16).to_le_bytes())?;
-    file.write_all(&sample_rate.to_le_bytes())?;
-    file.write_all(&byte_rate.to_le_bytes())?;
-    file.write_all(&block_align.to_le_bytes())?;
-    file.write_all(&bits_per_sample.to_le_bytes())?;
-    file.write_all(b"data")?;
-    file.write_all(&data_size.to_le_bytes())?;
-
-    let mut rng = DitherRng::new(0x1234_5678_9abc_defe);
-    let apply_dither = !is_float
-        && dither_is_applicable(
-            match bits_per_sample {
-                16 => ExportBitDepth::Int16,
-                24 => ExportBitDepth::Int24,
-                32 => ExportBitDepth::Int32,
-                _ => ExportBitDepth::Float32,
-            },
-            dither,
-        );
-    for &sample in samples {
-        let s = sample.clamp(-1.0, 1.0);
-        match (is_float, bits_per_sample) {
-            (true, 32) => file.write_all(&s.to_le_bytes())?,
-            (false, 16) => {
-                let scale = i16::MAX as f32;
-                let q = if apply_dither {
-                    quantize_with_dither(s, scale, &mut rng, dither)
-                } else {
-                    s * scale
-                }
-                .round()
-                .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-                file.write_all(&q.to_le_bytes())?;
-            }
-            (false, 24) => {
-                let scale = 8_388_607.0;
-                let q = if apply_dither {
-                    quantize_with_dither(s, scale, &mut rng, dither)
-                } else {
-                    s * scale
-                }
-                .round()
-                .clamp(-8_388_608.0, 8_388_607.0) as i32;
-                let b = q.to_le_bytes();
-                file.write_all(&b[..3])?;
-            }
-            (false, 32) => {
-                let scale = i32::MAX as f32;
-                let q = if apply_dither {
-                    quantize_with_dither(s, scale, &mut rng, dither)
-                } else {
-                    s * scale
-                }
-                .round()
-                .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-                file.write_all(&q.to_le_bytes())?;
-            }
-            _ => return Err(io::Error::other("Unsupported WAV format")),
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn quantize_samples_for_bit_depth(
-    mixed_buffer: &[f32],
-    bit_depth: ExportBitDepth,
-    dither: ExportDither,
-) -> (Vec<i32>, u8) {
-    let (scale, min, max, bits_per_sample) = match bit_depth {
-        ExportBitDepth::Int16 => (i16::MAX as f32, i16::MIN as f32, i16::MAX as f32, 16),
-        ExportBitDepth::Int24 => (8_388_607.0, -8_388_608.0, 8_388_607.0, 24),
-        ExportBitDepth::Int32 => (i32::MAX as f32, i32::MIN as f32, i32::MAX as f32, 32),
-        ExportBitDepth::Float32 => (8_388_607.0, -8_388_608.0, 8_388_607.0, 24),
-    };
-
-    if dither_is_applicable(bit_depth, dither) {
-        let mut rng = DitherRng::new(0x1234_5678_9abc_defe);
-        let samples = mixed_buffer
-            .iter()
-            .map(|s| {
-                quantize_with_dither(s.clamp(-1.0, 1.0), scale, &mut rng, dither)
-                    .round()
-                    .clamp(min, max) as i32
-            })
-            .collect();
-        return (samples, bits_per_sample);
-    }
-
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    {
-        use wide::{f32x4, i32x4};
-        let mut quantized = Vec::with_capacity(mixed_buffer.len());
-        let n = mixed_buffer.len() / 4;
-        let vmin_f = f32x4::splat(min);
-        let vmax_f = f32x4::splat(max);
-        let scale_f = f32x4::splat(scale);
-        let vmin_i = i32x4::splat(min as i32);
-        let vmax_i = i32x4::splat(max as i32);
-        for i in 0..n {
-            let chunk = &mixed_buffer[i * 4..(i + 1) * 4];
-            let v: f32x4 = [chunk[0], chunk[1], chunk[2], chunk[3]].into();
-            let clamped = v.clamp(vmin_f, vmax_f);
-            let scaled = clamped * scale_f;
-            let rounded = scaled.round_int();
-            let clamped_i = rounded.max(vmin_i).min(vmax_i);
-            quantized.extend_from_slice(&clamped_i.to_array());
-        }
-        for s in &mixed_buffer[n * 4..] {
-            quantized.push(
-                (*s).clamp(-1.0, 1.0)
-                    .mul_add(scale, 0.0)
-                    .round()
-                    .clamp(min, max) as i32,
-            );
-        }
-        (quantized, bits_per_sample)
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-    {
-        (
-            mixed_buffer
-                .iter()
-                .map(|s| (s.clamp(-1.0, 1.0) * scale).round().clamp(min, max) as i32)
-                .collect(),
-            bits_per_sample,
-        )
+fn export_format_to_engine(format: ExportFormat, bit_depth: ExportBitDepth) -> AudioEncodeFormat {
+    match format {
+        ExportFormat::Wav => AudioEncodeFormat::Wav(export_bit_depth_to_wav(bit_depth)),
+        ExportFormat::Flac => AudioEncodeFormat::Flac(export_bit_depth_to_flac_bits(bit_depth)),
+        ExportFormat::Ogg => AudioEncodeFormat::OggFlac(export_bit_depth_to_flac_bits(bit_depth)),
+        ExportFormat::Mp3 => AudioEncodeFormat::Mp3,
     }
 }
 
-fn flac_bits_per_sample(bit_depth: ExportBitDepth) -> u16 {
+fn export_bit_depth_to_wav(bit_depth: ExportBitDepth) -> WavBitDepth {
+    match bit_depth {
+        ExportBitDepth::Int16 => WavBitDepth::Int16,
+        ExportBitDepth::Int24 => WavBitDepth::Int24,
+        ExportBitDepth::Int32 => WavBitDepth::Int32,
+        ExportBitDepth::Float32 => WavBitDepth::Float32,
+    }
+}
+
+fn export_bit_depth_to_flac_bits(bit_depth: ExportBitDepth) -> u16 {
     match bit_depth {
         ExportBitDepth::Int16 => 16,
         ExportBitDepth::Int24 => 24,
@@ -930,20 +698,12 @@ fn flac_bits_per_sample(bit_depth: ExportBitDepth) -> u16 {
     }
 }
 
-fn write_flac_with_bit_depth(
-    export_path: &Path,
-    mixed_buffer: &[f32],
-    sample_rate: i32,
-    output_channels: usize,
-    bit_depth: ExportBitDepth,
-) -> io::Result<()> {
-    maolan_engine::audio_codec::write_flac(
-        export_path,
-        mixed_buffer,
-        output_channels.max(1),
-        sample_rate as u32,
-        flac_bits_per_sample(bit_depth),
-    )
+fn export_dither_to_engine(dither: ExportDither) -> AudioDither {
+    match dither {
+        ExportDither::None => AudioDither::None,
+        ExportDither::Rectangular => AudioDither::Rectangular,
+        ExportDither::Triangular => AudioDither::Triangular,
+    }
 }
 
 fn measure_lufs_and_true_peak(
@@ -1023,6 +783,128 @@ fn apply_export_normalization(
 #[cfg(test)]
 mod dither_tests {
     use super::*;
+
+    /// Tiny deterministic PRNG used for export dither tests.
+    struct DitherRng {
+        state: u64,
+    }
+
+    impl DitherRng {
+        fn new(seed: u64) -> Self {
+            Self { state: seed.max(1) }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            // xorshift64* — good enough for uncorrelated audio dither.
+            self.state ^= self.state >> 12;
+            self.state ^= self.state << 25;
+            self.state ^= self.state >> 27;
+            self.state.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+
+        /// Uniform random value in [-0.5, 0.5).
+        fn uniform_half(&mut self) -> f32 {
+            let u = self.next_u64() >> 32;
+            (u as f32 / 4_294_967_296.0) - 0.5
+        }
+
+        /// Triangular-PDF dither in [-1.0, 1.0) quantization steps.
+        fn triangular(&mut self) -> f32 {
+            self.uniform_half() + self.uniform_half()
+        }
+
+        /// Rectangular-PDF dither in [-0.5, 0.5) quantization steps.
+        fn rectangular(&mut self) -> f32 {
+            self.uniform_half()
+        }
+    }
+
+    /// Returns true when the selected bit depth is an integer format that benefits from dither.
+    fn dither_is_applicable(bit_depth: ExportBitDepth, dither: ExportDither) -> bool {
+        !matches!(dither, ExportDither::None) && !matches!(bit_depth, ExportBitDepth::Float32)
+    }
+
+    /// Applies dither in the float domain before quantization. The returned value is already
+    /// clamped to [-1.0, 1.0] and scaled by `scale`, suitable for `round()`.
+    fn quantize_with_dither(
+        sample: f32,
+        scale: f32,
+        rng: &mut DitherRng,
+        dither: ExportDither,
+    ) -> f32 {
+        let d = match dither {
+            ExportDither::None => 0.0,
+            ExportDither::Rectangular => rng.rectangular(),
+            ExportDither::Triangular => rng.triangular(),
+        };
+        (sample + d / scale).clamp(-1.0, 1.0) * scale
+    }
+
+    fn quantize_samples_for_bit_depth(
+        mixed_buffer: &[f32],
+        bit_depth: ExportBitDepth,
+        dither: ExportDither,
+    ) -> (Vec<i32>, u8) {
+        let (scale, min, max, bits_per_sample) = match bit_depth {
+            ExportBitDepth::Int16 => (i16::MAX as f32, i16::MIN as f32, i16::MAX as f32, 16),
+            ExportBitDepth::Int24 => (8_388_607.0, -8_388_608.0, 8_388_607.0, 24),
+            ExportBitDepth::Int32 => (i32::MAX as f32, i32::MIN as f32, i32::MAX as f32, 32),
+            ExportBitDepth::Float32 => (8_388_607.0, -8_388_608.0, 8_388_607.0, 24),
+        };
+
+        if dither_is_applicable(bit_depth, dither) {
+            let mut rng = DitherRng::new(0x1234_5678_9abc_defe);
+            let samples = mixed_buffer
+                .iter()
+                .map(|s| {
+                    quantize_with_dither(s.clamp(-1.0, 1.0), scale, &mut rng, dither)
+                        .round()
+                        .clamp(min, max) as i32
+                })
+                .collect();
+            return (samples, bits_per_sample);
+        }
+
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        {
+            use wide::{f32x4, i32x4};
+            let mut quantized = Vec::with_capacity(mixed_buffer.len());
+            let n = mixed_buffer.len() / 4;
+            let vmin_f = f32x4::splat(min);
+            let vmax_f = f32x4::splat(max);
+            let scale_f = f32x4::splat(scale);
+            let vmin_i = i32x4::splat(min as i32);
+            let vmax_i = i32x4::splat(max as i32);
+            for i in 0..n {
+                let chunk = &mixed_buffer[i * 4..(i + 1) * 4];
+                let v: f32x4 = [chunk[0], chunk[1], chunk[2], chunk[3]].into();
+                let clamped = v.clamp(vmin_f, vmax_f);
+                let scaled = clamped * scale_f;
+                let rounded = scaled.round_int();
+                let clamped_i = rounded.max(vmin_i).min(vmax_i);
+                quantized.extend_from_slice(&clamped_i.to_array());
+            }
+            for s in &mixed_buffer[n * 4..] {
+                quantized.push(
+                    (*s).clamp(-1.0, 1.0)
+                        .mul_add(scale, 0.0)
+                        .round()
+                        .clamp(min, max) as i32,
+                );
+            }
+            (quantized, bits_per_sample)
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+        {
+            (
+                mixed_buffer
+                    .iter()
+                    .map(|s| (s.clamp(-1.0, 1.0) * scale).round().clamp(min, max) as i32)
+                    .collect(),
+                bits_per_sample,
+            )
+        }
+    }
 
     #[test]
     fn dither_is_applicable_for_integer_formats() {

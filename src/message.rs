@@ -545,7 +545,8 @@ pub enum ExportBitDepth {
 pub enum ExportFormat {
     Wav,
     Flac,
-    Opus,
+    Mp3,
+    Ogg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -575,7 +576,8 @@ impl fmt::Display for ExportFormat {
         match self {
             ExportFormat::Wav => write!(f, "WAV"),
             ExportFormat::Flac => write!(f, "FLAC"),
-            ExportFormat::Opus => write!(f, "OPUS"),
+            ExportFormat::Mp3 => write!(f, "MP3"),
+            ExportFormat::Ogg => write!(f, "OGG"),
         }
     }
 }
@@ -844,8 +846,8 @@ pub enum Message {
     ExportSampleRateSelected(u32),
     ExportFormatWavToggled(bool),
     ExportFormatFlacToggled(bool),
-    ExportFormatOpusToggled(bool),
-    ExportOpusBitrateSelected(i32),
+    ExportFormatMp3Toggled(bool),
+    ExportFormatOggToggled(bool),
     ExportRenderModeSelected(ExportRenderMode),
     ExportHwOutPortToggled(usize, bool),
     ExportRealtimeFallbackToggled(bool),

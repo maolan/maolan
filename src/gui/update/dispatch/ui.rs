@@ -34,13 +34,14 @@ impl Maolan {
                 self.adjust_export_bit_depth_if_needed();
                 true
             }
-            Message::ExportFormatOpusToggled(enabled) => {
-                self.export_format_opus = *enabled;
+            Message::ExportFormatMp3Toggled(enabled) => {
+                self.export_format_mp3 = *enabled;
                 self.adjust_export_bit_depth_if_needed();
                 true
             }
-            Message::ExportOpusBitrateSelected(bitrate) => {
-                self.export_opus_bitrate_bps = *bitrate;
+            Message::ExportFormatOggToggled(enabled) => {
+                self.export_format_ogg = *enabled;
+                self.adjust_export_bit_depth_if_needed();
                 true
             }
             Message::ExportBitDepthSelected(bit_depth) => {
