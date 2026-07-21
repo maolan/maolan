@@ -238,8 +238,8 @@ pub mod state_platform_freebsd_lists {
 
 pub mod message_lists {
     use crate::message::{
-        ExportBitDepth, ExportDither, ExportMp3Mode, ExportNormalizeMode, ExportRenderMode,
-        PianoChordKind, PianoNrpnKind, PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
+        ExportBitDepth, ExportDither, ExportNormalizeMode, ExportRenderMode, PianoChordKind,
+        PianoNrpnKind, PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
     };
 
     pub const SNAP_MODE_ALL: [SnapMode; 8] = [
@@ -289,7 +289,6 @@ pub mod message_lists {
     ];
     pub const EXPORT_NORMALIZE_MODE_ALL: [ExportNormalizeMode; 2] =
         [ExportNormalizeMode::Peak, ExportNormalizeMode::Loudness];
-    pub const EXPORT_MP3_MODE_ALL: [ExportMp3Mode; 2] = [ExportMp3Mode::Cbr, ExportMp3Mode::Vbr];
     pub const EXPORT_RENDER_MODE_ALL: [ExportRenderMode; 3] = [
         ExportRenderMode::Mixdown,
         ExportRenderMode::StemsPostFader,

@@ -18,12 +18,6 @@ impl Maolan {
         }
     }
 
-    fn clamp_export_mp3_if_needed(&mut self) {
-        if !self.export_mp3_supported_for_current_settings() {
-            self.export_format_mp3 = false;
-        }
-    }
-
     fn handle_export_settings_ui_message(&mut self, message: &Message) -> bool {
         match message {
             Message::ExportSampleRateSelected(rate) => {
@@ -35,35 +29,18 @@ impl Maolan {
                 self.adjust_export_bit_depth_if_needed();
                 true
             }
-            Message::ExportFormatMp3Toggled(enabled) => {
-                self.export_format_mp3 =
-                    *enabled && self.export_mp3_supported_for_current_settings();
-                self.adjust_export_bit_depth_if_needed();
-                true
-            }
-            Message::ExportFormatOggToggled(enabled) => {
-                self.export_format_ogg = *enabled;
-                self.adjust_export_bit_depth_if_needed();
-                true
-            }
             Message::ExportFormatFlacToggled(enabled) => {
                 self.export_format_flac = *enabled;
                 self.adjust_export_bit_depth_if_needed();
                 true
             }
-            Message::ExportMp3ModeSelected(mode) => {
-                self.export_mp3_mode = *mode;
+            Message::ExportFormatOpusToggled(enabled) => {
+                self.export_format_opus = *enabled;
+                self.adjust_export_bit_depth_if_needed();
                 true
             }
-            Message::ExportMp3BitrateSelected(kbps) => {
-                self.export_mp3_bitrate_kbps = *kbps;
-                true
-            }
-            Message::ExportOggQualityInput(input) => {
-                self.export_ogg_quality_input = input
-                    .chars()
-                    .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
-                    .collect();
+            Message::ExportOpusBitrateSelected(bitrate) => {
+                self.export_opus_bitrate_bps = *bitrate;
                 true
             }
             Message::ExportBitDepthSelected(bit_depth) => {
@@ -79,7 +56,6 @@ impl Maolan {
                 if !matches!(mode, ExportRenderMode::Mixdown) {
                     self.export_normalize = false;
                 }
-                self.clamp_export_mp3_if_needed();
                 self.adjust_export_bit_depth_if_needed();
                 true
             }
@@ -89,7 +65,6 @@ impl Maolan {
                 } else {
                     self.export_hw_out_ports.remove(port);
                 }
-                self.clamp_export_mp3_if_needed();
                 self.adjust_export_bit_depth_if_needed();
                 true
             }

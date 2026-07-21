@@ -152,23 +152,6 @@ impl Maolan {
         }
     }
 
-    fn export_mp3_mode_to_json(mode: crate::message::ExportMp3Mode) -> Value {
-        Value::String(
-            match mode {
-                crate::message::ExportMp3Mode::Cbr => "cbr",
-                crate::message::ExportMp3Mode::Vbr => "vbr",
-            }
-            .to_string(),
-        )
-    }
-
-    fn export_mp3_mode_from_json(value: Option<&Value>) -> crate::message::ExportMp3Mode {
-        match value.and_then(Value::as_str) {
-            Some("vbr") => crate::message::ExportMp3Mode::Vbr,
-            _ => crate::message::ExportMp3Mode::Cbr,
-        }
-    }
-
     fn export_normalize_mode_to_json(mode: crate::message::ExportNormalizeMode) -> Value {
         Value::String(
             match mode {
@@ -600,14 +583,11 @@ impl Maolan {
             "export": {
                 "sample_rate_hz": self.export_sample_rate_hz,
                 "format_wav": self.export_format_wav,
-                "format_mp3": self.export_format_mp3,
-                "format_ogg": self.export_format_ogg,
                 "format_flac": self.export_format_flac,
+                "format_opus": self.export_format_opus,
+                "opus_bitrate_bps": self.export_opus_bitrate_bps,
                 "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
                 "dither": Self::export_dither_to_json(self.export_dither),
-                "mp3_mode": Self::export_mp3_mode_to_json(self.export_mp3_mode),
-                "mp3_bitrate_kbps": self.export_mp3_bitrate_kbps,
-                "ogg_quality_input": self.export_ogg_quality_input,
                 "render_mode": Self::export_render_mode_to_json(self.export_render_mode),
                 "hw_out_ports": export_hw_out_ports,
                 "realtime_fallback": self.export_realtime_fallback,
@@ -1846,14 +1826,11 @@ impl Maolan {
             "export": {
                 "sample_rate_hz": self.export_sample_rate_hz,
                 "format_wav": self.export_format_wav,
-                "format_mp3": self.export_format_mp3,
-                "format_ogg": self.export_format_ogg,
                 "format_flac": self.export_format_flac,
+                "format_opus": self.export_format_opus,
+                "opus_bitrate_bps": self.export_opus_bitrate_bps,
                 "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
                 "dither": Self::export_dither_to_json(self.export_dither),
-                "mp3_mode": Self::export_mp3_mode_to_json(self.export_mp3_mode),
-                "mp3_bitrate_kbps": self.export_mp3_bitrate_kbps,
-                "ogg_quality_input": self.export_ogg_quality_input,
                 "render_mode": Self::export_render_mode_to_json(self.export_render_mode),
                 "hw_out_ports": export_hw_out_ports,
                 "realtime_fallback": self.export_realtime_fallback,
@@ -2284,31 +2261,21 @@ impl Maolan {
                 .get("format_wav")
                 .and_then(Value::as_bool)
                 .unwrap_or(self.export_format_wav);
-            self.export_format_mp3 = export
-                .get("format_mp3")
-                .and_then(Value::as_bool)
-                .unwrap_or(self.export_format_mp3);
-            self.export_format_ogg = export
-                .get("format_ogg")
-                .and_then(Value::as_bool)
-                .unwrap_or(self.export_format_ogg);
             self.export_format_flac = export
                 .get("format_flac")
                 .and_then(Value::as_bool)
                 .unwrap_or(self.export_format_flac);
+            self.export_format_opus = export
+                .get("format_opus")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_format_opus);
+            self.export_opus_bitrate_bps = export
+                .get("opus_bitrate_bps")
+                .and_then(Value::as_i64)
+                .map(|v| v.max(1) as i32)
+                .unwrap_or(self.export_opus_bitrate_bps);
             self.export_bit_depth = Self::export_bit_depth_from_json(export.get("bit_depth"));
             self.export_dither = Self::export_dither_from_json(export.get("dither"));
-            self.export_mp3_mode = Self::export_mp3_mode_from_json(export.get("mp3_mode"));
-            self.export_mp3_bitrate_kbps = export
-                .get("mp3_bitrate_kbps")
-                .and_then(Value::as_u64)
-                .map(|v| v.clamp(8, u16::MAX as u64) as u16)
-                .unwrap_or(self.export_mp3_bitrate_kbps);
-            self.export_ogg_quality_input = export
-                .get("ogg_quality_input")
-                .and_then(Value::as_str)
-                .unwrap_or(&self.export_ogg_quality_input)
-                .to_string();
             self.export_render_mode = Self::export_render_mode_from_json(export.get("render_mode"));
             self.export_hw_out_ports = export
                 .get("hw_out_ports")
@@ -2363,9 +2330,6 @@ impl Maolan {
             self.export_hw_out_ports = self.default_export_hw_out_ports();
         }
         self.normalize_export_hw_out_ports();
-        if !self.export_mp3_supported_for_current_settings() {
-            self.export_format_mp3 = false;
-        }
 
         let transport = session.get("transport").ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "No 'transport' in session")
@@ -4030,38 +3994,6 @@ mod tests {
         assert!(matches!(result, crate::message::ExportDither::Triangular));
         let result = Maolan::export_dither_from_json(None);
         assert!(matches!(result, crate::message::ExportDither::Triangular));
-    }
-
-    #[test]
-    fn export_mp3_mode_to_json_cbr() {
-        let result = Maolan::export_mp3_mode_to_json(crate::message::ExportMp3Mode::Cbr);
-        assert_eq!(result, json!("cbr"));
-    }
-
-    #[test]
-    fn export_mp3_mode_to_json_vbr() {
-        let result = Maolan::export_mp3_mode_to_json(crate::message::ExportMp3Mode::Vbr);
-        assert_eq!(result, json!("vbr"));
-    }
-
-    #[test]
-    fn export_mp3_mode_from_json_cbr() {
-        let result = Maolan::export_mp3_mode_from_json(Some(&json!("cbr")));
-        assert!(matches!(result, crate::message::ExportMp3Mode::Cbr));
-    }
-
-    #[test]
-    fn export_mp3_mode_from_json_vbr() {
-        let result = Maolan::export_mp3_mode_from_json(Some(&json!("vbr")));
-        assert!(matches!(result, crate::message::ExportMp3Mode::Vbr));
-    }
-
-    #[test]
-    fn export_mp3_mode_from_json_defaults_to_cbr() {
-        let result = Maolan::export_mp3_mode_from_json(Some(&json!("unknown")));
-        assert!(matches!(result, crate::message::ExportMp3Mode::Cbr));
-        let result = Maolan::export_mp3_mode_from_json(None);
-        assert!(matches!(result, crate::message::ExportMp3Mode::Cbr));
     }
 
     #[test]

@@ -54,12 +54,6 @@ jobs:
             libgtk2.0-dev \
             librubberband-dev \
             rubberband-cli \
-            libavcodec-dev \
-            libavdevice-dev \
-            libavfilter-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libswresample-dev \
             llvm-dev \
             libclang-dev
 
@@ -123,12 +117,6 @@ jobs:
             libgtk2.0-dev \
             librubberband-dev \
             rubberband-cli \
-            libavcodec-dev \
-            libavdevice-dev \
-            libavfilter-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libswresample-dev \
             llvm-dev \
             libclang-dev
 
