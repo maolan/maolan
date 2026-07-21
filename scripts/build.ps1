@@ -111,65 +111,6 @@ function Ensure-VSBuildTools {
     }
 }
 
-function Patch-FFmpegNext {
-    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
-    $registrySrc = "$cargoHome\registry\src"
-
-    if (-not (Test-Path $registrySrc)) {
-        Write-Host "Cargo registry not found at $registrySrc. Running cargo fetch first..."
-        Push-Location $PSScriptRoot
-        cargo fetch
-        Pop-Location
-        if (-not (Test-Path $registrySrc)) {
-            Write-Host "Cargo registry still not found after fetch, skipping patch."
-            return
-        }
-    }
-
-    $ffmpegNextDir = (Get-ChildItem $registrySrc -Recurse -Filter "ffmpeg-next-8.1.0" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-    if (-not $ffmpegNextDir) {
-        Write-Host "ffmpeg-next-8.1.0 not found in cargo registry, skipping patch."
-        return
-    }
-    $frameFile = "$ffmpegNextDir\src\util\frame\side_data.rs"
-    $packetFile = "$ffmpegNextDir\src\codec\packet\side_data.rs"
-    $patched = $false
-
-    if (Test-Path $frameFile) {
-        $content = Get-Content $frameFile -Raw
-        if (-not $content.Contains("DYNAMIC_HDR_SMPTE_2094_APP5")) {
-            # Add enum variant
-            $content = $content -replace '(#\[cfg\(feature = "ffmpeg_8_1"\)\]\s+EXIF,)', "`$1`n`n            #[cfg(feature = `"ffmpeg_8_1`")]`n            DYNAMIC_HDR_SMPTE_2094_APP5,"
-            # Add From<AVFrameSideDataType> match arm
-            $content = $content -replace '(#\[cfg\(feature = "ffmpeg_8_1"\)\]\s+AV_FRAME_DATA_EXIF => Type::EXIF,)', "`$1`n`n            #[cfg(feature = `"ffmpeg_8_1`")]`n            AV_FRAME_DATA_DYNAMIC_HDR_SMPTE_2094_APP5 => Type::DYNAMIC_HDR_SMPTE_2094_APP5,"
-            # Add From<Type> match arm
-            $content = $content -replace '(#\[cfg\(feature = "ffmpeg_8_1"\)\]\s+Type::EXIF => AV_FRAME_DATA_EXIF,)', "`$1`n`n            #[cfg(feature = `"ffmpeg_8_1`")]`n            Type::DYNAMIC_HDR_SMPTE_2094_APP5 => AV_FRAME_DATA_DYNAMIC_HDR_SMPTE_2094_APP5,"
-            Set-Content $frameFile $content -NoNewline
-            Write-Host "Patched ffmpeg-next frame side_data.rs"
-            $patched = $true
-        }
-    }
-
-    if (Test-Path $packetFile) {
-        $content = Get-Content $packetFile -Raw
-        if (-not $content.Contains("DYNAMIC_HDR_SMPTE_2094_APP5")) {
-            # Add enum variant
-            $content = $content -replace '(#\[cfg\(feature = "ffmpeg_8_1"\)\]\s+EXIF,)', "`$1`n`n            #[cfg(feature = `"ffmpeg_8_1`")]`n            DYNAMIC_HDR_SMPTE_2094_APP5,"
-            # Add From<AVPacketSideDataType> match arm
-            $content = $content -replace '(#\[cfg\(feature = "ffmpeg_8_1"\)\]\s+AV_PKT_DATA_EXIF => Type::EXIF,)', "`$1`n`n            #[cfg(feature = `"ffmpeg_8_1`")]`n            AV_PKT_DATA_DYNAMIC_HDR_SMPTE_2094_APP5 => Type::DYNAMIC_HDR_SMPTE_2094_APP5,"
-            # Add From<Type> match arm
-            $content = $content -replace '(#\[cfg\(feature = "ffmpeg_8_1"\)\]\s+Type::EXIF => AV_PKT_DATA_EXIF,)', "`$1`n`n            #[cfg(feature = `"ffmpeg_8_1`")]`n            Type::DYNAMIC_HDR_SMPTE_2094_APP5 => AV_PKT_DATA_DYNAMIC_HDR_SMPTE_2094_APP5,"
-            Set-Content $packetFile $content -NoNewline
-            Write-Host "Patched ffmpeg-next packet side_data.rs"
-            $patched = $true
-        }
-    }
-
-    if (-not $patched) {
-        Write-Host "ffmpeg-next already patched or not found."
-    }
-}
-
 function Import-VSEnv {
     $vsPath = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
     $vcvars = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
@@ -253,32 +194,6 @@ function Ensure-Vcpkg {
     return $vcpkgRoot
 }
 
-function Ensure-FFmpegNuGet {
-    $ffmpegDir = "C:\ffmpeg-nuget\build\native"
-    if (Test-Path "$ffmpegDir\include\libavcodec\avcodec.h") {
-        Write-Host "FFmpeg NuGet package already installed."
-        return $ffmpegDir
-    }
-    Write-Host "Downloading FFmpeg.LGPL NuGet package..."
-    $nupkg = "$env:TEMP\FFmpeg.LGPL.nupkg"
-    $curl = "$env:SystemRoot\System32\curl.exe"
-    & $curl -s -L -o $nupkg "https://www.nuget.org/api/v2/package/FFmpeg.LGPL/20260504.1.0"
-    if (-not (Test-Path $nupkg) -or (Get-Item $nupkg).Length -lt 1000000) {
-        Write-Error "FFmpeg NuGet package download failed or too small."
-    }
-    Write-Host "Extracting FFmpeg NuGet package..."
-    New-Item -ItemType Directory -Force "C:\ffmpeg-nuget" | Out-Null
-    # .nupkg is a zip but Expand-Archive only accepts .zip extension
-    $zip = "$env:TEMP\FFmpeg.LGPL.zip"
-    Copy-Item $nupkg $zip -Force
-    Expand-Archive -Path $zip -DestinationPath "C:\ffmpeg-nuget" -Force
-    if (-not (Test-Path "$ffmpegDir\include\libavcodec\avcodec.h")) {
-        Write-Error "FFmpeg NuGet package extraction failed."
-    }
-    Write-Host "FFmpeg NuGet package ready at $ffmpegDir"
-    return $ffmpegDir
-}
-
 function Install-VcpkgPackage {
     param([string]$Root, [string]$Package)
     $name = $Package.Split(":")[0]
@@ -337,14 +252,12 @@ Ensure-Rust
 Ensure-NSIS
 Ensure-Git
 $vcpkgRoot = Ensure-Vcpkg
-$ffmpegDir = Ensure-FFmpegNuGet
 Install-VcpkgPackage $vcpkgRoot "sentencepiece:x64-windows"
 Ensure-LLVM
 
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-$env:FFMPEG_DIR = $ffmpegDir
 $env:VCPKG_ROOT = $vcpkgRoot
 # Append vcpkg paths to existing VS environment paths (don't overwrite)
 $env:LIB     = "$vcpkgRoot\installed\x64-windows\lib;$env:LIB"
@@ -363,8 +276,6 @@ if (-not (Test-Path $vcRedist)) {
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
-Patch-FFmpegNext
-
 Write-Host "Cleaning old build artifacts..."
 Push-Location $PSScriptRoot
 cargo clean --target-dir $targetDir
@@ -381,8 +292,6 @@ New-Item -ItemType Directory -Force $staging | Out-Null
 Copy-Item "$targetDir\$target\release\maolan.exe"     $staging -Force
 Copy-Item "$targetDir\$target\release\maolan-cli.exe" $staging -Force
 Copy-Item "$targetDir\$target\release\maolan-plugin-host.exe" $staging -Force
-Copy-Item "$ffmpegDir\bin\av*.dll" $staging -Force
-Copy-Item "$ffmpegDir\bin\sw*.dll" $staging -Force
 Copy-Item $vcRedist $staging -Force
 
 # ---------------------------------------------------------------------------

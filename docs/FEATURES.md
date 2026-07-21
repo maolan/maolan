@@ -210,19 +210,15 @@ Last updated: 2026-07-09
   - Loudness
 - Multi-format export in one run:
   - WAV
-  - MP3 (via ffmpeg)
-  - OGG (Vorbis, via ffmpeg)
   - FLAC
+  - Opus
 - Dither options for integer PCM export:
   - None
   - Rectangular
   - Triangular (default)
 - Codec settings:
-  - MP3 mode (CBR/VBR) + bitrate
-  - OGG quality
-- Metadata tagging on supported formats:
-  - MP3 (ID3 fields used by current encoder path)
-  - OGG Vorbis comments
+  - Opus bitrate
+- Metadata tagging is not yet implemented for Opus export.
 
 ## Control Surface and OSC
 - mixosc integration for OSC-based mixing control

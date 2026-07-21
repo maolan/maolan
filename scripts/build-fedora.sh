@@ -96,7 +96,6 @@ sudo dnf install -y \
     lilv-devel \
     suil-devel \
     gtk2-devel \
-    ffmpeg-free-devel \
     llvm-devel \
     clang-devel \
     cmake \
@@ -215,7 +214,7 @@ URL:            https://github.com/maolan/maolan
 Source0:        maolan-files.tar.gz
 BuildArch:      $RPM_ARCH
 
-Requires:       jack-audio-connection-kit, alsa-lib, lilv-libs, suil, gtk2, ffmpeg-free
+Requires:       jack-audio-connection-kit, alsa-lib, lilv-libs, suil, gtk2
 
 %description
 Maolan is a Rust DAW focused on recording, editing, routing,

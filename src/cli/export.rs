@@ -1,4 +1,4 @@
-use crate::cli::support::{ExportMetadata, ExportSessionData, ExportTrack};
+use crate::cli::support::{ExportSessionData, ExportTrack};
 use maolan_engine::{kind::Kind, message::AudioClipData};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -9,47 +9,23 @@ use std::{
 };
 
 use ebur128::{EbuR128, Mode as LoudnessMode};
-use ffmpeg_next::{
-    Dictionary,
-    codec::{Context as CodecContext, Id as CodecId},
-    format::output,
-    frame::Audio,
-};
 pub const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
     8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000,
 ];
-pub const EXPORT_MP3_BITRATES_KBPS: [u16; 7] = [96, 128, 160, 192, 224, 256, 320];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
     Wav,
-    Mp3,
-    Ogg,
     Flac,
+    Opus,
 }
 
 impl fmt::Display for ExportFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Wav => write!(f, "WAV"),
-            Self::Mp3 => write!(f, "MP3"),
-            Self::Ogg => write!(f, "OGG"),
             Self::Flac => write!(f, "FLAC"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExportMp3Mode {
-    Cbr,
-    Vbr,
-}
-
-impl fmt::Display for ExportMp3Mode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Cbr => write!(f, "CBR"),
-            Self::Vbr => write!(f, "VBR"),
+            Self::Opus => write!(f, "OPUS"),
         }
     }
 }
@@ -122,7 +98,6 @@ impl fmt::Display for ExportDither {
     }
 }
 
-pub const EXPORT_MP3_MODE_ALL: [ExportMp3Mode; 2] = [ExportMp3Mode::Cbr, ExportMp3Mode::Vbr];
 pub const EXPORT_RENDER_MODE_ALL: [ExportRenderMode; 3] = [
     ExportRenderMode::Mixdown,
     ExportRenderMode::StemsPostFader,
@@ -146,14 +121,11 @@ pub const EXPORT_NORMALIZE_MODE_ALL: [ExportNormalizeMode; 2] =
 pub struct ExportSettings {
     pub sample_rate_hz: u32,
     pub format_wav: bool,
-    pub format_mp3: bool,
-    pub format_ogg: bool,
     pub format_flac: bool,
+    pub format_opus: bool,
     pub bit_depth: ExportBitDepth,
     pub dither: ExportDither,
-    pub mp3_mode: ExportMp3Mode,
-    pub mp3_bitrate_kbps: u16,
-    pub ogg_quality: f32,
+    pub opus_bitrate_bps: i32,
     pub render_mode: ExportRenderMode,
     pub hw_out_ports: BTreeSet<usize>,
     pub realtime_fallback: bool,
@@ -172,14 +144,11 @@ impl ExportSettings {
         Self {
             sample_rate_hz: default_sample_rate_hz,
             format_wav: true,
-            format_mp3: false,
-            format_ogg: false,
             format_flac: false,
+            format_opus: false,
             bit_depth: ExportBitDepth::Int24,
             dither: ExportDither::Triangular,
-            mp3_mode: ExportMp3Mode::Cbr,
-            mp3_bitrate_kbps: 320,
-            ogg_quality: 0.6,
+            opus_bitrate_bps: 128_000,
             render_mode: ExportRenderMode::Mixdown,
             hw_out_ports: default_hw_out_ports(hw_output_channels),
             realtime_fallback: false,
@@ -199,14 +168,11 @@ impl ExportSettings {
         if self.format_wav {
             formats.push(ExportFormat::Wav);
         }
-        if self.format_mp3 {
-            formats.push(ExportFormat::Mp3);
-        }
-        if self.format_ogg {
-            formats.push(ExportFormat::Ogg);
-        }
         if self.format_flac {
             formats.push(ExportFormat::Flac);
+        }
+        if self.format_opus {
+            formats.push(ExportFormat::Opus);
         }
         formats
     }
@@ -235,23 +201,6 @@ pub fn export_bit_depth_options(formats: &[ExportFormat]) -> Vec<ExportBitDepth>
     }
 }
 
-pub fn export_mp3_supported(settings: &ExportSettings, session: &ExportSessionData) -> bool {
-    export_max_channels(settings, session) <= 2
-}
-
-pub fn export_max_channels(settings: &ExportSettings, session: &ExportSessionData) -> usize {
-    if matches!(settings.render_mode, ExportRenderMode::Mixdown) {
-        settings.hw_out_ports.len()
-    } else {
-        session
-            .tracks
-            .iter()
-            .map(|track| track.output_ports.max(1))
-            .max()
-            .unwrap_or(0)
-    }
-}
-
 pub fn validate_export_settings(
     settings: &ExportSettings,
     session: &ExportSessionData,
@@ -259,18 +208,12 @@ pub fn validate_export_settings(
     if settings.selected_formats().is_empty() {
         return Err("Select at least one export format".to_string());
     }
-    if settings.format_mp3 && !export_mp3_supported(settings, session) {
-        return Err("MP3 export supports only mono or stereo".to_string());
-    }
     if matches!(settings.render_mode, ExportRenderMode::Mixdown) && settings.hw_out_ports.is_empty()
     {
         return Err("Select at least one hw:out port for mixdown export".to_string());
     }
     if !(-20.0..=0.0).contains(&settings.master_limiter_ceiling_dbtp) {
         return Err("Master limiter ceiling must be between -20.0 and 0.0 dBTP".to_string());
-    }
-    if !(-0.1..=1.0).contains(&settings.ogg_quality) {
-        return Err("OGG quality must be between -0.1 and 1.0".to_string());
     }
     if settings.normalize {
         match settings.normalize_mode {
@@ -322,13 +265,7 @@ where
     }
 
     let export_formats = settings.selected_formats();
-    let codec = ExportCodecSettings {
-        mp3_mode: settings.mp3_mode,
-        mp3_bitrate_kbps: settings.mp3_bitrate_kbps,
-        ogg_quality: settings.ogg_quality,
-    };
     let has_solo = tracks.iter().any(|track| track.soloed);
-    let metadata = session.metadata.clone();
 
     progress_callback(0.0, Some("Analyzing tracks".to_string()));
     tokio::task::yield_now().await;
@@ -440,8 +377,7 @@ where
                 bit_depth: settings.bit_depth,
                 dither: settings.dither,
                 format: *format,
-                codec,
-                metadata: &metadata,
+                opus_bitrate_bps: settings.opus_bitrate_bps,
             })?;
             written.push(out_path);
         }
@@ -520,8 +456,7 @@ where
                 bit_depth: settings.bit_depth,
                 dither: settings.dither,
                 format: *format,
-                codec,
-                metadata: &metadata,
+                opus_bitrate_bps: settings.opus_bitrate_bps,
             })?;
             written.push(stem_file);
         }
@@ -616,7 +551,8 @@ fn mix_clip_into_buffer(
         return Ok(());
     }
     let clip_path = resolve_audio_clip_path(clip, session_root);
-    let (samples, clip_channels, _) = decode_audio_to_f32_interleaved_sync(&clip_path)?;
+    let (samples, clip_channels, _) =
+        maolan_engine::audio_codec::decode_audio_to_f32_interleaved_sync(&clip_path)?;
     if samples.is_empty() {
         return Ok(());
     }
@@ -668,9 +604,8 @@ fn apply_master_limiter(samples: &mut [f32], enabled: bool, ceiling_dbtp: f32) {
 fn export_format_extension(format: ExportFormat) -> &'static str {
     match format {
         ExportFormat::Wav => "wav",
-        ExportFormat::Mp3 => "mp3",
-        ExportFormat::Ogg => "ogg",
         ExportFormat::Flac => "flac",
+        ExportFormat::Opus => "opus",
     }
 }
 
@@ -690,13 +625,6 @@ fn sanitize_export_component(value: &str) -> String {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ExportCodecSettings {
-    mp3_mode: ExportMp3Mode,
-    mp3_bitrate_kbps: u16,
-    ogg_quality: f32,
-}
-
 struct ExportWriteRequest<'a> {
     export_path: &'a Path,
     mixed_buffer: &'a [f32],
@@ -705,8 +633,7 @@ struct ExportWriteRequest<'a> {
     bit_depth: ExportBitDepth,
     dither: ExportDither,
     format: ExportFormat,
-    codec: ExportCodecSettings,
-    metadata: &'a ExportMetadata,
+    opus_bitrate_bps: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -795,23 +722,13 @@ fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
             req.sample_rate,
             req.output_channels,
             req.bit_depth,
-            req.dither,
         ),
-        ExportFormat::Mp3 => write_mp3(
+        ExportFormat::Opus => maolan_engine::audio_codec::write_opus(
             &tmp_path,
             req.mixed_buffer,
-            req.sample_rate,
             req.output_channels,
-            req.codec,
-            req.metadata,
-        ),
-        ExportFormat::Ogg => write_ogg_vorbis(
-            &tmp_path,
-            req.mixed_buffer,
-            req.sample_rate,
-            req.output_channels,
-            req.codec,
-            req.metadata,
+            req.sample_rate as u32,
+            req.opus_bitrate_bps,
         ),
     };
     if result.is_ok() {
@@ -937,106 +854,7 @@ fn write_wav_pcm(
     Ok(())
 }
 
-fn decode_audio_to_f32_interleaved_sync(path: &Path) -> io::Result<(Vec<f32>, usize, u32)> {
-    use ffmpeg_next::{format::sample::Type as SampleType, media::Type};
-
-    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
-    let mut ictx = ffmpeg_next::format::input(path)
-        .map_err(|e| io::Error::other(format!("Failed to open '{}': {e}", path.display())))?;
-    let stream = ictx
-        .streams()
-        .best(Type::Audio)
-        .ok_or_else(|| io::Error::other(format!("No audio stream in '{}'", path.display())))?;
-    let stream_index = stream.index();
-    let mut decoder = ffmpeg_next::codec::Context::from_parameters(stream.parameters())
-        .map_err(|e| io::Error::other(format!("Decoder init failed: {e}")))?
-        .decoder()
-        .audio()
-        .map_err(|e| io::Error::other(format!("Audio decoder init failed: {e}")))?;
-    let sample_rate = decoder.rate() as u32;
-    let channels = decoder.channels().max(1) as usize;
-    let mut samples = Vec::<f32>::new();
-    let mut raw_frame = ffmpeg_next::frame::Audio::empty();
-    let append_frame = |frame: &ffmpeg_next::frame::Audio,
-                        channels: usize,
-                        out: &mut Vec<f32>|
-     -> io::Result<()> {
-        let frame_samples = frame.samples();
-        match frame.format() {
-            ffmpeg_next::format::Sample::F32(SampleType::Packed) => {
-                let plane = frame.plane::<f32>(0);
-                out.extend_from_slice(plane);
-            }
-            ffmpeg_next::format::Sample::F32(SampleType::Planar) => {
-                let start = out.len();
-                out.resize(start + frame_samples * channels, 0.0);
-                for ch in 0..channels {
-                    let plane = frame.plane::<f32>(ch);
-                    for i in 0..frame_samples {
-                        out[start + i * channels + ch] = plane[i];
-                    }
-                }
-            }
-            ffmpeg_next::format::Sample::I16(SampleType::Packed) => {
-                let plane = frame.plane::<i16>(0);
-                out.extend(plane.iter().map(|&v| v as f32 / 32768.0));
-            }
-            ffmpeg_next::format::Sample::I16(SampleType::Planar) => {
-                let start = out.len();
-                out.resize(start + frame_samples * channels, 0.0);
-                for ch in 0..channels {
-                    let plane = frame.plane::<i16>(ch);
-                    for i in 0..frame_samples {
-                        out[start + i * channels + ch] = plane[i] as f32 / 32768.0;
-                    }
-                }
-            }
-            ffmpeg_next::format::Sample::I32(SampleType::Packed) => {
-                let plane = frame.plane::<i32>(0);
-                out.extend(plane.iter().map(|&v| v as f32 / 2_147_483_648.0));
-            }
-            ffmpeg_next::format::Sample::I32(SampleType::Planar) => {
-                let start = out.len();
-                out.resize(start + frame_samples * channels, 0.0);
-                for ch in 0..channels {
-                    let plane = frame.plane::<i32>(ch);
-                    for i in 0..frame_samples {
-                        out[start + i * channels + ch] = plane[i] as f32 / 2_147_483_648.0;
-                    }
-                }
-            }
-            other => {
-                return Err(io::Error::other(format!(
-                    "Unsupported decoded sample format: {other:?}"
-                )));
-            }
-        }
-        Ok(())
-    };
-    for (stream, packet) in ictx.packets() {
-        if stream.index() != stream_index {
-            continue;
-        }
-        decoder
-            .send_packet(&packet)
-            .map_err(|e| io::Error::other(format!("Failed to send packet: {e}")))?;
-        while decoder.receive_frame(&mut raw_frame).is_ok() {
-            append_frame(&raw_frame, channels, &mut samples)?;
-        }
-    }
-    let _ = decoder.send_eof();
-    while decoder.receive_frame(&mut raw_frame).is_ok() {
-        append_frame(&raw_frame, channels, &mut samples)?;
-    }
-    if samples.is_empty() {
-        return Err(io::Error::other(format!(
-            "Audio file '{}' contains no samples",
-            path.display()
-        )));
-    }
-    Ok((samples, channels, sample_rate))
-}
-
+#[cfg(test)]
 fn quantize_samples_for_bit_depth(
     mixed_buffer: &[f32],
     bit_depth: ExportBitDepth,
@@ -1103,411 +921,29 @@ fn quantize_samples_for_bit_depth(
     }
 }
 
+fn flac_bits_per_sample(bit_depth: ExportBitDepth) -> u16 {
+    match bit_depth {
+        ExportBitDepth::Int16 => 16,
+        ExportBitDepth::Int24 => 24,
+        ExportBitDepth::Int32 => 32,
+        ExportBitDepth::Float32 => 24,
+    }
+}
+
 fn write_flac_with_bit_depth(
     export_path: &Path,
     mixed_buffer: &[f32],
     sample_rate: i32,
     output_channels: usize,
     bit_depth: ExportBitDepth,
-    dither: ExportDither,
 ) -> io::Result<()> {
-    let (quantized, bits_per_sample) =
-        quantize_samples_for_bit_depth(mixed_buffer, bit_depth, dither);
-    let use_i16 = bits_per_sample <= 16;
-
-    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
-
-    let mut octx = output(export_path.to_str().unwrap_or("output.flac"))
-        .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
-
-    let encoder_codec = ffmpeg_next::codec::encoder::find(CodecId::FLAC)
-        .ok_or_else(|| io::Error::other("FLAC encoder not found"))?;
-
-    let mut encoder_ctx = CodecContext::new_with_codec(encoder_codec);
-    // ffmpeg-next exposes no safe setter for this field; set it so 24-bit
-    // sources are written as 24-bit FLAC rather than promoted to 32-bit.
-    unsafe {
-        (*encoder_ctx.as_mut_ptr()).bits_per_raw_sample = i32::from(bits_per_sample);
-    }
-
-    let mut encoder = encoder_ctx
-        .encoder()
-        .audio()
-        .map_err(|e| io::Error::other(format!("Failed to create audio encoder: {e}")))?;
-
-    encoder.set_rate(sample_rate);
-    encoder.set_channel_layout(ffmpeg_next::channel_layout::ChannelLayout::default(
-        output_channels as i32,
-    ));
-    if use_i16 {
-        encoder.set_format(ffmpeg_next::format::Sample::I16(
-            ffmpeg_next::format::sample::Type::Packed,
-        ));
-    } else {
-        encoder.set_format(ffmpeg_next::format::Sample::I32(
-            ffmpeg_next::format::sample::Type::Packed,
-        ));
-    }
-
-    let mut output_stream = octx
-        .add_stream(encoder_codec)
-        .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
-    output_stream.set_parameters(&encoder);
-
-    let mut encoder = encoder
-        .open_as(encoder_codec)
-        .map_err(|e| io::Error::other(format!("Failed to open encoder: {e}")))?;
-
-    octx.write_header()
-        .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
-
-    // Packed 16-bit path needs a narrowed interleaved buffer.
-    let quantized_i16: Option<Vec<i16>> = if use_i16 {
-        Some(quantized.iter().map(|&s| s as i16).collect())
-    } else {
-        None
-    };
-
-    const FRAME_SIZE: usize = 4096;
-    for chunk_start in (0..mixed_buffer.len()).step_by(FRAME_SIZE * output_channels) {
-        let chunk_end = (chunk_start + FRAME_SIZE * output_channels).min(mixed_buffer.len());
-        let actual_frames = (chunk_end - chunk_start) / output_channels;
-        if actual_frames == 0 {
-            continue;
-        }
-
-        let mut frame = Audio::empty();
-        frame.set_format(encoder.format());
-        frame.set_channel_layout(encoder.channel_layout());
-        frame.set_rate(encoder.rate());
-        frame.set_samples(actual_frames);
-        unsafe {
-            ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
-        }
-
-        if let Some(ref narrow) = quantized_i16 {
-            let src = &narrow[chunk_start..chunk_end];
-            let dst = frame.data_mut(0).as_mut_ptr().cast::<i16>();
-            unsafe {
-                std::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
-            }
-        } else {
-            let src = &quantized[chunk_start..chunk_end];
-            let dst = frame.data_mut(0).as_mut_ptr().cast::<i32>();
-            unsafe {
-                std::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
-            }
-        }
-
-        encoder
-            .send_frame(&frame)
-            .map_err(|e| io::Error::other(format!("Failed to send frame: {e}")))?;
-
-        let mut packet = ffmpeg_next::packet::Packet::empty();
-        while encoder.receive_packet(&mut packet).is_ok() {
-            packet.set_stream(0);
-            packet
-                .write_interleaved(&mut octx)
-                .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
-        }
-    }
-
-    encoder
-        .send_eof()
-        .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;
-
-    let mut packet = ffmpeg_next::packet::Packet::empty();
-    while encoder.receive_packet(&mut packet).is_ok() {
-        packet.set_stream(0);
-        packet
-            .write_interleaved(&mut octx)
-            .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
-    }
-
-    octx.write_trailer()
-        .map_err(|e| io::Error::other(format!("Failed to write trailer: {e}")))?;
-
-    Ok(())
-}
-
-fn write_mp3(
-    export_path: &Path,
-    mixed_buffer: &[f32],
-    sample_rate: i32,
-    output_channels: usize,
-    codec: ExportCodecSettings,
-    metadata: &ExportMetadata,
-) -> io::Result<()> {
-    if output_channels != 1 && output_channels != 2 {
-        return Err(io::Error::other(format!(
-            "MP3 export supports only mono/stereo, got {} channels",
-            output_channels
-        )));
-    }
-
-    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
-
-    let mut octx = output(export_path.to_str().unwrap_or("output.mp3"))
-        .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
-
-    let codec_id = CodecId::MP3;
-    let encoder_codec = ffmpeg_next::codec::encoder::find(codec_id)
-        .ok_or_else(|| io::Error::other("MP3 encoder not found"))?;
-
-    let encoder_ctx = CodecContext::new_with_codec(encoder_codec);
-
-    let mut encoder = encoder_ctx
-        .encoder()
-        .audio()
-        .map_err(|e| io::Error::other(format!("Failed to create audio encoder: {e}")))?;
-
-    encoder.set_rate(sample_rate);
-
-    encoder.set_format(ffmpeg_next::format::Sample::F32(
-        ffmpeg_next::format::sample::Type::Planar,
-    ));
-    encoder.set_channel_layout(match output_channels {
-        1 => ffmpeg_next::channel_layout::ChannelLayout::MONO,
-        _ => ffmpeg_next::channel_layout::ChannelLayout::STEREO,
-    });
-
-    let bitrate = (codec.mp3_bitrate_kbps as usize) * 1000;
-    encoder.set_bit_rate(bitrate);
-
-    if matches!(codec.mp3_mode, ExportMp3Mode::Vbr) {
-        encoder.set_quality(2usize);
-    }
-
-    let mut metadata_dict = Dictionary::new();
-    if !metadata.author.is_empty() {
-        metadata_dict.set("artist", &metadata.author);
-    }
-    if !metadata.album.is_empty() {
-        metadata_dict.set("album", &metadata.album);
-    }
-    if let Some(year) = metadata.year {
-        metadata_dict.set("date", &year.to_string());
-    }
-    if let Some(track_number) = metadata.track_number {
-        metadata_dict.set("track", &track_number.to_string());
-    }
-    if !metadata.genre.is_empty() {
-        metadata_dict.set("genre", &metadata.genre);
-    }
-
-    let mut output_stream = octx
-        .add_stream(encoder_codec)
-        .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
-
-    output_stream.set_parameters(&encoder);
-
-    let mut encoder = encoder
-        .open_as(encoder_codec)
-        .map_err(|e| io::Error::other(format!("Failed to open encoder: {e}")))?;
-
-    octx.write_header()
-        .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
-
-    let frame_size = 1152;
-
-    for chunk_start in (0..mixed_buffer.len()).step_by(frame_size * output_channels) {
-        let chunk_end = (chunk_start + frame_size * output_channels).min(mixed_buffer.len());
-        let chunk = &mixed_buffer[chunk_start..chunk_end];
-        let actual_frames = chunk.len() / output_channels;
-
-        if actual_frames == 0 {
-            continue;
-        }
-
-        let mut frame = Audio::empty();
-        frame.set_format(encoder.format());
-        frame.set_channel_layout(encoder.channel_layout());
-        frame.set_rate(encoder.rate());
-        frame.set_samples(actual_frames);
-
-        unsafe {
-            ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
-        }
-
-        for ch in 0..output_channels {
-            let data_ptr = frame.data_mut(ch).as_mut_ptr() as *mut f32;
-            for frame_idx in 0..actual_frames {
-                let src_idx = frame_idx * output_channels + ch;
-                if src_idx < chunk.len() {
-                    unsafe {
-                        *data_ptr.add(frame_idx) = chunk[src_idx];
-                    }
-                }
-            }
-        }
-
-        match encoder.send_frame(&frame) {
-            Ok(()) => {}
-            Err(e) => return Err(io::Error::other(format!("Failed to send frame: {e}"))),
-        }
-
-        let mut packet = ffmpeg_next::packet::Packet::empty();
-        while encoder.receive_packet(&mut packet).is_ok() {
-            packet.set_stream(0);
-            packet
-                .write_interleaved(&mut octx)
-                .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
-        }
-    }
-
-    encoder
-        .send_eof()
-        .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;
-
-    let mut packet = ffmpeg_next::packet::Packet::empty();
-    while encoder.receive_packet(&mut packet).is_ok() {
-        packet.set_stream(0);
-        packet
-            .write_interleaved(&mut octx)
-            .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
-    }
-
-    octx.write_trailer()
-        .map_err(|e| io::Error::other(format!("Failed to write trailer: {e}")))?;
-
-    Ok(())
-}
-
-fn write_ogg_vorbis(
-    export_path: &Path,
-    mixed_buffer: &[f32],
-    sample_rate: i32,
-    output_channels: usize,
-    codec: ExportCodecSettings,
-    metadata: &ExportMetadata,
-) -> io::Result<()> {
-    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
-
-    let mut octx = output(export_path.to_str().unwrap_or("output.ogg"))
-        .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
-
-    let codec_id = CodecId::VORBIS;
-    let encoder_codec = ffmpeg_next::codec::encoder::find(codec_id)
-        .ok_or_else(|| io::Error::other("Vorbis encoder not found"))?;
-
-    let encoder_ctx = CodecContext::new_with_codec(encoder_codec);
-
-    let mut encoder = encoder_ctx
-        .encoder()
-        .audio()
-        .map_err(|e| io::Error::other(format!("Failed to create audio encoder: {e}")))?;
-
-    encoder.set_rate(sample_rate);
-
-    encoder.set_format(ffmpeg_next::format::Sample::F32(
-        ffmpeg_next::format::sample::Type::Planar,
-    ));
-    encoder.set_channel_layout(match output_channels {
-        1 => ffmpeg_next::channel_layout::ChannelLayout::MONO,
-        _ => ffmpeg_next::channel_layout::ChannelLayout::STEREO,
-    });
-
-    let quality = ((codec.ogg_quality + 0.1) * 10.0).clamp(0.0, 10.0) as i32;
-    encoder.set_quality(quality as usize);
-
-    let mut metadata_dict = Dictionary::new();
-    if !metadata.author.is_empty() {
-        metadata_dict.set("artist", &metadata.author);
-    }
-    if !metadata.album.is_empty() {
-        metadata_dict.set("album", &metadata.album);
-    }
-    if let Some(year) = metadata.year {
-        metadata_dict.set("date", &year.to_string());
-    }
-    if let Some(track_number) = metadata.track_number {
-        metadata_dict.set("track", &track_number.to_string());
-    }
-    if !metadata.genre.is_empty() {
-        metadata_dict.set("genre", &metadata.genre);
-    }
-
-    let mut output_stream = octx
-        .add_stream(encoder_codec)
-        .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
-
-    output_stream.set_parameters(&encoder);
-
-    let mut encoder = encoder
-        .open_as(encoder_codec)
-        .map_err(|e| io::Error::other(format!("Failed to open encoder: {e}")))?;
-
-    octx.write_header()
-        .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
-
-    let frame_size = 1024;
-
-    for chunk_start in (0..mixed_buffer.len()).step_by(frame_size * output_channels) {
-        let chunk_end = (chunk_start + frame_size * output_channels).min(mixed_buffer.len());
-        let chunk = &mixed_buffer[chunk_start..chunk_end];
-        let actual_frames = chunk.len() / output_channels;
-
-        if actual_frames == 0 {
-            continue;
-        }
-
-        let mut frame = Audio::empty();
-        frame.set_format(encoder.format());
-        frame.set_channel_layout(encoder.channel_layout());
-        frame.set_rate(encoder.rate());
-        frame.set_samples(actual_frames);
-
-        unsafe {
-            ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
-        }
-
-        for ch in 0..output_channels {
-            let data_ptr = frame.data_mut(ch).as_mut_ptr() as *mut f32;
-            for frame_idx in 0..actual_frames {
-                let src_idx = frame_idx * output_channels + ch;
-                if src_idx < chunk.len() {
-                    unsafe {
-                        *data_ptr.add(frame_idx) = chunk[src_idx];
-                    }
-                }
-            }
-        }
-
-        match encoder.send_frame(&frame) {
-            Ok(()) => {}
-            Err(e) => return Err(io::Error::other(format!("Failed to send frame: {e}"))),
-        }
-
-        let mut packet = ffmpeg_next::packet::Packet::empty();
-        while encoder.receive_packet(&mut packet).is_ok() {
-            packet.set_stream(0);
-            packet
-                .write_interleaved(&mut octx)
-                .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
-        }
-    }
-
-    encoder
-        .send_eof()
-        .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;
-
-    let mut packet = ffmpeg_next::packet::Packet::empty();
-    while encoder.receive_packet(&mut packet).is_ok() {
-        packet.set_stream(0);
-        packet
-            .write_interleaved(&mut octx)
-            .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
-    }
-
-    octx.write_trailer()
-        .map_err(|e| io::Error::other(format!("Failed to write trailer: {e}")))?;
-
-    Ok(())
-}
-
-fn ffmpeg_init() -> Result<(), ffmpeg_next::Error> {
-    static RESULT: std::sync::OnceLock<Result<(), ffmpeg_next::Error>> = std::sync::OnceLock::new();
-    *RESULT.get_or_init(ffmpeg_next::init)
+    maolan_engine::audio_codec::write_flac(
+        export_path,
+        mixed_buffer,
+        output_channels.max(1),
+        sample_rate as u32,
+        flac_bits_per_sample(bit_depth),
+    )
 }
 
 fn measure_lufs_and_true_peak(

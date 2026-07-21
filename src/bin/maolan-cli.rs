@@ -5,10 +5,10 @@ mod cli;
 
 use cli::config::{CliConfig, load_session_end_sample};
 use cli::export::{
-    EXPORT_DITHER_ALL, EXPORT_MP3_BITRATES_KBPS, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
-    EXPORT_RENDER_MODE_ALL, ExportBitDepth, ExportFormat, ExportNormalizeMode, ExportRenderMode,
-    ExportSettings, STANDARD_EXPORT_SAMPLE_RATES, default_export_base_path,
-    export_bit_depth_options, export_session, validate_export_settings,
+    EXPORT_DITHER_ALL, EXPORT_NORMALIZE_MODE_ALL, EXPORT_RENDER_MODE_ALL, ExportBitDepth,
+    ExportFormat, ExportNormalizeMode, ExportRenderMode, ExportSettings,
+    STANDARD_EXPORT_SAMPLE_RATES, default_export_base_path, export_bit_depth_options,
+    export_session, validate_export_settings,
 };
 use cli::support::{ExportSessionData, load_export_session_data, load_session_restore_actions};
 use crossterm::{
@@ -102,15 +102,12 @@ enum ExportEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExportField {
     FormatWav,
-    FormatMp3,
-    FormatOgg,
     FormatFlac,
+    FormatOpus,
     SampleRate,
     BitDepth,
     Dither,
-    Mp3Mode,
-    Mp3Bitrate,
-    OggQuality,
+    OpusBitrate,
     RenderMode,
     HwOutPort(usize),
     RealtimeFallback,
@@ -743,9 +740,8 @@ impl App {
         };
         let mut fields = vec![
             ExportField::FormatWav,
-            ExportField::FormatMp3,
-            ExportField::FormatOgg,
             ExportField::FormatFlac,
+            ExportField::FormatOpus,
             ExportField::SampleRate,
         ];
         let selected_formats = export_ui.settings.selected_formats();
@@ -756,12 +752,8 @@ impl App {
             fields.push(ExportField::BitDepth);
             fields.push(ExportField::Dither);
         }
-        if export_ui.settings.format_mp3 {
-            fields.push(ExportField::Mp3Mode);
-            fields.push(ExportField::Mp3Bitrate);
-        }
-        if export_ui.settings.format_ogg {
-            fields.push(ExportField::OggQuality);
+        if export_ui.settings.format_opus {
+            fields.push(ExportField::OpusBitrate);
         }
         fields.push(ExportField::RenderMode);
         if matches!(export_ui.settings.render_mode, ExportRenderMode::Mixdown) {
@@ -806,14 +798,11 @@ impl App {
             ExportField::FormatWav => {
                 export_ui.settings.format_wav = !export_ui.settings.format_wav
             }
-            ExportField::FormatMp3 => {
-                export_ui.settings.format_mp3 = !export_ui.settings.format_mp3
-            }
-            ExportField::FormatOgg => {
-                export_ui.settings.format_ogg = !export_ui.settings.format_ogg
-            }
             ExportField::FormatFlac => {
                 export_ui.settings.format_flac = !export_ui.settings.format_flac
+            }
+            ExportField::FormatOpus => {
+                export_ui.settings.format_opus = !export_ui.settings.format_opus
             }
             ExportField::SampleRate => {
                 cycle_u32(
@@ -829,21 +818,9 @@ impl App {
             ExportField::Dither => {
                 cycle_copy(&mut export_ui.settings.dither, &EXPORT_DITHER_ALL, delta);
             }
-            ExportField::Mp3Mode => cycle_copy(
-                &mut export_ui.settings.mp3_mode,
-                &EXPORT_MP3_MODE_ALL,
-                delta,
-            ),
-            ExportField::Mp3Bitrate => {
-                cycle_u16(
-                    &mut export_ui.settings.mp3_bitrate_kbps,
-                    &EXPORT_MP3_BITRATES_KBPS,
-                    delta,
-                );
-            }
-            ExportField::OggQuality => {
-                export_ui.settings.ogg_quality =
-                    (export_ui.settings.ogg_quality + (delta as f32 * 0.1)).clamp(-0.1, 1.0);
+            ExportField::OpusBitrate => {
+                export_ui.settings.opus_bitrate_bps =
+                    (export_ui.settings.opus_bitrate_bps + delta * 8_000).clamp(16_000, 512_000);
             }
             ExportField::RenderMode => {
                 cycle_copy(
@@ -1003,15 +980,14 @@ impl App {
     fn export_field_label(&self, field: ExportField, settings: &ExportSettings) -> String {
         match field {
             ExportField::FormatWav => format!("[{}] WAV", mark(settings.format_wav)),
-            ExportField::FormatMp3 => format!("[{}] MP3", mark(settings.format_mp3)),
-            ExportField::FormatOgg => format!("[{}] OGG", mark(settings.format_ogg)),
             ExportField::FormatFlac => format!("[{}] FLAC", mark(settings.format_flac)),
+            ExportField::FormatOpus => format!("[{}] OPUS", mark(settings.format_opus)),
             ExportField::SampleRate => format!("Sample rate: {}", settings.sample_rate_hz),
             ExportField::BitDepth => format!("Bit depth: {}", settings.bit_depth),
             ExportField::Dither => format!("Dither: {}", settings.dither),
-            ExportField::Mp3Mode => format!("MP3 mode: {}", settings.mp3_mode),
-            ExportField::Mp3Bitrate => format!("MP3 bitrate: {} kbps", settings.mp3_bitrate_kbps),
-            ExportField::OggQuality => format!("OGG quality: {:.1}", settings.ogg_quality),
+            ExportField::OpusBitrate => {
+                format!("Opus bitrate: {} bps", settings.opus_bitrate_bps)
+            }
             ExportField::RenderMode => format!("Render mode: {}", settings.render_mode),
             ExportField::HwOutPort(port) => format!(
                 "[{}] hw:out {}",
@@ -1088,18 +1064,6 @@ fn cycle_copy<T: Copy + PartialEq>(current: &mut T, values: &[T], delta: i32) {
 }
 
 fn cycle_u32(current: &mut u32, values: &[u32], delta: i32) {
-    if values.is_empty() {
-        return;
-    }
-    let index = values
-        .iter()
-        .position(|value| value == current)
-        .unwrap_or(0) as i32;
-    let next = (index + delta).rem_euclid(values.len() as i32) as usize;
-    *current = values[next];
-}
-
-fn cycle_u16(current: &mut u16, values: &[u16], delta: i32) {
     if values.is_empty() {
         return;
     }

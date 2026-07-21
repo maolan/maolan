@@ -9260,8 +9260,6 @@ impl Maolan {
                     .unwrap_or(48_000);
                 self.export_sample_rate_hz = nearest_rate;
                 self.normalize_export_hw_out_ports();
-                self.export_format_mp3 =
-                    self.export_format_mp3 && self.export_mp3_supported_for_current_settings();
                 self.modal = Some(crate::message::Show::ExportSettings);
             }
             Message::MidiLearnMappingsPanelToggle => {
@@ -9356,11 +9354,6 @@ impl Maolan {
                         "Select at least one export format".to_string();
                     return Task::none();
                 }
-                if self.export_format_mp3 && !self.export_mp3_supported_for_current_settings() {
-                    self.state.blocking_write().message =
-                        "MP3 export supports only mono or stereo".to_string();
-                    return Task::none();
-                }
                 if matches!(self.export_render_mode, ExportRenderMode::Mixdown)
                     && self.export_hw_out_ports.is_empty()
                 {
@@ -9368,25 +9361,12 @@ impl Maolan {
                         "Select at least one hw:out port for mixdown export".to_string();
                     return Task::none();
                 }
-                if self.export_format_ogg {
-                    let ogg_quality = self.export_ogg_quality_input.parse::<f32>().ok();
-                    let Some(ogg_quality) = ogg_quality else {
-                        self.state.blocking_write().message =
-                            "OGG quality must be a number between -0.1 and 1.0".to_string();
-                        return Task::none();
-                    };
-                    if !(-0.1..=1.0).contains(&ogg_quality) {
-                        self.state.blocking_write().message =
-                            "OGG quality must be between -0.1 and 1.0".to_string();
-                        return Task::none();
-                    }
-                }
                 self.modal = None;
                 return Task::perform(
                     async move {
                         AsyncFileDialog::new()
                             .set_title("Export Audio")
-                            .add_filter("Audio", &["wav", "mp3", "ogg", "flac"])
+                            .add_filter("Audio", &["wav", "flac", "opus"])
                             .set_file_name("export")
                             .save_file()
                             .await
@@ -9436,38 +9416,11 @@ impl Maolan {
                         "Select at least one export format".to_string();
                     return Task::none();
                 }
-                if self.export_format_mp3 && !self.export_mp3_supported_for_current_settings() {
-                    self.state.blocking_write().message =
-                        "MP3 export supports only mono or stereo".to_string();
-                    return Task::none();
-                }
                 let export_path = Self::export_base_path(path.clone());
-                let export_mp3_mode = self.export_mp3_mode;
-                let export_mp3_bitrate_kbps = self.export_mp3_bitrate_kbps;
-                let export_ogg_quality = self
-                    .export_ogg_quality_input
-                    .parse::<f32>()
-                    .ok()
-                    .unwrap_or(0.6);
+                let export_opus_bitrate_bps = self.export_opus_bitrate_bps;
                 let selected_hw_out_ports = self.export_hw_out_ports.iter().copied().collect();
                 let state_clone = self.state.clone();
                 let render_mode = self.export_render_mode;
-                let (
-                    metadata_author,
-                    metadata_album,
-                    metadata_year,
-                    metadata_track_number,
-                    metadata_genre,
-                ) = {
-                    let state = self.state.blocking_read();
-                    (
-                        state.session_author.trim().to_string(),
-                        state.session_album.trim().to_string(),
-                        state.session_year.trim().parse::<u32>().ok(),
-                        state.session_track_number.trim().parse::<u32>().ok(),
-                        state.session_genre.trim().to_string(),
-                    )
-                };
 
                 self.export_in_progress = true;
                 self.export_progress = 0.0;
@@ -9531,9 +9484,7 @@ impl Maolan {
                                 realtime_fallback: export_realtime_fallback,
                                 bit_depth: export_bit_depth,
                                 dither: export_dither,
-                                mp3_mode: export_mp3_mode,
-                                mp3_bitrate_kbps: export_mp3_bitrate_kbps,
-                                ogg_quality: export_ogg_quality,
+                                opus_bitrate_bps: export_opus_bitrate_bps,
                                 normalize: export_normalize,
                                 normalize_target_dbfs,
                                 normalize_mode,
@@ -9542,11 +9493,6 @@ impl Maolan {
                                 normalize_tp_limiter,
                                 master_limiter: export_master_limiter,
                                 master_limiter_ceiling_dbtp: export_master_limiter_ceiling_dbtp,
-                                metadata_author,
-                                metadata_album,
-                                metadata_year,
-                                metadata_track_number,
-                                metadata_genre,
                                 state: state_clone,
                                 session_root: session_root.clone(),
                             };

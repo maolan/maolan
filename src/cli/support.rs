@@ -19,15 +19,6 @@ struct SavedConnection {
     kind: Kind,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct ExportMetadata {
-    pub author: String,
-    pub album: String,
-    pub year: Option<u32>,
-    pub track_number: Option<u32>,
-    pub genre: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct ExportConnection {
     pub from_track: String,
@@ -50,7 +41,6 @@ pub struct ExportTrack {
 
 #[derive(Debug, Clone, Default)]
 pub struct ExportSessionData {
-    pub metadata: ExportMetadata,
     pub tracks: Vec<ExportTrack>,
     pub connections: Vec<ExportConnection>,
 }
@@ -183,7 +173,6 @@ pub fn load_export_session_data(
         .map(parse_export_track)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ExportSessionData {
-        metadata: parse_export_metadata(session.get("metadata")),
         tracks,
         connections: parse_export_connections(session.get("connections"))?,
     })
@@ -584,37 +573,6 @@ fn get_required_usize(value: &Value, key: &str, track_name: &str) -> Result<usiz
         .and_then(Value::as_u64)
         .map(|value| value as usize)
         .ok_or_else(|| format!("Track '{track_name}' is missing numeric field '{key}'"))
-}
-
-fn parse_export_metadata(value: Option<&Value>) -> ExportMetadata {
-    let Some(metadata) = value.and_then(Value::as_object) else {
-        return ExportMetadata::default();
-    };
-    ExportMetadata {
-        author: metadata
-            .get("author")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        album: metadata
-            .get("album")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        year: metadata
-            .get("year")
-            .and_then(Value::as_u64)
-            .map(|value| value as u32),
-        track_number: metadata
-            .get("track_number")
-            .and_then(Value::as_u64)
-            .map(|value| value as u32),
-        genre: metadata
-            .get("genre")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-    }
 }
 
 fn parse_export_track(track: &Value) -> Result<ExportTrack, String> {
