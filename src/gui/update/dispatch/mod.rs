@@ -9366,7 +9366,7 @@ impl Maolan {
                     async move {
                         AsyncFileDialog::new()
                             .set_title("Export Audio")
-                            .add_filter("Audio", &["wav", "flac", "opus"])
+                            .add_filter("Audio", &["wav", "flac"])
                             .set_file_name("export")
                             .save_file()
                             .await
@@ -9417,7 +9417,6 @@ impl Maolan {
                     return Task::none();
                 }
                 let export_path = Self::export_base_path(path.clone());
-                let export_opus_bitrate_bps = self.export_opus_bitrate_bps;
                 let selected_hw_out_ports = self.export_hw_out_ports.iter().copied().collect();
                 let state_clone = self.state.clone();
                 let render_mode = self.export_render_mode;
@@ -9484,7 +9483,6 @@ impl Maolan {
                                 realtime_fallback: export_realtime_fallback,
                                 bit_depth: export_bit_depth,
                                 dither: export_dither,
-                                opus_bitrate_bps: export_opus_bitrate_bps,
                                 normalize: export_normalize,
                                 normalize_target_dbfs,
                                 normalize_mode,

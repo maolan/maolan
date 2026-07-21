@@ -253,9 +253,8 @@ Current bundle contents:
 - Mixdown export renders the selected hardware output ports.
 - Stem export writes one file per eligible selected track into `<base>_stems/`.
 - Multiple output formats can be written in one export run.
-- Opus export supports only mono or stereo output.
 - Normalization, master-limiter, and dither settings are persisted in the session file.
-- Dither is applied when exporting to integer PCM formats (WAV/FLAC at 16/24/32-bit). It is skipped for 32-bit float and for lossy formats (Opus).
+- Dither is applied when exporting to integer PCM formats (WAV/FLAC/Ogg-FLAC at 16/24/32-bit) and before MP3 encoding. It is skipped for 32-bit float WAV.
 
 ## HeartMuLa Generation Operations
 

@@ -209,16 +209,14 @@ Last updated: 2026-07-09
   - Peak
   - Loudness
 - Multi-format export in one run:
-  - WAV
-  - FLAC
-  - Opus
+  - WAV (16/24/32-bit integer, 32-bit float)
+  - FLAC (16/24/32-bit integer)
+  - Ogg-FLAC (16/24/32-bit integer, `.ogg`)
+  - MP3 (mono/stereo, CBR)
 - Dither options for integer PCM export:
   - None
   - Rectangular
   - Triangular (default)
-- Codec settings:
-  - Opus bitrate
-- Metadata tagging is not yet implemented for Opus export.
 
 ## Control Surface and OSC
 - mixosc integration for OSC-based mixing control
