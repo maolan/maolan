@@ -59,6 +59,24 @@ fn push_track_plugin_graph_restore_actions(
                     continue;
                 };
                 match plugin.get("format").and_then(Value::as_str) {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    Some("LV2") => {
+                        let instance_id = next_instance_id;
+                        next_instance_id += 1;
+                        runtime_nodes.push(PluginGraphNode::Lv2PluginInstance(instance_id));
+                        actions.push(Action::TrackLoadLv2Plugin {
+                            track_name: track_name.clone(),
+                            plugin_uri: uri.to_string(),
+                            instance_id: Some(instance_id),
+                        });
+                        if let Some(state) = lv2_state_from_json(&plugin["state"]) {
+                            actions.push(Action::TrackSetLv2PluginState {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                state,
+                            });
+                        }
+                    }
                     Some("CLAP") => {
                         let instance_id = next_instance_id;
                         next_instance_id += 1;
@@ -165,6 +183,11 @@ fn parse_plugin_node_with_runtime_nodes(
     match t {
         "track_input" => Some(PluginGraphNode::TrackInput),
         "track_output" => Some(PluginGraphNode::TrackOutput),
+        #[cfg(all(unix, not(target_os = "macos")))]
+        "lv2_plugin" => runtime_nodes
+            .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
+            .filter(|node| matches!(node, PluginGraphNode::Lv2PluginInstance(_)))
+            .cloned(),
         "clap_plugin" => runtime_nodes
             .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
             .filter(|node| matches!(node, PluginGraphNode::ClapPluginInstance(_)))
@@ -209,6 +232,26 @@ fn resolve_vst3_plugin_id(stored: &str, vst3_plugins: &[Vst3PluginInfo]) -> Opti
         .iter()
         .find(|info| info.id == stored || info.path == stored)
         .map(|info| info.id.clone())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn lv2_state_from_json(value: &Value) -> Option<Vec<u8>> {
+    if value.is_null() {
+        return None;
+    }
+    if let Some(arr) = value.as_array() {
+        let bytes = arr
+            .iter()
+            .filter_map(|item| item.as_u64().map(|value| value as u8))
+            .collect::<Vec<_>>();
+        if bytes.is_empty() {
+            return None;
+        }
+        return Some(bytes);
+    }
+    serde_json::to_vec(value)
+        .ok()
+        .filter(|bytes| !bytes.is_empty())
 }
 
 fn clap_state_from_json(value: &Value) -> Option<ClapPluginState> {

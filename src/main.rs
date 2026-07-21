@@ -42,6 +42,8 @@ mod plugin_blocklist;
 #[cfg(not(miri))]
 mod plugin_host;
 #[cfg(not(miri))]
+mod session_restore;
+#[cfg(not(miri))]
 mod session_view;
 #[cfg(not(miri))]
 mod shortcuts_pane;

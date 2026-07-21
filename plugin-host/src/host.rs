@@ -53,6 +53,27 @@ fn abandon_x11_gui_window(window: &mut Option<crate::gui_x11::x11::ContainerWind
     }
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
+fn floating_gui_parent_api() -> GuiParentApi {
+    let forced_x11 = ["WINIT_UNIX_BACKEND", "GDK_BACKEND", "QT_QPA_PLATFORM"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .filter_map(|value| value.into_string().ok())
+        .any(|value| {
+            let value = value.to_ascii_lowercase();
+            value.contains("x11") || value.contains("xcb")
+        });
+    if forced_x11 {
+        GuiParentApi::X11
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        GuiParentApi::Wayland
+    } else if std::env::var_os("DISPLAY").is_some() {
+        GuiParentApi::X11
+    } else {
+        GuiParentApi::None
+    }
+}
+
 struct PortBuffers {
     inputs: Vec<ClapAudioBuffer>,
     outputs: Vec<ClapAudioBuffer>,
@@ -295,29 +316,39 @@ impl HostRuntime {
             plugin.gui_destroy();
         }
 
-        // Prefer the plugin's preferred API if it already wants to float.
-        if let Some((ref api, true)) = plugin.gui_preferred_api() {
-            plugin
-                .gui_create(api, true)
-                .and_then(|_| plugin.gui_show())?;
-            return Ok(());
-        }
-
-        // Otherwise try each Unix API in floating mode.
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            if plugin.gui_is_api_supported("wayland", true)
-                && plugin.gui_create("wayland", true).is_ok()
+            let backend = floating_gui_parent_api();
+            let apis: &[&str] = match backend {
+                GuiParentApi::Wayland => &["wayland", "x11"],
+                GuiParentApi::X11 => &["x11"],
+                GuiParentApi::None => &["x11", "wayland"],
+            };
+
+            if let Some((ref preferred, true)) = plugin.gui_preferred_api()
+                && apis.iter().any(|api| api == preferred)
+                && plugin.gui_create(preferred, true).is_ok()
             {
                 return plugin.gui_show();
             }
-            if plugin.gui_is_api_supported("x11", true) && plugin.gui_create("x11", true).is_ok() {
-                return plugin.gui_show();
+
+            for api in apis {
+                if plugin.gui_is_api_supported(api, true) && plugin.gui_create(api, true).is_ok() {
+                    return plugin.gui_show();
+                }
             }
         }
 
         #[cfg(windows)]
         {
+            if let Some((ref api, true)) = plugin.gui_preferred_api()
+                && api == "win32"
+            {
+                plugin
+                    .gui_create(api, true)
+                    .and_then(|_| plugin.gui_show())?;
+                return Ok(());
+            }
             if plugin.gui_is_api_supported("win32", true)
                 && plugin.gui_create("win32", true).is_ok()
             {
@@ -327,6 +358,14 @@ impl HostRuntime {
 
         #[cfg(target_os = "macos")]
         {
+            if let Some((ref api, true)) = plugin.gui_preferred_api()
+                && api == "cocoa"
+            {
+                plugin
+                    .gui_create(api, true)
+                    .and_then(|_| plugin.gui_show())?;
+                return Ok(());
+            }
             if plugin.gui_is_api_supported("cocoa", true)
                 && plugin.gui_create("cocoa", true).is_ok()
             {
@@ -334,7 +373,7 @@ impl HostRuntime {
             }
         }
 
-        Err("Plugin does not support native floating GUI".to_string())
+        Err("Plugin does not support native floating GUI for the selected backend".to_string())
     }
 
     fn serialize_clap_parameters(
@@ -804,68 +843,103 @@ impl HostRuntime {
                                 if native_floating.is_ok() {
                                     native_floating
                                 } else {
-                                    let already_created = plugin.gui_created();
-                                    if plugin.gui_created() {
-                                        abandon_x11_gui_window(&mut clap_gui_window_x11);
+                                    let embedded_wayland = if gui_mode == GuiMode::Embedded
+                                        && header.gui_parent_api() == GuiParentApi::Wayland
+                                    {
+                                        let parent = header.parent_window_usize() as u64;
+                                        if parent != 0
+                                            && plugin.gui_is_api_supported("wayland", false)
+                                        {
+                                            if plugin.gui_created() {
+                                                plugin.gui_destroy();
+                                            }
+                                            close_x11_gui_window(&mut clap_gui_window_x11);
+                                            plugin
+                                                .gui_create("wayland", false)
+                                                .and_then(|_| {
+                                                    plugin
+                                                        .gui_set_parent_with_api(parent, "wayland")
+                                                })
+                                                .and_then(|_| plugin.gui_show())
+                                        } else {
+                                            Err("Plugin does not support embedded Wayland GUI"
+                                                .to_string())
+                                        }
                                     } else {
-                                        close_x11_gui_window(&mut clap_gui_window_x11);
-                                    }
+                                        Err("GUI mode is not embedded Wayland".to_string())
+                                    };
 
-                                    let title = std::path::Path::new(self.real_plugin_path())
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("Plugin");
-                                    let parent = if gui_mode == GuiMode::Embedded {
-                                        let p = header.parent_window_usize();
-                                        if p != 0 {
-                                            Some(p as crate::gui_x11::x11::Window)
+                                    if embedded_wayland.is_ok()
+                                        || (gui_mode == GuiMode::Embedded
+                                            && header.gui_parent_api() == GuiParentApi::Wayland)
+                                    {
+                                        embedded_wayland
+                                    } else {
+                                        let already_created = plugin.gui_created();
+                                        if plugin.gui_created() {
+                                            abandon_x11_gui_window(&mut clap_gui_window_x11);
+                                        } else {
+                                            close_x11_gui_window(&mut clap_gui_window_x11);
+                                        }
+
+                                        let title = std::path::Path::new(self.real_plugin_path())
+                                            .file_stem()
+                                            .and_then(|s| s.to_str())
+                                            .unwrap_or("Plugin");
+                                        let parent = if gui_mode == GuiMode::Embedded {
+                                            let p = header.parent_window_usize();
+                                            if p != 0
+                                                && header.gui_parent_api() == GuiParentApi::X11
+                                            {
+                                                Some(p as crate::gui_x11::x11::Window)
+                                            } else {
+                                                None
+                                            }
                                         } else {
                                             None
-                                        }
-                                    } else {
-                                        None
-                                    };
-                                    match crate::gui_x11::x11::create_container_window(
-                                        None, parent, title, 800, 600,
-                                    ) {
-                                        Ok(window) => {
-                                            let window_id = window.window();
-                                            window.map();
-                                            let result = if already_created {
-                                                Ok(())
-                                            } else {
-                                                plugin
-                                                    .gui_create("x11", false)
-                                                    .inspect(|_| ())
-                                                    .inspect_err(|_e| ())
-                                            }
-                                            .and_then(|_| {
-                                                plugin
-                                                    .gui_get_size()
-                                                    .inspect(|(_w, _h)| ())
-                                                    .inspect_err(|_e| ())
-                                            })
-                                            .and_then(|(w, h)| {
-                                                if w > 0 && h > 0 {
-                                                    window.resize(w, h);
+                                        };
+                                        match crate::gui_x11::x11::create_container_window(
+                                            None, parent, title, 800, 600,
+                                        ) {
+                                            Ok(window) => {
+                                                let window_id = window.window();
+                                                window.map();
+                                                let result = if already_created {
+                                                    Ok(())
+                                                } else {
+                                                    plugin
+                                                        .gui_create("x11", false)
+                                                        .inspect(|_| ())
+                                                        .inspect_err(|_e| ())
                                                 }
-                                                plugin
-                                                    .gui_set_parent(window_id)
-                                                    .inspect(|_| ())
-                                                    .inspect_err(|_e| ())
-                                            })
-                                            .and_then(|_| {
-                                                plugin
-                                                    .gui_show()
-                                                    .inspect(|_| ())
-                                                    .inspect_err(|_e| ())
-                                            });
-                                            if result.is_ok() {
-                                                clap_gui_window_x11 = Some(window);
+                                                .and_then(|_| {
+                                                    plugin
+                                                        .gui_get_size()
+                                                        .inspect(|(_w, _h)| ())
+                                                        .inspect_err(|_e| ())
+                                                })
+                                                .and_then(|(w, h)| {
+                                                    if w > 0 && h > 0 {
+                                                        window.resize(w, h);
+                                                    }
+                                                    plugin
+                                                        .gui_set_parent(window_id)
+                                                        .inspect(|_| ())
+                                                        .inspect_err(|_e| ())
+                                                })
+                                                .and_then(|_| {
+                                                    plugin
+                                                        .gui_show()
+                                                        .inspect(|_| ())
+                                                        .inspect_err(|_e| ())
+                                                });
+                                                if result.is_ok() {
+                                                    clap_gui_window_x11 = Some(window);
+                                                }
+                                                result
                                             }
-                                            result
+                                            Err(e) => Err(e),
                                         }
-                                        Err(e) => Err(e),
                                     }
                                 }
                             }

@@ -1876,6 +1876,16 @@ impl Maolan {
 
     pub(super) fn load(&mut self, path: String) -> std::io::Result<Task<Message>> {
         let load_start = Instant::now();
+        let shared_restore_actions = crate::session_restore::load_session_restore_actions(
+            &PathBuf::from(path.clone()),
+            &self.session_branch,
+        )
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+        tracing::debug!(
+            path = %path,
+            actions = shared_restore_actions.len(),
+            "shared session restore action builder completed"
+        );
         let mut restore_actions: Vec<Action> = vec![
             Action::BeginSessionRestore,
             Action::SetSessionPath(path.clone()),

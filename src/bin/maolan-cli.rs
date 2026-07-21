@@ -2,6 +2,10 @@
 mod audio_defaults;
 #[path = "../cli/mod.rs"]
 mod cli;
+mod session_restore {
+    pub use crate::cli::plugin_support;
+    pub use crate::cli::support::load_session_restore_actions;
+}
 
 use cli::config::{CliConfig, load_session_end_sample};
 use cli::export::{
@@ -10,7 +14,7 @@ use cli::export::{
     STANDARD_EXPORT_SAMPLE_RATES, default_export_base_path, export_bit_depth_options,
     export_session, validate_export_settings,
 };
-use cli::support::{ExportSessionData, load_export_session_data, load_session_restore_actions};
+use cli::support::{ExportSessionData, load_export_session_data};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -30,6 +34,7 @@ use ratatui::{
     text::{Line, Text},
     widgets::{Block, Borders, Clear, Paragraph},
 };
+use session_restore::load_session_restore_actions;
 use std::{
     collections::BTreeSet,
     io,
@@ -172,6 +177,9 @@ struct App {
     export_progress: f32,
     export_operation: Option<String>,
     default_export_sample_rate_hz: u32,
+    startup_complete: bool,
+    session_restore_in_progress: bool,
+    session_restore_had_warnings: bool,
 }
 
 impl App {
@@ -203,6 +211,9 @@ impl App {
             export_progress: 0.0,
             export_operation: None,
             default_export_sample_rate_hz,
+            startup_complete: false,
+            session_restore_in_progress: false,
+            session_restore_had_warnings: false,
         }
     }
 
@@ -216,28 +227,18 @@ impl App {
         }
     }
 
-    async fn restore_session(&mut self, client: &Client, session_dir: Option<&PathBuf>) {
-        let Some(session_dir) = session_dir else {
-            return;
-        };
-        match load_session_restore_actions(session_dir, &self.session_branch) {
-            Ok(actions) => {
-                self.status = format!("Restoring session '{}'", session_dir.display());
-                for action in actions {
-                    if let Err(err) = client.send(EngineMessage::Request(action)).await {
-                        self.status = format!("Failed to send session restore action: {err}");
-                        self.playing = false;
-                        self.paused = false;
-                        self.sticky_status = true;
-                        break;
-                    }
-                }
-            }
-            Err(err) => {
-                self.status = err;
-                self.sticky_status = true;
-            }
+    async fn send_session_restore_actions(
+        &mut self,
+        client: &Client,
+        actions: Vec<Action>,
+    ) -> Result<(), String> {
+        for action in actions {
+            client
+                .send(EngineMessage::Request(action))
+                .await
+                .map_err(|err| format!("Failed to send session restore action: {err}"))?;
         }
+        Ok(())
     }
 
     async fn handle_command(
@@ -458,6 +459,20 @@ impl App {
         }
     }
 
+    fn set_audio_ready_status(&mut self) {
+        if !self.sticky_status {
+            self.status = format!(
+                "Audio ready: {} in / {} out @ {} Hz",
+                self.input_channels, self.output_channels, self.sample_rate_hz
+            );
+        }
+    }
+
+    fn is_nonfatal_restore_error(err: &str) -> bool {
+        err.starts_with("Failed to open MIDI input ")
+            || err.starts_with("Failed to open MIDI output ")
+    }
+
     fn handle_engine_message(&mut self, message: EngineMessage) {
         match message {
             EngineMessage::Response(Ok(Action::HWInfo {
@@ -477,12 +492,24 @@ impl App {
                             .normalize_hw_out_ports(self.output_channels);
                     }
                 }
-                if !self.sticky_status {
-                    self.status = format!(
-                        "Audio ready: {} in / {} out @ {} Hz",
-                        self.input_channels, self.output_channels, self.sample_rate_hz
-                    );
+                self.set_audio_ready_status();
+            }
+            EngineMessage::Response(Ok(Action::OpenAudioDevice {
+                sample_rate_hz,
+                input_channels,
+                output_channels,
+                ..
+            })) => {
+                self.hw_ready = true;
+                self.sample_rate_hz = sample_rate_hz.max(0) as usize;
+                self.input_channels = input_channels;
+                self.output_channels = output_channels;
+                if let Some(export_ui) = self.export_ui.as_mut() {
+                    export_ui
+                        .settings
+                        .normalize_hw_out_ports(self.output_channels);
                 }
+                self.set_audio_ready_status();
             }
             EngineMessage::Response(Ok(Action::TransportPosition(sample))) => {
                 self.transport_sample = sample;
@@ -508,10 +535,16 @@ impl App {
                 self.track_meters = track_meters.as_ref().clone();
             }
             EngineMessage::Response(Err(err)) => {
+                let nonfatal =
+                    self.session_restore_in_progress || Self::is_nonfatal_restore_error(&err);
                 self.status = err;
-                self.playing = false;
-                self.paused = false;
-                self.sticky_status = true;
+                if nonfatal {
+                    self.session_restore_had_warnings = true;
+                } else {
+                    self.playing = false;
+                    self.paused = false;
+                    self.sticky_status = true;
+                }
             }
             EngineMessage::OfflineBounceFinished { result: Err(err) } => {
                 self.status = err;
@@ -522,6 +555,9 @@ impl App {
     }
 
     fn draw(&self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+        if !self.startup_complete {
+            return self.draw_startup(terminal);
+        }
         let state = transport_state_label(self.playing, self.paused);
         let state_color = transport_state_color(self.playing, self.paused);
         let device_hint = match &self.open_audio_action {
@@ -663,6 +699,40 @@ impl App {
             }
         })?;
 
+        Ok(())
+    }
+
+    fn draw_startup(
+        &self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> io::Result<()> {
+        terminal.draw(|frame| {
+            let area = frame.area();
+            let popup = centered_rect(area, 70, 35);
+            let session = self
+                .session_dir
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "not set".to_string());
+            let device = self.output_device_label();
+            let lines = Text::from(vec![
+                Line::from("Initializing engine").style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Line::from(format!("Session: {session}")),
+                Line::from(format!("Device: {device}")),
+                Line::from(format!("Status: {}", self.status)),
+            ]);
+            frame.render_widget(Clear, popup);
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .block(Block::default().borders(Borders::ALL).title("Startup"))
+                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                popup,
+            );
+        })?;
         Ok(())
     }
 
@@ -1374,6 +1444,91 @@ async fn drain_engine_for(app: &mut App, rx: &mut Receiver<EngineMessage>, durat
     }
 }
 
+async fn draw_and_wait_for_hw_ready(
+    app: &mut App,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    rx: &mut Receiver<EngineMessage>,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    while !app.hw_ready {
+        app.draw(terminal)
+            .map_err(|err| format!("Failed to draw startup screen: {err}"))?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!("Timed out opening audio device: {}", app.status));
+        }
+        match tokio::time::timeout(remaining.min(Duration::from_millis(50)), rx.recv()).await {
+            Ok(Some(message)) => app.handle_engine_message(message),
+            Ok(None) => return Err("Engine channel closed while opening audio".to_string()),
+            Err(_) => {}
+        }
+        if app.sticky_status {
+            return Err(app.status.clone());
+        }
+    }
+    app.draw(terminal)
+        .map_err(|err| format!("Failed to draw startup screen: {err}"))?;
+    Ok(())
+}
+
+async fn initialize_interactive_app(
+    app: &mut App,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    client: &Client,
+    rx: &mut Receiver<EngineMessage>,
+) -> Result<(), String> {
+    app.status = "Initializing engine...".to_string();
+    app.draw(terminal)
+        .map_err(|err| format!("Failed to draw startup screen: {err}"))?;
+    drain_engine_for(app, rx, Duration::from_millis(50)).await;
+
+    if app.open_audio_action.is_some() {
+        app.open_audio(client).await;
+        draw_and_wait_for_hw_ready(app, terminal, rx, Duration::from_secs(5)).await?;
+    }
+
+    let actions = if let Some(session_dir) = app.session_dir.clone() {
+        app.status = "Scanning plugins...".to_string();
+        app.draw(terminal)
+            .map_err(|err| format!("Failed to draw startup screen: {err}"))?;
+        let actions = load_session_restore_actions(&session_dir, &app.session_branch)?;
+
+        app.status = format!("Loading session '{}'", session_dir.display());
+        app.draw(terminal)
+            .map_err(|err| format!("Failed to draw startup screen: {err}"))?;
+        Some(actions)
+    } else {
+        None
+    };
+
+    if let Some(actions) = actions {
+        app.session_restore_had_warnings = false;
+        app.session_restore_in_progress = true;
+        let send_result = app.send_session_restore_actions(client, actions).await;
+        drain_engine_for(app, rx, Duration::from_secs(2)).await;
+        app.session_restore_in_progress = false;
+        send_result?;
+        if app.sticky_status {
+            return Err(app.status.clone());
+        }
+        app.status = if app.session_restore_had_warnings {
+            "Session loaded with warnings".to_string()
+        } else {
+            "Session loaded".to_string()
+        };
+    } else if app.hw_ready {
+        app.set_audio_ready_status();
+    } else {
+        app.status = "Ready".to_string();
+    }
+
+    app.startup_complete = true;
+    app.draw(terminal)
+        .map_err(|err| format!("Failed to draw startup screen: {err}"))?;
+    Ok(())
+}
+
 async fn run_record_once(
     options: &CliOptions,
     config: &CliConfig,
@@ -1410,6 +1565,7 @@ async fn run_record_once(
         .map_err(|err| format!("Failed to send open-audio request: {err}"))?;
     wait_for_hw_ready(&mut app, &mut rx, Duration::from_secs(5)).await?;
 
+    app.session_restore_in_progress = true;
     for action in load_session_restore_actions(session_dir, &options.branch)? {
         client
             .send(EngineMessage::Request(action))
@@ -1417,6 +1573,7 @@ async fn run_record_once(
             .map_err(|err| format!("Failed to restore session: {err}"))?;
     }
     drain_engine_for(&mut app, &mut rx, Duration::from_millis(500)).await;
+    app.session_restore_in_progress = false;
     if app.sticky_status {
         return Err(app.status);
     }
@@ -1523,18 +1680,6 @@ fn drain_engine_messages(app: &mut App, rx: &mut Receiver<EngineMessage>) {
     }
 }
 
-fn should_restore_session(
-    restored: bool,
-    session_dir: Option<&PathBuf>,
-    open_audio_action: Option<&Action>,
-    hw_ready: bool,
-) -> bool {
-    if restored || session_dir.is_none() {
-        return false;
-    }
-    open_audio_action.is_none() || hw_ready
-}
-
 fn spawn_input_thread() -> UnboundedReceiver<AppCommand> {
     let (tx, rx) = unbounded_channel();
     thread::spawn(move || {
@@ -1622,7 +1767,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )))
         .await;
     let mut rx = client.subscribe().await;
-    let mut input_rx = spawn_input_thread();
     let (export_tx, mut export_rx) = unbounded_channel();
     let mut app = App::new(
         options.session_dir.clone(),
@@ -1635,32 +1779,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.default_export_sample_rate_hz
         },
     );
-    let mut session_restored = false;
-    app.draw(&mut terminal)?;
-    app.open_audio(&client).await;
-    if should_restore_session(
-        session_restored,
-        options.session_dir.as_ref(),
-        app.open_audio_action.as_ref(),
-        app.hw_ready,
-    ) {
-        app.restore_session(&client, options.session_dir.as_ref())
-            .await;
-        session_restored = true;
+    if let Err(err) = initialize_interactive_app(&mut app, &mut terminal, &client, &mut rx).await {
+        app.status = err;
+        app.sticky_status = true;
+        app.startup_complete = true;
+        app.draw(&mut terminal)?;
     }
+    let mut input_rx = spawn_input_thread();
 
     loop {
         drain_engine_messages(&mut app, &mut rx);
-        if should_restore_session(
-            session_restored,
-            options.session_dir.as_ref(),
-            app.open_audio_action.as_ref(),
-            app.hw_ready,
-        ) {
-            app.restore_session(&client, options.session_dir.as_ref())
-                .await;
-            session_restored = true;
-        }
         while let Ok(event) = export_rx.try_recv() {
             app.handle_export_event(event);
         }
@@ -1684,58 +1812,6 @@ mod tests {
     fn maps_space_to_toggle_play_stop() {
         let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
         assert_eq!(map_key_event(key), AppCommand::TogglePlayStop);
-    }
-
-    #[test]
-    fn restore_session_waits_for_audio_when_opening_device() {
-        assert!(!should_restore_session(
-            false,
-            Some(&PathBuf::from("/tmp/session")),
-            Some(&Action::OpenAudioDevice {
-                device: "dev".to_string(),
-                input_device: None,
-                sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ,
-                bits: audio_defaults::BIT_DEPTH as i32,
-                exclusive: false,
-                period_frames: audio_defaults::PERIOD_FRAMES,
-                nperiods: audio_defaults::NPERIODS,
-                sync_mode: audio_defaults::SYNC_MODE,
-                actual_period_frames: 0,
-                input_channels: 0,
-                output_channels: 0,
-                bytes_per_frame: 0,
-            }),
-            false,
-        ));
-        assert!(should_restore_session(
-            false,
-            Some(&PathBuf::from("/tmp/session")),
-            Some(&Action::OpenAudioDevice {
-                device: "dev".to_string(),
-                input_device: None,
-                sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ,
-                bits: audio_defaults::BIT_DEPTH as i32,
-                exclusive: false,
-                period_frames: audio_defaults::PERIOD_FRAMES,
-                nperiods: audio_defaults::NPERIODS,
-                sync_mode: audio_defaults::SYNC_MODE,
-                actual_period_frames: 0,
-                input_channels: 0,
-                output_channels: 0,
-                bytes_per_frame: 0,
-            }),
-            true,
-        ));
-    }
-
-    #[test]
-    fn restore_session_runs_immediately_without_audio_open() {
-        assert!(should_restore_session(
-            false,
-            Some(&PathBuf::from("/tmp/session")),
-            None,
-            false,
-        ));
     }
 
     #[test]

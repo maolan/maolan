@@ -4,8 +4,7 @@ use iced::{Color, Point};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::consts::state_track::{
-    TRACK_FOLDER_BODY_HEIGHT, TRACK_FOLDER_HEADER_HEIGHT, TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP,
-    TRACK_SUBTRACK_MIN_HEIGHT,
+    TRACK_FOLDER_HEADER_HEIGHT, TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT,
 };
 
 #[derive(Debug, Clone)]
@@ -398,6 +397,10 @@ impl Track {
     }
 
     pub fn min_height_for_layout(&self) -> f32 {
+        if self.is_folder {
+            return TRACK_FOLDER_HEADER_HEIGHT + TRACK_SUBTRACK_MIN_HEIGHT;
+        }
+
         let lanes = self.total_lane_count().max(1);
         TRACK_FOLDER_HEADER_HEIGHT
             + (lanes as f32 * TRACK_SUBTRACK_MIN_HEIGHT)
@@ -655,7 +658,8 @@ impl Track {
     }
 
     pub fn folder_content_height(&self) -> f32 {
-        TRACK_FOLDER_HEADER_HEIGHT + TRACK_FOLDER_BODY_HEIGHT
+        self.height
+            .max(TRACK_FOLDER_HEADER_HEIGHT + TRACK_SUBTRACK_MIN_HEIGHT)
     }
 
     pub fn visible_height(&self, all_tracks: &[Track]) -> f32 {

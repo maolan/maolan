@@ -19,6 +19,11 @@ pub struct Lv2ControlPortInfo {
     pub value: f32,
 }
 
+pub struct Lv2UiControlPortValue {
+    pub index: u32,
+    pub value: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct Lv2StatePortValue {
     pub index: u32,
@@ -41,14 +46,24 @@ pub struct Lv2PluginState {
 
 use crate::util::MidiEvent;
 use crate::util::SimpleMutex;
-use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
-use lv2_raw::{
+use maolan_lv2::raw::{
     LV2_ATOM__DOUBLE, LV2_ATOM__FRAMETIME, LV2_ATOM__INT, LV2_ATOM__LONG, LV2_ATOM__OBJECT,
     LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2_URID__UNMAP, LV2Atom, LV2AtomDouble, LV2AtomEvent,
     LV2AtomLong, LV2AtomObjectBody, LV2AtomPropertyBody, LV2AtomSequence, LV2AtomSequenceBody,
     LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle, lv2_atom_pad_size,
     lv2_atom_sequence_append_event, lv2_atom_sequence_begin, lv2_atom_sequence_is_end,
     lv2_atom_sequence_next,
+};
+use maolan_lv2::{
+    World,
+    instance::ActiveInstance,
+    node::Node,
+    plugin::Plugin,
+    raw::{
+        LV2_MIDI__MIDIEVENT, LV2_TIME__BAR, LV2_TIME__BARBEAT, LV2_TIME__BEATSPERBAR,
+        LV2_TIME__BEATSPERMINUTE, LV2_TIME__BEATUNIT, LV2_TIME__FRAME, LV2_TIME__POSITION,
+        LV2_TIME__SPEED,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -62,6 +77,16 @@ pub struct Lv2PluginInfo {
     pub audio_outputs: usize,
     pub midi_inputs: usize,
     pub midi_outputs: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lv2UiInfo {
+    pub uri: String,
+    pub class_uri: String,
+    pub class_uris: Vec<String>,
+    pub extension_data_uris: Vec<String>,
+    pub bundle_uri: String,
+    pub binary_uri: String,
 }
 
 pub struct Lv2Host {
@@ -179,6 +204,7 @@ pub struct Lv2Processor {
     latency_port_index: Option<usize>,
     has_worker_interface: bool,
     control_ports: Vec<ControlPortInfo>,
+    ui_control_ports: Vec<u32>,
     midnam_note_names: SimpleMutex<HashMap<u8, String>>,
     bypassed: AtomicBool,
 }
@@ -449,21 +475,22 @@ impl Lv2Processor {
         let mut midi_inputs = 0_usize;
         let mut midi_outputs = 0_usize;
         let mut control_ports = vec![];
+        let mut ui_control_ports = vec![];
         let has_worker_interface = plugin.has_extension_data(&world.new_uri(LV2_WORKER__INTERFACE));
         let atom_sequence_urid = urid_feature.map_uri(LV2_ATOM__SEQUENCE);
         let atom_object_urid = urid_feature.map_uri(LV2_ATOM__OBJECT);
         let atom_long_urid = urid_feature.map_uri(LV2_ATOM__LONG);
         let atom_double_urid = urid_feature.map_uri(LV2_ATOM__DOUBLE);
         let atom_frame_time_urid = urid_feature.map_uri(LV2_ATOM__FRAMETIME);
-        let midi_event_urid = urid_feature.map_uri(lv2_raw::LV2_MIDI__MIDIEVENT);
-        let time_position_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__POSITION);
-        let time_frame_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__FRAME);
-        let time_speed_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__SPEED);
-        let time_bpm_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATSPERMINUTE);
-        let time_bar_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BAR);
-        let time_bar_beat_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BARBEAT);
-        let time_beats_per_bar_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATSPERBAR);
-        let time_beat_unit_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATUNIT);
+        let midi_event_urid = urid_feature.map_uri(LV2_MIDI__MIDIEVENT);
+        let time_position_urid = urid_feature.map_uri(LV2_TIME__POSITION);
+        let time_frame_urid = urid_feature.map_uri(LV2_TIME__FRAME);
+        let time_speed_urid = urid_feature.map_uri(LV2_TIME__SPEED);
+        let time_bpm_urid = urid_feature.map_uri(LV2_TIME__BEATSPERMINUTE);
+        let time_bar_urid = urid_feature.map_uri(LV2_TIME__BAR);
+        let time_bar_beat_urid = urid_feature.map_uri(LV2_TIME__BARBEAT);
+        let time_beats_per_bar_urid = urid_feature.map_uri(LV2_TIME__BEATSPERBAR);
+        let time_beat_unit_urid = urid_feature.map_uri(LV2_TIME__BEATUNIT);
         let declared_audio_inputs = plugin
             .iter_ports()
             .filter(|port| port.is_a(&audio_port) && port.is_a(&input_port))
@@ -564,6 +591,10 @@ impl Lv2Processor {
                     let _ = (uri, index, symbol, min, max, default_value, fallback_reason);
                 }
 
+                if is_control {
+                    ui_control_ports.push(index as u32);
+                }
+
                 if is_control && is_input {
                     let mut min = min;
                     let mut max = max;
@@ -630,6 +661,7 @@ impl Lv2Processor {
             latency_port_index,
             has_worker_interface,
             control_ports,
+            ui_control_ports,
             midnam_note_names: SimpleMutex::new(HashMap::new()),
             bypassed: AtomicBool::new(false),
         };
@@ -645,6 +677,29 @@ impl Lv2Processor {
 
     pub fn name(&self) -> &str {
         &self.plugin_name
+    }
+
+    pub fn ui_infos(&self) -> Vec<Lv2UiInfo> {
+        let plugin = self
+            ._world
+            .plugins()
+            .plugin(&self._world.new_uri(&self.uri));
+        plugin
+            .map(|plugin| {
+                plugin
+                    .uis()
+                    .into_iter()
+                    .map(|ui| Lv2UiInfo {
+                        uri: ui.uri,
+                        class_uri: ui.class_uri,
+                        class_uris: ui.class_uris,
+                        extension_data_uris: ui.extension_data_uris,
+                        bundle_uri: ui.bundle_uri,
+                        binary_uri: ui.binary_uri,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn audio_inputs(&self) -> &[Arc<AudioPort>] {
@@ -1085,7 +1140,7 @@ impl Lv2Processor {
         Some(unsafe { ptr.as_ref() })
     }
 
-    fn has_extension_data_callback(&self, instance: &lilv::instance::Instance) -> bool {
+    fn has_extension_data_callback(&self, instance: &maolan_lv2::instance::Instance) -> bool {
         let Some(descriptor) = instance.descriptor() else {
             return false;
         };
@@ -1159,6 +1214,20 @@ impl Lv2Processor {
                     .get(port.index as usize)
                     .copied()
                     .unwrap_or(0.0),
+            })
+            .collect()
+    }
+
+    pub fn ui_control_port_values(&self) -> Vec<Lv2UiControlPortValue> {
+        self.ui_control_ports
+            .iter()
+            .filter_map(|index| {
+                self.scalar_values
+                    .get(*index as usize)
+                    .map(|value| Lv2UiControlPortValue {
+                        index: *index,
+                        value: *value,
+                    })
             })
             .collect()
     }
@@ -1268,22 +1337,18 @@ impl Lv2Processor {
             return;
         }
         let seq = bytes.as_mut_ptr() as *mut LV2AtomSequence;
-        let capacity = bytes
-            .len()
-            .saturating_sub(std::mem::size_of::<lv2_raw::LV2Atom>()) as u32;
+        let capacity = bytes.len().saturating_sub(std::mem::size_of::<LV2Atom>()) as u32;
         for event in events {
             if event.data.is_empty() {
                 continue;
             }
-            let mut raw =
-                vec![0_u8; std::mem::size_of::<lv2_raw::LV2AtomEvent>() + event.data.len()];
-            let raw_event = raw.as_mut_ptr() as *mut lv2_raw::LV2AtomEvent;
+            let mut raw = vec![0_u8; std::mem::size_of::<LV2AtomEvent>() + event.data.len()];
+            let raw_event = raw.as_mut_ptr() as *mut LV2AtomEvent;
             unsafe {
                 (*raw_event).time_in_frames = event.frame as i64;
                 (*raw_event).body.mytype = self.midi_event_urid;
                 (*raw_event).body.size = event.data.len() as u32;
-                let data_ptr =
-                    (raw_event as *mut u8).add(std::mem::size_of::<lv2_raw::LV2AtomEvent>());
+                let data_ptr = (raw_event as *mut u8).add(std::mem::size_of::<LV2AtomEvent>());
                 std::ptr::copy_nonoverlapping(event.data.as_ptr(), data_ptr, event.data.len());
                 if lv2_atom_sequence_append_event(seq, capacity, raw_event).is_null() {
                     break;
@@ -1301,9 +1366,7 @@ impl Lv2Processor {
             return;
         }
         let seq = bytes.as_mut_ptr() as *mut LV2AtomSequence;
-        let capacity = bytes
-            .len()
-            .saturating_sub(std::mem::size_of::<lv2_raw::LV2Atom>()) as u32;
+        let capacity = bytes.len().saturating_sub(std::mem::size_of::<LV2Atom>()) as u32;
 
         let beats_per_bar = if transport.tsig_num == 0 {
             4.0
@@ -1408,8 +1471,7 @@ impl Lv2Processor {
             while !lv2_atom_sequence_is_end(body, size, it) {
                 let event = &*it;
                 if event.body.mytype == self.midi_event_urid && event.body.size > 0 {
-                    let data_ptr =
-                        (it as *const u8).add(std::mem::size_of::<lv2_raw::LV2AtomEvent>());
+                    let data_ptr = (it as *const u8).add(std::mem::size_of::<LV2AtomEvent>());
                     let data_len = event.body.size as usize;
                     let data = std::slice::from_raw_parts(data_ptr, data_len).to_vec();
                     result.push(MidiEvent::new(event.time_in_frames.max(0) as u32, data));
@@ -1442,19 +1504,6 @@ impl Lv2Host {
     }
 
     pub fn list_plugins(&self) -> Vec<Lv2PluginInfo> {
-        let input_port = self.world.new_uri("http://lv2plug.in/ns/lv2core#InputPort");
-        let output_port = self
-            .world
-            .new_uri("http://lv2plug.in/ns/lv2core#OutputPort");
-        let audio_port = self.world.new_uri("http://lv2plug.in/ns/lv2core#AudioPort");
-        let atom_port = self.world.new_uri("http://lv2plug.in/ns/ext/atom#AtomPort");
-        let event_port = self
-            .world
-            .new_uri("http://lv2plug.in/ns/ext/event#EventPort");
-        let midi_event = self
-            .world
-            .new_uri("http://lv2plug.in/ns/ext/midi#MidiEvent");
-
         let mut plugins = self
             .world
             .plugins()
@@ -1472,15 +1521,7 @@ impl Lv2Host {
                     .to_string();
                 let bundle_uri = plugin.bundle_uri().as_uri().unwrap_or("").to_string();
                 let required_features = plugin_feature_uris(&plugin);
-                let (audio_inputs, audio_outputs, midi_inputs, midi_outputs) = plugin_port_counts(
-                    &plugin,
-                    &input_port,
-                    &output_port,
-                    &audio_port,
-                    &atom_port,
-                    &event_port,
-                    &midi_event,
-                );
+                let port_counts = plugin.port_counts();
 
                 tracing::debug!("finished scanning LV2 plugin: {uri}");
                 Some(Lv2PluginInfo {
@@ -1489,10 +1530,10 @@ impl Lv2Host {
                     class_label,
                     bundle_uri,
                     required_features,
-                    audio_inputs,
-                    audio_outputs,
-                    midi_inputs,
-                    midi_outputs,
+                    audio_inputs: port_counts.audio_inputs,
+                    audio_outputs: port_counts.audio_outputs,
+                    midi_inputs: port_counts.midi_inputs,
+                    midi_outputs: port_counts.midi_outputs,
                 })
             })
             .collect::<Vec<_>>();
@@ -1589,7 +1630,7 @@ fn instantiate_plugin(
     uri: &str,
     urid_feature: &mut UridMapFeature,
     state_path_feature: &mut StatePathFeature,
-) -> Result<(lilv::instance::Instance, InstantiateFeatureSet), String> {
+) -> Result<(maolan_lv2::instance::Instance, InstantiateFeatureSet), String> {
     let required_features = plugin_feature_uris(plugin);
     let feature_set =
         build_instantiate_features(&required_features, urid_feature, state_path_feature)?;
@@ -2244,9 +2285,7 @@ fn prepare_output_atom_sequence(
         return;
     }
     let seq = buffer.as_mut_ptr() as *mut LV2AtomSequence;
-    let body_capacity = buffer
-        .len()
-        .saturating_sub(std::mem::size_of::<lv2_raw::LV2Atom>()) as u32;
+    let body_capacity = buffer.len().saturating_sub(std::mem::size_of::<LV2Atom>()) as u32;
     unsafe {
         (*seq).atom.mytype = sequence_urid;
         (*seq).atom.size = body_capacity;
@@ -2294,48 +2333,6 @@ extern "C" fn urid_unmap_callback(handle: LV2UridMapHandle, urid: LV2Urid) -> *c
         .get(&urid)
         .map(|uri| uri.as_ptr())
         .unwrap_or(std::ptr::null())
-}
-
-fn plugin_port_counts(
-    plugin: &Plugin,
-    input_port: &Node,
-    output_port: &Node,
-    audio_port: &Node,
-    atom_port: &Node,
-    event_port: &Node,
-    midi_event: &Node,
-) -> (usize, usize, usize, usize) {
-    let mut audio_inputs = 0;
-    let mut audio_outputs = 0;
-    let mut midi_inputs = 0;
-    let mut midi_outputs = 0;
-
-    for port in plugin.iter_ports() {
-        let is_input = port.is_a(input_port);
-        let is_output = port.is_a(output_port);
-
-        if port.is_a(audio_port) {
-            if is_input {
-                audio_inputs += 1;
-            }
-            if is_output {
-                audio_outputs += 1;
-            }
-        }
-
-        let is_event_or_atom = port.is_a(atom_port) || port.is_a(event_port);
-        let is_midi = is_event_or_atom && port.supports_event(midi_event);
-        if is_midi {
-            if is_input {
-                midi_inputs += 1;
-            }
-            if is_output {
-                midi_outputs += 1;
-            }
-        }
-    }
-
-    (audio_inputs, audio_outputs, midi_inputs, midi_outputs)
 }
 
 fn count_main_audio_ports(

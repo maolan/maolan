@@ -444,6 +444,7 @@ pub struct ClapWindow {
 #[repr(C)]
 pub union ClapWindowUnion {
     pub x11: c_ulong,
+    pub wayland: *mut c_void,
     pub cocoa: *mut c_void,
     pub win32: *mut c_void,
 }
@@ -1098,6 +1099,18 @@ impl PluginInstance {
     }
 
     pub fn gui_set_parent(&self, window_id: u64) -> Result<(), String> {
+        self.gui_set_parent_with_api(
+            window_id,
+            #[cfg(windows)]
+            "win32",
+            #[cfg(all(unix, not(target_os = "macos")))]
+            "x11",
+            #[cfg(target_os = "macos")]
+            "cocoa",
+        )
+    }
+
+    pub fn gui_set_parent_with_api(&self, window_id: u64, api_name: &str) -> Result<(), String> {
         let gui = self.gui.ok_or("GUI extension not available")?;
         let set_parent = unsafe { (*gui).set_parent }.ok_or("gui.set_parent is null")?;
 
@@ -1114,11 +1127,18 @@ impl PluginInstance {
 
         #[cfg(all(unix, not(target_os = "macos")))]
         let window = {
-            let api = c"x11".as_ptr();
+            let api_cstring = std::ffi::CString::new(api_name).map_err(|e| e.to_string())?;
+            let api = api_cstring.as_ptr();
             ClapWindow {
                 api,
-                clap_window__: ClapWindowUnion {
-                    x11: window_id as c_ulong,
+                clap_window__: if api_name == "wayland" {
+                    ClapWindowUnion {
+                        wayland: window_id as *mut c_void,
+                    }
+                } else {
+                    ClapWindowUnion {
+                        x11: window_id as c_ulong,
+                    }
                 },
             }
         };

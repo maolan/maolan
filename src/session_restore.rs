@@ -1,3 +1,6 @@
+#[path = "cli/plugin_support.rs"]
+pub mod plugin_support;
+
 use maolan_engine::{
     clap::ClapPluginInfo,
     kind::Kind,
@@ -17,32 +20,6 @@ struct SavedConnection {
     to_track: String,
     to_port: usize,
     kind: Kind,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExportConnection {
-    pub from_track: String,
-    pub from_port: usize,
-    pub to_track: String,
-    pub to_port: usize,
-    pub kind: Kind,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExportTrack {
-    pub name: String,
-    pub level: f32,
-    pub balance: f32,
-    pub muted: bool,
-    pub soloed: bool,
-    pub output_ports: usize,
-    pub audio_clips: Vec<AudioClipData>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ExportSessionData {
-    pub tracks: Vec<ExportTrack>,
-    pub connections: Vec<ExportConnection>,
 }
 
 pub fn load_session_restore_actions(
@@ -158,24 +135,6 @@ fn load_session_restore_actions_from_value(
 
     actions.push(Action::EndSessionRestore);
     Ok(actions)
-}
-
-pub fn load_export_session_data(
-    session_dir: &Path,
-    branch: &str,
-) -> Result<ExportSessionData, String> {
-    let session = load_session_json(session_dir, branch)?;
-    let tracks = session
-        .get("tracks")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "Session is missing 'tracks' array".to_string())?
-        .iter()
-        .map(parse_export_track)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(ExportSessionData {
-        tracks,
-        connections: parse_export_connections(session.get("connections"))?,
-    })
 }
 
 fn load_session_json(session_dir: &Path, branch: &str) -> Result<Value, String> {
@@ -587,62 +546,6 @@ fn get_required_usize(value: &Value, key: &str, track_name: &str) -> Result<usiz
         .ok_or_else(|| format!("Track '{track_name}' is missing numeric field '{key}'"))
 }
 
-fn parse_export_track(track: &Value) -> Result<ExportTrack, String> {
-    let name = get_required_str(track, "name")?.to_string();
-    let audio = track
-        .get("audio")
-        .ok_or_else(|| format!("Track '{name}' is missing audio section"))?;
-    let output_ports = get_required_usize(audio, "outs", &name)?.max(1);
-    let audio_clips = audio
-        .get("clips")
-        .and_then(Value::as_array)
-        .map(|clips| {
-            clips
-                .iter()
-                .map(parse_audio_clip_data)
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?
-        .unwrap_or_default();
-    Ok(ExportTrack {
-        name,
-        level: track.get("level").and_then(Value::as_f64).unwrap_or(0.0) as f32,
-        balance: track.get("balance").and_then(Value::as_f64).unwrap_or(0.0) as f32,
-        muted: track.get("muted").and_then(Value::as_bool).unwrap_or(false),
-        soloed: track
-            .get("soloed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        output_ports,
-        audio_clips,
-    })
-}
-
-fn parse_export_connections(value: Option<&Value>) -> Result<Vec<ExportConnection>, String> {
-    let Some(connections) = value.and_then(Value::as_array) else {
-        return Ok(Vec::new());
-    };
-    connections
-        .iter()
-        .map(|connection| {
-            Ok(ExportConnection {
-                from_track: get_required_str(connection, "from_track")?.to_string(),
-                from_port: connection
-                    .get("from_port")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize,
-                to_track: get_required_str(connection, "to_track")?.to_string(),
-                to_port: connection
-                    .get("to_port")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize,
-                kind: parse_kind(connection.get("kind"))
-                    .ok_or_else(|| "Failed to parse connection kind".to_string())?,
-            })
-        })
-        .collect()
-}
-
 fn push_optional_f32<F>(actions: &mut Vec<Action>, track: &Value, key: &str, build: F)
 where
     F: FnOnce(f32) -> Action,
@@ -910,142 +813,5 @@ fn parse_kind(value: Option<&Value>) -> Option<Kind> {
         Some("audio") | Some("Audio") => Some(Kind::Audio),
         Some("midi") | Some("MIDI") => Some(Kind::MIDI),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn load_session_restore_actions_parses_tracks_and_connections() {
-        let dir = Path::new("maolan-cli-support-test");
-        let session = serde_json::json!({
-                "transport": {
-                    "loop_range_samples": null,
-                    "loop_enabled": false,
-                    "punch_range_samples": null,
-                    "punch_enabled": false,
-                    "tempo": 140.0,
-                    "time_signature_num": 7,
-                    "time_signature_denom": 8
-                },
-                "tracks": [{
-                    "name": "Track 1",
-                    "audio": {"ins": 2, "outs": 2, "clips": []},
-                    "midi": {"ins": 1, "outs": 1, "clips": []},
-                    "level": 1.5,
-                    "balance": -0.25,
-                    "armed": true,
-                    "muted": false,
-                    "phase_inverted": false,
-                    "soloed": true,
-                    "input_monitor": true,
-                    "disk_monitor": false,
-                    "midi_lane_channels": [null, 3],
-                    "midi_learn_volume": null
-                },{
-                    "name": "Folder",
-                    "is_folder": true,
-                    "folder_open": false,
-                    "audio": {"ins": 2, "outs": 2, "clips": []},
-                    "midi": {"ins": 1, "outs": 1, "clips": []}
-                },{
-                    "name": "Child",
-                    "parent_track": "Folder",
-                    "audio": {"ins": 2, "outs": 2, "clips": []},
-                    "midi": {"ins": 1, "outs": 1, "clips": []}
-                }],
-                "connections": [{
-                    "from_track": "midi:hw:in:dev-in",
-                    "from_port": 0,
-                    "to_track": "Track 1",
-                    "to_port": 0,
-                    "kind": "MIDI"
-                },{
-                    "from_track": "Track 1",
-                    "from_port": 0,
-                    "to_track": "midi:hw:out:dev-out",
-                    "to_port": 0,
-                    "kind": "MIDI"
-                }],
-                "graphs": {
-                    "Track 1": {
-                        "plugins": [{
-                            "format": "LV2",
-                            "uri": "http://example.invalid/lv2",
-                            "state": null
-                        }],
-                        "connections": [{
-                            "from_node": {"type": "track_input"},
-                            "from_port": 0,
-                            "to_node": {"type": "lv2_plugin", "plugin_index": 0},
-                            "to_port": 0,
-                            "kind": "audio"
-                        },{
-                            "from_node": {"type": "lv2_plugin", "plugin_index": 0},
-                            "from_port": 0,
-                            "to_node": {"type": "track_output"},
-                            "to_port": 0,
-                            "kind": "audio"
-                        }]
-                    },
-                    "Deleted Track": {
-                        "plugins": [],
-                        "connections": [{
-                            "from_node": {"type": "track_input"},
-                            "from_port": 0,
-                            "to_node": {"type": "track_output"},
-                            "to_port": 0,
-                            "kind": "audio"
-                        }]
-                    }
-                }
-        });
-
-        let actions =
-            load_session_restore_actions_from_value(dir, &session).expect("restore actions");
-
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            Action::AddTrack { name, audio_ins, audio_outs, midi_ins, midi_outs, folder }
-            if name == "Track 1" && *audio_ins == 2 && *audio_outs == 2 && *midi_ins == 1 && *midi_outs == 1 && !folder
-        )));
-        assert!(actions.iter().any(
-            |action| matches!(action, Action::OpenMidiInputDevice(device) if device == "dev-in")
-        ));
-        assert!(actions.iter().any(
-            |action| matches!(action, Action::OpenMidiOutputDevice(device) if device == "dev-out")
-        ));
-        #[cfg(all(unix, not(target_os = "macos")))]
-        assert!(actions.iter().any(
-            |action| matches!(action, Action::TrackLoadLv2Plugin { track_name, plugin_uri, instance_id } if track_name == "Track 1" && plugin_uri == "http://example.invalid/lv2" && *instance_id == Some(0))
-        ));
-        assert_eq!(
-            actions
-                .iter()
-                .filter(|action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Track 1"))
-                .count(),
-            2
-        );
-        assert!(!actions.iter().any(
-            |action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Deleted Track")
-        ));
-        assert_eq!(
-            actions
-                .iter()
-                .filter(|action| matches!(action, Action::TrackToggleDiskMonitor { track_name, .. } if track_name == "Track 1"))
-                .count(),
-            1
-        );
-        assert!(actions.iter().any(
-            |action| matches!(action, Action::Connect { from_track, to_track, kind, .. } if from_track == "Track 1" && to_track == "midi:hw:out:dev-out" && *kind == Kind::MIDI)
-        ));
-        assert!(actions.iter().any(
-            |action| matches!(action, Action::TrackSetFolder { track_name, is_folder } if track_name == "Folder" && *is_folder)
-        ));
-        assert!(actions.iter().any(
-            |action| matches!(action, Action::TrackSetParent { track_name, parent_name } if track_name == "Child" && parent_name.as_deref() == Some("Folder"))
-        ));
     }
 }
