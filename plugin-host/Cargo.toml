@@ -1,6 +1,6 @@
 [package]
 name = "maolan-plugin-host"
-version = "0.0.5"
+version = "0.0.6"
 edition = "2024"
 description = "Out-of-process plugin host for Maolan DAW"
 authors = ["Maolan Team"]
@@ -29,13 +29,12 @@ tracing-subscriber = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 vst3 = "0.3"
-maolan-plugin-protocol = "0.0.13"
+maolan-plugin-protocol = "0.0.14"
 arc-swap = "1.7"
 crossbeam-channel = "0.5"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-lilv = "0.2.4"
-lv2_raw = "0.2.0"
+maolan-lv2 = "0.0.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging"] }

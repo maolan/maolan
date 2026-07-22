@@ -295,7 +295,7 @@ Last updated: 2026-07-09
 - Windows builds support WSAPI backend, CLAP, and VST3.
 - macOS builds refresh CLAP and VST3 plugin support paths; LV2 is Unix-only in the current codebase.
 - Linux and FreeBSD builds run on Wayland when available and fall back to X11 (Xorg) when Wayland is unavailable.
-- Plugin UI embedding on Unix still uses X11, so an X11 server must be reachable even under Wayland (for example via XWayland).
+- Plugin UIs on Unix prefer native Wayland/external UIs when the plugin exposes them, and fall back to X11/XWayland for plugins that only provide X11 UIs.
 - FreeBSD roadmap notes still mark MIDI 2.0 as N/A.
 
 ## Known Boundaries

@@ -8,6 +8,21 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+#[cfg(all(unix, not(target_os = "macos")))]
+use maolan_lv2::raw::{
+    LV2Feature, LV2UIControllerRaw, LV2UIDescriptorRaw, LV2UIHandle, LV2UIIdleInterface,
+    LV2UIShowInterface, LV2UIWidget,
+};
+
+#[cfg(all(unix, not(target_os = "macos")))]
+const LV2_UI_X11_UI: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
+#[cfg(all(unix, not(target_os = "macos")))]
+const LV2_UI_PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
+#[cfg(all(unix, not(target_os = "macos")))]
+const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
+#[cfg(all(unix, not(target_os = "macos")))]
+const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
+
 const SHM_LATENCY_SAMPLES_OFFSET: usize = 84;
 
 unsafe fn latency_samples_atomic(ptr: *mut u8) -> &'static std::sync::atomic::AtomicU32 {
@@ -42,9 +57,55 @@ impl Drop for ComInitGuard {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11_ffi {
-    use std::os::raw::{c_char, c_int, c_uint, c_ulong};
+    use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong};
+    pub type Atom = c_ulong;
     pub type Display = std::ffi::c_void;
     pub type Window = c_ulong;
+
+    pub const CLIENT_MESSAGE: c_int = 33;
+    pub const DESTROY_NOTIFY: c_int = 17;
+    pub const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub union ClientMessageData {
+        pub b: [c_char; 20],
+        pub s: [i16; 10],
+        pub l: [c_long; 5],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct XClientMessageEvent {
+        pub type_: c_int,
+        pub serial: c_ulong,
+        pub send_event: c_int,
+        pub display: *mut Display,
+        pub window: Window,
+        pub message_type: Atom,
+        pub format: c_int,
+        pub data: ClientMessageData,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct XDestroyWindowEvent {
+        pub type_: c_int,
+        pub serial: c_ulong,
+        pub send_event: c_int,
+        pub display: *mut Display,
+        pub event: Window,
+        pub window: Window,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub union XEvent {
+        pub type_: c_int,
+        pub client_message: XClientMessageEvent,
+        pub destroy_window: XDestroyWindowEvent,
+        pub pad: [c_long; 24],
+    }
 
     #[link(name = "X11")]
     unsafe extern "C" {
@@ -69,6 +130,27 @@ mod x11_ffi {
         pub fn XMapWindow(display: *mut Display, w: Window) -> c_int;
         pub fn XUnmapWindow(display: *mut Display, w: Window) -> c_int;
         pub fn XDestroyWindow(display: *mut Display, w: Window) -> c_int;
+        pub fn XSelectInput(display: *mut Display, w: Window, event_mask: c_long) -> c_int;
+        pub fn XInternAtom(
+            display: *mut Display,
+            atom_name: *const c_char,
+            only_if_exists: c_int,
+        ) -> Atom;
+        pub fn XSetWMProtocols(
+            display: *mut Display,
+            w: Window,
+            protocols: *mut Atom,
+            count: c_int,
+        ) -> c_int;
+        pub fn XPending(display: *mut Display) -> c_int;
+        pub fn XNextEvent(display: *mut Display, event_return: *mut XEvent) -> c_int;
+        pub fn XReparentWindow(
+            display: *mut Display,
+            w: Window,
+            parent: Window,
+            x: c_int,
+            y: c_int,
+        ) -> c_int;
         pub fn XResizeWindow(
             display: *mut Display,
             w: Window,
@@ -76,6 +158,7 @@ mod x11_ffi {
             height: c_uint,
         ) -> c_int;
         pub fn XFlush(display: *mut Display) -> c_int;
+        pub fn XSync(display: *mut Display, discard: c_int) -> c_int;
     }
 }
 
@@ -107,6 +190,22 @@ fn create_vst3_gui(
 ) -> Result<Vst3GuiWindow, String> {
     use std::os::raw::c_uint;
 
+    let header = unsafe { header_ref(ptr) };
+    let gui_mode = header.gui_mode();
+    let requested_api = match gui_mode {
+        GuiMode::Embedded => header.gui_parent_api(),
+        GuiMode::Floating => floating_gui_parent_api(),
+    };
+    if gui_mode == GuiMode::Embedded && requested_api == GuiParentApi::Wayland {
+        return Err(
+            "VST3 GUI: embedded Wayland parent requested, but VST3 on Unix supports X11EmbedWindowID"
+                .to_string(),
+        );
+    }
+    if gui_mode == GuiMode::Floating && requested_api == GuiParentApi::Wayland {
+        tracing::warn!("VST3 GUI: no standard Wayland platform type; falling back to X11");
+    }
+
     let display = unsafe { x11_ffi::XOpenDisplay(std::ptr::null()) };
     if display.is_null() {
         return Err("VST3 GUI: failed to open X11 display".to_string());
@@ -117,18 +216,13 @@ fn create_vst3_gui(
     let black = unsafe { x11_ffi::XBlackPixel(display, screen) };
     let white = unsafe { x11_ffi::XWhitePixel(display, screen) };
 
-    let parent_window = {
-        let header = unsafe { header_ref(ptr) };
-        if header.gui_mode() == GuiMode::Floating {
-            root
-        } else {
-            let parent = header.parent_window_usize();
-            if parent != 0 {
-                parent as x11_ffi::Window
-            } else {
-                root
-            }
-        }
+    let parent_window = if gui_mode == GuiMode::Embedded
+        && requested_api == GuiParentApi::X11
+        && header.parent_window_usize() != 0
+    {
+        header.parent_window_usize() as x11_ffi::Window
+    } else {
+        root
     };
 
     let window = unsafe {
@@ -416,6 +510,14 @@ fn apply_vst3_transport(processor: &crate::vst3::Vst3Processor, ptr: *mut u8) {
     processor.set_transport_info(info);
 }
 
+fn refresh_vst3_param_cache(processor: &crate::vst3::Vst3Processor, cache: &mut HashMap<u32, f32>) {
+    cache.clear();
+    for param in processor.parameters() {
+        let current = processor.get_parameter_value(param.id).unwrap_or(0.0);
+        cache.insert(param.id, current);
+    }
+}
+
 fn write_vst3_echo_ring(
     processor: &crate::vst3::Vst3Processor,
     ptr: *mut u8,
@@ -684,6 +786,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
     header.ready.store(1, Ordering::Release);
 
     let mut vst3_param_cache = HashMap::new();
+    refresh_vst3_param_cache(&processor, &mut vst3_param_cache);
 
     #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
     let mut vst3_gui_window: Option<Vst3GuiWindow> = None;
@@ -710,7 +813,13 @@ pub fn run_vst3(args: Vst3RunArgs) {
                 2 => {
                     let size = header.scratch_size.load(Ordering::Acquire) as usize;
                     match deserialize_vst3_state(scratch, size) {
-                        Ok(state) => processor.restore_state(&state),
+                        Ok(state) => {
+                            let result = processor.restore_state(&state);
+                            if result.is_ok() {
+                                refresh_vst3_param_cache(&processor, &mut vst3_param_cache);
+                            }
+                            result
+                        }
                         Err(e) => Err(e),
                     }
                 }
@@ -881,6 +990,14 @@ fn read_lv2_transport(ptr: *mut u8) -> crate::lv2::Lv2TransportInfo {
 }
 
 #[cfg(unix)]
+fn refresh_lv2_param_cache(processor: &crate::lv2::Lv2Processor, cache: &mut HashMap<u32, f32>) {
+    cache.clear();
+    for port in processor.control_ports_with_values() {
+        cache.insert(port.index, port.value);
+    }
+}
+
+#[cfg(unix)]
 fn write_lv2_echo_ring(
     processor: &crate::lv2::Lv2Processor,
     ptr: *mut u8,
@@ -905,6 +1022,729 @@ fn write_lv2_echo_ring(
             }
             cache.insert(port.index, current);
         }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+type Lv2UiDescriptorFn = unsafe extern "C" fn(index: u32) -> *const LV2UIDescriptorRaw;
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[derive(Clone, Copy)]
+struct Lv2UiWrite {
+    port_index: u32,
+    value: f32,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct Lv2UiController {
+    writes: std::sync::Mutex<Vec<Lv2UiWrite>>,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+extern "C" fn lv2_ui_write_function(
+    controller: LV2UIControllerRaw,
+    port_index: libc::c_uint,
+    buffer_size: libc::c_uint,
+    port_protocol: libc::c_uint,
+    buffer: *const libc::c_void,
+) {
+    if controller.is_null()
+        || buffer.is_null()
+        || port_protocol != 0
+        || buffer_size as usize != std::mem::size_of::<f32>()
+    {
+        return;
+    }
+    let controller = unsafe { &*(controller as *const Lv2UiController) };
+    let value = unsafe { *(buffer as *const f32) };
+    controller
+        .writes
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(Lv2UiWrite { port_index, value });
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct Lv2UiFeatureSet {
+    _uris: Vec<std::ffi::CString>,
+    _features: Vec<LV2Feature>,
+    ptrs: Vec<*const LV2Feature>,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl Lv2UiFeatureSet {
+    fn new(parent: Option<x11_ffi::Window>, show_interface: bool) -> Result<Self, String> {
+        let mut uris =
+            vec![std::ffi::CString::new(LV2_UI_IDLE_INTERFACE).map_err(|e| e.to_string())?];
+        if parent.is_some() {
+            uris.push(std::ffi::CString::new(LV2_UI_PARENT).map_err(|e| e.to_string())?);
+        }
+        if show_interface {
+            uris.push(std::ffi::CString::new(LV2_UI_SHOW_INTERFACE).map_err(|e| e.to_string())?);
+        }
+
+        let mut features = Vec::with_capacity(uris.len());
+        features.push(LV2Feature {
+            uri: uris[0].as_ptr(),
+            data: std::ptr::null_mut(),
+        });
+        if let Some(parent) = parent {
+            features.push(LV2Feature {
+                uri: uris[1].as_ptr(),
+                data: parent as usize as *mut libc::c_void,
+            });
+        }
+        if show_interface {
+            features.push(LV2Feature {
+                uri: uris.last().expect("show interface URI exists").as_ptr(),
+                data: std::ptr::null_mut(),
+            });
+        }
+        let mut ptrs: Vec<*const LV2Feature> =
+            features.iter().map(|feature| feature as *const _).collect();
+        ptrs.push(std::ptr::null());
+        Ok(Self {
+            _uris: uris,
+            _features: features,
+            ptrs,
+        })
+    }
+
+    fn as_ptr(&self) -> *const *const LV2Feature {
+        self.ptrs.as_ptr()
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[derive(Clone, Copy)]
+enum Lv2GuiSurface {
+    X11 {
+        display: *mut x11_ffi::Display,
+        container: x11_ffi::Window,
+        child: x11_ffi::Window,
+        wm_delete_window: x11_ffi::Atom,
+    },
+    External {
+        show_interface: *const LV2UIShowInterface,
+    },
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct Lv2GuiWindow {
+    surface: Lv2GuiSurface,
+    descriptor: *const LV2UIDescriptorRaw,
+    handle: LV2UIHandle,
+    idle_interface: Option<*const LV2UIIdleInterface>,
+    _lib: libloading::Library,
+    _features: Lv2UiFeatureSet,
+    controller: Box<Lv2UiController>,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+unsafe impl Send for Lv2GuiWindow {}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl Lv2GuiWindow {
+    fn show(&self) {
+        match self.surface {
+            Lv2GuiSurface::X11 {
+                display,
+                container,
+                child,
+                ..
+            } => unsafe {
+                x11_ffi::XMapWindow(display, child);
+                x11_ffi::XMapWindow(display, container);
+                x11_ffi::XFlush(display);
+            },
+            Lv2GuiSurface::External { show_interface } => {
+                let show = unsafe { (*show_interface).show };
+                let _ = show(self.handle);
+            }
+        }
+    }
+
+    fn hide(&self) {
+        match self.surface {
+            Lv2GuiSurface::X11 {
+                display, container, ..
+            } => unsafe {
+                x11_ffi::XUnmapWindow(display, container);
+                x11_ffi::XFlush(display);
+            },
+            Lv2GuiSurface::External { show_interface } => {
+                let hide = unsafe { (*show_interface).hide };
+                let _ = hide(self.handle);
+            }
+        }
+    }
+
+    fn poll_x11_close_request(&self) -> bool {
+        let Lv2GuiSurface::X11 {
+            display,
+            container,
+            wm_delete_window,
+            ..
+        } = self.surface
+        else {
+            return false;
+        };
+        if display.is_null() || container == 0 {
+            return false;
+        }
+
+        let mut destroyed = false;
+        unsafe {
+            while x11_ffi::XPending(display) > 0 {
+                let mut event = x11_ffi::XEvent { pad: [0; 24] };
+                x11_ffi::XNextEvent(display, &mut event);
+                match event.type_ {
+                    x11_ffi::CLIENT_MESSAGE => {
+                        let client = event.client_message;
+                        if client.window == container
+                            && client.format == 32
+                            && wm_delete_window != 0
+                            && client.data.l[0] as x11_ffi::Atom == wm_delete_window
+                        {
+                            x11_ffi::XUnmapWindow(display, container);
+                            x11_ffi::XFlush(display);
+                        }
+                    }
+                    x11_ffi::DESTROY_NOTIFY => {
+                        let destroy = event.destroy_window;
+                        if destroy.window == container {
+                            destroyed = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        destroyed
+    }
+
+    fn idle(&self) -> bool {
+        if self.poll_x11_close_request() {
+            return true;
+        }
+        let Some(idle_interface) = self.idle_interface else {
+            return false;
+        };
+        let idle = unsafe { (*idle_interface).idle };
+        idle(self.handle) != 0
+    }
+
+    fn drain_writes(&self) -> Vec<Lv2UiWrite> {
+        self.controller
+            .writes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect()
+    }
+
+    fn send_control_ports(&self, processor: &crate::lv2::Lv2Processor) {
+        let port_event = unsafe { (*self.descriptor).port_event };
+        if (port_event as *const ()) as usize == 0 {
+            return;
+        }
+        for port in processor.ui_control_port_values() {
+            let value = port.value;
+            port_event(
+                self.handle,
+                port.index,
+                std::mem::size_of::<f32>() as u32,
+                0,
+                (&value as *const f32).cast(),
+            );
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl Drop for Lv2GuiWindow {
+    fn drop(&mut self) {
+        unsafe {
+            if let Lv2GuiSurface::External { show_interface } = self.surface {
+                ((*show_interface).hide)(self.handle);
+            }
+            let cleanup = (*self.descriptor).cleanup;
+            if (cleanup as *const ()) as usize != 0 && !self.handle.is_null() {
+                cleanup(self.handle);
+            }
+            if let Lv2GuiSurface::X11 {
+                display, container, ..
+            } = self.surface
+                && !display.is_null()
+            {
+                x11_ffi::XDestroyWindow(display, container);
+                x11_ffi::XFlush(display);
+                x11_ffi::XCloseDisplay(display);
+            }
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn file_uri_to_path(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    let path_start = rest.find('/')?;
+    let authority = &rest[..path_start];
+    if !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost") {
+        return None;
+    }
+    let path = &rest[path_start..];
+    let mut out = Vec::with_capacity(path.len());
+    let bytes = path.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            let hex = std::str::from_utf8(&bytes[i + 1..=i + 2]).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn load_lv2_ui_descriptor(
+    ui: &crate::lv2::Lv2UiInfo,
+) -> Result<(libloading::Library, *const LV2UIDescriptorRaw, String), String> {
+    let ui_binary = file_uri_to_path(&ui.binary_uri)
+        .ok_or_else(|| format!("LV2 GUI: unsupported UI binary URI '{}'", ui.binary_uri))?;
+    let lib = unsafe {
+        libloading::os::unix::Library::open(
+            Some(&ui_binary),
+            libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL,
+        )
+        .map(libloading::Library::from)
+    }
+    .map_err(|e| format!("LV2 GUI: failed to open UI library '{ui_binary}': {e}"))?;
+    let descriptor_fn = unsafe {
+        *lib.get::<Lv2UiDescriptorFn>(b"lv2ui_descriptor\0")
+            .map_err(|e| format!("LV2 GUI: no lv2ui_descriptor in '{ui_binary}': {e}"))?
+    };
+    let descriptor = {
+        let mut index = 0_u32;
+        loop {
+            let descriptor = unsafe { descriptor_fn(index) };
+            if descriptor.is_null() {
+                return Err(format!(
+                    "LV2 GUI: UI descriptor '{}' not found in '{}'",
+                    ui.uri, ui_binary
+                ));
+            }
+            let descriptor_uri = unsafe { std::ffi::CStr::from_ptr((*descriptor).uri) };
+            if descriptor_uri.to_bytes() == ui.uri.as_bytes() {
+                break descriptor;
+            }
+            index += 1;
+        }
+    };
+    Ok((lib, descriptor, ui_binary))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn lv2_ui_interface<T>(descriptor: *const LV2UIDescriptorRaw, uri: &str) -> Option<*const T> {
+    unsafe {
+        (*descriptor).extension_data.and_then(|extension_data| {
+            let uri = std::ffi::CString::new(uri).ok()?;
+            let ptr = extension_data(uri.as_ptr());
+            (!ptr.is_null()).then_some(ptr as *const T)
+        })
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn instantiate_lv2_ui(
+    ui: &crate::lv2::Lv2UiInfo,
+    processor: &crate::lv2::Lv2Processor,
+    plugin_uri: &str,
+    parent: Option<x11_ffi::Window>,
+    show_interface: bool,
+) -> Result<Lv2GuiWindow, String> {
+    let mut ui_bundle = file_uri_to_path(&ui.bundle_uri)
+        .ok_or_else(|| format!("LV2 GUI: unsupported UI bundle URI '{}'", ui.bundle_uri))?;
+    if !ui_bundle.ends_with(std::path::MAIN_SEPARATOR) {
+        ui_bundle.push(std::path::MAIN_SEPARATOR);
+    }
+
+    let (lib, descriptor, ui_binary) = load_lv2_ui_descriptor(ui)?;
+    let features = Lv2UiFeatureSet::new(parent, show_interface)?;
+    let controller = Box::new(Lv2UiController {
+        writes: std::sync::Mutex::new(Vec::new()),
+    });
+    let plugin_uri = std::ffi::CString::new(plugin_uri).map_err(|e| e.to_string())?;
+    let bundle_path = std::ffi::CString::new(ui_bundle).map_err(|e| e.to_string())?;
+    let mut widget: LV2UIWidget = std::ptr::null_mut();
+    let handle = unsafe {
+        ((*descriptor).instantiate_raw)(
+            descriptor,
+            plugin_uri.as_ptr(),
+            bundle_path.as_ptr(),
+            Some(lv2_ui_write_function),
+            (&*controller as *const Lv2UiController).cast(),
+            &mut widget,
+            features.as_ptr(),
+        )
+    };
+    if handle.is_null() {
+        return Err(format!(
+            "LV2 GUI: failed to instantiate UI '{}' from '{}'",
+            ui.uri, ui_binary
+        ));
+    }
+
+    let idle_interface = lv2_ui_interface::<LV2UIIdleInterface>(descriptor, LV2_UI_IDLE_INTERFACE);
+    let show_interface = lv2_ui_interface::<LV2UIShowInterface>(descriptor, LV2_UI_SHOW_INTERFACE);
+
+    if parent.is_none() {
+        let Some(show_interface) = show_interface else {
+            unsafe {
+                ((*descriptor).cleanup)(handle);
+            }
+            return Err(format!(
+                "LV2 GUI: UI '{}' does not provide ui:showInterface",
+                ui.uri
+            ));
+        };
+        let show = unsafe { (*show_interface).show };
+        if show(handle) != 0 {
+            unsafe {
+                ((*descriptor).cleanup)(handle);
+            }
+            return Err(format!("LV2 GUI: UI '{}' refused to show", ui.uri));
+        }
+        let window = Lv2GuiWindow {
+            surface: Lv2GuiSurface::External { show_interface },
+            descriptor,
+            handle,
+            idle_interface,
+            _lib: lib,
+            _features: features,
+            controller,
+        };
+        window.send_control_ports(processor);
+        return Ok(window);
+    }
+
+    if widget.is_null() {
+        unsafe {
+            ((*descriptor).cleanup)(handle);
+        }
+        return Err(format!("LV2 GUI: UI '{}' returned a null widget", ui.uri));
+    }
+
+    let window = Lv2GuiWindow {
+        surface: Lv2GuiSurface::X11 {
+            display: std::ptr::null_mut(),
+            container: 0,
+            child: widget as usize as x11_ffi::Window,
+            wm_delete_window: 0,
+        },
+        descriptor,
+        handle,
+        idle_interface,
+        _lib: lib,
+        _features: features,
+        controller,
+    };
+    window.send_control_ports(processor);
+    Ok(window)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn create_lv2_x11_gui(
+    processor: &crate::lv2::Lv2Processor,
+    plugin_uri: &str,
+    ptr: *mut u8,
+    ui: &crate::lv2::Lv2UiInfo,
+) -> Result<Lv2GuiWindow, String> {
+    let display = unsafe { x11_ffi::XOpenDisplay(std::ptr::null()) };
+    if display.is_null() {
+        return Err("LV2 GUI: failed to open X11 display".to_string());
+    }
+
+    let screen = unsafe { x11_ffi::XDefaultScreen(display) };
+    let root = unsafe { x11_ffi::XRootWindow(display, screen) };
+    let black = unsafe { x11_ffi::XBlackPixel(display, screen) };
+    let white = unsafe { x11_ffi::XWhitePixel(display, screen) };
+    let parent_window = {
+        let header = unsafe { header_ref(ptr) };
+        if header.gui_mode() == GuiMode::Floating {
+            root
+        } else {
+            match header.gui_parent_api() {
+                GuiParentApi::X11 => {
+                    let parent = header.parent_window_usize();
+                    if parent != 0 {
+                        parent as x11_ffi::Window
+                    } else {
+                        root
+                    }
+                }
+                GuiParentApi::Wayland => root,
+                GuiParentApi::None => root,
+            }
+        }
+    };
+    let container = unsafe {
+        x11_ffi::XCreateSimpleWindow(display, parent_window, 0, 0, 800, 600, 1, black, white)
+    };
+    if container == 0 {
+        unsafe {
+            x11_ffi::XCloseDisplay(display);
+        }
+        return Err("LV2 GUI: failed to create X11 container window".to_string());
+    }
+    if let Ok(title) = std::ffi::CString::new(processor.name()) {
+        unsafe {
+            x11_ffi::XStoreName(display, container, title.as_ptr());
+        }
+    }
+    let wm_delete_window = if let Ok(atom_name) = std::ffi::CString::new("WM_DELETE_WINDOW") {
+        let mut atom = unsafe { x11_ffi::XInternAtom(display, atom_name.as_ptr(), 0) };
+        if atom != 0 {
+            unsafe {
+                x11_ffi::XSetWMProtocols(display, container, &mut atom, 1);
+            }
+        }
+        atom
+    } else {
+        0
+    };
+    unsafe {
+        x11_ffi::XSelectInput(display, container, x11_ffi::STRUCTURE_NOTIFY_MASK);
+        x11_ffi::XSync(display, 0);
+    }
+
+    let result = (|| {
+        let mut window = instantiate_lv2_ui(ui, processor, plugin_uri, Some(container), false)?;
+        let widget = match window.surface {
+            Lv2GuiSurface::X11 { child, .. } => child,
+            Lv2GuiSurface::External { .. } => return Ok(window),
+        };
+        unsafe {
+            x11_ffi::XReparentWindow(display, widget, container, 0, 0);
+            x11_ffi::XMapWindow(display, widget);
+            x11_ffi::XMapWindow(display, container);
+            x11_ffi::XFlush(display);
+        }
+        window.surface = Lv2GuiSurface::X11 {
+            display,
+            container,
+            child: widget,
+            wm_delete_window,
+        };
+        Ok(window)
+    })();
+
+    if result.is_err() {
+        unsafe {
+            x11_ffi::XDestroyWindow(display, container);
+            x11_ffi::XFlush(display);
+            x11_ffi::XCloseDisplay(display);
+        }
+    }
+    result
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn create_lv2_external_gui(
+    processor: &crate::lv2::Lv2Processor,
+    plugin_uri: &str,
+    ui: &crate::lv2::Lv2UiInfo,
+) -> Result<Lv2GuiWindow, String> {
+    instantiate_lv2_ui(ui, processor, plugin_uri, None, true)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn lv2_ui_has_x11_class(ui: &crate::lv2::Lv2UiInfo) -> bool {
+    ui.class_uris.iter().any(|class| class == LV2_UI_X11_UI)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn lv2_ui_has_wayland_class(ui: &crate::lv2::Lv2UiInfo) -> bool {
+    ui.class_uris
+        .iter()
+        .any(|class| class.to_ascii_lowercase().contains("wayland"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn lv2_ui_supports_show_interface(ui: &crate::lv2::Lv2UiInfo) -> bool {
+    ui.extension_data_uris
+        .iter()
+        .any(|uri| uri == LV2_UI_SHOW_INTERFACE)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn floating_gui_parent_api() -> GuiParentApi {
+    let forced_x11 = ["WINIT_UNIX_BACKEND", "GDK_BACKEND", "QT_QPA_PLATFORM"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .filter_map(|value| value.into_string().ok())
+        .any(|value| {
+            let value = value.to_ascii_lowercase();
+            value.contains("x11") || value.contains("xcb")
+        });
+    if forced_x11 {
+        GuiParentApi::X11
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        GuiParentApi::Wayland
+    } else if std::env::var_os("DISPLAY").is_some() {
+        GuiParentApi::X11
+    } else {
+        GuiParentApi::None
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn create_lv2_embedded_wayland_gui(
+    processor: &crate::lv2::Lv2Processor,
+    plugin_uri: &str,
+    parent: usize,
+    ui: &crate::lv2::Lv2UiInfo,
+) -> Result<Lv2GuiWindow, String> {
+    if parent == 0 {
+        return Err("LV2 GUI: embedded Wayland requested without a parent surface".to_string());
+    }
+    instantiate_lv2_ui(
+        ui,
+        processor,
+        plugin_uri,
+        Some(parent as x11_ffi::Window),
+        false,
+    )
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn try_lv2_external_gui_by_backend(
+    processor: &crate::lv2::Lv2Processor,
+    plugin_uri: &str,
+    ui_infos: &[crate::lv2::Lv2UiInfo],
+    backend: GuiParentApi,
+) -> Result<Lv2GuiWindow, Vec<String>> {
+    let mut errors = Vec::new();
+    for ui in ui_infos.iter().filter(|ui| {
+        lv2_ui_supports_show_interface(ui)
+            && match backend {
+                GuiParentApi::Wayland => lv2_ui_has_wayland_class(ui),
+                GuiParentApi::X11 => lv2_ui_has_x11_class(ui),
+                GuiParentApi::None => false,
+            }
+    }) {
+        match create_lv2_external_gui(processor, plugin_uri, ui) {
+            Ok(window) => return Ok(window),
+            Err(error) => errors.push(error),
+        }
+    }
+    Err(errors)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn create_lv2_gui(
+    processor: &crate::lv2::Lv2Processor,
+    plugin_uri: &str,
+    ptr: *mut u8,
+) -> Result<Lv2GuiWindow, String> {
+    let ui_infos = processor.ui_infos();
+    if ui_infos.is_empty() {
+        return Err("LV2 GUI: plugin does not advertise any UI".to_string());
+    }
+
+    let header = unsafe { header_ref(ptr) };
+    let gui_mode = header.gui_mode();
+    let requested_api = match gui_mode {
+        GuiMode::Embedded => header.gui_parent_api(),
+        GuiMode::Floating => floating_gui_parent_api(),
+    };
+    let parent = header.parent_window_usize();
+
+    match requested_api {
+        GuiParentApi::Wayland => {
+            if gui_mode == GuiMode::Floating {
+                match try_lv2_external_gui_by_backend(
+                    processor,
+                    plugin_uri,
+                    &ui_infos,
+                    GuiParentApi::Wayland,
+                ) {
+                    Ok(window) => return Ok(window),
+                    Err(errors) if !errors.is_empty() => tracing::warn!(
+                        errors = %errors.join(" | "),
+                        "LV2 GUI: floating Wayland UI failed; checking X11 fallback"
+                    ),
+                    Err(_) => {}
+                }
+            } else {
+                for ui in ui_infos.iter().filter(|ui| lv2_ui_has_wayland_class(ui)) {
+                    match create_lv2_embedded_wayland_gui(processor, plugin_uri, parent, ui) {
+                        Ok(window) => return Ok(window),
+                        Err(error) => tracing::warn!(%error, "LV2 GUI: embedded Wayland UI failed"),
+                    }
+                }
+            }
+        }
+        GuiParentApi::X11 => {
+            if gui_mode == GuiMode::Floating {
+                match try_lv2_external_gui_by_backend(
+                    processor,
+                    plugin_uri,
+                    &ui_infos,
+                    GuiParentApi::X11,
+                ) {
+                    Ok(window) => return Ok(window),
+                    Err(errors) if !errors.is_empty() => tracing::warn!(
+                        errors = %errors.join(" | "),
+                        "LV2 GUI: floating X11 UI failed; checking embedded X11 fallback"
+                    ),
+                    Err(_) => {}
+                }
+            }
+        }
+        GuiParentApi::None => {}
+    }
+
+    let Some(ui) = ui_infos.iter().find(|ui| lv2_ui_has_x11_class(ui)) else {
+        let supported = ui_infos
+            .into_iter()
+            .flat_map(|ui| ui.class_uris)
+            .collect::<Vec<_>>();
+        return Err(format!(
+            "LV2 GUI: no supported UI for {:?} {:?}; plugin UI types: {}",
+            gui_mode,
+            requested_api,
+            supported.join(", ")
+        ));
+    };
+
+    create_lv2_x11_gui(processor, plugin_uri, ptr, ui)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn pump_lv2_gui(
+    window: &mut Option<Lv2GuiWindow>,
+    processor: &mut crate::lv2::Lv2Processor,
+    ptr: *mut u8,
+    param_cache: &mut HashMap<u32, f32>,
+) {
+    let Some(gui_window) = window else {
+        return;
+    };
+    for write in gui_window.drain_writes() {
+        let _ = processor.set_control_value(write.port_index, write.value);
+    }
+    write_lv2_echo_ring(processor, ptr, param_cache);
+    gui_window.send_control_ports(processor);
+    if gui_window.idle() {
+        *window = None;
     }
 }
 
@@ -1369,6 +2209,9 @@ pub fn run_lv2(
     header.ready.store(1, Ordering::Release);
 
     let mut lv2_param_cache = HashMap::new();
+    refresh_lv2_param_cache(&processor, &mut lv2_param_cache);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut lv2_gui_window: Option<Lv2GuiWindow> = None;
 
     loop {
         if header.shutdown_request.load(Ordering::Acquire) != 0 {
@@ -1393,12 +2236,43 @@ pub fn run_lv2(
                 2 => {
                     let size = header.scratch_size.load(Ordering::Acquire) as usize;
                     match deserialize_lv2_state(scratch, size) {
-                        Ok(state) => processor.restore_state(&state),
+                        Ok(state) => {
+                            let result = processor.restore_state(&state);
+                            if result.is_ok() {
+                                refresh_lv2_param_cache(&processor, &mut lv2_param_cache);
+                            }
+                            result
+                        }
                         Err(e) => Err(e),
                     }
                 }
-                3 => Err("LV2 GUI not yet supported".to_string()),
-                4 => Ok(()),
+                3 => {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        if let Some(window) = &lv2_gui_window {
+                            window.show();
+                            window.send_control_ports(&processor);
+                            Ok(())
+                        } else {
+                            create_lv2_gui(&processor, plugin_uri, ptr).map(|window| {
+                                lv2_gui_window = Some(window);
+                            })
+                        }
+                    }
+                    #[cfg(any(not(unix), target_os = "macos"))]
+                    {
+                        Err("LV2 GUI is only supported on X11 hosts".to_string())
+                    }
+                }
+                4 => {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        if let Some(window) = &lv2_gui_window {
+                            window.hide();
+                        }
+                    }
+                    Ok(())
+                }
                 5 => {
                     std::sync::atomic::fence(Ordering::SeqCst);
                     let dir = unsafe { read_resource_directory_from_scratch(ptr) };
@@ -1459,7 +2333,16 @@ pub fn run_lv2(
         let wait_result = events.wait_daw(Duration::from_millis(100));
         match wait_result {
             Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                pump_lv2_gui(
+                    &mut lv2_gui_window,
+                    &mut processor,
+                    ptr,
+                    &mut lv2_param_cache,
+                );
+                continue;
+            }
             Err(_e) => {
                 break;
             }
@@ -1475,6 +2358,13 @@ pub fn run_lv2(
         }
 
         apply_lv2_param_ring(&mut processor, ptr);
+        #[cfg(all(unix, not(target_os = "macos")))]
+        pump_lv2_gui(
+            &mut lv2_gui_window,
+            &mut processor,
+            ptr,
+            &mut lv2_param_cache,
+        );
 
         let transport = read_lv2_transport(ptr);
 

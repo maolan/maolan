@@ -5,7 +5,7 @@ Last updated: 2026-07-09
 ## Runtime and Platform Behavior
 
 - Linux and FreeBSD builds run on Wayland when available and fall back to X11 (Xorg) when Wayland is unavailable.
-- Plugin UI embedding on Unix still uses X11, so an X11 server must be reachable even under Wayland (for example via XWayland).
+- Plugin UIs on Unix prefer native Wayland/external UIs when the plugin exposes them, and fall back to X11/XWayland for plugins that only provide X11 UIs.
 - macOS builds support CLAP and VST3, but not the Unix LV2 host path.
 - Plugin discovery runs automatically on startup:
   - Linux / FreeBSD: LV2, VST3, CLAP

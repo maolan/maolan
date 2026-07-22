@@ -94,7 +94,8 @@ modules:
 
 - `clap` – Low-level CLAP C FFI bindings and host extension helpers.
 - `host` – Shared-memory runtime that drives a plugin instance.
-- `lv2` – LV2 host implementation (Unix only).
+- `lv2` – LV2 host implementation (Unix only), built on the pure-Rust
+  `maolan-lv2` crate (no C lilv dependency).
 - `scan` – Plugin scanner and metadata serialization.
 - `paths` – Standard plugin installation paths for each platform.
 - `util` – Small helpers such as `SimpleMutex` and `AudioPort`.
@@ -115,8 +116,9 @@ cargo build --release
 ### Platform-specific dependencies
 
 - **Linux / FreeBSD**
-  - `liblilv` / `lv2` development libraries (for LV2 support)
-  - `libsuil` and X11 development libraries (for LV2/VST3 GUI support)
+  - X11 development libraries (for VST3 GUI support)
+  - LV2 support is pure Rust (via `maolan-lv2`); no `liblilv`/`lv2` system
+    libraries are required.
 - **Windows**
   - No extra system libraries required.
 

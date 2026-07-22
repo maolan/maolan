@@ -1108,7 +1108,7 @@ impl Tracks {
         let buttons_bottom = TRACK_FOLDER_HEADER_HEIGHT + buttons_container_height;
         let slider_bottom = buttons_bottom + slider_height_with_spacing;
         let resize_top = height - resize_handle_height;
-        let show_buttons = track.is_folder || resize_top >= buttons_bottom;
+        let show_buttons = resize_top >= buttons_bottom;
         let show_volume_slider = show_buttons && resize_top >= slider_bottom;
         let show_meter = track.meter_out_db.is_some();
 
@@ -1317,11 +1317,10 @@ impl Tracks {
             Space::new().width(Length::Fixed(0.0)).into()
         };
 
-        let (track_container_element, track_fill_element): (
-            Element<'static, Message>,
-            Element<'static, Message>,
-        ) = if track.is_folder {
-            (
+        let children_overlay: Option<Element<'static, Message>> = if track.is_folder
+            && track.folder_open
+        {
+            Some(
                 container(Column::with_children(children).spacing(TRACK_SUBTRACK_GAP))
                     .width(Length::Fill)
                     .padding(iced::Padding {
@@ -1333,20 +1332,15 @@ impl Tracks {
                         ..container::Style::default()
                     })
                     .into(),
-                Space::new().height(Length::Fill).into(),
             )
         } else {
-            (
-                Space::new().height(Length::Fixed(0.0)).into(),
-                Space::new().height(Length::Fill).into(),
-            )
+            None
         };
 
         let track_content: Element<'static, Message> = column![
             header,
             body_element,
-            track_container_element,
-            track_fill_element,
+            Space::new().height(Length::Fill),
             lane_rows.spacing(TRACK_SUBTRACK_GAP),
         ]
         .spacing(0)
@@ -1354,38 +1348,39 @@ impl Tracks {
         .into();
 
         let mut track_ui = Stack::new().push(track_content);
-        if !track.is_folder {
-            let resize_handle = mouse_area(
-                mouse_area(
-                    container("")
-                        .width(Length::Fill)
-                        .height(Length::Fixed(resize_handle_height))
-                        .style(move |_theme| container::Style {
-                            background: if is_resize_hovered {
-                                Some(Background::Color(Color::from_rgba(0.51, 0.68, 0.92, 0.95)))
-                            } else {
-                                None
-                            },
-                            border: Border {
-                                color: Color::TRANSPARENT,
-                                width: 0.0,
-                                radius: 2.0.into(),
-                            },
-                            ..container::Style::default()
-                        }),
-                )
-                .on_enter(Message::TrackResizeHover(track.name.clone(), true))
-                .on_exit(Message::TrackResizeHover(track.name.clone(), false))
-                .on_press(Message::TrackResizeStart(track.name.clone())),
-            )
-            .on_enter(Message::ShortcutsHint(Some("Resize height".to_string())))
-            .on_exit(Message::ShortcutsHint(None));
-
-            track_ui = track_ui.push(pin(resize_handle).position(Point::new(
-                0.0,
-                (visible_height - 8.0 - resize_handle_height).max(0.0),
-            )));
+        if let Some(children_overlay) = children_overlay {
+            track_ui = track_ui.push(pin(children_overlay).position(Point::new(0.0, height)));
         }
+        let resize_handle = mouse_area(
+            mouse_area(
+                container("")
+                    .width(Length::Fill)
+                    .height(Length::Fixed(resize_handle_height))
+                    .style(move |_theme| container::Style {
+                        background: if is_resize_hovered {
+                            Some(Background::Color(Color::from_rgba(0.51, 0.68, 0.92, 0.95)))
+                        } else {
+                            None
+                        },
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 2.0.into(),
+                        },
+                        ..container::Style::default()
+                    }),
+            )
+            .on_enter(Message::TrackResizeHover(track.name.clone(), true))
+            .on_exit(Message::TrackResizeHover(track.name.clone(), false))
+            .on_press(Message::TrackResizeStart(track.name.clone())),
+        )
+        .on_enter(Message::ShortcutsHint(Some("Resize height".to_string())))
+        .on_exit(Message::ShortcutsHint(None));
+
+        track_ui = track_ui.push(pin(resize_handle).position(Point::new(
+            0.0,
+            (height - 8.0 - resize_handle_height).max(0.0),
+        )));
         if show_meter {
             let meter_height = meter_total_height(track.audio_outs.max(1));
             let meter_top = slider_bottom + 4.0;
@@ -1638,7 +1633,7 @@ impl Tracks {
                                     TRACK_FOLDER_HEADER_HEIGHT + buttons_container_height;
                                 let slider_bottom = buttons_bottom + slider_height_with_spacing;
                                 let resize_top = track.height - resize_handle_height;
-                                let show_buttons = track.is_folder || resize_top >= buttons_bottom;
+                                let show_buttons = resize_top >= buttons_bottom;
                                 let show_volume_slider =
                                     show_buttons && resize_top >= slider_bottom;
                                 let audio_outs = track.audio.outs;
