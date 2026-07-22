@@ -33,11 +33,11 @@ iced = { version = "0.14.0", features = ["advanced", "image", "lazy", "tokio"] }
 iced_aw = "0.14.1"
 iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
-maolan-generate = "0.0.8"
-maolan-engine = "0.2.39"
+maolan-generate = {git = "https://github.com/maolan/generate"}
+maolan-engine = {git = "https://github.com/maolan/engine"}
 maolan-plugin-host = { version = "0.0.5", path = "plugin-host" }
-maolan-widgets = "0.0.26"
-mixosc = "0.0.9"
+maolan-widgets = {git = "https://github.com/maolan/widgets" }
+mixosc = { git = "https://github.com/maolan/mixosc"}
 midly = "0.5.3"
 pitch-detection = "0.3.0"
 ratatui = "0.30.0"

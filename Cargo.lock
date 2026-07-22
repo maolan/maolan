@@ -5084,6 +5084,7 @@ dependencies = [
 [[package]]
 name = "maolan-engine"
 version = "0.2.39"
+source = "git+https://github.com/maolan/engine#f2b9dc0e8fe36c659ba7846e6da0323c7b77a028"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5094,7 +5095,7 @@ dependencies = [
  "cpal",
  "ebur128",
  "jack",
- "maolan-plugin-protocol",
+ "maolan-plugin-protocol 0.0.14",
  "midir",
  "midly",
  "nix 0.31.3",
@@ -5119,8 +5120,7 @@ dependencies = [
 [[package]]
 name = "maolan-generate"
 version = "0.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95523c5965e3d1c14cbbb3fe15326b72a1fcc3db40d5e3f66204987ce50726ad"
+source = "git+https://github.com/maolan/generate#3907ccaa5697d2051e2d81b720d3542ac56fed03"
 dependencies = [
  "anyhow",
  "burn",
@@ -5149,7 +5149,7 @@ dependencies = [
  "libloading 0.9.0",
  "lilv",
  "lv2_raw",
- "maolan-plugin-protocol",
+ "maolan-plugin-protocol 0.0.13",
  "serde",
  "serde_json",
  "tracing",
@@ -5170,6 +5170,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "maolan-plugin-protocol"
+version = "0.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22195c02461dc7fe5fbfbc26449fb53343fb7efa61a49a278b6afab9898ecf46"
+dependencies = [
+ "libc",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "maolan-widgets"
 version = "0.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5183,8 +5194,7 @@ dependencies = [
 [[package]]
 name = "maolan-widgets"
 version = "0.0.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63f8687a716cc3eae64dee28aa58772d9ef38b5aa15f8db7a9156a555cba44f5"
+source = "git+https://github.com/maolan/widgets#10e2ad69daf36721f98089e414f4c9931d2e30fd"
 dependencies = [
  "iced",
  "iced_fonts",
@@ -5333,8 +5343,7 @@ dependencies = [
 [[package]]
 name = "mixosc"
 version = "0.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "321d2730a4ddf8fbb0bb062bbd27f8384c6d52e17bf1281fbcf040aa1e0dd271"
+source = "git+https://github.com/maolan/mixosc#6380da287f6f351fd4e6fa3eae4cc7c08dc9fb73"
 dependencies = [
  "iced",
  "iced_fonts",
