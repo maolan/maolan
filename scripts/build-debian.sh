@@ -92,16 +92,8 @@ sudo apt-get install -y \
     jackd2 \
     libjack-jackd2-dev \
     libasound2-dev \
-    liblilv-dev \
-    libsuil-dev \
-    libgtk2.0-dev \
-    llvm-dev \
-    libclang-dev \
     curl \
     ca-certificates \
-    cmake \
-    protobuf-compiler \
-    libprotobuf-dev \
     git
 
 # ---------------------------------------------------------------------------
@@ -122,14 +114,6 @@ fi
 # Ensure cargo is in PATH for the rest of the script
 if [[ -f "${CARGO_HOME:-$HOME/.cargo}/env" ]]; then
     source "${CARGO_HOME:-$HOME/.cargo}/env"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. Set LIBCLANG_PATH if needed
-# ---------------------------------------------------------------------------
-if command -v llvm-config &>/dev/null; then
-    export LIBCLANG_PATH="$(llvm-config --libdir)"
-    echo "LIBCLANG_PATH set to: $LIBCLANG_PATH"
 fi
 
 # ---------------------------------------------------------------------------
@@ -214,7 +198,7 @@ Version: $PKG_VERSION
 Section: sound
 Priority: optional
 Architecture: $DEB_ARCH
-Depends: libjack-jackd2-0, libasound2t64, liblilv-0-0, libsuil-0-0, libgtk2.0-0t64
+Depends: libjack-jackd2-0, libasound2t64
 Maintainer: Maolan Team <maolan@github.io>
 Description: Rust Digital Audio Workstation
  Maolan is a Rust DAW focused on recording, editing, routing,

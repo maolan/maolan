@@ -37,7 +37,7 @@ Maolan currently includes:
 
 - Rust toolchain (edition 2024)
 
-For Unix plugin/audio integrations, install platform libraries as needed (for example `jack`, `lilv`, `suil`, `gtk2`, `rust`, and `cargo` where applicable).
+For Unix audio integrations, install platform libraries as needed (for example `jack`, `alsa`, `rust`, and `cargo` where applicable).
 
 ### Windows
 
