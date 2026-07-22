@@ -93,14 +93,6 @@ sudo dnf install -y \
     gcc-c++ \
     jack-audio-connection-kit-devel \
     alsa-lib-devel \
-    lilv-devel \
-    suil-devel \
-    gtk2-devel \
-    llvm-devel \
-    clang-devel \
-    cmake \
-    protobuf-compiler \
-    protobuf-devel \
     git \
     rpm-build \
     curl \
@@ -116,16 +108,6 @@ if ! command -v cargo &>/dev/null; then
     sudo dnf install -y rust cargo
 else
     echo "Rust already installed: $(rustc --version)"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. Set LIBCLANG_PATH if needed
-# ---------------------------------------------------------------------------
-echo ""
-echo "[3/6] Configuring build environment..."
-if command -v llvm-config &>/dev/null; then
-    export LIBCLANG_PATH="$(llvm-config --libdir)"
-    echo "LIBCLANG_PATH set to: $LIBCLANG_PATH"
 fi
 
 # ---------------------------------------------------------------------------
@@ -214,7 +196,7 @@ URL:            https://github.com/maolan/maolan
 Source0:        maolan-files.tar.gz
 BuildArch:      $RPM_ARCH
 
-Requires:       jack-audio-connection-kit, alsa-lib, lilv-libs, suil, gtk2
+Requires:       jack-audio-connection-kit, alsa-lib
 
 %description
 Maolan is a Rust DAW focused on recording, editing, routing,

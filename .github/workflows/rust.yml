@@ -48,22 +48,12 @@ jobs:
             pkg-config \
             jackd2 \
             libjack-jackd2-dev \
-            libasound2-dev \
-            liblilv-dev \
-            libsuil-dev \
-            libgtk2.0-dev \
-            librubberband-dev \
-            rubberband-cli \
-            llvm-dev \
-            libclang-dev
+            libasound2-dev
 
       - name: Save apt cache
         run: |
           mkdir -p ~/apt-cache
           cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
-
-      - name: Set LIBCLANG_PATH
-        run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
       - name: Check formatting
         run: cargo fmt --check
@@ -111,22 +101,12 @@ jobs:
             pkg-config \
             jackd2 \
             libjack-jackd2-dev \
-            libasound2-dev \
-            liblilv-dev \
-            libsuil-dev \
-            libgtk2.0-dev \
-            librubberband-dev \
-            rubberband-cli \
-            llvm-dev \
-            libclang-dev
+            libasound2-dev
 
       - name: Save apt cache
         run: |
           mkdir -p ~/apt-cache
           cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
-
-      - name: Set LIBCLANG_PATH
-        run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
       - name: Build release binary
         run: cargo build --release
