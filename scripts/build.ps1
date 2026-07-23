@@ -207,7 +207,7 @@ if ($versionMatch.Success) {
     $productVersion = "0.0.0.0"
 }
 $iconPath = "$nsiTemp\maolan-icon.ico"
-Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) "images\maolan-icon.ico") $iconPath -Force
+Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) "assets\images\maolan-icon.ico") $iconPath -Force
 Push-Location $nsiTemp
 & $nsisPath "/INPUTCHARSET" "UTF8" "/DMAOLAN_VERSION=$pkgVersion" "/DMAOLAN_PRODUCT_VERSION=$productVersion" "/DMAOLAN_ICON=$iconPath" "$nsiTemp\installer.nsi"
 Pop-Location

@@ -118,8 +118,8 @@ jobs:
           cp target/release/maolan "dist/${ASSET_BASENAME}/maolan"
           cp target/release/maolan-cli "dist/${ASSET_BASENAME}/maolan-cli"
           cp target/release/maolan-osc "dist/${ASSET_BASENAME}/maolan-osc"
-          cp images/maolan.svg "dist/${ASSET_BASENAME}/maolan.svg"
-          cp desktop/maolan-linux.desktop "dist/${ASSET_BASENAME}/maolan.desktop"
+          cp assets/images/maolan.svg "dist/${ASSET_BASENAME}/maolan.svg"
+          cp assets/desktop/maolan-linux.desktop "dist/${ASSET_BASENAME}/maolan.desktop"
           tar -C dist -czf "dist/${ASSET_BASENAME}.tar.gz" "${ASSET_BASENAME}"
 
       - name: Upload Linux artifact

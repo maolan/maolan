@@ -39,7 +39,7 @@ VIAddVersionKey "LegalCopyright" "BSD-2-Clause"
 ;--------------------------------
 !define MUI_ABORTWARNING
 !ifndef MAOLAN_ICON
-!define MAOLAN_ICON "..\images\maolan-icon.ico"
+!define MAOLAN_ICON "..\assets\images\maolan-icon.ico"
 !endif
 !define MUI_ICON "${MAOLAN_ICON}"
 !define MUI_UNICON "${MAOLAN_ICON}"
