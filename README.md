@@ -2,13 +2,13 @@
 
 [![crates.io](https://img.shields.io/crates/v/maolan.svg)](https://crates.io/crates/maolan)
 
-![Maolan](images/maolan.svg)
+![Maolan](assets/images/maolan.svg)
 
 Maolan is a Rust DAW focused on recording, editing, routing, automation, export, and plugin hosting.
 
 [maolan.github.io](https://maolan.github.io)
 
-![workspace](images/workspace.gif)
+![workspace](assets/images/workspace.gif)
 
 ## Current Scope
 
@@ -42,13 +42,14 @@ For Unix audio integrations, install platform libraries as needed (for example `
 ### Windows
 
 In the Windows environment execute the following:
-`powershell -ExecutionPolicy Bypass -File "\\172.16.0.254\repos\maolan\daw\build.ps1"`
+`powershell -ExecutionPolicy Bypass -File "\\172.16.0.254\repos\maolan\maolan\scripts\build.ps1"`
 
 ### Compile and run (Unix)
 
-The repository root is a single Cargo package (not a workspace).
+`maolan/` is a Cargo workspace. Build from that directory:
 
 ```bash
+cd maolan
 cargo build --workspace --release
 cargo run --release
 ```
@@ -56,16 +57,17 @@ cargo run --release
 ### Debug logging
 
 ```bash
+cd maolan
 cargo run --release -- --log-level debug
 ```
 
 ## Documentation
 
-- [Features](docs/FEATURES.md)
-- [Operations, Storage, and Recovery](docs/OPERATIONS.md)
-- [Shortcuts and Mouse Gestures](docs/SHORTCUTS.md)
-- [Plugin Routing and Sidechains](docs/PLUGIN_ROUTING.md)
-- [History Audit Notes](docs/HISTORY_AUDIT.md)
+- [Features](../doc/src/features.md)
+- [Workflow](../doc/src/workflow.md)
+- [Shortcuts and Mouse Gestures](../doc/src/shortcuts.md)
+- [Plugin Routing and Sidechains](../doc/src/routing.md)
+- [History Audit Notes](../doc/src/history-audit.md)
 
 ## Project Notes
 

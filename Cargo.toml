@@ -23,9 +23,6 @@ members = [".", "plugin-host"]
 opt-level = 3
 debug = true
 
-[patch.crates-io]
-esaxx-rs = { git = "https://github.com/maolan/esaxx" }
-
 [dependencies]
 chrono = "0.4"
 crossterm = "0.29.0"
