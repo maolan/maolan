@@ -375,6 +375,8 @@ struct ExportTrackData {
     muted: bool,
     soloed: bool,
     output_ports: usize,
+    is_folder: bool,
+    parent_track: Option<String>,
     clips: Vec<crate::state::AudioClip>,
 }
 
@@ -3817,6 +3819,95 @@ impl Maolan {
         Ok(mixed)
     }
 
+    /// Compute which hw:out ports a track's output port reaches, following
+    /// track-to-track and folder routing. This mirrors the engine's routing
+    /// enough to make the offline export sound like the live playback.
+    fn reachable_hw_out_ports(
+        track_name: &str,
+        source_port: usize,
+        connections: &[crate::state::Connection],
+        tracks: &HashMap<String, ExportTrackData>,
+        visited: &mut HashSet<(String, usize)>,
+    ) -> Vec<usize> {
+        if !visited.insert((track_name.to_string(), source_port)) {
+            return Vec::new();
+        }
+        let mut result = Vec::new();
+        // Implicit routing: child tracks feed their parent folder's outputs
+        // one-to-one when channel counts match. The engine creates these
+        // AudioIO connections automatically and does not store them in the
+        // session's connection list.
+        if let Some(parent_name) = tracks.get(track_name).and_then(|t| t.parent_track.as_ref())
+            && let Some(parent) = tracks.get(parent_name)
+            && parent.is_folder
+            && source_port < parent.output_ports
+        {
+            result.extend(Self::reachable_hw_out_ports(
+                parent_name,
+                source_port,
+                connections,
+                tracks,
+                visited,
+            ));
+        }
+        for conn in connections {
+            if conn.kind != Kind::Audio {
+                continue;
+            }
+            if conn.from_track != track_name || conn.from_port != source_port {
+                continue;
+            }
+            if conn.to_track == "hw:out" {
+                result.push(conn.to_port);
+                continue;
+            }
+            let Some(dest) = tracks.get(&conn.to_track) else {
+                continue;
+            };
+            let is_child_to_folder = dest.is_folder
+                && dest
+                    .parent_track
+                    .as_ref()
+                    .is_some_and(|parent| parent == track_name);
+            if dest.is_folder {
+                if is_child_to_folder {
+                    // child track -> folder output: continue from that folder output.
+                    result.extend(Self::reachable_hw_out_ports(
+                        &conn.to_track,
+                        conn.to_port,
+                        connections,
+                        tracks,
+                        visited,
+                    ));
+                } else {
+                    // external source -> folder input: folder sums inputs to all outputs.
+                    for out_port in 0..dest.output_ports {
+                        result.extend(Self::reachable_hw_out_ports(
+                            &conn.to_track,
+                            out_port,
+                            connections,
+                            tracks,
+                            visited,
+                        ));
+                    }
+                }
+            } else {
+                // Normal track: input port routes to the same output port.
+                let out_port = conn.to_port.min(dest.output_ports.saturating_sub(1));
+                result.extend(Self::reachable_hw_out_ports(
+                    &conn.to_track,
+                    out_port,
+                    connections,
+                    tracks,
+                    visited,
+                ));
+            }
+        }
+        result.sort_unstable();
+        result.dedup();
+        result
+    }
+
     async fn export_session<F>(
         options: &ExportSessionOptions,
         cancel: &Arc<AtomicBool>,
@@ -3868,6 +3959,8 @@ impl Maolan {
                         muted: track.muted,
                         soloed: track.soloed,
                         output_ports: track.audio.outs.max(1),
+                        is_folder: track.is_folder,
+                        parent_track: track.parent_track.clone(),
                         clips: track.audio.clips.clone(),
                     }
                 })
@@ -4129,6 +4222,8 @@ impl Maolan {
                 .enumerate()
                 .map(|(channel_idx, port)| (*port, channel_idx))
                 .collect();
+            let track_map: HashMap<String, ExportTrackData> =
+                tracks.iter().map(|t| (t.name.clone(), t.clone())).collect();
             let mut mixed_buffer = vec![0.0_f32; total_length * output_channels];
             for (track_idx, track) in tracks.iter().enumerate() {
                 if track.muted || (has_solo && !track.soloed) {
@@ -4141,19 +4236,23 @@ impl Maolan {
                     Some(format!("Processing track: {}", track.name)),
                 );
                 tokio::task::yield_now().await;
-                let routed_ports: Vec<(usize, usize)> = connections
-                    .iter()
-                    .filter(|conn| {
-                        conn.kind == Kind::Audio
-                            && conn.from_track == track.name
-                            && conn.to_track == "hw:out"
-                    })
-                    .filter_map(|conn| {
-                        hw_out_channel_map
-                            .get(&conn.to_port)
-                            .map(|dest_idx| (conn.from_port, *dest_idx))
-                    })
-                    .collect();
+                let mut routed_ports: Vec<(usize, usize)> = Vec::new();
+                for source_port in 0..track.output_ports {
+                    let mut visited = HashSet::new();
+                    for hw_out_port in Self::reachable_hw_out_ports(
+                        &track.name,
+                        source_port,
+                        &connections,
+                        &track_map,
+                        &mut visited,
+                    ) {
+                        if let Some(&dest_channel) = hw_out_channel_map.get(&hw_out_port) {
+                            routed_ports.push((source_port, dest_channel));
+                        }
+                    }
+                }
+                routed_ports.sort_unstable();
+                routed_ports.dedup();
                 if routed_ports.is_empty() {
                     continue;
                 }

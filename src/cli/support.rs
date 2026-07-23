@@ -36,6 +36,8 @@ pub struct ExportTrack {
     pub muted: bool,
     pub soloed: bool,
     pub output_ports: usize,
+    pub is_folder: bool,
+    pub parent_track: Option<String>,
     pub audio_clips: Vec<AudioClipData>,
 }
 
@@ -614,6 +616,14 @@ fn parse_export_track(track: &Value) -> Result<ExportTrack, String> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         output_ports,
+        is_folder: track
+            .get("is_folder")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        parent_track: track
+            .get("parent_track")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string()),
         audio_clips,
     })
 }
