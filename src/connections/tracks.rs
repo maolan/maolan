@@ -3315,6 +3315,9 @@ impl canvas::Program<Message> for Graph {
         let midi_box_fill = rgb8(55, 90, 50);
         let midi_box_selected_fill = rgb8(84, 133, 72);
         let midi_box_border = rgb8(148, 215, 118);
+        let plugin_node_fill = midi_box_fill;
+        let plugin_node_border = midi_box_border;
+        let plugin_node_hover = midi_box_selected_fill;
         let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
         let conn_midi = Color::from_rgb(0.30, 0.82, 0.38);
         let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
@@ -4191,7 +4194,7 @@ impl canvas::Program<Message> for Graph {
                     if plugin.bypassed {
                         frame.fill(&path, bypass_fill);
                     } else {
-                        draw_true_gradient_box(&mut frame, pos, size, track_node_fill);
+                        draw_true_gradient_box(&mut frame, pos, size, plugin_node_fill);
                     }
 
                     let is_h = data.hovering
@@ -4211,11 +4214,11 @@ impl canvas::Program<Message> for Graph {
                             2.5,
                         )
                     } else if is_h {
-                        (node_hover, 1.4)
+                        (plugin_node_hover, 1.4)
                     } else if plugin.bypassed {
                         (bypass_border, 2.0)
                     } else {
-                        (node_border, 1.0)
+                        (plugin_node_border, 1.0)
                     };
                     frame.stroke(
                         &path,
