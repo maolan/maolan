@@ -18,8 +18,8 @@ use crate::{
 use iced::{
     Background, Border, Color, Element, Length, Point,
     widget::{
-        Id, Stack, button, canvas, checkbox, column, container, pick_list, pin, row, scrollable,
-        slider, text, text_input, vertical_slider,
+        Id, Stack, button, canvas, column, container, pick_list, pin, row, scrollable, slider,
+        text, text_input, vertical_slider,
     },
 };
 use iced_aw::{
@@ -143,8 +143,6 @@ impl MIDIEdit {
         let humanize_time_amount = state.piano_humanize_time_amount.clamp(0.0, 1.0);
         let humanize_velocity_amount = state.piano_humanize_velocity_amount.clamp(0.0, 1.0);
         let groove_amount = state.piano_groove_amount.clamp(0.0, 1.0);
-        let scale_root = state.piano_scale_root;
-        let scale_minor = state.piano_scale_minor;
         let chord_kind = state.piano_chord_kind;
         let velocity_shape_amount = state.piano_velocity_shape_amount.clamp(0.0, 1.0);
         let controller_lane = state.piano_controller_lane;
@@ -964,19 +962,8 @@ impl MIDIEdit {
                     Message::MidiEditorViewModeSelected,
                 )
                 .width(Length::Fill),
-                row![
-                    button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),
-                    pick_list(
-                        crate::consts::message_lists::PIANO_SCALE_ROOT_ALL.to_vec(),
-                        Some(scale_root),
-                        Message::PianoScaleRootSelected
-                    )
-                    .width(Length::Fixed(62.0)),
-                    checkbox(scale_minor)
-                        .label("Min")
-                        .on_toggle(Message::PianoScaleMinorToggled),
-                ]
-                .spacing(6),
+                row![button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),]
+                    .spacing(6),
                 row![
                     button(text("Chord").size(11)).on_press(Message::PianoChordSelectedNotes),
                     pick_list(
