@@ -1,6 +1,8 @@
 use crate::{
     connections::{
-        colors::{audio_port_color, midi_port_color},
+        colors::{
+            audio_connection_color, audio_port_color, midi_connection_color, midi_port_color,
+        },
         ports::hover_radius,
         selection::is_bezier_hit,
     },
@@ -653,8 +655,8 @@ impl canvas::Program<Message> for Graph {
                 }),
                 canvas::Stroke {
                     style: canvas::Style::Solid(match source.kind {
-                        Kind::Audio => Color::from_rgba(0.73, 0.84, 1.0, 0.62),
-                        Kind::MIDI => Color::from_rgba(0.58, 0.92, 0.62, 0.62),
+                        Kind::Audio => audio_connection_color(),
+                        Kind::MIDI => midi_connection_color(),
                     }),
                     width: 2.0,
                     line_cap: LineCap::Round,
@@ -714,8 +716,8 @@ impl canvas::Program<Message> for Graph {
                 }),
                 canvas::Stroke::default()
                     .with_color(match connecting.kind {
-                        Kind::Audio => Color::from_rgba(0.73, 0.84, 1.0, 0.62),
-                        Kind::MIDI => Color::from_rgba(0.58, 0.92, 0.62, 0.62),
+                        Kind::Audio => audio_connection_color(),
+                        Kind::MIDI => midi_connection_color(),
                     })
                     .with_width(2.0),
             );
