@@ -5,19 +5,100 @@ use crate::{
     style,
 };
 use iced::{
-    Alignment, Element, Length, Padding,
+    Alignment, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme, mouse,
     widget::{
-        Row, Space, Stack, button, column, container, lazy, mouse_area, row, scrollable, text,
-        text_input,
+        Row, Space, Stack, button, canvas,
+        canvas::{Geometry, Path, Text},
+        column, container, lazy, mouse_area, row, scrollable, text, text_input,
     },
 };
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
-use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider, ticks};
+use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider};
 use std::collections::{HashMap, HashSet};
 
 const STRIP_SPACING: f32 = 2.0;
 const STRIP_ROW_PADDING_X: f32 = 8.0;
 const MIXER_OVERSCAN_PX: f32 = 160.0;
+const FADER_TICK_VALUES: [f32; 12] = [
+    20.0, 10.0, 0.0, -10.0, -20.0, -30.0, -40.0, -50.0, -60.0, -70.0, -80.0, -90.0,
+];
+const FADER_TICK_OUTER_PAD_Y: f32 = 7.0;
+const FADER_TICK_HANDLE_HEIGHT: f32 = 2.0;
+const FADER_TICK_BORDER_WIDTH: f32 = 1.0;
+
+#[derive(Clone, Copy)]
+struct MixerFaderTicks {
+    fader_height: f32,
+}
+
+impl MixerFaderTicks {
+    fn effective_fader_height(configured_height: f32, bounds_height: f32) -> f32 {
+        configured_height
+            .min((bounds_height - FADER_TICK_OUTER_PAD_Y * 2.0).max(1.0))
+            .max(1.0)
+    }
+
+    fn normalized_level(level: f32) -> f32 {
+        ((level - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB)).clamp(0.0, 1.0)
+    }
+
+    fn tick_y_for_height(level: f32, fader_height: f32) -> f32 {
+        let travel =
+            (fader_height - FADER_TICK_HANDLE_HEIGHT - FADER_TICK_BORDER_WIDTH * 2.0).max(1.0);
+        let y = FADER_TICK_OUTER_PAD_Y
+            + FADER_TICK_HANDLE_HEIGHT / 2.0
+            + travel * (1.0 - Self::normalized_level(level));
+        y.round()
+    }
+
+    fn label(level: f32) -> String {
+        if level == 0.0 {
+            "0".to_owned()
+        } else {
+            format!("{level:+.0}")
+        }
+    }
+}
+
+impl canvas::Program<Message> for MixerFaderTicks {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let fader_height = Self::effective_fader_height(self.fader_height, bounds.height);
+        let tick_x = 3.0;
+
+        for level in FADER_TICK_VALUES {
+            let tick_y = Self::tick_y_for_height(level, fader_height)
+                .clamp(0.0, (bounds.height - 1.0).max(0.0));
+            let label_y = (tick_y - 4.0).clamp(0.0, (bounds.height - 10.0).max(0.0));
+            frame.fill(
+                &Path::rectangle(Point::new(tick_x, tick_y), iced::Size::new(4.0, 1.0)),
+                Color::from_rgba(0.62, 0.67, 0.77, 0.78),
+            );
+            frame.fill_text(Text {
+                content: Self::label(level),
+                position: Point::new(tick_x + 6.0, label_y),
+                color: Color::from_rgba(0.9, 0.92, 0.96, 0.9),
+                size: 8.0.into(),
+                ..Default::default()
+            });
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Mixer {
@@ -409,7 +490,9 @@ impl Mixer {
                         if *show_ticks {
                             row![
                                 control,
-                                ticks::ticks(FADER_MIN_DB..=FADER_MAX_DB, fader_height)
+                                canvas(MixerFaderTicks { fader_height })
+                                    .width(Length::Fixed(SCALE_WIDTH + 3.0))
+                                    .height(Length::Fill)
                             ]
                             .into()
                         } else {
@@ -1205,5 +1288,44 @@ mod tests {
     fn mixer_default_creates_instance() {
         let mixer: Mixer = Default::default();
         let _ = &mixer;
+    }
+
+    #[test]
+    fn mixer_fader_ticks_are_evenly_spaced_on_slider_travel() {
+        let height = 160.0;
+        let y_20 = MixerFaderTicks::tick_y_for_height(20.0, height);
+        let y_10 = MixerFaderTicks::tick_y_for_height(10.0, height);
+        let y_0 = MixerFaderTicks::tick_y_for_height(0.0, height);
+        let step_20_to_10 = y_10 - y_20;
+        let step_10_to_0 = y_0 - y_10;
+
+        assert!((step_20_to_10 - step_10_to_0).abs() <= 1.0);
+    }
+
+    #[test]
+    fn mixer_fader_zero_tick_matches_slider_zero_position() {
+        let height = 160.0;
+        let normalized = (0.0 - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB);
+        let expected = (FADER_TICK_OUTER_PAD_Y
+            + FADER_TICK_HANDLE_HEIGHT / 2.0
+            + (height - FADER_TICK_HANDLE_HEIGHT - FADER_TICK_BORDER_WIDTH * 2.0)
+                * (1.0 - normalized))
+            .round();
+
+        assert_eq!(MixerFaderTicks::tick_y_for_height(0.0, height), expected);
+    }
+
+    #[test]
+    fn mixer_fader_ticks_shrink_to_child_strip_bounds() {
+        let configured_height = 160.0;
+        let child_bounds_height = 128.0;
+        let effective =
+            MixerFaderTicks::effective_fader_height(configured_height, child_bounds_height);
+        let y_minus_80 = MixerFaderTicks::tick_y_for_height(-80.0, effective);
+        let y_minus_90 = MixerFaderTicks::tick_y_for_height(-90.0, effective);
+
+        assert!(effective < configured_height);
+        assert!(y_minus_90 - y_minus_80 > 4.0);
+        assert!(y_minus_90 < child_bounds_height);
     }
 }

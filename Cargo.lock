@@ -5402,9 +5402,9 @@ dependencies = [
 
 [[package]]
 name = "mixosc"
-version = "0.0.9"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "321d2730a4ddf8fbb0bb062bbd27f8384c6d52e17bf1281fbcf040aa1e0dd271"
+checksum = "b03e2f041dde581c7ef8b743d51bce633966aa25c7559a17a61bc2715547f2ee"
 dependencies = [
  "iced",
  "iced_fonts",
