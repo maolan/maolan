@@ -8888,6 +8888,12 @@ impl Maolan {
             Message::GenerateAudioBackendSelected(backend) => {
                 self.generate_audio_backend = backend;
             }
+            Message::GenerateAudioKeyRootChanged(root) => {
+                self.generate_audio_key_root = root;
+            }
+            Message::GenerateAudioKeyModeChanged(mode) => {
+                self.generate_audio_key_mode = mode;
+            }
 
             Message::GenerateAudioCfgScaleInput(ref value) => {
                 self.generate_audio_cfg_scale_input = value.clone();
@@ -8944,6 +8950,17 @@ impl Maolan {
                     let state = self.state.blocking_read();
                     Self::timing_at_sample(&state, transport_sample)
                 };
+                let musical_key = crate::state::MusicalKey {
+                    root: self.generate_audio_key_root,
+                    mode: self.generate_audio_key_mode,
+                };
+                {
+                    let mut state = self.state.blocking_write();
+                    if state.musical_key != musical_key {
+                        state.musical_key = musical_key;
+                        self.has_unsaved_changes = true;
+                    }
+                }
                 let output_stem = super::super::Maolan::sanitize_generated_track_base_name(&prompt);
                 let request = super::super::BurnGenerateRequest {
                     model: self.generate_audio_model,
@@ -8977,6 +8994,13 @@ impl Maolan {
                     cfg_scale,
                     ode_steps,
                     length: self.generate_audio_seconds_total_input.saturating_mul(1000),
+                    bpm: Some(bpm),
+                    key_scale: Some(musical_key.to_string()),
+                    time_signature: Some(format!(
+                        "{}/{}",
+                        time_signature_num.max(1),
+                        time_signature_denom.max(1)
+                    )),
                 };
 
                 let _used_track_names: HashSet<String> = self

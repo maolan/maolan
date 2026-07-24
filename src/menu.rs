@@ -87,16 +87,16 @@ impl Menu {
                     (submenu("Recent", Message::None), recent_submenu),
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Save as", Message::Show(Show::SaveAs))),
+                    (menu_item("Consolidate", Message::CollectToSession)),
                     (menu_item("Session metadata", Message::Show(Show::SessionMetadata))),
                     (menu_item("Branches", Message::Show(Show::BranchManager))),
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
-                    (menu_item("Import", Message::OpenFileImporter)),
                     (menu_item("Generate audio", Message::Show(Show::GenerateAudio))),
                     (menu_item(
                         "Delete unused files",
                         Message::DeleteUnusedSessionMediaFiles
                     )),
-                    (menu_item("Consolidate", Message::CollectToSession)),
+                    (menu_item("Import", Message::OpenFileImporter)),
                     (menu_item("Export", Message::OpenExporter)),
                     (menu_item("Quit", Message::WindowCloseRequested)),
                 ))

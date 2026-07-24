@@ -7,9 +7,9 @@ use maolan_widgets::curve_editor::{CurveEditorMessage, CurvePoint as CurveEditor
 pub use maolan_widgets::midi::{PianoControllerLane, PianoNrpnKind, PianoRpnKind};
 use std::path::PathBuf;
 
-use crate::state::AudioBackendOption;
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 use crate::state::AudioDeviceOption;
+use crate::state::{AudioBackendOption, KeyMode, NoteName};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -479,6 +479,24 @@ impl PianoScaleRoot {
             PianoScaleRoot::B => 11,
         }
     }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label.trim() {
+            "C" => Some(PianoScaleRoot::C),
+            "C#" => Some(PianoScaleRoot::CSharp),
+            "D" => Some(PianoScaleRoot::D),
+            "D#" => Some(PianoScaleRoot::DSharp),
+            "E" => Some(PianoScaleRoot::E),
+            "F" => Some(PianoScaleRoot::F),
+            "F#" => Some(PianoScaleRoot::FSharp),
+            "G" => Some(PianoScaleRoot::G),
+            "G#" => Some(PianoScaleRoot::GSharp),
+            "A" => Some(PianoScaleRoot::A),
+            "A#" => Some(PianoScaleRoot::ASharp),
+            "B" => Some(PianoScaleRoot::B),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for PianoScaleRoot {
@@ -827,6 +845,8 @@ pub enum Message {
 
     GenerateAudioTagsInput(String),
     GenerateAudioBackendSelected(BurnBackendOption),
+    GenerateAudioKeyRootChanged(NoteName),
+    GenerateAudioKeyModeChanged(KeyMode),
 
     GenerateAudioCfgScaleInput(String),
     GenerateAudioStepsInput(usize),

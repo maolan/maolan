@@ -152,6 +152,13 @@ impl Maolan {
         }
     }
 
+    fn musical_key_from_json(value: Option<&Value>) -> crate::state::MusicalKey {
+        value
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_default()
+    }
+
     fn export_normalize_mode_to_json(mode: crate::message::ExportNormalizeMode) -> Value {
         Value::String(
             match mode {
@@ -543,6 +550,8 @@ impl Maolan {
                 "year": metadata_year,
                 "track_number": metadata_track_number,
                 "genre": state.session_genre.clone(),
+                "scale_root": state.piano_scale_root.to_string(),
+                "scale_mode": if state.piano_scale_minor { "minor" } else { "major" },
             },
             "transport": {
                 "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
@@ -556,6 +565,7 @@ impl Maolan {
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
+                "musical_key": state.musical_key.to_string(),
                 "tempo_points": state
                     .tempo_points
                     .iter()
@@ -1786,6 +1796,8 @@ impl Maolan {
                 "year": metadata_year,
                 "track_number": metadata_track_number,
                 "genre": state.session_genre.clone(),
+                "scale_root": state.piano_scale_root.to_string(),
+                "scale_mode": if state.piano_scale_minor { "minor" } else { "major" },
             },
             "transport": {
                 "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
@@ -1799,6 +1811,7 @@ impl Maolan {
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
+                "musical_key": state.musical_key.to_string(),
                 "tempo_points": state
                     .tempo_points
                     .iter()
@@ -1940,6 +1953,8 @@ impl Maolan {
             state.session_year.clear();
             state.session_track_number.clear();
             state.session_genre.clear();
+            state.piano_scale_root = crate::message::PianoScaleRoot::C;
+            state.piano_scale_minor = false;
             state.plugin_graphs_by_track.clear();
             state.connectable_connections_by_track.clear();
         }
@@ -2260,6 +2275,16 @@ impl Maolan {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
+            state.piano_scale_root = metadata
+                .get("scale_root")
+                .and_then(Value::as_str)
+                .and_then(crate::message::PianoScaleRoot::from_label)
+                .unwrap_or(crate::message::PianoScaleRoot::C);
+            state.piano_scale_minor = metadata
+                .get("scale_mode")
+                .and_then(Value::as_str)
+                .map(|mode| mode.eq_ignore_ascii_case("minor"))
+                .unwrap_or(false);
         }
         if let Some(export) = session.get("export").and_then(Value::as_object) {
             self.export_sample_rate_hz = export
@@ -2473,6 +2498,7 @@ impl Maolan {
             16 => 16,
             _ => 4,
         };
+        let loaded_musical_key = Self::musical_key_from_json(transport.get("musical_key"));
         let mut loaded_tempo_points = transport
             .get("tempo_points")
             .and_then(Value::as_array)
@@ -2585,6 +2611,7 @@ impl Maolan {
             state.tempo = loaded_tempo;
             state.time_signature_num = loaded_num;
             state.time_signature_denom = loaded_denom;
+            state.musical_key = loaded_musical_key;
             state.tempo_points = loaded_tempo_points;
             state.time_signature_points = loaded_time_signature_points;
             state.hw_out_level = loaded_hw_out_level;
@@ -4003,6 +4030,34 @@ mod tests {
         assert!(matches!(result, crate::message::ExportDither::Triangular));
         let result = Maolan::export_dither_from_json(None);
         assert!(matches!(result, crate::message::ExportDither::Triangular));
+    }
+
+    #[test]
+    fn musical_key_from_json_parses_key() {
+        let result = Maolan::musical_key_from_json(Some(&json!("A minor")));
+        assert_eq!(
+            result,
+            crate::state::MusicalKey {
+                root: crate::state::NoteName::A,
+                mode: crate::state::KeyMode::Minor
+            }
+        );
+    }
+
+    #[test]
+    fn musical_key_from_json_defaults_to_c_major() {
+        assert_eq!(
+            Maolan::musical_key_from_json(None),
+            crate::state::MusicalKey::default()
+        );
+        assert_eq!(
+            Maolan::musical_key_from_json(Some(&json!("not a key"))),
+            crate::state::MusicalKey::default()
+        );
+        assert_eq!(
+            Maolan::musical_key_from_json(Some(&json!(42))),
+            crate::state::MusicalKey::default()
+        );
     }
 
     #[test]

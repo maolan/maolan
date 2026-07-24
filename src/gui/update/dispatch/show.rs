@@ -106,6 +106,11 @@ impl Maolan {
                     maolan_generate::DEFAULT_CFG_SCALE.to_string();
                 self.generate_audio_steps_input = 10;
                 self.generate_audio_seconds_total_input = 180;
+                {
+                    let state = self.state.blocking_read();
+                    self.generate_audio_key_root = state.musical_key.root;
+                    self.generate_audio_key_mode = state.musical_key.mode;
+                }
                 self.generate_audio_in_progress = false;
                 self.generate_audio_progress = 0.0;
                 self.generate_audio_operation = None;

@@ -3,7 +3,7 @@ use crate::{
     connections::plugins::{Graph as PluginGraph, select_plugin_indices},
     connections::port_kind::{can_connect_kinds, should_highlight_port},
     connections::ports::hover_radius,
-    connections::selection::{is_bezier_hit, select_connection_indices},
+    connections::selection::{is_cubic_bezier_hit, select_connection_indices},
     consts::connections_plugins::{
         MIDI_HIT_RADIUS, PLUGIN_W, PORT_HIT_RADIUS, TRACK_IO_MARGIN_X, TRACK_IO_W,
     },
@@ -1927,11 +1927,24 @@ impl canvas::Program<Message> for Graph {
                                 bounds,
                                 hw_width,
                             );
-                            if let (Some(start), Some(end)) = (start, end)
-                                && is_bezier_hit(start, end, cursor_position, 100, 12.0)
-                            {
-                                clicked_plugin_connection = Some(idx);
-                                break;
+                            if let (Some(start), Some(end)) = (start, end) {
+                                let start_edge =
+                                    Self::plugin_graph_node_edge(&conn.from_node, false);
+                                let end_edge = Self::plugin_graph_node_edge(&conn.to_node, true);
+                                let (c1, c2) =
+                                    Self::bezier_controls(start, start_edge, end, end_edge);
+                                if is_cubic_bezier_hit(
+                                    start,
+                                    c1,
+                                    c2,
+                                    end,
+                                    cursor_position,
+                                    100,
+                                    12.0,
+                                ) {
+                                    clicked_plugin_connection = Some(idx);
+                                    break;
+                                }
                             }
                         }
                         if let Some(idx) = clicked_plugin_connection {
@@ -1949,11 +1962,7 @@ impl canvas::Program<Message> for Graph {
                         for (idx, conn) in data.connectable_connections.iter().enumerate() {
                             let involves_child = matches!(conn.from, ConnectableRef::ChildTrack(_))
                                 || matches!(conn.to, ConnectableRef::ChildTrack(_));
-                            // Folder/track inputs cannot be used as audio/MIDI sources, so the
-                            // connection from folder input to child input is not selectable.
-                            let from_is_track_input =
-                                matches!(conn.from, ConnectableRef::TrackInput);
-                            if !involves_child || from_is_track_input {
+                            if !involves_child {
                                 continue;
                             }
                             let start = self.connectable_port_position(
@@ -1972,11 +1981,23 @@ impl canvas::Program<Message> for Graph {
                                 conn.kind,
                                 bounds,
                             );
-                            if let (Some(start), Some(end)) = (start, end)
-                                && is_bezier_hit(start, end, cursor_position, 100, 12.0)
-                            {
-                                clicked_connectable_connection = Some(idx);
-                                break;
+                            if let (Some(start), Some(end)) = (start, end) {
+                                let start_edge = Self::connectable_port_edge(&conn.from, false);
+                                let end_edge = Self::connectable_port_edge(&conn.to, true);
+                                let (c1, c2) =
+                                    Self::bezier_controls(start, start_edge, end, end_edge);
+                                if is_cubic_bezier_hit(
+                                    start,
+                                    c1,
+                                    c2,
+                                    end,
+                                    cursor_position,
+                                    100,
+                                    12.0,
+                                ) {
+                                    clicked_connectable_connection = Some(idx);
+                                    break;
+                                }
                             }
                         }
                         if let Some(idx) = clicked_connectable_connection {
@@ -2115,11 +2136,40 @@ impl canvas::Program<Message> for Graph {
                             })
                         };
 
-                        if let (Some(start), Some(end)) = (start_point, end_point)
-                            && is_bezier_hit(start, end, cursor_position, 20, 10.0)
-                        {
-                            clicked_connection = Some(idx);
-                            break;
+                        if let (Some(start), Some(end)) = (start_point, end_point) {
+                            let start_edge = if let Some(track) = start_track_option {
+                                Self::track_port_edge(
+                                    track,
+                                    Self::connection_port_index(
+                                        track,
+                                        conn.kind,
+                                        conn.from_port,
+                                        false,
+                                    ),
+                                    false,
+                                )
+                            } else {
+                                TrackPortEdge::Right
+                            };
+                            let end_edge = if let Some(track) = end_track_option {
+                                Self::track_port_edge(
+                                    track,
+                                    Self::connection_port_index(
+                                        track,
+                                        conn.kind,
+                                        conn.to_port,
+                                        true,
+                                    ),
+                                    true,
+                                )
+                            } else {
+                                TrackPortEdge::Left
+                            };
+                            let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
+                            if is_cubic_bezier_hit(start, c1, c2, end, cursor_position, 100, 12.0) {
+                                clicked_connection = Some(idx);
+                                break;
+                            }
                         }
                     }
 
@@ -2413,6 +2463,82 @@ impl canvas::Program<Message> for Graph {
                         }
 
                         if let Some((to_t_name, to_p)) = target_port {
+                            if self.effective_folder(&data).is_some()
+                                && visible_names.contains(&from_t)
+                                && (to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID)
+                                && let Some(source_track) =
+                                    data.tracks.iter().find(|t| t.name == from_t)
+                            {
+                                let source_ref =
+                                    ConnectableRef::ChildTrack(source_track.name.clone());
+                                if is_input {
+                                    let engine_port = Self::track_port_to_engine_index(
+                                        source_track,
+                                        from_p,
+                                        true,
+                                    )
+                                    .1;
+                                    return self.connectable_connection_actions(
+                                        &data,
+                                        ConnectableRef::TrackInput,
+                                        to_p,
+                                        source_ref,
+                                        engine_port,
+                                        kind,
+                                    );
+                                } else {
+                                    let engine_port = Self::track_port_to_engine_index(
+                                        source_track,
+                                        from_p,
+                                        false,
+                                    )
+                                    .1;
+                                    return self.connectable_connection_actions(
+                                        &data,
+                                        source_ref,
+                                        engine_port,
+                                        ConnectableRef::TrackOutput,
+                                        to_p,
+                                        kind,
+                                    );
+                                }
+                            }
+
+                            if self.effective_folder(&data).is_some()
+                                && (from_t == HW_IN_ID || from_t == HW_OUT_ID)
+                                && visible_names.contains(&to_t_name)
+                                && let Some(target_track) =
+                                    data.tracks.iter().find(|t| t.name == to_t_name)
+                            {
+                                let target_ref =
+                                    ConnectableRef::ChildTrack(target_track.name.clone());
+                                if is_input {
+                                    let engine_port =
+                                        Self::track_port_to_engine_index(target_track, to_p, false)
+                                            .1;
+                                    return self.connectable_connection_actions(
+                                        &data,
+                                        target_ref,
+                                        engine_port,
+                                        ConnectableRef::TrackOutput,
+                                        from_p,
+                                        kind,
+                                    );
+                                } else {
+                                    let engine_port =
+                                        Self::track_port_to_engine_index(target_track, to_p, true)
+                                            .1;
+                                    return self.connectable_connection_actions(
+                                        &data,
+                                        ConnectableRef::TrackInput,
+                                        from_p,
+                                        target_ref,
+                                        engine_port,
+                                        kind,
+                                    );
+                                }
+                            }
+
                             let folder_name = self.effective_folder(&data);
                             let from_t =
                                 if self.effective_folder(&data).is_some() && from_t == HW_IN_ID {
@@ -3348,8 +3474,9 @@ impl canvas::Program<Message> for Graph {
                     });
 
                     let is_selected = matches!(&data.connection_view_selection, ConnectionViewSelection::Connections(set) if set.contains(&idx));
-                    let is_hovered = cursor_position
-                        .is_some_and(|cursor| is_bezier_hit(start, end, cursor, 20, 10.0));
+                    let is_hovered = cursor_position.is_some_and(|cursor| {
+                        is_cubic_bezier_hit(start, c1, c2, end, cursor, 100, 12.0)
+                    });
                     let (color, width) = if is_selected {
                         (conn_selected, 4.0)
                     } else if is_hovered {
@@ -3405,15 +3532,24 @@ impl canvas::Program<Message> for Graph {
                     });
 
                     let is_selected = data.plugin_graph_selected_connections.contains(&idx);
-                    let color = if is_selected {
-                        conn_selected
-                    } else {
-                        match conn.kind {
+                    let is_hovered = cursor_position.is_some_and(|cursor| {
+                        is_cubic_bezier_hit(start, c1, c2, end, cursor, 100, 12.0)
+                    });
+                    let (color, width) = if is_selected {
+                        (conn_selected, 4.0)
+                    } else if is_hovered {
+                        let c = match conn.kind {
                             Kind::Audio => conn_audio,
                             Kind::MIDI => conn_midi,
-                        }
+                        };
+                        (c, 3.0)
+                    } else {
+                        let c = match conn.kind {
+                            Kind::Audio => conn_audio,
+                            Kind::MIDI => conn_midi,
+                        };
+                        (c, 2.0)
                     };
-                    let width = if is_selected { 4.0 } else { 2.0 };
                     frame.stroke(
                         &path,
                         canvas::Stroke::default()
@@ -3460,15 +3596,24 @@ impl canvas::Program<Message> for Graph {
                     let is_selected = data
                         .plugin_graph_selected_connectable_connections
                         .contains(&idx);
-                    let color = if is_selected {
-                        conn_selected
-                    } else {
-                        match conn.kind {
+                    let is_hovered = cursor_position.is_some_and(|cursor| {
+                        is_cubic_bezier_hit(start, c1, c2, end, cursor, 100, 12.0)
+                    });
+                    let (color, width) = if is_selected {
+                        (conn_selected, 4.0)
+                    } else if is_hovered {
+                        let c = match conn.kind {
                             Kind::Audio => conn_audio,
                             Kind::MIDI => conn_midi,
-                        }
+                        };
+                        (c, 3.0)
+                    } else {
+                        let c = match conn.kind {
+                            Kind::Audio => conn_audio,
+                            Kind::MIDI => conn_midi,
+                        };
+                        (c, 2.0)
                     };
-                    let width = if is_selected { 4.0 } else { 2.0 };
                     frame.stroke(
                         &path,
                         canvas::Stroke::default()
@@ -3480,20 +3625,33 @@ impl canvas::Program<Message> for Graph {
 
             if let Some(conn) = &data.connecting {
                 let start_track_option = data.tracks.iter().find(|t| t.name == conn.from_track);
+                let folder_track = self.folder_track(&data);
 
                 let preview_count = if data.shift {
                     if conn.from_track == HW_IN_ID {
-                        data.hw_in
-                            .as_ref()
-                            .map(|h| h.channels.saturating_sub(conn.from_port))
-                            .unwrap_or(1)
-                            .max(1)
+                        if let Some(folder) = folder_track {
+                            Self::folder_input_count(folder)
+                                .saturating_sub(conn.from_port)
+                                .max(1)
+                        } else {
+                            data.hw_in
+                                .as_ref()
+                                .map(|h| h.channels.saturating_sub(conn.from_port))
+                                .unwrap_or(1)
+                                .max(1)
+                        }
                     } else if conn.from_track == HW_OUT_ID {
-                        data.hw_out
-                            .as_ref()
-                            .map(|h| h.channels.saturating_sub(conn.from_port))
-                            .unwrap_or(1)
-                            .max(1)
+                        if let Some(folder) = folder_track {
+                            Self::folder_output_count(folder)
+                                .saturating_sub(conn.from_port)
+                                .max(1)
+                        } else {
+                            data.hw_out
+                                .as_ref()
+                                .map(|h| h.channels.saturating_sub(conn.from_port))
+                                .unwrap_or(1)
+                                .max(1)
+                        }
                     } else if conn.from_track.starts_with(MIDI_HW_IN_ID)
                         || conn.from_track.starts_with(MIDI_HW_OUT_ID)
                     {
@@ -3520,19 +3678,31 @@ impl canvas::Program<Message> for Graph {
                 for offset in 0..preview_count {
                     let from_port = conn.from_port + offset;
                     let start_point = if conn.from_track == HW_IN_ID {
-                        data.hw_in.as_ref().map(move |hw_in| {
-                            let py = 50.0
-                                + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
-                                    * (from_port + 1) as f32;
-                            Point::new(hw_width, py)
-                        })
+                        if let Some(folder) = folder_track {
+                            Some(Self::folder_input_port_position(
+                                folder, from_port, bounds, hw_width,
+                            ))
+                        } else {
+                            data.hw_in.as_ref().map(move |hw_in| {
+                                let py = 50.0
+                                    + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
+                                        * (from_port + 1) as f32;
+                                Point::new(hw_width, py)
+                            })
+                        }
                     } else if conn.from_track == HW_OUT_ID {
-                        data.hw_out.as_ref().map(move |hw_out| {
-                            let py = 50.0
-                                + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
-                                    * (from_port + 1) as f32;
-                            Point::new(bounds.width - hw_width, py)
-                        })
+                        if let Some(folder) = folder_track {
+                            Some(Self::folder_output_port_position(
+                                folder, from_port, bounds, hw_width,
+                            ))
+                        } else {
+                            data.hw_out.as_ref().map(move |hw_out| {
+                                let py = 50.0
+                                    + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
+                                        * (from_port + 1) as f32;
+                                Point::new(bounds.width - hw_width, py)
+                            })
+                        }
                     } else if let Some(device) =
                         conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
                     {
@@ -4714,6 +4884,55 @@ mod tests {
     }
 
     #[test]
+    fn releasing_child_output_on_folder_output_creates_folder_connection() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor_pos = {
+            let mut data = state.blocking_write();
+            let mut folder = crate::state::Track::new("folder".to_string(), 0.0, 2, 2, 0, 0);
+            folder.is_folder = true;
+            let mut synth = crate::state::Track::new("Synth".to_string(), 0.0, 2, 2, 0, 0);
+            synth.parent_track = Some("folder".to_string());
+            data.tracks.push(folder);
+            data.tracks.push(synth);
+            data.connections_folder = Some("folder".to_string());
+            data.plugin_graph_track = Some("folder".to_string());
+            data.connecting = Some(Connecting {
+                from_track: "Synth".to_string(),
+                from_port: 0,
+                kind: Kind::Audio,
+                point: Point::new(100.0, 100.0),
+                is_input: false,
+            });
+            Graph::folder_output_port_position(&data.tracks[0], 0, bounds, FOLDER_HW_WIDTH)
+        };
+
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(cursor_pos),
+            )
+            .expect("action");
+
+        let (message, _status) = action_message(action);
+        assert!(matches!(
+            message,
+            Some(Message::Request(EngineAction::TrackConnectAudio {
+                track_name,
+                from,
+                from_port: 0,
+                to,
+                to_port: 0,
+            })) if track_name == "folder"
+                && from == ConnectableRef::ChildTrack("Synth".to_string())
+                && to == ConnectableRef::TrackOutput
+        ));
+    }
+
+    #[test]
     fn plugin_graph_connection_actions_batches_shift_plugin_to_track_output() {
         let mut data = crate::state::StateData::default();
         let folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 2, 0, 0);
@@ -4782,6 +5001,53 @@ mod tests {
                         .iter()
                         .all(|a| matches!(a, EngineAction::TrackConnectAudio { .. }))
                 );
+            }
+            other => panic!("expected RequestBatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shift_folder_output_connection_uses_folder_port_count_not_hardware() {
+        let mut data = crate::state::StateData::default();
+        let mut folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 2, 0, 0);
+        folder.is_folder = true;
+        let mut child = crate::state::Track::new("Synth".to_string(), 0.0, 2, 2, 0, 0);
+        child.parent_track = Some("Folder".to_string());
+        data.tracks.push(folder);
+        data.tracks.push(child);
+        data.plugin_graph_track = Some("Folder".to_string());
+        data.connections_folder = Some("Folder".to_string());
+        data.hw_out = Some(crate::state::HW { channels: 32 });
+        data.shift = true;
+
+        let state = Arc::new(RwLock::new(data));
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .connectable_connection_actions(
+                &state.blocking_read(),
+                ConnectableRef::ChildTrack("Synth".to_string()),
+                0,
+                ConnectableRef::TrackOutput,
+                0,
+                Kind::Audio,
+            )
+            .expect("action");
+
+        let message = action_message(action).0.expect("message");
+        match message {
+            Message::RequestBatch(actions) => {
+                assert_eq!(actions.len(), 2);
+                assert!(actions.iter().all(|action| matches!(
+                    action,
+                    EngineAction::TrackConnectAudio {
+                        track_name,
+                        from,
+                        to,
+                        ..
+                    } if track_name == "Folder"
+                        && from == &ConnectableRef::ChildTrack("Synth".to_string())
+                        && to == &ConnectableRef::TrackOutput
+                )));
             }
             other => panic!("expected RequestBatch, got {other:?}"),
         }

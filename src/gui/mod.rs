@@ -14,7 +14,7 @@ use crate::{
     },
     consts::message_lists::{
         EXPORT_BIT_DEPTH_ALL, EXPORT_DITHER_ALL, EXPORT_NORMALIZE_MODE_ALL, EXPORT_RENDER_MODE_ALL,
-        SNAP_MODE_ALL,
+        PIANO_SCALE_ROOT_ALL, SNAP_MODE_ALL,
     },
     consts::state_ids::METRONOME_TRACK_ID,
     consts::widget_piano::PITCH_MAX,
@@ -26,9 +26,9 @@ use crate::{
     },
     platform_caps,
     state::{
-        AudioClip, ClipPeaks, LOG_HISTORY_LIMIT, LogEntry, LogLevel, MIDIClip, MidiClipPreviewMap,
-        PianoControllerPoint, PianoNote, PianoSysExPoint, PitchCorrectionData,
-        PitchCorrectionPoint, State, StateData,
+        AudioClip, ClipPeaks, KeyMode, LOG_HISTORY_LIMIT, LogEntry, LogLevel, MIDIClip,
+        MidiClipPreviewMap, NoteName, PianoControllerPoint, PianoNote, PianoSysExPoint,
+        PitchCorrectionData, PitchCorrectionPoint, State, StateData,
     },
     template_save, toolbar, track_marker, track_rename, track_template_save, workspace,
 };
@@ -286,6 +286,10 @@ struct BurnGenerateRequest {
     cfg_scale: f32,
     ode_steps: usize,
     length: usize,
+    bpm: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_scale: Option<String>,
+    time_signature: Option<String>,
 }
 
 #[cfg(unix)]
@@ -734,6 +738,8 @@ pub struct Maolan {
 
     generate_audio_tags_input: String,
     generate_audio_backend: BurnBackendOption,
+    generate_audio_key_root: NoteName,
+    generate_audio_key_mode: KeyMode,
 
     generate_audio_cfg_scale_input: String,
     generate_audio_steps_input: usize,
@@ -1043,6 +1049,8 @@ impl Default for Maolan {
 
             generate_audio_tags_input: String::new(),
             generate_audio_backend: BurnBackendOption::Vulkan,
+            generate_audio_key_root: NoteName::C,
+            generate_audio_key_mode: KeyMode::Major,
 
             generate_audio_cfg_scale_input: maolan_generate::DEFAULT_CFG_SCALE.to_string(),
             generate_audio_steps_input: 10,
@@ -6541,6 +6549,25 @@ impl Maolan {
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
                     row![
+                        text("Key:"),
+                        pick_list(
+                            NoteName::ALL.to_vec(),
+                            Some(self.generate_audio_key_root),
+                            Message::GenerateAudioKeyRootChanged
+                        )
+                        .placeholder("Root")
+                        .width(Length::Fill),
+                        pick_list(
+                            KeyMode::ALL.to_vec(),
+                            Some(self.generate_audio_key_mode),
+                            Message::GenerateAudioKeyModeChanged
+                        )
+                        .placeholder("Mode")
+                        .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
                         text("CFG scale"),
                         number_input_f32(
                             &self.generate_audio_cfg_scale_input,
@@ -6630,6 +6657,20 @@ impl Maolan {
                     text_input("Genre", &state.session_genre)
                         .on_input(Message::SessionMetadataGenreInput)
                         .width(Length::Fixed(260.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Song scale:"),
+                    pick_list(
+                        PIANO_SCALE_ROOT_ALL.to_vec(),
+                        Some(state.piano_scale_root),
+                        Message::PianoScaleRootSelected
+                    )
+                    .width(Length::Fixed(90.0)),
+                    checkbox(state.piano_scale_minor)
+                        .label("Minor")
+                        .on_toggle(Message::PianoScaleMinorToggled),
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
@@ -7297,6 +7338,128 @@ mod tests {
                 .expect("Drums track after response");
             assert!((track.position.x - 123.0).abs() < f32::EPSILON);
             assert!((track.position.y - 456.0).abs() < f32::EPSILON);
+        }
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_save_and_load_roundtrip_preserves_musical_key() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root =
+            std::env::temp_dir().join(format!("maolan_musical_key_session_{unique}"));
+
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.musical_key = crate::state::MusicalKey {
+                root: crate::state::NoteName::FSharp,
+                mode: crate::state::KeyMode::Minor,
+            };
+        }
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("main.json");
+        let session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        assert_eq!(
+            session["transport"]["musical_key"].as_str(),
+            Some("F# minor")
+        );
+
+        let mut restored = Maolan::default();
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+        {
+            let state = restored.state.blocking_read();
+            assert_eq!(
+                state.musical_key,
+                crate::state::MusicalKey {
+                    root: crate::state::NoteName::FSharp,
+                    mode: crate::state::KeyMode::Minor
+                }
+            );
+        }
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_save_and_load_roundtrip_preserves_song_scale_metadata() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_song_scale_session_{unique}"));
+
+        let app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.piano_scale_root = crate::message::PianoScaleRoot::FSharp;
+            state.piano_scale_minor = true;
+        }
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("main.json");
+        let session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        assert_eq!(session["metadata"]["scale_root"].as_str(), Some("F#"));
+        assert_eq!(session["metadata"]["scale_mode"].as_str(), Some("minor"));
+
+        let mut restored = Maolan::default();
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+        {
+            let state = restored.state.blocking_read();
+            assert_eq!(
+                state.piano_scale_root,
+                crate::message::PianoScaleRoot::FSharp
+            );
+            assert!(state.piano_scale_minor);
+        }
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_load_without_musical_key_defaults_to_c_major() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_legacy_key_session_{unique}"));
+
+        let app = Maolan::default();
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("main.json");
+        let mut session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        session["transport"]
+            .as_object_mut()
+            .expect("transport object")
+            .remove("musical_key");
+        let mut file = File::create(&session_path).expect("rewrite saved session");
+        serde_json::to_writer_pretty(&mut file, &session).expect("write legacy session");
+
+        let mut restored = Maolan::default();
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load legacy session");
+        {
+            let state = restored.state.blocking_read();
+            assert_eq!(state.musical_key, crate::state::MusicalKey::default());
         }
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");

@@ -1118,6 +1118,159 @@ pub struct TimeSignaturePoint {
     pub denominator: u8,
 }
 
+/// Pitch class used as the root of the session's musical key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum NoteName {
+    #[default]
+    C,
+    CSharp,
+    D,
+    DSharp,
+    E,
+    F,
+    FSharp,
+    G,
+    GSharp,
+    A,
+    ASharp,
+    B,
+}
+
+impl NoteName {
+    pub const ALL: [Self; 12] = [
+        Self::C,
+        Self::CSharp,
+        Self::D,
+        Self::DSharp,
+        Self::E,
+        Self::F,
+        Self::FSharp,
+        Self::G,
+        Self::GSharp,
+        Self::A,
+        Self::ASharp,
+        Self::B,
+    ];
+}
+
+impl fmt::Display for NoteName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::C => f.write_str("C"),
+            Self::CSharp => f.write_str("C#"),
+            Self::D => f.write_str("D"),
+            Self::DSharp => f.write_str("D#"),
+            Self::E => f.write_str("E"),
+            Self::F => f.write_str("F"),
+            Self::FSharp => f.write_str("F#"),
+            Self::G => f.write_str("G"),
+            Self::GSharp => f.write_str("G#"),
+            Self::A => f.write_str("A"),
+            Self::ASharp => f.write_str("A#"),
+            Self::B => f.write_str("B"),
+        }
+    }
+}
+
+impl std::str::FromStr for NoteName {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "c" => Ok(Self::C),
+            "c#" | "db" => Ok(Self::CSharp),
+            "d" => Ok(Self::D),
+            "d#" | "eb" => Ok(Self::DSharp),
+            "e" => Ok(Self::E),
+            "f" => Ok(Self::F),
+            "f#" | "gb" => Ok(Self::FSharp),
+            "g" => Ok(Self::G),
+            "g#" | "ab" => Ok(Self::GSharp),
+            "a" => Ok(Self::A),
+            "a#" | "bb" => Ok(Self::ASharp),
+            "b" => Ok(Self::B),
+            _ => Err(format!("Unknown note name '{s}'")),
+        }
+    }
+}
+
+/// Mode of the session's musical key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum KeyMode {
+    #[default]
+    Major,
+    Minor,
+}
+
+impl KeyMode {
+    pub const ALL: [Self; 2] = [Self::Major, Self::Minor];
+}
+
+impl fmt::Display for KeyMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Major => f.write_str("major"),
+            Self::Minor => f.write_str("minor"),
+        }
+    }
+}
+
+impl std::str::FromStr for KeyMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "major" => Ok(Self::Major),
+            "minor" => Ok(Self::Minor),
+            _ => Err(format!("Unknown key mode '{s}'")),
+        }
+    }
+}
+
+/// Musical key of the session, serialized as a plain string like "C# minor".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct MusicalKey {
+    pub root: NoteName,
+    pub mode: KeyMode,
+}
+
+impl fmt::Display for MusicalKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.root, self.mode)
+    }
+}
+
+impl std::str::FromStr for MusicalKey {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split_whitespace();
+        let (Some(root), Some(mode)) = (parts.next(), parts.next()) else {
+            return Err(format!("Invalid musical key '{s}'"));
+        };
+        if parts.next().is_some() {
+            return Err(format!("Invalid musical key '{s}'"));
+        }
+        Ok(Self {
+            root: root.parse()?,
+            mode: mode.parse()?,
+        })
+    }
+}
+
+impl serde::Serialize for MusicalKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MusicalKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PianoData {
     pub track_idx: String,
@@ -1369,6 +1522,7 @@ pub struct StateData {
     pub tempo: f32,
     pub time_signature_num: u8,
     pub time_signature_denom: u8,
+    pub musical_key: MusicalKey,
     pub tempo_points: Vec<TempoPoint>,
     pub time_signature_points: Vec<TimeSignaturePoint>,
     pub session_author: String,
@@ -1593,6 +1747,7 @@ impl Default for StateData {
             tempo: 120.0,
             time_signature_num: 4,
             time_signature_denom: 4,
+            musical_key: MusicalKey::default(),
             tempo_points: vec![TempoPoint {
                 sample: 0,
                 bpm: 120.0,
@@ -2053,5 +2208,77 @@ mod tests {
         assert!(
             matches!(engine_target, maolan_engine::modulator::ModulatorTarget::TrackBalance { track_name, min, max } if track_name == "Drums" && (min - -1.0).abs() < f32::EPSILON && (max - 1.0).abs() < f32::EPSILON)
         );
+    }
+
+    #[test]
+    fn musical_key_default_is_c_major() {
+        assert_eq!(
+            MusicalKey::default(),
+            MusicalKey {
+                root: NoteName::C,
+                mode: KeyMode::Major
+            }
+        );
+    }
+
+    #[test]
+    fn musical_key_display_from_str_round_trip() {
+        for root in NoteName::ALL {
+            for mode in KeyMode::ALL {
+                let key = MusicalKey { root, mode };
+                let parsed: MusicalKey = key.to_string().parse().unwrap();
+                assert_eq!(parsed, key);
+            }
+        }
+    }
+
+    #[test]
+    fn musical_key_from_str_accepts_flats_and_case() {
+        assert_eq!(
+            "Db major".parse::<MusicalKey>().unwrap(),
+            MusicalKey {
+                root: NoteName::CSharp,
+                mode: KeyMode::Major
+            }
+        );
+        assert_eq!(
+            "bb minor".parse::<MusicalKey>().unwrap(),
+            MusicalKey {
+                root: NoteName::ASharp,
+                mode: KeyMode::Minor
+            }
+        );
+        assert_eq!(
+            "F# MINOR".parse::<MusicalKey>().unwrap(),
+            MusicalKey {
+                root: NoteName::FSharp,
+                mode: KeyMode::Minor
+            }
+        );
+    }
+
+    #[test]
+    fn musical_key_from_str_rejects_invalid() {
+        assert!("H major".parse::<MusicalKey>().is_err());
+        assert!("C".parse::<MusicalKey>().is_err());
+        assert!("C major extra".parse::<MusicalKey>().is_err());
+    }
+
+    #[test]
+    fn musical_key_serde_string_round_trip() {
+        let key = MusicalKey {
+            root: NoteName::A,
+            mode: KeyMode::Minor,
+        };
+        let value = serde_json::to_value(key).unwrap();
+        assert_eq!(value, serde_json::json!("A minor"));
+        let parsed: MusicalKey = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed, key);
+    }
+
+    #[test]
+    fn state_data_default_musical_key_is_c_major() {
+        let data: StateData = Default::default();
+        assert_eq!(data.musical_key, MusicalKey::default());
     }
 }
