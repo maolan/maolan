@@ -5120,6 +5120,7 @@ dependencies = [
  "nvtree",
  "pitch-detection",
  "ratatui",
+ "regex",
  "rfd",
  "rubato",
  "serde",

@@ -889,7 +889,10 @@ impl canvas::Program<Message> for TempoCanvas {
                         }
                         return Some(CanvasAction::capture());
                     }
-                    return Some(CanvasAction::capture());
+                    return Some(
+                        CanvasAction::publish(Message::TimelineZoomByScroll(scroll_y))
+                            .and_capture(),
+                    );
                 }
             }
             _ => {}
@@ -1631,6 +1634,48 @@ mod tests {
     fn tempo_new_creates_instance() {
         let tempo = Tempo::new();
         assert_eq!(tempo.height(), TEMPO_HEIGHT);
+    }
+
+    #[test]
+    fn wheel_over_timeline_area_publishes_zoom_message() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: None,
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(LEFT_HIT_WIDTH + 20.0, 10.0));
+
+        let action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+                }),
+                bounds,
+                cursor,
+            )
+            .expect("wheel over timeline publishes action");
+
+        let (message, status) = action_message(action);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(message, Some(Message::TimelineZoomByScroll(1.0))));
     }
 
     #[test]

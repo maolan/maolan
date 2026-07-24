@@ -317,6 +317,7 @@ pub(crate) fn zoom_slider_to_visible_bars(position: f32) -> f32 {
     2.0_f32.powf(min + (max - min) * clamped)
 }
 
+#[cfg(test)]
 pub(crate) fn visible_bars_to_zoom_slider(visible_bars: f32) -> f32 {
     let clamped = visible_bars.clamp(MIN_ZOOM_VISIBLE_BARS, MAX_ZOOM_VISIBLE_BARS);
     let min = MIN_ZOOM_VISIBLE_BARS.log2();
@@ -706,6 +707,7 @@ pub struct Maolan {
     editor_scroll_y: f32,
     mixer_scroll_x: f32,
     tracks_resize_hovered: bool,
+    tracks_filter: String,
     mixer_resize_hovered: bool,
     tracks_visible: bool,
     editor_visible: bool,
@@ -1015,6 +1017,7 @@ impl Default for Maolan {
             editor_scroll_y: 0.0,
             mixer_scroll_x: 0.0,
             tracks_resize_hovered: false,
+            tracks_filter: String::new(),
             mixer_resize_hovered: false,
             tracks_visible: true,
             editor_visible: true,
@@ -9238,6 +9241,21 @@ mod tests {
         let _ = app.update(Message::ZoomSliderChanged(0.0));
         assert_eq!(app.zoom_visible_bars, MIN_ZOOM_VISIBLE_BARS);
         assert!(app.editor_scroll_x >= 0.0 && app.editor_scroll_x <= 1.0);
+
+        app.zoom_visible_bars = 8.0;
+        let _ = app.update(Message::TimelineZoomByScroll(1.0));
+        assert!(app.zoom_visible_bars < 8.0);
+        let zoomed_in = app.zoom_visible_bars;
+        let _ = app.update(Message::TimelineZoomByScroll(-1.0));
+        assert!(app.zoom_visible_bars > zoomed_in);
+
+        app.zoom_visible_bars = MAX_ZOOM_VISIBLE_BARS;
+        let _ = app.update(Message::TimelineZoomByScroll(-1.0));
+        assert!(app.zoom_visible_bars > MAX_ZOOM_VISIBLE_BARS);
+
+        app.zoom_visible_bars = MIN_ZOOM_VISIBLE_BARS;
+        let _ = app.update(Message::TimelineZoomByScroll(1.0));
+        assert_eq!(app.zoom_visible_bars, MIN_ZOOM_VISIBLE_BARS);
 
         let _ = app.update(Message::EditorScrollXChanged(2.0));
         assert_eq!(app.editor_scroll_x, 1.0);

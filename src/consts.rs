@@ -31,6 +31,7 @@ pub mod workspace {
     pub const MIN_LABEL_SPACING_PX: f32 = 64.0;
 
     pub const TEMPO_HEIGHT: f32 = 56.0;
+    pub const TRACK_SEARCH_HEIGHT: f32 = 48.0;
     pub const TEMPO_HIT_HEIGHT: f32 = 14.0;
     pub const TIME_SIG_HIT_X_SPLIT: f32 = 36.0;
     pub const LEFT_HIT_WIDTH: f32 = 84.0;
@@ -327,6 +328,7 @@ mod tests {
     fn workspace_constants_are_expected_values() {
         assert_eq!(workspace::BEATS_PER_BAR, 4);
         assert_eq!(workspace::MIN_LABEL_SPACING_PX, 64.0);
+        assert_eq!(workspace::TRACK_SEARCH_HEIGHT, 48.0);
     }
 
     #[test]

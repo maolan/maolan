@@ -79,6 +79,36 @@ struct EditorTrackNode<'a> {
     children: Vec<EditorTrackNode<'a>>,
 }
 
+#[derive(Clone)]
+struct SessionOverviewClip {
+    start: usize,
+    length: usize,
+    kind: Kind,
+    muted: bool,
+}
+
+#[derive(Clone)]
+struct SessionOverviewTrack {
+    height: f32,
+    clips: Vec<SessionOverviewClip>,
+}
+
+#[derive(Clone)]
+struct SessionOverviewCanvas {
+    tracks: Vec<SessionOverviewTrack>,
+    timeline_samples: usize,
+    visible_start_samples: f32,
+    visible_samples: f32,
+    scroll_top_px: f32,
+    viewport_height_px: f32,
+}
+
+#[derive(Default)]
+struct SessionOverviewCanvasState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
 fn build_editor_track_tree<'a>(all_tracks: &'a [Track]) -> Vec<EditorTrackNode<'a>> {
     let visible: Vec<&'a Track> = all_tracks
         .iter()
@@ -103,6 +133,46 @@ fn build_editor_track_tree<'a>(all_tracks: &'a [Track]) -> Vec<EditorTrackNode<'
         }
     }
     roots
+}
+
+fn flatten_editor_track_nodes<'a>(nodes: &'a [EditorTrackNode<'a>], tracks: &mut Vec<&'a Track>) {
+    for node in nodes {
+        tracks.push(node.track);
+        flatten_editor_track_nodes(&node.children, tracks);
+    }
+}
+
+fn session_overview_tracks(all_tracks: &[Track]) -> Vec<SessionOverviewTrack> {
+    let root_nodes = build_editor_track_tree(all_tracks);
+    let mut ordered_tracks = Vec::new();
+    flatten_editor_track_nodes(&root_nodes, &mut ordered_tracks);
+
+    ordered_tracks
+        .into_iter()
+        .map(|track| {
+            let audio = track.audio.clips.iter().map(|clip| SessionOverviewClip {
+                start: clip.start,
+                length: clip.length,
+                kind: Kind::Audio,
+                muted: clip.muted,
+            });
+            let midi = track.midi.clips.iter().map(|clip| SessionOverviewClip {
+                start: clip.start,
+                length: clip.length,
+                kind: Kind::MIDI,
+                muted: clip.muted,
+            });
+
+            SessionOverviewTrack {
+                height: if track.is_folder {
+                    track.folder_content_height()
+                } else {
+                    track.height
+                },
+                clips: audio.chain(midi).collect(),
+            }
+        })
+        .collect()
 }
 
 fn build_editor_track_subtree<'a>(
@@ -192,6 +262,157 @@ fn hash_track_node<H: Hasher>(node: &EditorTrackNode<'_>, hasher: &mut H) {
 
     for child in &node.children {
         hash_track_node(child, hasher);
+    }
+}
+
+impl SessionOverviewCanvas {
+    const TRACK_HEIGHT: f32 = 2.0;
+
+    fn shape_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.timeline_samples.hash(&mut hasher);
+        self.visible_start_samples.to_bits().hash(&mut hasher);
+        self.visible_samples.to_bits().hash(&mut hasher);
+        self.scroll_top_px.to_bits().hash(&mut hasher);
+        self.viewport_height_px.to_bits().hash(&mut hasher);
+        self.tracks.len().hash(&mut hasher);
+        for track in &self.tracks {
+            track.height.to_bits().hash(&mut hasher);
+            track.clips.len().hash(&mut hasher);
+            for clip in &track.clips {
+                clip.start.hash(&mut hasher);
+                clip.length.hash(&mut hasher);
+                std::mem::discriminant(&clip.kind).hash(&mut hasher);
+                clip.muted.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    fn sample_x(&self, sample: f32, width: f32) -> f32 {
+        let timeline = self.timeline_samples.max(1) as f32;
+        (sample / timeline * width).clamp(0.0, width)
+    }
+
+    fn row_for_editor_y(&self, editor_y: f32) -> f32 {
+        let mut accumulated = 0.0;
+        for (index, track) in self.tracks.iter().enumerate() {
+            let next = accumulated + track.height.max(1.0);
+            if editor_y <= next {
+                let progress = ((editor_y - accumulated) / (next - accumulated)).clamp(0.0, 1.0);
+                return (index as f32 + progress) * Self::TRACK_HEIGHT;
+            }
+            accumulated = next;
+        }
+        self.tracks.len() as f32 * Self::TRACK_HEIGHT
+    }
+
+    fn clip_color(kind: Kind, muted: bool) -> Color {
+        let base = match kind {
+            Kind::Audio => AUDIO_CLIP_SELECTED_BASE,
+            Kind::MIDI => MIDI_CLIP_SELECTED_BASE,
+        };
+        Color {
+            r: base.r,
+            g: base.g,
+            b: base.b,
+            a: if muted { 0.38 } else { 0.86 },
+        }
+    }
+}
+
+impl canvas::Program<Message> for SessionOverviewCanvas {
+    type State = SessionOverviewCanvasState;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let hash = self.shape_hash(bounds);
+        if state.last_hash.get() != hash {
+            state.cache.clear();
+            state.last_hash.set(hash);
+        }
+
+        let geom = state.cache.draw(renderer, bounds.size(), |frame| {
+            frame.fill(
+                &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
+                Color::from_rgb(0.07, 0.08, 0.10),
+            );
+
+            let content_height = self.tracks.len() as f32 * Self::TRACK_HEIGHT;
+            let top = ((bounds.height - content_height) * 0.5).max(0.0);
+
+            for (track_index, track) in self.tracks.iter().enumerate() {
+                let y = top + track_index as f32 * Self::TRACK_HEIGHT;
+                let row_color = if track_index % 2 == 0 {
+                    Color::from_rgba(0.22, 0.25, 0.30, 0.34)
+                } else {
+                    Color::from_rgba(0.16, 0.18, 0.22, 0.34)
+                };
+                frame.fill(
+                    &Path::rectangle(
+                        Point::new(0.0, y),
+                        iced::Size::new(bounds.width, Self::TRACK_HEIGHT),
+                    ),
+                    row_color,
+                );
+
+                for clip in &track.clips {
+                    if clip.length == 0 {
+                        continue;
+                    }
+                    let x = self.sample_x(clip.start as f32, bounds.width);
+                    let end =
+                        self.sample_x(clip.start.saturating_add(clip.length) as f32, bounds.width);
+                    let w = (end - x).max(1.0).min((bounds.width - x).max(0.0));
+                    if w <= 0.0 {
+                        continue;
+                    }
+                    frame.fill(
+                        &Path::rectangle(Point::new(x, y), iced::Size::new(w, Self::TRACK_HEIGHT)),
+                        Self::clip_color(clip.kind, clip.muted),
+                    );
+                }
+            }
+
+            let view_x = self.sample_x(self.visible_start_samples, bounds.width);
+            let view_end = self.sample_x(
+                self.visible_start_samples + self.visible_samples.max(1.0),
+                bounds.width,
+            );
+            let view_w = (view_end - view_x)
+                .max(2.0)
+                .min((bounds.width - view_x).max(0.0));
+            let view_y = (top + self.row_for_editor_y(self.scroll_top_px)).min(bounds.height);
+            let view_bottom =
+                top + self.row_for_editor_y(self.scroll_top_px + self.viewport_height_px);
+            let view_h = (view_bottom - view_y)
+                .max(Self::TRACK_HEIGHT)
+                .min((bounds.height - view_y).max(0.0));
+            frame.fill(
+                &Path::rectangle(Point::new(view_x, view_y), iced::Size::new(view_w, view_h)),
+                Color::from_rgba(0.55, 0.70, 0.95, 0.16),
+            );
+            frame.stroke(
+                &Path::rectangle(Point::new(view_x, view_y), iced::Size::new(view_w, view_h)),
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgba(0.78, 0.88, 1.0, 0.92))
+                    .with_width(1.0),
+            );
+        });
+
+        vec![geom]
     }
 }
 
@@ -1604,6 +1825,42 @@ pub struct OwnedEditorViewArgs {
 impl Editor {
     pub fn new(state: State) -> Self {
         Self { state }
+    }
+
+    pub fn session_overview(
+        &self,
+        timeline_samples: usize,
+        visible_samples: f32,
+        editor_scroll_x: f32,
+        editor_scroll_y: f32,
+        track_viewport_height: f32,
+    ) -> Element<'static, Message> {
+        let state = self.state.blocking_read();
+        let tracks = session_overview_tracks(&state.tracks);
+        let total_track_height = tracks
+            .iter()
+            .map(|track| track.height)
+            .sum::<f32>()
+            .max(1.0);
+        let viewport_height_px = track_viewport_height.max(1.0).min(total_track_height);
+        let max_scroll_px = (total_track_height - viewport_height_px).max(0.0);
+        let scroll_top_px = editor_scroll_y.clamp(0.0, 1.0) * max_scroll_px;
+        let timeline_samples = timeline_samples.max(1);
+        let visible_samples = visible_samples.max(1.0).min(timeline_samples as f32);
+        let max_scroll_samples = (timeline_samples as f32 - visible_samples).max(0.0);
+        let visible_start_samples = editor_scroll_x.clamp(0.0, 1.0) * max_scroll_samples;
+
+        canvas(SessionOverviewCanvas {
+            tracks,
+            timeline_samples,
+            visible_start_samples,
+            visible_samples,
+            scroll_top_px,
+            viewport_height_px,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     pub fn render_hash(&self, args: &EditorViewArgs<'_>) -> u64 {

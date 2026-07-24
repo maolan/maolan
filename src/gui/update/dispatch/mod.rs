@@ -915,6 +915,22 @@ impl Maolan {
                 self.editor_scroll_x = self.editor_scroll_relative_x();
                 return self.sync_editor_scrollbars();
             }
+            Message::TimelineZoomByScroll(delta) => {
+                if delta.abs() > f32::EPSILON {
+                    let factor = 1.12_f32.powf(delta.abs());
+                    self.zoom_visible_bars = if delta > 0.0 {
+                        self.zoom_visible_bars / factor
+                    } else {
+                        self.zoom_visible_bars * factor
+                    }
+                    .max(crate::gui::MIN_ZOOM_VISIBLE_BARS);
+                    let max_scroll = self.editor_max_scroll_samples();
+                    self.editor_scroll_origin_samples =
+                        self.editor_scroll_origin_samples.clamp(0.0, max_scroll);
+                    self.editor_scroll_x = self.editor_scroll_relative_x();
+                    return self.sync_editor_scrollbars();
+                }
+            }
             Message::EditorScrollXChanged(value) => {
                 let x = value.clamp(0.0, 1.0);
                 if (self.editor_scroll_x - x).abs() > 0.0005 {
@@ -2742,6 +2758,9 @@ impl Maolan {
             }
             Message::TracksResizeHover(hovered) => {
                 self.tracks_resize_hovered = hovered;
+            }
+            Message::TracksFilterInput(ref value) => {
+                self.tracks_filter = value.clone();
             }
             Message::MixerResizeHover(hovered) => {
                 self.mixer_resize_hovered = hovered;
