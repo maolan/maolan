@@ -12,9 +12,10 @@ use crate::{
         widget_piano::{
             KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
         },
-        workspace::{MIN_TIMELINE_BARS, PLAYHEAD_WIDTH_PX, TIMELINE_LEFT_INSET_PX},
+        workspace::{
+            MIN_TIMELINE_BARS, PLAYHEAD_WIDTH_PX, TIMELINE_LEFT_INSET_PX, TRACK_SEARCH_HEIGHT,
+        },
     },
-    gui::visible_bars_to_zoom_slider,
     message::{DraggedClip, Message, Show, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
     widget::{midi_edit, pitch_correction},
@@ -25,8 +26,7 @@ use iced::{
     Alignment, Background, Color, Element, Length, Point, Theme,
     advanced::mouse,
     widget::{
-        Id, Space, Stack, button, column, container, lazy, mouse_area, pin, row, scrollable,
-        slider, text,
+        Id, Space, Stack, button, column, container, lazy, mouse_area, pin, row, scrollable, text,
     },
 };
 use iced_drop::droppable;
@@ -159,6 +159,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub window_width: f32,
     pub window_height: f32,
     pub editor_scroll_y: f32,
+    pub tracks_filter: &'a str,
     pub track_drag_active: bool,
     pub session_slot_drag_active: bool,
     pub tracks_resize_hovered: bool,
@@ -289,6 +290,7 @@ impl Workspace {
             window_width,
             window_height,
             editor_scroll_y,
+            tracks_filter,
             track_drag_active,
             session_slot_drag_active,
             tracks_resize_hovered,
@@ -406,6 +408,7 @@ impl Workspace {
                 0.0
             }
             - self.tempo.height()
+            - TRACK_SEARCH_HEIGHT
             - self.ruler.height())
         .max(160.0);
         let visible_track_window =
@@ -435,7 +438,7 @@ impl Workspace {
             .max(min_timeline_samples);
         let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
         let workspace_content_height =
-            self.tempo.height() + self.ruler.height() + tracks_total_height;
+            TRACK_SEARCH_HEIGHT + self.tempo.height() + self.ruler.height() + tracks_total_height;
         let track_context_menu_overlay = {
             let state = self.state.blocking_read();
             tracks::track_context_menu_overlay(
@@ -530,7 +533,7 @@ impl Workspace {
                 editor_scroll_y,
                 Message::EditorScrollYChanged,
             )
-            .width(Length::Fixed(16.0))
+            .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
             .height(Length::Fill),
         ]
         .spacing(0)
@@ -547,15 +550,18 @@ impl Workspace {
         .height(Length::Fixed(16.0));
 
         let editor_with_zoom = right_lanes_with_scrollbar;
-        let tracks_scrolled =
-            scrollable(self.tracks.view(tracks_visible_window, selected_modulator))
-                .id(Id::new(TRACKS_SCROLL_ID))
-                .direction(scrollable::Direction::Vertical(
-                    scrollable::Scrollbar::hidden(),
-                ))
-                .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
-                .width(tracks_width)
-                .height(Length::Fill);
+        let tracks_scrolled = scrollable(self.tracks.view(
+            tracks_visible_window,
+            selected_modulator,
+            tracks_filter,
+        ))
+        .id(Id::new(TRACKS_SCROLL_ID))
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
+        .width(tracks_width)
+        .height(Length::Fill);
 
         let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
             bpm: tempo,
@@ -649,7 +655,18 @@ impl Workspace {
             editor_with_zoom
         };
 
+        let session_overview = self.editor.session_overview(
+            timeline_samples,
+            min_visible_samples as f32,
+            editor_scroll_x,
+            editor_scroll_y,
+            track_viewport_height,
+        );
         let right_panel = column![
+            container(session_overview)
+                .width(Length::Fill)
+                .height(Length::Fixed(TRACK_SEARCH_HEIGHT))
+                .style(|_theme| crate::style::app_background()),
             tempo_scrolled,
             ruler_scrolled,
             container(editor_body).height(Length::Fill),
@@ -768,22 +785,14 @@ impl Workspace {
                     } else {
                         0.0
                     })),
-                    container(
-                        row![
-                            h_scroll,
-                            slider(
-                                0.0..=1.0,
-                                visible_bars_to_zoom_slider(zoom_visible_bars),
-                                Message::ZoomSliderChanged,
-                            )
-                            .step(0.001_f32)
-                            .width(Length::Fixed(105.0)),
-                        ]
-                        .spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .height(Length::Fixed(16.0))
-                    .padding([0, 8]),
+                    container(h_scroll)
+                        .width(Length::Fill)
+                        .height(Length::Fixed(16.0))
+                        .padding(iced::Padding {
+                            left: 8.0,
+                            ..Default::default()
+                        }),
+                    Space::new().width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH)),
                 ]
                 .height(Length::Fill)
                 .align_y(iced::alignment::Vertical::Bottom),

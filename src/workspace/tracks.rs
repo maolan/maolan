@@ -1,7 +1,10 @@
 use super::VisibleTrackWindow;
 use crate::{
-    consts::state_ids::METRONOME_TRACK_ID,
-    consts::state_track::{TRACK_FOLDER_HEADER_HEIGHT, TRACK_SUBTRACK_GAP},
+    consts::{
+        state_ids::METRONOME_TRACK_ID,
+        state_track::{TRACK_FOLDER_HEADER_HEIGHT, TRACK_SUBTRACK_GAP},
+        workspace::TRACK_SEARCH_HEIGHT,
+    },
     menu,
     message::{Message, MidiLaneChannelSelection, Show, TrackAutomationTarget},
     state::{State, StateData, TrackLaneLayout},
@@ -11,7 +14,7 @@ use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
     widget::{
         Column, Row, Space, Stack, button, column, container, lazy, mouse_area, pick_list, pin,
-        row, scrollable, text,
+        row, scrollable, text, text_input,
     },
 };
 use iced_drop::droppable;
@@ -1544,10 +1547,38 @@ impl Tracks {
         }
     }
 
+    fn track_filter_matches(filter: &str, name: &str) -> bool {
+        let filter = filter.trim();
+        if filter.is_empty() {
+            return true;
+        }
+        let pattern = format!("(?i).*{filter}.*");
+        regex::Regex::new(&pattern).map_or_else(
+            |_| name.to_lowercase().contains(&filter.to_lowercase()),
+            |regex| regex.is_match(name),
+        )
+    }
+
+    fn filter_track_tree(nodes: Vec<TrackNode>, filter: &str) -> Vec<TrackNode> {
+        if filter.trim().is_empty() {
+            return nodes;
+        }
+
+        nodes
+            .into_iter()
+            .filter_map(|mut node| {
+                node.children = Self::filter_track_tree(node.children, filter);
+                (Self::track_filter_matches(filter, &node.data.name) || !node.children.is_empty())
+                    .then_some(node)
+            })
+            .collect()
+    }
+
     pub fn view(
         &self,
         visible_window: VisibleTrackWindow,
         selected_modulator: Option<&crate::state::Modulator>,
+        filter: &str,
     ) -> Element<'_, Message> {
         let (entries, width) = {
             let state = self.state.blocking_read();
@@ -1688,22 +1719,42 @@ impl Tracks {
             _ => 200.0,
         };
 
-        let roots = Self::build_track_tree(&entries);
+        let roots = Self::filter_track_tree(Self::build_track_tree(&entries), filter);
 
         let root_heights: Vec<f32> = roots.iter().map(|r| r.data.visible_height).collect();
-        let start = visible_window.start_index.min(roots.len());
-        let end = visible_window.end_index.min(roots.len());
+        let filtering = !filter.trim().is_empty();
+        let start = if filtering {
+            0
+        } else {
+            visible_window.start_index.min(roots.len())
+        };
+        let end = if filtering {
+            roots.len()
+        } else {
+            visible_window.end_index.min(roots.len())
+        };
         let top_padding = root_heights[..start].iter().sum::<f32>();
         let bottom_padding = root_heights[end..].iter().sum::<f32>();
         let visible_height = root_heights[start..end].iter().sum::<f32>();
-        let total_height = (top_padding + visible_height + bottom_padding).max(1.0);
+        let total_height = (TRACK_SEARCH_HEIGHT + top_padding + visible_height + bottom_padding)
+            .max(TRACK_SEARCH_HEIGHT);
 
         let children_elements: Vec<Element<'_, Message>> = roots[start..end]
             .iter()
             .map(|node| Self::render_node(node, track_width_px, selected_modulator, false))
             .collect();
 
-        let mut result = column![];
+        let search = text_input("Search", filter)
+            .on_input(Message::TracksFilterInput)
+            .size(12)
+            .padding([12, 6])
+            .width(Length::Fill);
+        let mut result = column![
+            container(search)
+                .width(width)
+                .height(Length::Fixed(TRACK_SEARCH_HEIGHT))
+                .padding([2, 6])
+        ];
         if top_padding > 0.0 {
             result = result.push(Space::new().height(Length::Fixed(top_padding)));
         }
@@ -1793,5 +1844,47 @@ mod tests {
         assert_eq!(roots[0].data.name, "folder");
         assert_eq!(roots[0].children.len(), 1);
         assert_eq!(roots[0].children[0].data.name, "child");
+    }
+
+    #[test]
+    fn track_filter_matches_case_insensitive_regex() {
+        assert!(Tracks::track_filter_matches("bass", "Deep Bass"));
+        assert!(Tracks::track_filter_matches("b.ss", "Bass"));
+        assert!(!Tracks::track_filter_matches("kick", "Deep Bass"));
+    }
+
+    #[test]
+    fn track_filter_falls_back_to_case_insensitive_substring_for_invalid_regex() {
+        assert!(Tracks::track_filter_matches("[bass", "Lead [Bass"));
+        assert!(!Tracks::track_filter_matches("[bass", "Lead Synth"));
+    }
+
+    #[test]
+    fn filter_track_tree_keeps_parent_for_matching_child() {
+        let roots = vec![TrackNode {
+            index: 0,
+            data: TrackViewData {
+                name: "Folder".to_string(),
+                folder_depth: 0,
+                is_folder: true,
+                ..TrackViewData::default()
+            },
+            children: vec![TrackNode {
+                index: 1,
+                data: TrackViewData {
+                    name: "Kick".to_string(),
+                    folder_depth: 1,
+                    parent_track: Some("Folder".to_string()),
+                    ..TrackViewData::default()
+                },
+                children: Vec::new(),
+            }],
+        }];
+
+        let filtered = Tracks::filter_track_tree(roots, "kick");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].data.name, "Folder");
+        assert_eq!(filtered[0].children.len(), 1);
+        assert_eq!(filtered[0].children[0].data.name, "Kick");
     }
 }

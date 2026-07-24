@@ -976,6 +976,7 @@ pub enum Message {
     RecordingPreviewPeaksTick,
     ToggleTransport,
     ZoomSliderChanged(f32),
+    TimelineZoomByScroll(f32),
     PianoZoomXChanged(f32),
     PianoZoomYChanged(f32),
     PianoScrollChanged {
@@ -986,6 +987,7 @@ pub enum Message {
     PianoScrollYChanged(f32),
     PianoSysExScrollYChanged(f32),
     TracksResizeHover(bool),
+    TracksFilterInput(String),
     MixerResizeHover(bool),
 
     OpenFileImporter,
