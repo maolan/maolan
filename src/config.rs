@@ -1,4 +1,5 @@
 use crate::consts::audio_defaults;
+use crate::keyboard_shortcuts::ShortcutBindings;
 use crate::message::SnapMode;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -19,6 +20,7 @@ pub struct Config {
     pub default_output_device_id: Option<String>,
     pub default_input_device_id: Option<String>,
     pub recent_session_paths: Vec<String>,
+    pub shortcut_overrides: ShortcutBindings,
 }
 
 impl Default for Config {
@@ -36,6 +38,7 @@ impl Default for Config {
             default_output_device_id: None,
             default_input_device_id: None,
             recent_session_paths: Vec::new(),
+            shortcut_overrides: ShortcutBindings::new(),
         }
     }
 }

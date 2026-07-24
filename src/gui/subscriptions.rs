@@ -1,7 +1,8 @@
 use super::{CLIENT, Maolan};
 use crate::{
     consts::gui::{METER_DIRTY_EPSILON_DB, METER_QUANTIZE_STEP_DB},
-    message::{Message, Show},
+    keyboard_shortcuts::{ShortcutBinding, ShortcutBindings, action_for_binding},
+    message::Message,
     ui_timing::{
         PLAYHEAD_UPDATE_INTERVAL, RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL,
         RECORDING_PREVIEW_UPDATE_INTERVAL,
@@ -145,9 +146,26 @@ impl Maolan {
         let engine_sub = Subscription::run(listener);
 
         let current_view = self.state.blocking_read().view.clone();
+        let mut shortcut_overrides: Vec<_> = self
+            .shortcut_overrides
+            .iter()
+            .map(|(action, binding)| (*action, binding.clone()))
+            .collect();
+        shortcut_overrides.sort_by_key(|(action, _)| *action);
+        let capturing_shortcut = self.shortcut_capture_action.is_some();
         let keyboard_sub = keyboard::listen()
-            .with(current_view)
-            .map(|(current_view, event)| Self::keyboard_message(event, current_view));
+            .with((current_view, shortcut_overrides, capturing_shortcut))
+            .map(
+                |((current_view, shortcut_overrides, capturing_shortcut), event)| {
+                    let shortcut_overrides = shortcut_overrides.into_iter().collect();
+                    Self::keyboard_message(
+                        event,
+                        current_view,
+                        &shortcut_overrides,
+                        capturing_shortcut,
+                    )
+                },
+            );
 
         let event_sub = event::listen().map(|event| match event {
             event::Event::Mouse(mouse_event) => match mouse_event {
@@ -264,135 +282,28 @@ impl Maolan {
         ])
     }
 
-    fn keyboard_message(event: KeyEvent, current_view: crate::state::View) -> Message {
+    fn keyboard_message(
+        event: KeyEvent,
+        current_view: crate::state::View,
+        shortcut_overrides: &ShortcutBindings,
+        capturing_shortcut: bool,
+    ) -> Message {
         match event {
             KeyEvent::KeyPressed { key, modifiers, .. } => {
-                if modifiers.control()
-                    && let keyboard::Key::Character(ch) = &key
-                {
-                    let s = ch.to_ascii_lowercase();
-                    if s == "n" {
-                        return Message::NewSession;
+                if let Some(binding) = ShortcutBinding::from_iced_key(&key, modifiers) {
+                    if capturing_shortcut {
+                        return Message::ShortcutCaptured(binding);
                     }
-                    if s == "o" {
-                        return Message::Show(Show::Open);
-                    }
-                    if s == "i" {
-                        return Message::OpenFileImporter;
-                    }
-                    if s == "e" {
-                        return Message::OpenExporter;
-                    }
-                    if s == "s" {
-                        if modifiers.shift() {
-                            return Message::Show(Show::SaveAs);
-                        }
-                        return Message::Show(Show::Save);
-                    }
-                    if s == "t" {
-                        return Message::Show(Show::AddTrack);
-                    }
-                    if s == "a" {
-                        return Message::SelectAll;
-                    }
-                    if s == "r" {
-                        return Message::TransportRecordToggle;
-                    }
-                    if s == "l" {
-                        return Message::TransportPanic;
-                    }
-                    if s == "z" {
-                        if modifiers.shift() {
-                            return Message::Redo;
-                        }
-                        return Message::Undo;
-                    }
-                    if s == "y" {
-                        return Message::Redo;
+                    if let Some(action) =
+                        action_for_binding(&binding, shortcut_overrides, current_view.clone())
+                    {
+                        return action.message(current_view);
                     }
                 }
+
                 match key {
-                    keyboard::Key::Character(ch) if !modifiers.control() => {
-                        let s = ch.to_ascii_lowercase();
-                        if s == "q" {
-                            Message::PianoQuantizeSelectedNotes
-                        } else if s == "h" {
-                            Message::PianoHumanizeSelectedNotes
-                        } else if s == "g" {
-                            Message::PianoGrooveSelectedNotes
-                        } else if s == "s" {
-                            Message::ToggleShortcutsPane
-                        } else if s == "m" {
-                            Message::ToggleModulatorsPane
-                        } else if s == "c" {
-                            Message::ToggleClipsPane
-                        } else if s == "x" {
-                            Message::ToggleCutIndicator
-                        } else if s == "b" {
-                            Message::ToggleSelectedPluginBypass
-                        } else {
-                            Message::None
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                        if matches!(current_view, crate::state::View::Session) {
-                            Message::Workspace
-                        } else {
-                            Message::Session
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {
-                        if matches!(current_view, crate::state::View::Session) {
-                            Message::SessionNavStopAll
-                        } else {
-                            Message::TransportPause
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::Space) => Message::ToggleTransport,
-                    keyboard::Key::Named(keyboard::key::Named::Home) => Message::JumpToStart,
-                    keyboard::Key::Named(keyboard::key::Named::End) => Message::JumpToEnd,
-                    keyboard::Key::Named(keyboard::key::Named::ArrowUp)
-                        if matches!(current_view, crate::state::View::Session) =>
-                    {
-                        Message::SessionNavMove {
-                            delta_x: 0,
-                            delta_y: -1,
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::ArrowDown)
-                        if matches!(current_view, crate::state::View::Session) =>
-                    {
-                        Message::SessionNavMove {
-                            delta_x: 0,
-                            delta_y: 1,
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::ArrowLeft)
-                        if matches!(current_view, crate::state::View::Session) =>
-                    {
-                        Message::SessionNavMove {
-                            delta_x: -1,
-                            delta_y: 0,
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::ArrowRight)
-                        if matches!(current_view, crate::state::View::Session) =>
-                    {
-                        Message::SessionNavMove {
-                            delta_x: 1,
-                            delta_y: 0,
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::Enter)
-                        if matches!(current_view, crate::state::View::Session) =>
-                    {
-                        Message::SessionNavLaunch
-                    }
                     keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                     keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
-                    keyboard::Key::Named(keyboard::key::Named::Delete)
-                    | keyboard::Key::Named(keyboard::key::Named::Backspace) => Message::Remove,
-                    keyboard::Key::Named(keyboard::key::Named::Escape) => Message::EscapePressed,
                     _ => Message::None,
                 }
             }
@@ -496,11 +407,20 @@ mod tests {
         ));
     }
 
+    fn keyboard_message(event: KeyEvent, view: crate::state::View) -> Message {
+        Maolan::keyboard_message(
+            event,
+            view,
+            &crate::keyboard_shortcuts::ShortcutBindings::new(),
+            false,
+        )
+    }
+
     #[test]
     fn keyboard_shortcuts_map_to_transport_actions() {
         let view = crate::state::View::Workspace;
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Character("r".into()),
                     modified_key: Key::Character("r".into()),
@@ -516,7 +436,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Character("l".into()),
                     modified_key: Key::Character("l".into()),
@@ -532,7 +452,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Named(Named::Home),
                     modified_key: Key::Named(Named::Home),
@@ -548,7 +468,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Named(Named::End),
                     modified_key: Key::Named(Named::End),
@@ -568,7 +488,7 @@ mod tests {
     fn s_in_workspace_toggles_shortcuts_pane() {
         let view = crate::state::View::Workspace;
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Character("s".into()),
                     modified_key: Key::Character("s".into()),
@@ -588,7 +508,7 @@ mod tests {
     fn c_in_workspace_toggles_clips_pane() {
         let view = crate::state::View::Workspace;
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Character("c".into()),
                     modified_key: Key::Character("c".into()),
@@ -608,7 +528,7 @@ mod tests {
     fn x_in_workspace_toggles_cut_indicator() {
         let view = crate::state::View::Workspace;
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Character("x".into()),
                     modified_key: Key::Character("x".into()),
@@ -628,7 +548,7 @@ mod tests {
     fn ctrl_t_in_workspace_opens_add_track_modal() {
         let view = crate::state::View::Workspace;
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Character("t".into()),
                     modified_key: Key::Character("t".into()),
@@ -648,7 +568,7 @@ mod tests {
     fn ctrl_t_in_session_opens_add_track_modal() {
         let view = crate::state::View::Session;
         assert!(matches!(
-            Maolan::keyboard_message(
+            keyboard_message(
                 KeyEvent::KeyPressed {
                     key: Key::Character("t".into()),
                     modified_key: Key::Character("t".into()),

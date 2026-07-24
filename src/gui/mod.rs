@@ -18,7 +18,9 @@ use crate::{
     },
     consts::state_ids::METRONOME_TRACK_ID,
     consts::widget_piano::PITCH_MAX,
-    hw, menu,
+    hw,
+    keyboard_shortcuts::{ShortcutAction, ShortcutBindings},
+    menu,
     message::{
         BurnBackendOption, DraggedClip, ExportBitDepth, ExportDither, ExportFormat,
         ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message,
@@ -456,6 +458,7 @@ struct AppPreferences {
     default_output_device_id: Option<String>,
     default_input_device_id: Option<String>,
     recent_session_paths: Vec<String>,
+    shortcut_overrides: ShortcutBindings,
 }
 
 impl Default for AppPreferences {
@@ -469,6 +472,7 @@ impl Default for AppPreferences {
             default_output_device_id: None,
             default_input_device_id: None,
             recent_session_paths: Vec::new(),
+            shortcut_overrides: ShortcutBindings::new(),
         }
     }
 }
@@ -715,6 +719,8 @@ pub struct Maolan {
     toolbar_visible: bool,
     show_log_window: bool,
     shortcuts_pane_visible: bool,
+    shortcut_overrides: ShortcutBindings,
+    shortcut_capture_action: Option<ShortcutAction>,
     modulators_pane_visible: bool,
     clips_pane_visible: bool,
     pub modulators: Vec<crate::state::Modulator>,
@@ -825,6 +831,7 @@ fn load_preferences() -> AppPreferences {
         default_output_device_id: cfg.default_output_device_id,
         default_input_device_id: cfg.default_input_device_id,
         recent_session_paths: cfg.recent_session_paths,
+        shortcut_overrides: cfg.shortcut_overrides,
     }
 }
 
@@ -1025,6 +1032,8 @@ impl Default for Maolan {
             toolbar_visible: true,
             show_log_window: false,
             shortcuts_pane_visible: false,
+            shortcut_overrides: prefs.shortcut_overrides,
+            shortcut_capture_action: None,
             modulators_pane_visible: false,
             clips_pane_visible: false,
             modulators: vec![],

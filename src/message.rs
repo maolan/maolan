@@ -1,3 +1,4 @@
+use crate::keyboard_shortcuts::{ShortcutAction, ShortcutBinding};
 use iced::{
     Point, Rectangle, Size, mouse,
     widget::{Id, text_editor},
@@ -913,6 +914,8 @@ pub enum Message {
         divider: usize,
     },
     ShortcutsHint(Option<String>),
+    ShortcutEditStart(ShortcutAction),
+    ShortcutCaptured(ShortcutBinding),
     ClipResizeHandleHover {
         kind: Kind,
         track_idx: String,
