@@ -26,6 +26,8 @@ mod hw;
 #[cfg(not(miri))]
 mod icon;
 #[cfg(not(miri))]
+mod keyboard_shortcuts;
+#[cfg(not(miri))]
 mod menu;
 #[cfg(not(miri))]
 mod message;

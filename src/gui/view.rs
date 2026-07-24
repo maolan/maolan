@@ -872,7 +872,9 @@ impl Maolan {
                             container(view).width(Length::Fill),
                             crate::shortcuts_pane::ShortcutsPane::view(
                                 view_kind,
-                                shortcuts_hint.as_deref()
+                                shortcuts_hint.as_deref(),
+                                &self.shortcut_overrides,
+                                self.shortcut_capture_action,
                             )
                         ]
                         .width(Length::Fill)

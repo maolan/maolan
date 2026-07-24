@@ -6927,6 +6927,35 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.shortcuts_hint = hint.clone();
             }
+            Message::ShortcutEditStart(action) => {
+                self.shortcut_capture_action = Some(action);
+                self.state.blocking_write().message =
+                    "Press the new shortcut key combination".to_string();
+            }
+            Message::ShortcutCaptured(ref binding) => {
+                let Some(action) = self.shortcut_capture_action.take() else {
+                    return Task::none();
+                };
+
+                if *binding == crate::keyboard_shortcuts::default_binding(action) {
+                    self.shortcut_overrides.remove(&action);
+                } else {
+                    self.shortcut_overrides.insert(action, binding.clone());
+                }
+
+                let mut cfg = crate::config::Config::load().unwrap_or_default();
+                cfg.shortcut_overrides = self.shortcut_overrides.clone();
+                match cfg.save() {
+                    Ok(()) => {
+                        self.state.blocking_write().message =
+                            format!("Shortcut updated: {}", binding.label());
+                    }
+                    Err(err) => {
+                        self.state.blocking_write().message =
+                            format!("Failed to save shortcut: {err}");
+                    }
+                }
+            }
             Message::ClipResizeHandleHover {
                 kind,
                 ref track_idx,
@@ -9646,6 +9675,7 @@ impl Maolan {
                     default_output_device_id: cfg.default_output_device_id.clone(),
                     default_input_device_id: cfg.default_input_device_id.clone(),
                     recent_session_paths: cfg.recent_session_paths.clone(),
+                    shortcut_overrides: cfg.shortcut_overrides.clone(),
                 };
                 match cfg.save().map_err(|e| e.to_string()) {
                     Ok(()) => {

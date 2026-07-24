@@ -1,21 +1,27 @@
+use crate::keyboard_shortcuts::{ShortcutAction, ShortcutBindings, binding_for};
 use crate::message::Message;
 use crate::state::View;
 use iced::{
     Background, Border, Color, Element, Length,
-    widget::{column, container, scrollable, text},
+    widget::{column, container, mouse_area, scrollable, text},
 };
 
 pub struct ShortcutsPane;
 
 impl ShortcutsPane {
-    pub fn view(view: View, hint: Option<&str>) -> Element<'static, Message> {
+    pub fn view(
+        view: View,
+        hint: Option<&str>,
+        overrides: &ShortcutBindings,
+        editing: Option<ShortcutAction>,
+    ) -> Element<'static, Message> {
         let content = match view {
             View::Connections | View::TrackPlugins => connections_shortcuts(hint),
-            View::Piano => piano_shortcuts(hint),
-            View::PitchCorrection => pitch_correction_shortcuts(hint),
-            View::Session => session_shortcuts(hint),
+            View::Piano => piano_shortcuts(hint, overrides, editing),
+            View::PitchCorrection => pitch_correction_shortcuts(hint, overrides, editing),
+            View::Session => session_shortcuts(hint, overrides, editing),
             View::X32 => column![].into(),
-            _ => workspace_shortcuts(hint),
+            _ => workspace_shortcuts(hint, overrides, editing),
         };
 
         container(
@@ -40,22 +46,89 @@ impl ShortcutsPane {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ShortcutRow {
+    action: ShortcutAction,
+    label: &'static str,
+}
+
+enum PaneRow {
+    Editable(ShortcutRow),
+    Static(&'static str),
+}
+
+fn keyboard_row(action: ShortcutAction, label: &'static str) -> PaneRow {
+    PaneRow::Editable(ShortcutRow { action, label })
+}
+
+fn static_row(label: &'static str) -> PaneRow {
+    PaneRow::Static(label)
+}
+
 fn section(
     title: impl Into<String>,
-    items: &[impl AsRef<str>],
+    items: Vec<PaneRow>,
     hint: Option<&str>,
+    overrides: &ShortcutBindings,
+    editing: Option<ShortcutAction>,
 ) -> Element<'static, Message> {
     let title = title.into();
     let mut col = column![text(title).size(13)].spacing(4);
     for item in items {
-        let item_str = item.as_ref();
-        let is_highlighted = hint.is_some_and(|h| item_str.contains(h));
-        let item_element: Element<'static, Message> = if is_highlighted {
-            container(
-                text(format!("  • {}", item_str))
-                    .size(11)
-                    .color(Color::from_rgb(1.0, 0.95, 0.6)),
-            )
+        col = col.push(row_element(item, hint, overrides, editing));
+    }
+    col.into()
+}
+
+fn row_element(
+    item: PaneRow,
+    hint: Option<&str>,
+    overrides: &ShortcutBindings,
+    editing: Option<ShortcutAction>,
+) -> Element<'static, Message> {
+    match item {
+        PaneRow::Editable(row) => editable_row(row, hint, overrides, editing),
+        PaneRow::Static(label) => {
+            styled_row(format!("  * {label}"), highlighted(label, hint), false)
+        }
+    }
+}
+
+fn editable_row(
+    row_data: ShortcutRow,
+    hint: Option<&str>,
+    overrides: &ShortcutBindings,
+    editing: Option<ShortcutAction>,
+) -> Element<'static, Message> {
+    let binding = binding_for(overrides, row_data.action).label();
+    let is_editing = editing == Some(row_data.action);
+    let label = if is_editing {
+        format!("  * {binding}: Press new shortcut")
+    } else {
+        format!("  * {binding}: {}", row_data.label)
+    };
+    let content = styled_row(
+        label,
+        highlighted(row_data.label, hint) || is_editing,
+        is_editing,
+    );
+    mouse_area(content)
+        .on_double_click(Message::ShortcutEditStart(row_data.action))
+        .into()
+}
+
+fn styled_row(label: String, is_highlighted: bool, is_editing: bool) -> Element<'static, Message> {
+    let color = if is_editing {
+        Color::from_rgb(0.72, 0.9, 1.0)
+    } else if is_highlighted {
+        Color::from_rgb(1.0, 0.95, 0.6)
+    } else {
+        Color::WHITE
+    };
+
+    let row = text(label).size(11).color(color);
+    if is_highlighted || is_editing {
+        container(row)
             .style(|_theme| container::Style {
                 background: Some(Background::Color(Color::from_rgba(0.35, 0.4, 0.22, 0.45))),
                 border: Border {
@@ -66,235 +139,305 @@ fn section(
             })
             .padding([2, 4])
             .into()
-        } else {
-            text(format!("  • {}", item_str)).size(11).into()
-        };
-        col = col.push(item_element);
+    } else {
+        row.into()
     }
-    col.into()
+}
+
+fn highlighted(label: &str, hint: Option<&str>) -> bool {
+    hint.is_some_and(|h| label.contains(h))
 }
 
 fn connections_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
-    column![section(
+    section(
         "Mouse",
-        &[
-            "Drag plugin node: Move node",
-            "Drag from port to port: Create connection",
-            "Select connection + Delete: Remove connection",
-            "Select plugin + Delete: Remove plugin",
+        vec![
+            static_row("Drag plugin node: Move node"),
+            static_row("Drag from port to port: Create connection"),
+            static_row("Select connection + Delete: Remove connection"),
+            static_row("Select plugin + Delete: Remove plugin"),
         ],
-        hint
-    ),]
-    .spacing(16)
-    .into()
+        hint,
+        &ShortcutBindings::new(),
+        None,
+    )
 }
 
-fn piano_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
+fn piano_shortcuts(
+    hint: Option<&str>,
+    overrides: &ShortcutBindings,
+    editing: Option<ShortcutAction>,
+) -> Element<'static, Message> {
     column![
         section(
             "Keyboard",
-            &[
-                "Q: Quantize selected notes",
-                "H: Humanize selected notes",
-                "G: Groove selected notes",
-                "Space: Toggle play/stop",
-                "Shift+Space: Pause",
-                "Home: Rewind to start",
-                "End: Rewind to end",
+            vec![
+                keyboard_row(
+                    ShortcutAction::QuantizeSelectedNotes,
+                    "Quantize selected notes"
+                ),
+                keyboard_row(
+                    ShortcutAction::HumanizeSelectedNotes,
+                    "Humanize selected notes"
+                ),
+                keyboard_row(ShortcutAction::GrooveSelectedNotes, "Groove selected notes"),
+                keyboard_row(ShortcutAction::ToggleTransport, "Toggle play/stop"),
+                keyboard_row(ShortcutAction::PauseTransport, "Pause"),
+                keyboard_row(ShortcutAction::JumpToStart, "Rewind to start"),
+                keyboard_row(ShortcutAction::JumpToEnd, "Rewind to end"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Mouse",
-            &[
-                "Click/drag notes: Select and move",
-                "Drag note edge: Resize note",
-                "Left drag empty area: Box-select notes",
-                "Right drag empty area: Create notes",
-                "Middle click note: Delete note",
-                "Mouse wheel over note: Adjust velocity",
+            vec![
+                static_row("Click/drag notes: Select and move"),
+                static_row("Drag note edge: Resize note"),
+                static_row("Left drag empty area: Box-select notes"),
+                static_row("Right drag empty area: Create notes"),
+                static_row("Middle click note: Delete note"),
+                static_row("Mouse wheel over note: Adjust velocity"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Controller Lanes",
-            &[
-                "Left drag: Adjust point/value",
-                "Middle click/drag: Erase",
-                "Right drag: Draw",
-                "Mouse wheel over event: Adjust value",
+            vec![
+                static_row("Left drag: Adjust point/value"),
+                static_row("Middle click/drag: Erase"),
+                static_row("Right drag: Draw"),
+                static_row("Mouse wheel over event: Adjust value"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "SysEx Lane",
-            &[
-                "Left drag: Move SysEx event",
-                "Double click: Open SysEx editor",
+            vec![
+                static_row("Left drag: Move SysEx event"),
+                static_row("Double click: Open SysEx editor"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
     ]
     .spacing(16)
     .into()
 }
 
-fn pitch_correction_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
+fn pitch_correction_shortcuts(
+    hint: Option<&str>,
+    overrides: &ShortcutBindings,
+    editing: Option<ShortcutAction>,
+) -> Element<'static, Message> {
     column![
         section(
             "Keyboard",
-            &[
-                "Ctrl+A: Select all segments",
-                "Ctrl+Z: Undo local edits",
-                "Ctrl+Shift+Z / Ctrl+Y: Redo local edits",
+            vec![
+                keyboard_row(ShortcutAction::SelectAll, "Select all segments"),
+                keyboard_row(ShortcutAction::Undo, "Undo local edits"),
+                keyboard_row(ShortcutAction::Redo, "Redo local edits"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Mouse",
-            &[
-                "Left click segment: Select",
-                "Shift+Left click: Add/remove from selection",
-                "Left drag selected: Retarget vertically",
-                "Left drag empty: Box-select",
-                "Shift+Left drag empty: Add to selection",
-                "Double click: Snap to nearest semitone",
+            vec![
+                static_row("Left click segment: Select"),
+                static_row("Shift+Left click: Add/remove from selection"),
+                static_row("Left drag selected: Retarget vertically"),
+                static_row("Left drag empty: Box-select"),
+                static_row("Shift+Left drag empty: Add to selection"),
+                static_row("Double click: Snap to nearest semitone"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
     ]
     .spacing(16)
     .into()
 }
 
-fn session_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
+fn session_shortcuts(
+    hint: Option<&str>,
+    overrides: &ShortcutBindings,
+    editing: Option<ShortcutAction>,
+) -> Element<'static, Message> {
     column![
         section(
             "Keyboard",
-            &[
-                "Tab: Toggle Workspace/Session view",
-                "Return: Launch/stop selected slot",
-                "Shift+Space: Stop all session clips",
-                "Arrow keys: Navigate slots",
-                "Space: Play/stop arrangement transport",
+            vec![
+                keyboard_row(
+                    ShortcutAction::ToggleWorkspaceSession,
+                    "Toggle Workspace/Session view"
+                ),
+                keyboard_row(
+                    ShortcutAction::SessionNavLaunch,
+                    "Launch/stop selected slot"
+                ),
+                keyboard_row(ShortcutAction::SessionStopAll, "Stop all session clips"),
+                keyboard_row(ShortcutAction::SessionNavUp, "Navigate slots up"),
+                keyboard_row(ShortcutAction::SessionNavDown, "Navigate slots down"),
+                keyboard_row(ShortcutAction::SessionNavLeft, "Navigate slots left"),
+                keyboard_row(ShortcutAction::SessionNavRight, "Navigate slots right"),
+                keyboard_row(
+                    ShortcutAction::ToggleTransport,
+                    "Play/stop arrangement transport"
+                ),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Mouse",
-            &[
-                "Click slot: Launch/stop clip",
-                "Click scene: Launch all clips in scene",
-                "Right click slot: Context menu",
-                "Double click slot: Open referenced clip",
+            vec![
+                static_row("Click slot: Launch/stop clip"),
+                static_row("Click scene: Launch all clips in scene"),
+                static_row("Right click slot: Context menu"),
+                static_row("Double click slot: Open referenced clip"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
     ]
     .spacing(16)
     .into()
 }
 
-fn workspace_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
+fn workspace_shortcuts(
+    hint: Option<&str>,
+    overrides: &ShortcutBindings,
+    editing: Option<ShortcutAction>,
+) -> Element<'static, Message> {
     column![
         section(
             "Session",
-            &[
-                "Ctrl+N: New session",
-                "Ctrl+O: Open session",
-                "Ctrl+S: Save session",
-                "Ctrl+Shift+S: Save as",
-                "Ctrl+I: Import files",
-                "Ctrl+E: Export",
-                "Ctrl+T: Add track",
-                "Ctrl+A: Select all",
-                "Ctrl+R: Record arm toggle",
-                "Ctrl+L: MIDI panic",
-                "Ctrl+Z: Undo",
-                "Ctrl+Shift+Z / Ctrl+Y: Redo",
-                "Delete / Backspace: Remove selected",
-                "Escape: Cancel / clear",
-                "S: Toggle shortcuts pane",
-                "M: Toggle modulators pane",
-                "C: Toggle clips pane",
-                "X: Toggle cut indicator",
+            vec![
+                keyboard_row(ShortcutAction::NewSession, "New session"),
+                keyboard_row(ShortcutAction::OpenSession, "Open session"),
+                keyboard_row(ShortcutAction::SaveSession, "Save session"),
+                keyboard_row(ShortcutAction::SaveSessionAs, "Save as"),
+                keyboard_row(ShortcutAction::ImportFiles, "Import files"),
+                keyboard_row(ShortcutAction::Export, "Export"),
+                keyboard_row(ShortcutAction::AddTrack, "Add track"),
+                keyboard_row(ShortcutAction::SelectAll, "Select all"),
+                keyboard_row(ShortcutAction::RecordArmToggle, "Record arm toggle"),
+                keyboard_row(ShortcutAction::MidiPanic, "MIDI panic"),
+                keyboard_row(ShortcutAction::Undo, "Undo"),
+                keyboard_row(ShortcutAction::Redo, "Redo"),
+                keyboard_row(ShortcutAction::RemoveSelected, "Remove selected"),
+                keyboard_row(ShortcutAction::Escape, "Cancel / clear"),
+                keyboard_row(ShortcutAction::ToggleShortcutsPane, "Toggle shortcuts pane"),
+                keyboard_row(
+                    ShortcutAction::ToggleModulatorsPane,
+                    "Toggle modulators pane"
+                ),
+                keyboard_row(ShortcutAction::ToggleClipsPane, "Toggle clips pane"),
+                keyboard_row(ShortcutAction::ToggleCutIndicator, "Toggle cut indicator"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Transport",
-            &[
-                "Space: Play/stop",
-                "Shift+Space: Pause",
-                "Home: Rewind to start",
-                "End: Rewind to end",
+            vec![
+                keyboard_row(ShortcutAction::ToggleTransport, "Play/stop"),
+                keyboard_row(ShortcutAction::PauseTransport, "Pause"),
+                keyboard_row(ShortcutAction::JumpToStart, "Rewind to start"),
+                keyboard_row(ShortcutAction::JumpToEnd, "Rewind to end"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Tracks",
-            &[
-                "Left click: Select track",
-                "Ctrl+Left click: Add to selection",
-                "Double click: Open plugin graph",
-                "Right click: Context menu",
-                "Drag track: Reorder",
-                "Drag bottom edge: Resize height",
+            vec![
+                static_row("Left click: Select track"),
+                static_row("Ctrl+Left click: Add to selection"),
+                static_row("Double click: Open plugin graph"),
+                static_row("Right click: Context menu"),
+                static_row("Drag track: Reorder"),
+                static_row("Drag bottom edge: Resize height"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Timeline Clips",
-            &[
-                "Left click: Select clip",
-                "Left click empty: Deselect",
-                "Left drag: Move clip",
-                "Ctrl+drag: Copy clip",
-                "Drag edge: Resize bounds",
-                "Shift+drag edge: Stretch audio",
-                "Drag fade handles: Resize fade",
-                "Middle click clip: Split at cursor",
-                "Double click MIDI clip: Open piano roll",
-                "Right click clip: Context menu",
+            vec![
+                static_row("Left click: Select clip"),
+                static_row("Left click empty: Deselect"),
+                static_row("Left drag: Move clip"),
+                static_row("Ctrl+drag: Copy clip"),
+                static_row("Drag edge: Resize bounds"),
+                static_row("Shift+drag edge: Stretch audio"),
+                static_row("Drag fade handles: Resize fade"),
+                static_row("Middle click clip: Split at cursor"),
+                static_row("Double click MIDI clip: Open piano roll"),
+                static_row("Right click clip: Context menu"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Markers",
-            &[
-                "Right click empty header: Create marker",
-                "Left drag marker: Move",
-                "Right click marker: Rename",
-                "Middle click marker: Delete",
+            vec![
+                static_row("Right click empty header: Create marker"),
+                static_row("Left drag marker: Move"),
+                static_row("Right click marker: Rename"),
+                static_row("Middle click marker: Delete"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Selection",
-            &[
-                "Left drag empty editor: Marquee select",
-                "Right drag MIDI lane: Create empty MIDI clip",
+            vec![
+                static_row("Left drag empty editor: Marquee select"),
+                static_row("Right drag MIDI lane: Create empty MIDI clip"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Automation Lanes",
-            &[
-                "Left click empty area: Insert automation point",
-                "Right click point: Delete automation point",
+            vec![
+                static_row("Left click empty area: Insert automation point"),
+                static_row("Right click point: Delete automation point"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
         section(
             "Ruler",
-            &[
-                "Left click: Move playhead",
-                "Left drag: Set loop range",
-                "Middle drag inside loop: Move loop range",
-                "Middle drag loop edge: Adjust loop start/end",
-                "Right click: Clear loop range",
+            vec![
+                static_row("Left click: Move playhead"),
+                static_row("Left drag: Set loop range"),
+                static_row("Middle drag inside loop: Move loop range"),
+                static_row("Middle drag loop edge: Adjust loop start/end"),
+                static_row("Right click: Clear loop range"),
             ],
-            hint
+            hint,
+            overrides,
+            editing,
         ),
     ]
     .spacing(16)
