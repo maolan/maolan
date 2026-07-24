@@ -119,7 +119,16 @@ function Ensure-Rust {
     if (-not (Test-Path $installer)) {
         Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile $installer
     }
-    & $installer -y --default-toolchain stable --target $target 2>&1 | ForEach-Object { Write-Host $_ }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $installer -y --default-toolchain stable --target $target 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Rust installation failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 }
 

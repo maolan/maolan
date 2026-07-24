@@ -1031,13 +1031,14 @@ mod tests {
         assert!(actions.iter().any(
             |action| matches!(action, Action::TrackLoadLv2Plugin { track_name, plugin_uri, instance_id } if track_name == "Track 1" && plugin_uri == "http://example.invalid/lv2" && *instance_id == Some(0))
         ));
-        assert_eq!(
-            actions
-                .iter()
-                .filter(|action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Track 1"))
-                .count(),
-            2
-        );
+        let track_1_plugin_audio_connections = actions
+            .iter()
+            .filter(|action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Track 1"))
+            .count();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert_eq!(track_1_plugin_audio_connections, 2);
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        assert_eq!(track_1_plugin_audio_connections, 0);
         assert!(!actions.iter().any(
             |action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Deleted Track")
         ));

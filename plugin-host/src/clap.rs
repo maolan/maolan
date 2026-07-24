@@ -1116,6 +1116,9 @@ impl PluginInstance {
 
         #[cfg(windows)]
         let window = {
+            if api_name != "win32" {
+                return Err(format!("unsupported CLAP GUI API for Windows: {api_name}"));
+            }
             let api = c"win32".as_ptr();
             ClapWindow {
                 api,
@@ -1145,6 +1148,9 @@ impl PluginInstance {
 
         #[cfg(target_os = "macos")]
         let window = {
+            if api_name != "cocoa" {
+                return Err(format!("unsupported CLAP GUI API for macOS: {api_name}"));
+            }
             let api = c"cocoa".as_ptr();
             ClapWindow {
                 api,

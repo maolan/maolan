@@ -136,7 +136,54 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
         candidates.push(dir.join(host_name));
     }
 
-    candidates.into_iter().find(|cand| cand.exists())
+    if let Some(candidate) = candidates.into_iter().find(|cand| cand.exists()) {
+        return Some(candidate);
+    }
+
+    #[cfg(test)]
+    if dir.file_name()? == "deps" {
+        return build_plugin_host_binary(dir.parent()?, host_name);
+    }
+
+    None
+}
+
+#[cfg(test)]
+fn build_plugin_host_binary(profile_dir: &std::path::Path, host_name: &str) -> Option<PathBuf> {
+    let profile = profile_dir.file_name()?.to_str()?;
+    let mut cmd = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    cmd.current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("build")
+        .arg("-p")
+        .arg("maolan-plugin-host")
+        .arg("--bin")
+        .arg("maolan-plugin-host");
+
+    if profile == "release" {
+        cmd.arg("--release");
+    }
+
+    if let Some(target_dir) = profile_dir.parent().and_then(|target_parent| {
+        let target = target_parent.file_name()?.to_str()?;
+        if target.contains('-') {
+            Some((target_parent.parent()?.to_path_buf(), target.to_string()))
+        } else {
+            None
+        }
+    }) {
+        cmd.arg("--target")
+            .arg(target_dir.1)
+            .arg("--target-dir")
+            .arg(target_dir.0);
+    }
+
+    let status = cmd.status().ok()?;
+    if status.success() {
+        let candidate = profile_dir.join(host_name);
+        candidate.exists().then_some(candidate)
+    } else {
+        None
+    }
 }
 
 mod tests {

@@ -4749,6 +4749,7 @@ mod tests {
         assert_eq!(second_status, event::Status::Ignored);
     }
 
+    #[cfg(unix)]
     #[test]
     fn update_double_clicking_hw_in_with_jack_opens_jack_connections_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
