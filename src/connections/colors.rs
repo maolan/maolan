@@ -12,6 +12,18 @@ pub fn midi_port_color() -> Color {
     Color::from_rgb(0.30, 0.82, 0.38)
 }
 
+pub fn audio_connection_color() -> Color {
+    Color::from_rgb(0.36, 0.66, 0.98)
+}
+
+pub fn midi_connection_color() -> Color {
+    midi_port_color()
+}
+
+pub fn selected_connection_color() -> Color {
+    Color::from_rgb(0.72, 0.90, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,5 +61,15 @@ mod tests {
         assert_ne!(audio, aux);
         assert_ne!(audio, midi);
         assert_ne!(aux, midi);
+    }
+
+    #[test]
+    fn connection_colors_match_connection_view_palette() {
+        assert_eq!(audio_connection_color(), Color::from_rgb(0.36, 0.66, 0.98));
+        assert_eq!(midi_connection_color(), midi_port_color());
+        assert_eq!(
+            selected_connection_color(),
+            Color::from_rgb(0.72, 0.90, 1.0)
+        );
     }
 }

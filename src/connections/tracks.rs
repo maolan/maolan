@@ -1,5 +1,8 @@
 use crate::{
-    connections::colors::{audio_port_color, aux_port_color, midi_port_color},
+    connections::colors::{
+        audio_connection_color, audio_port_color, aux_port_color, midi_connection_color,
+        midi_port_color, selected_connection_color,
+    },
     connections::plugins::{Graph as PluginGraph, select_plugin_indices},
     connections::port_kind::{can_connect_kinds, should_highlight_port},
     connections::ports::hover_radius,
@@ -3318,9 +3321,9 @@ impl canvas::Program<Message> for Graph {
         let plugin_node_fill = midi_box_fill;
         let plugin_node_border = midi_box_border;
         let plugin_node_hover = midi_box_selected_fill;
-        let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
-        let conn_midi = Color::from_rgb(0.30, 0.82, 0.38);
-        let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
+        let conn_audio = audio_connection_color();
+        let conn_midi = midi_connection_color();
+        let conn_selected = selected_connection_color();
         frame.fill(&Path::rectangle(Point::new(0.0, 0.0), bounds.size()), bg);
         draw_grid(&mut frame, bounds.width, bounds.height);
 

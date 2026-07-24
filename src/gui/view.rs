@@ -638,6 +638,7 @@ impl Maolan {
                     };
 
                     let mut content = column![self.menu.view(MenuViewState {
+                        has_selected_track: !self.state.blocking_read().selected.is_empty(),
                         tracks_visible: self.tracks_visible,
                         editor_visible: self.editor_visible,
                         mixer_visible: self.mixer_visible,

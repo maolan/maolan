@@ -19,6 +19,7 @@ pub struct Menu {
 
 #[derive(Clone, Copy)]
 pub struct MenuViewState {
+    pub has_selected_track: bool,
     pub tracks_visible: bool,
     pub editor_visible: bool,
     pub mixer_visible: bool,
@@ -87,11 +88,10 @@ impl Menu {
                     (submenu("Recent", Message::None), recent_submenu),
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Save as", Message::Show(Show::SaveAs))),
+                    (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
                     (menu_item("Consolidate", Message::CollectToSession)),
                     (menu_item("Session metadata", Message::Show(Show::SessionMetadata))),
                     (menu_item("Branches", Message::Show(Show::BranchManager))),
-                    (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
-                    (menu_item("Generate audio", Message::Show(Show::GenerateAudio))),
                     (menu_item(
                         "Delete unused files",
                         Message::DeleteUnusedSessionMediaFiles
@@ -172,6 +172,13 @@ impl Menu {
             (menu_dropdown("Track", Message::None), {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Show(Show::AddTrack))),
+                    (menu_item_maybe(
+                        "Delete Track",
+                        state
+                            .has_selected_track
+                            .then_some(Message::RemoveSelectedTracks)
+                    )),
+                    (menu_item("Generate audio", Message::Show(Show::GenerateAudio)))
                 ))
             }),
             (menu_dropdown("View", Message::None), {
