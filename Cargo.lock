@@ -5177,9 +5177,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-generate"
-version = "0.0.9"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5be3a1ec44cdc4e6bc8cea04cd4f89f7ddfe1e3eaea7bbc3b18baaf4315437db"
+checksum = "291f2f47d45b2ebf9fbb5db204078c6c7779c2e7e5d39f3a34f72eeeef06439b"
 dependencies = [
  "anyhow",
  "burn",
