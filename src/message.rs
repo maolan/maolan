@@ -68,10 +68,19 @@ pub enum GenerateAudioModelOption {
     HappyNewYear,
     #[serde(rename = "RL")]
     Rl,
+    #[serde(rename = "acestep-turbo")]
+    AceStepTurbo,
+    #[serde(rename = "acestep-sft")]
+    AceStepSft,
 }
 
 impl GenerateAudioModelOption {
-    pub const ALL: [Self; 2] = [Self::HappyNewYear, Self::Rl];
+    pub const ALL: [Self; 4] = [
+        Self::HappyNewYear,
+        Self::Rl,
+        Self::AceStepTurbo,
+        Self::AceStepSft,
+    ];
 }
 
 impl fmt::Display for GenerateAudioModelOption {
@@ -79,6 +88,8 @@ impl fmt::Display for GenerateAudioModelOption {
         match self {
             Self::HappyNewYear => write!(f, "happy-new-year"),
             Self::Rl => write!(f, "RL"),
+            Self::AceStepTurbo => write!(f, "acestep-turbo"),
+            Self::AceStepSft => write!(f, "acestep-sft"),
         }
     }
 }
