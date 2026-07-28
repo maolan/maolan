@@ -56,6 +56,7 @@ struct CliOptions {
     nperiods: usize,
     exclusive: bool,
     sync_mode: bool,
+    play_millis: Option<u64>,
     record_millis: Option<u64>,
 }
 
@@ -72,6 +73,7 @@ impl Default for CliOptions {
             nperiods: audio_defaults::NPERIODS,
             exclusive: false,
             sync_mode: audio_defaults::SYNC_MODE,
+            play_millis: None,
             record_millis: None,
         }
     }
@@ -1364,6 +1366,18 @@ fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOption
             "--sync-mode" => {
                 options.sync_mode = true;
             }
+            "--play-seconds" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--play-seconds requires a value".to_string())?;
+                let seconds = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("Invalid --play-seconds value: {value}"))?;
+                if !seconds.is_finite() || seconds <= 0.0 {
+                    return Err(format!("Invalid --play-seconds value: {value}"));
+                }
+                options.play_millis = Some((seconds * 1000.0).ceil().max(1.0) as u64);
+            }
             "--record-seconds" => {
                 let value = args
                     .next()
@@ -1393,12 +1407,18 @@ fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOption
             }
         }
     }
+    if options.play_millis.is_some() && options.record_millis.is_some() {
+        return Err(format!(
+            "--play-seconds and --record-seconds cannot be used together.\n\n{}",
+            help_text()
+        ));
+    }
     Ok(options)
 }
 
 fn help_text() -> String {
     format!(
-        "Usage: maolan-cli [session_dir] [options]\n\nOptions:\n  --device <id>           Output device id\n  --input-device <id>     Input device id\n  --sample-rate <hz>      Sample rate (default: {})\n  --bits <n>              Bit depth (default: {})\n  --period-frames <n>     Period size in frames (default: {})\n  --nperiods <n>          Number of periods (default: {})\n  --exclusive             Open device in exclusive mode\n  --sync-mode             Enable sync mode\n  --record-seconds <n>    Restore the session, record for n seconds, then exit",
+        "Usage: maolan-cli [session_dir] [options]\n\nOptions:\n  --device <id>           Output device id\n  --input-device <id>     Input device id\n  --sample-rate <hz>      Sample rate (default: {})\n  --bits <n>              Bit depth (default: {})\n  --period-frames <n>     Period size in frames (default: {})\n  --nperiods <n>          Number of periods (default: {})\n  --exclusive             Open device in exclusive mode\n  --sync-mode             Enable sync mode\n  --play-seconds <n>      Restore the session, play for n seconds, then exit\n  --record-seconds <n>    Restore the session, record for n seconds, then exit",
         audio_defaults::SAMPLE_RATE_HZ,
         audio_defaults::BIT_DEPTH,
         audio_defaults::PERIOD_FRAMES,
@@ -1535,11 +1555,29 @@ async fn run_record_once(
     open_audio_action: Action,
     record_duration: Duration,
 ) -> Result<(), String> {
-    let _seconds = record_duration.as_secs_f64();
+    run_timed_playback_once(options, config, open_audio_action, record_duration, true).await
+}
+
+async fn run_play_once(
+    options: &CliOptions,
+    config: &CliConfig,
+    open_audio_action: Action,
+    play_duration: Duration,
+) -> Result<(), String> {
+    run_timed_playback_once(options, config, open_audio_action, play_duration, false).await
+}
+
+async fn run_timed_playback_once(
+    options: &CliOptions,
+    config: &CliConfig,
+    open_audio_action: Action,
+    duration: Duration,
+    record_enabled: bool,
+) -> Result<(), String> {
     let session_dir = options
         .session_dir
         .as_ref()
-        .ok_or_else(|| "--record-seconds requires a session directory".to_string())?;
+        .ok_or_else(|| "Timed playback requires a session directory".to_string())?;
     let client = Client::default();
     let _ = client
         .send(EngineMessage::Request(Action::SetOscEnabled(
@@ -1586,25 +1624,29 @@ async fn run_record_once(
         .send(EngineMessage::Request(Action::SetClipPlaybackEnabled(true)))
         .await
         .map_err(|err| format!("Failed to enable clip playback: {err}"))?;
-    client
-        .send(EngineMessage::Request(Action::SetRecordEnabled(true)))
-        .await
-        .map_err(|err| format!("Failed to enable recording: {err}"))?;
+    if record_enabled {
+        client
+            .send(EngineMessage::Request(Action::SetRecordEnabled(true)))
+            .await
+            .map_err(|err| format!("Failed to enable recording: {err}"))?;
+    }
     client
         .send(EngineMessage::Request(Action::Play))
         .await
         .map_err(|err| format!("Failed to start transport: {err}"))?;
 
-    drain_engine_for(&mut app, &mut rx, record_duration).await;
+    drain_engine_for(&mut app, &mut rx, duration).await;
 
     client
         .send(EngineMessage::Request(Action::Stop))
         .await
         .map_err(|err| format!("Failed to stop transport: {err}"))?;
-    client
-        .send(EngineMessage::Request(Action::SetRecordEnabled(false)))
-        .await
-        .map_err(|err| format!("Failed to disable recording: {err}"))?;
+    if record_enabled {
+        client
+            .send(EngineMessage::Request(Action::SetRecordEnabled(false)))
+            .await
+            .map_err(|err| format!("Failed to disable recording: {err}"))?;
+    }
     drain_engine_for(&mut app, &mut rx, Duration::from_secs(2)).await;
     let _ = client.send(EngineMessage::Request(Action::Quit)).await;
     if app.sticky_status {
@@ -1720,6 +1762,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let config = CliConfig::load().unwrap_or_default();
     let open_audio_action = resolve_open_audio_action(&options, &config).ok();
+    if let Some(play_millis) = options.play_millis {
+        let open_audio_action = open_audio_action.ok_or_else(|| {
+            "Playback requires an output device. Pass --device or set default_output_device_id in config."
+                .to_string()
+        })?;
+        return run_play_once(
+            &options,
+            &config,
+            open_audio_action,
+            Duration::from_millis(play_millis),
+        )
+        .await
+        .map_err(Into::into);
+    }
     if let Some(record_millis) = options.record_millis {
         let open_audio_action = open_audio_action.ok_or_else(|| {
             "Recording requires an output device. Pass --device or set default_output_device_id in config."
@@ -1948,6 +2004,36 @@ mod tests {
         .expect_err("multiple session dirs should fail");
 
         assert!(err.contains("Only one session directory may be provided."));
+    }
+
+    #[test]
+    fn parse_cli_options_accepts_play_seconds() {
+        let options = parse_cli_options(vec![
+            "maolan-cli".to_string(),
+            "/tmp/session".to_string(),
+            "--play-seconds".to_string(),
+            "1.5".to_string(),
+        ])
+        .expect("cli options");
+
+        assert_eq!(options.session_dir, Some(PathBuf::from("/tmp/session")));
+        assert_eq!(options.play_millis, Some(1500));
+        assert_eq!(options.record_millis, None);
+    }
+
+    #[test]
+    fn parse_cli_options_rejects_play_and_record_seconds_together() {
+        let err = parse_cli_options(vec![
+            "maolan-cli".to_string(),
+            "/tmp/session".to_string(),
+            "--play-seconds".to_string(),
+            "1".to_string(),
+            "--record-seconds".to_string(),
+            "1".to_string(),
+        ])
+        .expect_err("conflicting timed modes should fail");
+
+        assert!(err.contains("--play-seconds and --record-seconds cannot be used together"));
     }
 
     #[test]
