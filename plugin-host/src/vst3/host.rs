@@ -190,7 +190,7 @@ fn class_info_to_plugin_info(
     }
 }
 
-fn tuid_to_string(tuid: &[i8; 16]) -> String {
+fn tuid_to_string(tuid: &vst3::Steinberg::TUID) -> String {
     tuid.iter()
         .map(|&b| format!("{:02X}", b as u8))
         .collect::<Vec<_>>()
@@ -208,12 +208,16 @@ mod tests {
     use crate::vst3::interfaces::ClassInfo;
     use std::path::PathBuf;
 
+    fn tuid_from_bytes(bytes: [u8; 16]) -> vst3::Steinberg::TUID {
+        bytes.map(|b| b as _)
+    }
+
     #[test]
     fn class_info_to_plugin_info_uses_capabilities_when_present() {
         let class_info = ClassInfo {
             name: "Synth".to_string(),
             category: "Instrument".to_string(),
-            cid: [0x12_i8; 16],
+            cid: tuid_from_bytes([0x12; 16]),
         };
 
         let info = class_info_to_plugin_info(
@@ -238,7 +242,7 @@ mod tests {
         let class_info = ClassInfo {
             name: "Fx".to_string(),
             category: "Audio Module".to_string(),
-            cid: [0; 16],
+            cid: tuid_from_bytes([0; 16]),
         };
 
         let info = class_info_to_plugin_info(&class_info, Path::new("/tmp/Fx.vst3"), None, None);
@@ -251,10 +255,10 @@ mod tests {
 
     #[test]
     fn tuid_to_string_formats_bytes_as_uppercase_hex() {
-        let tuid = [
-            0x00_i8, 0x01, 0x23, 0x45, 0x67, 0x7F, -0x80, -0x01, 0x10, 0x20, 0x30, 0x40, 0x50,
-            0x60, 0x70, 0x7E,
-        ];
+        let tuid = tuid_from_bytes([
+            0x00_u8, 0x01, 0x23, 0x45, 0x67, 0x7F, 0x80, 0xFF, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60,
+            0x70, 0x7E,
+        ]);
 
         assert_eq!(tuid_to_string(&tuid), "00012345677F80FF102030405060707E");
     }
