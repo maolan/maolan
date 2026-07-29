@@ -55,6 +55,7 @@ pub mod ui_timing {
 pub mod platform_caps {
     pub const HAS_SEPARATE_AUDIO_INPUT_DEVICE: bool = cfg!(any(
         target_os = "linux",
+        target_os = "windows",
         target_os = "freebsd",
         target_os = "openbsd"
     ));

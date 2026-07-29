@@ -3378,8 +3378,28 @@ impl Maolan {
                 let state = self.state.blocking_read();
                 (state.vst3_plugins.clone(), state.clap_plugins.clone())
             };
-            if let Some(graphs) = session["graphs"].as_object() {
+            let valid_track_names = session
+                .get("tracks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|track| track.get("name").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect::<std::collections::BTreeSet<_>>();
+            let graphs = crate::session_restore::plugin_support::merged_session_graphs(&session);
+            if let Some(graphs) = graphs.as_object() {
                 for (track_name, graph_v) in graphs {
+                    if !valid_track_names.contains(track_name) {
+                        tracing::warn!(
+                            "Skipping plugin graph for unknown track '{}' (valid tracks: {:?})",
+                            track_name,
+                            valid_track_names
+                        );
+                        continue;
+                    }
+                    if !crate::session_restore::plugin_support::graph_has_restore_payload(graph_v) {
+                        continue;
+                    }
                     restore_actions.push(Action::TrackClearDefaultPassthrough {
                         track_name: track_name.clone(),
                     });

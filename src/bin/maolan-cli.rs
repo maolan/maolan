@@ -1760,6 +1760,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(message) => return Err(message.into()),
     };
+    if options.play_millis.is_some() || options.record_millis.is_some() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
     let config = CliConfig::load().unwrap_or_default();
     let open_audio_action = resolve_open_audio_action(&options, &config).ok();
     if let Some(play_millis) = options.play_millis {

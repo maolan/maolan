@@ -1,4 +1,4 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 #[cfg(miri)]
 fn main() {}
@@ -82,16 +82,15 @@ use iced::{Pixels, Settings, Theme};
 #[cfg(not(miri))]
 use iced_fonts::LUCIDE_FONT_BYTES;
 #[cfg(not(miri))]
-use tracing_subscriber::{
-    fmt::{Layer as FmtLayer, writer::MakeWriterExt},
-    prelude::*,
-};
+use tracing_subscriber::{filter::LevelFilter, fmt::Layer as FmtLayer, prelude::*};
 
 #[cfg(not(miri))]
 pub fn main() -> iced::Result {
     let log_level = parse_log_level_from_env();
     if let Some(level) = log_level {
-        let layer = FmtLayer::new().with_writer(std::io::stderr.with_max_level(level));
+        let layer = FmtLayer::new()
+            .with_writer(std::io::stderr)
+            .with_filter(LevelFilter::from_level(level));
         tracing_subscriber::registry().with(layer).init();
     }
 
