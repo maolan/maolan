@@ -1,11 +1,6 @@
 use crate::midi::io::MidiEvent;
 use crate::util::SimpleMutex;
-#[cfg(any(
-    target_os = "macos",
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "openbsd"
-))]
+#[cfg(unix)]
 use crate::plugins::paths;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
@@ -238,7 +233,6 @@ struct ClapPluginGui {
 union ClapWindowHandle {
     x11: usize,
     native: *mut c_void,
-    cocoa: *mut c_void,
 }
 
 #[repr(C)]
@@ -810,7 +804,7 @@ fn scan_plugin_capabilities(
             let gui = unsafe { &*(gui_ptr as *const ClapPluginGui) };
 
             if let Some(is_api_supported) = gui.is_api_supported {
-                for api in ["x11", "cocoa"] {
+                for api in ["x11"] {
                     if let Ok(api_cstr) = CString::new(api) {
                         if unsafe { is_api_supported(plugin, api_cstr.as_ptr(), false) } {
                             capabilities.gui_apis.push(format!("{} (embedded)", api));
@@ -906,24 +900,13 @@ fn scan_plugin_capabilities(
 }
 
 fn default_clap_search_roots() -> Vec<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut roots = Vec::new();
-        paths::push_macos_audio_plugin_roots(&mut roots, "CLAP");
-        roots
-    }
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     {
         let mut roots = Vec::new();
         paths::push_unix_plugin_roots(&mut roots, "clap");
         roots
     }
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "openbsd"
-    )))]
+    #[cfg(not(unix))]
     {
         Vec::new()
     }

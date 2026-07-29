@@ -3,7 +3,7 @@ use super::*;
 impl Maolan {
     pub(super) fn handle_plugin_message(&mut self, message: Message) -> Option<Task<Message>> {
         match message {
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Message::RefreshLv2Plugins => Some(self.send(Action::ListLv2Plugins)),
             Message::RefreshVst3Plugins => Some(self.send(Action::ListVst3Plugins)),
             Message::RefreshClapPlugins => Some(self.send(Action::ListClapPlugins)),
@@ -11,7 +11,7 @@ impl Maolan {
                 self.plugin_list_filter = query.clone();
                 None
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Message::SelectLv2Plugin(ref plugin_uri) => {
                 if self.selected_lv2_plugins.contains(plugin_uri) {
                     self.selected_lv2_plugins.remove(plugin_uri);
@@ -36,7 +36,7 @@ impl Maolan {
                 }
                 None
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Message::LoadSelectedPlugins => {
                 let (clip_target, track_name) = {
                     let state = self.state.blocking_read();
@@ -50,7 +50,7 @@ impl Maolan {
                 };
 
                 if clip_target.is_some() {
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     let lv2_selected = self
                         .selected_lv2_plugins
                         .iter()
@@ -66,7 +66,7 @@ impl Maolan {
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>();
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     self.selected_lv2_plugins.clear();
                     self.selected_clap_plugins.clear();
                     self.selected_vst3_plugins.clear();
@@ -80,7 +80,7 @@ impl Maolan {
                         .max()
                         .map(|id| id.saturating_add(1))
                         .unwrap_or(0);
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     {
                         let plugin_infos = state.lv2_plugins.clone();
                         for plugin_uri in lv2_selected {
@@ -177,7 +177,7 @@ impl Maolan {
 
                 if let Some(track_name) = track_name {
                     let mut tasks: Vec<Task<Message>> = Vec::new();
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     {
                         tasks.extend(self.selected_lv2_plugins.iter().cloned().map(|plugin_uri| {
                             self.send(Action::TrackLoadLv2Plugin {
@@ -235,7 +235,7 @@ impl Maolan {
                     instance_id,
                 }))
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Message::OpenLv2PluginUi {
                 ref track_name,
                 clip_idx: _,

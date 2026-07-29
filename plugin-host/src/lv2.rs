@@ -1,4 +1,4 @@
-#![cfg(not(target_os = "macos"))]
+#![cfg(unix)]
 
 use std::{
     collections::{HashMap, HashSet},

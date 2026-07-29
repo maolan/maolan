@@ -366,7 +366,7 @@ impl Graph {
     ) -> Option<Message> {
         let instance_id = plugin.instance_id;
         match &plugin.node {
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             PluginGraphNode::Lv2PluginInstance(_) => {
                 Some(Message::Request(EngineAction::TrackSetLv2ControlValue {
                     track_name: track_name.to_string(),
@@ -456,7 +456,7 @@ impl Graph {
     ) -> Option<TrackAutomationTarget> {
         let instance_id = plugin.instance_id;
         match &plugin.node {
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             PluginGraphNode::Lv2PluginInstance(_) => Some(TrackAutomationTarget::Lv2Parameter {
                 instance_id,
                 index: param_id,
@@ -648,7 +648,7 @@ impl Graph {
             ConnectableRef::TrackOutput => Some(PluginGraphNode::TrackOutput),
             ConnectableRef::ClapPlugin(id) => Some(PluginGraphNode::ClapPluginInstance(*id)),
             ConnectableRef::Vst3Plugin(id) => Some(PluginGraphNode::Vst3PluginInstance(*id)),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             ConnectableRef::Lv2Plugin(id) => Some(PluginGraphNode::Lv2PluginInstance(*id)),
             ConnectableRef::ChildTrack(_) => None,
         }
@@ -969,7 +969,7 @@ impl Graph {
             PluginGraphNode::TrackOutput => Some(ConnectableRef::TrackOutput),
             PluginGraphNode::ClapPluginInstance(id) => Some(ConnectableRef::ClapPlugin(*id)),
             PluginGraphNode::Vst3PluginInstance(id) => Some(ConnectableRef::Vst3Plugin(*id)),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             PluginGraphNode::Lv2PluginInstance(id) => Some(ConnectableRef::Lv2Plugin(*id)),
         }
     }
@@ -1042,7 +1042,7 @@ impl Graph {
                     }
                 })
                 .unwrap_or(0),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             ConnectableRef::Lv2Plugin(id) => data
                 .plugin_graph_plugins
                 .iter()
@@ -1873,7 +1873,7 @@ impl canvas::Program<Message> for Graph {
                                         .as_ref()
                                         .map(|target| target.clip_idx);
                                     return match &node {
-                                        #[cfg(all(unix, not(target_os = "macos")))]
+                                        #[cfg(unix)]
                                         PluginGraphNode::Lv2PluginInstance(_) => {
                                             Some(Action::publish(Message::OpenLv2PluginUi {
                                                 track_name,

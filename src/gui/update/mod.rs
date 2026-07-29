@@ -10,7 +10,7 @@ use self::types::{
     AutomationTrackView, MidiMappingsFile, MidiMappingsGlobalFile, MidiMappingsTrackFile,
 };
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 use crate::state::AudioDeviceOption;
 use crate::{
     connections,
@@ -920,7 +920,7 @@ impl Maolan {
                 state.clap_plugins.clone(),
             )
         };
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         let (plugins, connections) = {
             let lv2_plugins = self.state.blocking_read().lv2_plugins.clone();
             Self::plugin_graph_snapshot_from_json(
@@ -930,7 +930,7 @@ impl Maolan {
                 &clap_plugins,
             )
         };
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        #[cfg(not(unix))]
         let (plugins, connections) = Self::plugin_graph_snapshot_from_json(
             graph_json.as_ref(),
             &vst3_plugins,
@@ -982,7 +982,7 @@ impl Maolan {
         plugins: &[PluginGraphPlugin],
     ) -> Vec<Task<Message>> {
         let mut pending_queries: Vec<Task<Message>> = vec![];
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         self.queue_pending_lv2_automation_queries(track_name, plugins, &mut pending_queries);
         let pending_vst3_paths: Vec<(String, String)> = self
             .pending_add_vst3_automation_paths
@@ -1037,7 +1037,7 @@ impl Maolan {
         pending_queries
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn queue_pending_lv2_automation_queries(
         &mut self,
         track_name: &str,
@@ -1118,12 +1118,6 @@ impl Maolan {
         None
     }
 
-    #[cfg(target_os = "macos")]
-    fn pending_vst3_save_ready(&self) -> bool {
-        !platform_caps::REQUIRE_VST3_STATE_FOR_SAVE || self.pending_save_vst3_states.is_empty()
-    }
-
-    #[cfg(not(target_os = "macos"))]
     fn pending_vst3_save_ready(&self) -> bool {
         !platform_caps::REQUIRE_VST3_STATE_FOR_SAVE
     }
@@ -1675,7 +1669,7 @@ impl Maolan {
             })
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn find_lv2_target(
         &self,
         track_name: &str,
@@ -2061,7 +2055,7 @@ impl Maolan {
                     },
                 );
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackSetLv2ControlValue {
                 track_name,
                 instance_id,
@@ -2250,7 +2244,7 @@ impl Maolan {
                             midi_cc_updates.push((channel, cc, cc_value));
                         }
                     }
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     TrackAutomationTarget::Lv2Parameter {
                         instance_id,
                         index,
@@ -2260,7 +2254,7 @@ impl Maolan {
                         if track.frozen {
                             continue;
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         if let Some(v) = value {
                             let lo = min.min(max);
                             let hi = max.max(min);
@@ -2281,7 +2275,7 @@ impl Maolan {
                             }
                         }
                     }
-                    #[cfg(not(all(unix, not(target_os = "macos"))))]
+                    #[cfg(not(unix))]
                     TrackAutomationTarget::Lv2Parameter { .. } => {}
                     TrackAutomationTarget::Vst3Parameter {
                         instance_id,
@@ -4025,7 +4019,7 @@ impl Maolan {
     }
 }
 
-#[cfg(all(test, unix, not(target_os = "macos")))]
+#[cfg(all(test, unix))]
 mod tests {
     use super::Maolan;
     use crate::state::{AudioClip, PitchCorrectionData, PitchCorrectionPoint, Track};

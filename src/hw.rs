@@ -73,7 +73,7 @@ pub(crate) fn oss_period_frame_options(
     (!out.is_empty()).then_some(out)
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 impl DeviceId for crate::state::AudioDeviceOption {
     fn device_id(&self) -> String {
         self.id.clone()
@@ -107,11 +107,11 @@ impl HW {
         let state = self.state.blocking_read();
         let core_plugins_loaded = (state.vst3_plugins_loaded || state.vst3_plugins_unavailable)
             && (state.clap_plugins_loaded || state.clap_plugins_unavailable);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         {
             core_plugins_loaded && (state.lv2_plugins_loaded || state.lv2_plugins_unavailable)
         }
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        #[cfg(not(unix))]
         {
             core_plugins_loaded
         }
@@ -292,7 +292,7 @@ impl HW {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     fn selected_bits(selected_is_jack: bool, chosen_bits: usize) -> i32 {
         if selected_is_jack {
             32
@@ -301,7 +301,7 @@ impl HW {
         }
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(unix))]
     fn selected_bits(_selected_is_jack: bool, _chosen_bits: usize) -> i32 {
         32
     }
@@ -413,7 +413,7 @@ impl HW {
             target_os = "windows"
         ))]
         let selected_bits = self.state.blocking_read().oss_bits;
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
             .into_iter()
             .filter(|hw| match selected_backend {
@@ -427,7 +427,7 @@ impl HW {
                 crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
             })
             .collect();
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         let available_input_hw: Vec<crate::state::AudioDeviceOption> = available_input_hw
             .into_iter()
             .filter(|hw| match selected_backend {
@@ -455,7 +455,7 @@ impl HW {
                 crate::state::AudioBackendOption::Wasapi => hw.starts_with("wasapi:"),
             })
             .collect();
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
         }
@@ -479,7 +479,7 @@ impl HW {
         let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
         #[cfg(not(unix))]
         let selected_is_jack = false;
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         let sample_rate_options = if selected_is_jack {
             fallback_sample_rates.clone()
         } else {
@@ -514,7 +514,7 @@ impl HW {
         } else {
             Some(chosen_sample_rate_hz)
         };
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         let bit_options = if selected_is_jack {
             fallback_bits.clone()
         } else {
@@ -906,7 +906,7 @@ mod tests {
 
     #[test]
     fn selected_bits_for_non_jack() {
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+        #[cfg(not(unix))]
         {
             assert_eq!(HW::selected_bits(false, 24), 32);
         }

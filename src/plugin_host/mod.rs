@@ -15,13 +15,13 @@ use std::time::Duration;
 /// Returns the real user home directory, ignoring any temporary override of
 /// `HOME` that tests may have performed. The plugin-host scanner needs a
 /// stable home directory to locate CLAP/VST3 plugins by ID.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn real_user_home_dir() -> Option<PathBuf> {
     use nix::unistd::{Uid, User};
     User::from_uid(Uid::current()).ok().flatten().map(|u| u.dir)
 }
 
-#[cfg(not(all(unix, not(target_os = "macos"))))]
+#[cfg(not(unix))]
 fn real_user_home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }

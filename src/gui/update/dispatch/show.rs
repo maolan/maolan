@@ -93,7 +93,7 @@ impl Maolan {
             }
             Show::TrackPluginList => {
                 self.modal = Some(Show::TrackPluginList);
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(unix)]
                 self.selected_lv2_plugins.clear();
                 self.selected_vst3_plugins.clear();
                 self.selected_clap_plugins.clear();

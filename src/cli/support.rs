@@ -1027,7 +1027,7 @@ mod tests {
         assert!(actions.iter().any(
             |action| matches!(action, Action::OpenMidiOutputDevice(device) if device == "dev-out")
         ));
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         assert!(actions.iter().any(
             |action| matches!(action, Action::TrackLoadLv2Plugin { track_name, plugin_uri, instance_id } if track_name == "Track 1" && plugin_uri == "http://example.invalid/lv2" && *instance_id == Some(0))
         ));
@@ -1035,9 +1035,9 @@ mod tests {
             .iter()
             .filter(|action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Track 1"))
             .count();
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         assert_eq!(track_1_plugin_audio_connections, 2);
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        #[cfg(not(unix))]
         assert_eq!(track_1_plugin_audio_connections, 0);
         assert!(!actions.iter().any(
             |action| matches!(action, Action::TrackConnectPluginAudio { track_name, .. } if track_name == "Deleted Track")

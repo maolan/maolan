@@ -398,7 +398,7 @@ fn build_offline_automation_lanes(
             TrackAutomationTarget::MidiCc { channel, cc } => {
                 OfflineAutomationTarget::MidiCc { channel, cc }
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             TrackAutomationTarget::Lv2Parameter {
                 instance_id,
                 index,
@@ -410,7 +410,7 @@ fn build_offline_automation_lanes(
                 min,
                 max,
             },
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            #[cfg(not(unix))]
             TrackAutomationTarget::Lv2Parameter { .. } => continue,
             TrackAutomationTarget::Vst3Parameter {
                 instance_id,
@@ -548,7 +548,7 @@ struct TrackAutomationRuntime {
     level_db: Option<f32>,
     balance: Option<f32>,
     midi_cc: HashMap<(u8, u8), u8>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     lv2_params: HashMap<(usize, u32), f32>,
     vst3_params: HashMap<(usize, u32), f32>,
     clap_params: HashMap<(usize, u32), f64>,
@@ -643,7 +643,7 @@ pub struct Maolan {
     modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView,
     track_template_save: track_template_save::TrackTemplateSaveView,
     template_save: template_save::TemplateSaveView,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     selected_lv2_plugins: BTreeSet<String>,
     selected_vst3_plugins: BTreeSet<String>,
     selected_clap_plugins: BTreeSet<String>,
@@ -655,8 +655,6 @@ pub struct Maolan {
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_clap_tracks: std::collections::HashSet<String>,
     pending_save_clap_clips: std::collections::HashSet<(String, usize, usize)>,
-    #[cfg(target_os = "macos")]
-    pending_save_vst3_states: HashSet<(String, usize)>,
     pending_save_is_template: bool,
     pending_save_track_name: Option<String>,
     pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
@@ -673,9 +671,9 @@ pub struct Maolan {
         HashMap<String, HashMap<AutomationWriteKey, TouchAutomationOverride>>,
     touch_active_keys: HashMap<String, HashSet<AutomationWriteKey>>,
     latch_automation_overrides: HashMap<String, HashMap<AutomationWriteKey, f32>>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pending_add_lv2_automation_uris: HashSet<(String, String)>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pending_add_lv2_automation_instances: HashSet<(String, usize)>,
     pending_add_vst3_automation_paths: HashSet<(String, String)>,
     pending_add_vst3_automation_instances: HashSet<(String, usize)>,
@@ -956,8 +954,8 @@ impl Default for Maolan {
             ),
             track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
             template_save: template_save::TemplateSaveView::new(state.clone()),
-            #[cfg(all(unix, not(target_os = "macos")))]
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
+            #[cfg(unix)]
             selected_lv2_plugins: BTreeSet::new(),
             selected_vst3_plugins: BTreeSet::new(),
             selected_clap_plugins: BTreeSet::new(),
@@ -969,8 +967,6 @@ impl Default for Maolan {
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_clap_tracks: std::collections::HashSet::new(),
             pending_save_clap_clips: std::collections::HashSet::new(),
-            #[cfg(target_os = "macos")]
-            pending_save_vst3_states: HashSet::new(),
             pending_save_is_template: false,
             pending_save_track_name: None,
             pending_peak_file_loads: HashMap::new(),
@@ -986,9 +982,9 @@ impl Default for Maolan {
             touch_automation_overrides: HashMap::new(),
             touch_active_keys: HashMap::new(),
             latch_automation_overrides: HashMap::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             pending_add_lv2_automation_uris: HashSet::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             pending_add_lv2_automation_instances: HashSet::new(),
             pending_add_vst3_automation_paths: HashSet::new(),
             pending_add_vst3_automation_instances: HashSet::new(),
@@ -4875,7 +4871,7 @@ impl Maolan {
         match node {
             PluginGraphNode::TrackInput => Some(json!({"type":"track_input"})),
             PluginGraphNode::TrackOutput => Some(json!({"type":"track_output"})),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             PluginGraphNode::Lv2PluginInstance(id) => id_to_index
                 .get(id)
                 .copied()
@@ -4909,13 +4905,13 @@ impl Maolan {
         match t {
             "track_input" => Some(PluginGraphNode::TrackInput),
             "track_output" => Some(PluginGraphNode::TrackOutput),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             "plugin" => runtime_nodes
                 .get(v["plugin_index"].as_u64()? as usize)
                 .and_then(|node| {
                     matches!(node, PluginGraphNode::Lv2PluginInstance(_)).then(|| node.clone())
                 }),
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            #[cfg(not(unix))]
             "plugin" => None,
             "vst3_plugin" => runtime_nodes
                 .get(v["plugin_index"].as_u64()? as usize)
@@ -4951,7 +4947,7 @@ impl Maolan {
                     "plugin_index": idx,
                 })
             }),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             ConnectableRef::Lv2Plugin(id) => id_to_index.get(id).copied().map(|idx| {
                 json!({
                     "type": "lv2_plugin",
@@ -4984,7 +4980,7 @@ impl Maolan {
                     .copied()
                     .map(ConnectableRef::Vst3Plugin)
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             "lv2_plugin" => {
                 let idx = v["plugin_index"].as_u64()? as usize;
                 index_to_id
@@ -5049,13 +5045,13 @@ impl Maolan {
                 conn.to,
                 ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
             );
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             {
                 plugin
                     || matches!(conn.from, ConnectableRef::Lv2Plugin(_))
                     || matches!(conn.to, ConnectableRef::Lv2Plugin(_))
             }
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            #[cfg(not(unix))]
             {
                 plugin
             }
@@ -5128,7 +5124,7 @@ impl Maolan {
         })
     }
 
-    #[cfg(all(test, unix, not(target_os = "macos")))]
+    #[cfg(all(test, unix))]
     fn plugin_graph_saved_state_from_json<T: serde::de::DeserializeOwned>(
         graph: Option<&Value>,
         plugin_index: usize,
@@ -5142,7 +5138,7 @@ impl Maolan {
         serde_json::from_value(state).ok()
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_graph_json_with_saved_plugin_state(
         graph: Option<&Value>,
         plugin_index: usize,
@@ -5155,7 +5151,7 @@ impl Maolan {
         plugin_object.insert("state".to_string(), state);
         Some(graph)
     }
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[cfg(not(unix))]
     fn plugin_graph_json_with_saved_plugin_state(
         _graph: Option<&Value>,
         _plugin_index: usize,
@@ -5164,7 +5160,7 @@ impl Maolan {
         None
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     #[allow(dead_code)]
     fn plugin_graph_plugin_from_saved_json(
         instance_id: usize,
@@ -5271,7 +5267,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[cfg(not(unix))]
     #[allow(dead_code)]
     fn plugin_graph_plugin_from_saved_json(
         instance_id: usize,
@@ -5354,7 +5350,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     #[allow(dead_code)]
     fn plugin_graph_snapshot_from_json(
         graph: Option<&Value>,
@@ -5414,7 +5410,7 @@ impl Maolan {
         (plugins, connections)
     }
 
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[cfg(not(unix))]
     #[allow(dead_code)]
     fn plugin_graph_snapshot_from_json(
         graph: Option<&Value>,
@@ -5488,12 +5484,12 @@ impl Maolan {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn lv2_state_to_json(state: &[u8]) -> Value {
         json!(state)
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn lv2_state_from_json(v: &Value) -> Option<Vec<u8>> {
         v.as_array()
             .map(|arr| {
@@ -5516,7 +5512,7 @@ impl Maolan {
         serde_json::from_value(resolved).ok()
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = Self::plugin_graph_title(&state);
@@ -5734,7 +5730,7 @@ impl Maolan {
         .into()
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(windows)]
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = Self::plugin_graph_title(&state);
@@ -6256,14 +6252,14 @@ impl Maolan {
     fn preferences_output_device_options(&self) -> Vec<PreferencesDeviceOption> {
         let mut options = vec![Self::preferences_auto_device_option()];
         let state = self.state.blocking_read();
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         {
             options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
                 id: hw.id.clone(),
                 label: hw.label.clone(),
             }));
         }
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+        #[cfg(not(unix))]
         {
             options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
                 id: hw.clone(),
@@ -6276,7 +6272,7 @@ impl Maolan {
     fn preferences_input_device_options(&self) -> Vec<PreferencesDeviceOption> {
         let mut options = vec![Self::preferences_auto_device_option()];
         let state = self.state.blocking_read();
-        #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "linux"))]
+        #[cfg(unix)]
         {
             options.extend(
                 state
@@ -6314,7 +6310,7 @@ impl Maolan {
             state.oss_bits = bits;
         }
         if let Some(device_id) = prefs.default_output_device_id.as_deref() {
-            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+            #[cfg(unix)]
             if let Some(selected) = state
                 .available_hw
                 .iter()
@@ -6323,13 +6319,13 @@ impl Maolan {
             {
                 state.selected_hw = Some(selected);
             }
-            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+            #[cfg(not(unix))]
             if state.available_hw.iter().any(|hw| hw == device_id) {
                 state.selected_hw = Some(device_id.to_string());
             }
         }
         if let Some(device_id) = prefs.default_input_device_id.as_deref() {
-            #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "linux"))]
+            #[cfg(unix)]
             if let Some(selected) = state
                 .available_input_hw
                 .iter()
@@ -6343,7 +6339,7 @@ impl Maolan {
                 state.selected_input_hw = Some(device_id.to_string());
             }
         }
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         if let Some(selected) = state.selected_hw.as_ref()
             && let Some(bits) = selected.preferred_bits()
         {
@@ -7075,7 +7071,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_node_from_json_with_runtime_nodes_maps_only_matching_runtime_formats() {
         let runtime_nodes = vec![
             PluginGraphNode::Lv2PluginInstance(10),
@@ -7121,7 +7117,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_graph_snapshot_resolves_portable_clap_plugin_id() {
         let graph = json!({
             "plugins": [{
@@ -7176,7 +7172,7 @@ mod tests {
             Maolan::plugin_node_to_json(&PluginGraphNode::TrackOutput, &id_to_index),
             Some(json!({"type":"track_output"}))
         );
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         assert_eq!(
             Maolan::plugin_node_to_json(&PluginGraphNode::Lv2PluginInstance(7), &id_to_index),
             Some(json!({"type":"plugin","plugin_index":2}))
@@ -8453,7 +8449,7 @@ mod tests {
         assert!(!app.import_in_progress);
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     #[test]
     fn clip_plugin_snapshot_preserves_existing_vst3_state_blob() {
         let previous = json!({
@@ -8485,7 +8481,7 @@ mod tests {
         assert_eq!(snapshot["plugins"][0]["state"], json!({"bytes": [1, 2, 3]}));
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     #[test]
     fn plugin_graph_saved_state_from_json_reads_plugin_slot_by_index() {
         let graph = json!({
@@ -8522,7 +8518,7 @@ mod tests {
         assert!(state.controller_state.is_empty());
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     #[test]
     fn plugin_graph_json_with_saved_plugin_state_updates_only_target_plugin() {
         let graph = json!({

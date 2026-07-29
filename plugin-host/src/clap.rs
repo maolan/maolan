@@ -445,7 +445,7 @@ pub struct ClapWindow {
 pub union ClapWindowUnion {
     pub x11: c_ulong,
     pub wayland: *mut c_void,
-    pub cocoa: *mut c_void,
+    pub native: *mut c_void,
     pub win32: *mut c_void,
 }
 
@@ -1103,10 +1103,8 @@ impl PluginInstance {
             window_id,
             #[cfg(windows)]
             "win32",
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             "x11",
-            #[cfg(target_os = "macos")]
-            "cocoa",
         )
     }
 
@@ -1128,7 +1126,7 @@ impl PluginInstance {
             }
         };
 
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         let window = {
             let api_cstring = std::ffi::CString::new(api_name).map_err(|e| e.to_string())?;
             let api = api_cstring.as_ptr();
@@ -1142,20 +1140,6 @@ impl PluginInstance {
                     ClapWindowUnion {
                         x11: window_id as c_ulong,
                     }
-                },
-            }
-        };
-
-        #[cfg(target_os = "macos")]
-        let window = {
-            if api_name != "cocoa" {
-                return Err(format!("unsupported CLAP GUI API for macOS: {api_name}"));
-            }
-            let api = c"cocoa".as_ptr();
-            ClapWindow {
-                api,
-                clap_window__: ClapWindowUnion {
-                    cocoa: window_id as *mut c_void,
                 },
             }
         };
@@ -1182,24 +1166,13 @@ impl PluginInstance {
             }
         };
 
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         let window = {
             let api = c"x11".as_ptr();
             ClapWindow {
                 api,
                 clap_window__: ClapWindowUnion {
                     x11: window_id as c_ulong,
-                },
-            }
-        };
-
-        #[cfg(target_os = "macos")]
-        let window = {
-            let api = c"cocoa".as_ptr();
-            ClapWindow {
-                api,
-                clap_window__: ClapWindowUnion {
-                    cocoa: window_id as *mut c_void,
                 },
             }
         };

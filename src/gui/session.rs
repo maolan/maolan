@@ -766,7 +766,7 @@ impl Maolan {
                 for plugin in plugins {
                     if let Some(uri) = plugin.get("uri").and_then(|u| u.as_str()) {
                         match plugin.get("format").and_then(Value::as_str) {
-                            #[cfg(all(unix, not(target_os = "macos")))]
+                            #[cfg(unix)]
                             Some("LV2") => {
                                 let instance_id = next_instance_id;
                                 next_instance_id += 1;
@@ -890,7 +890,7 @@ impl Maolan {
                         | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
                             Some((idx, *id))
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
                             Some((idx, *id))
                         }
@@ -923,7 +923,7 @@ impl Maolan {
                         | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
                             Some((idx, *id))
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
                             Some((idx, *id))
                         }
@@ -953,7 +953,7 @@ impl Maolan {
                         | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
                             Some((idx, *id))
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
                             Some((idx, *id))
                         }
@@ -2014,7 +2014,7 @@ impl Maolan {
                 crate::state::SessionMatrix::default()
             };
         }
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
             let (lv2_plugins, vst3_plugins, clap_plugins) = {
                 let state = self.state.blocking_read();
@@ -2077,7 +2077,7 @@ impl Maolan {
                 }
             }
         }
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        #[cfg(not(unix))]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
             let (vst3_plugins, clap_plugins) = {
                 let state = self.state.blocking_read();
@@ -3414,7 +3414,7 @@ impl Maolan {
                         };
                         match p.get("format").and_then(Value::as_str) {
                             Some("LV2") => {
-                                #[cfg(all(unix, not(target_os = "macos")))]
+                                #[cfg(unix)]
                                 {
                                     let instance_id = next_instance_id;
                                     next_instance_id += 1;
@@ -3553,7 +3553,7 @@ impl Maolan {
                                     | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
                                         id,
                                     ) => Some((idx, *id)),
-                                    #[cfg(all(unix, not(target_os = "macos")))]
+                                    #[cfg(unix)]
                                     maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
                                         id,
                                     ) => Some((idx, *id)),
@@ -3589,7 +3589,7 @@ impl Maolan {
                                     | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
                                         id,
                                     ) => Some((idx, *id)),
-                                    #[cfg(all(unix, not(target_os = "macos")))]
+                                    #[cfg(unix)]
                                     maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
                                         id,
                                     ) => Some((idx, *id)),

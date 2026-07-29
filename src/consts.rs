@@ -64,7 +64,7 @@ pub mod platform_caps {
         target_os = "freebsd",
         target_os = "openbsd"
     ));
-    pub const REQUIRE_VST3_STATE_FOR_SAVE: bool = cfg!(target_os = "macos");
+    pub const REQUIRE_VST3_STATE_FOR_SAVE: bool = false;
     pub const SUPPORTS_PLUGIN_GRAPH: bool = true;
 }
 
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(state_track::TRACK_SUBTRACK_MIN_HEIGHT, 18.0);
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     #[test]
     fn connections_plugins_constants_are_expected_values() {
         assert_eq!(connections_plugins::PLUGIN_W, 170.0);

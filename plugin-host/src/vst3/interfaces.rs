@@ -896,12 +896,12 @@ unsafe extern "system" fn host_query_interface(
         .iter()
         .zip(FUnknown::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     let requested_run_loop = iid_bytes
         .iter()
         .zip(Linux::IRunLoop::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(unix))]
     let requested_run_loop = false;
     if !(requested_host || requested_unknown || requested_run_loop) {
         if !obj.is_null() {
@@ -1469,22 +1469,7 @@ static HOST_ATTRIBUTE_LIST_VTBL: IAttributeListVtbl = IAttributeListVtbl {
 };
 
 fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let module = bundle_path.join("Contents").join("MacOS").join(
-            bundle_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("plugin"),
-        );
-        if module.exists() {
-            Ok(module)
-        } else {
-            Err(format!("VST3 module not found at {:?}", module))
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     {
         let module = bundle_path
             .join("Contents")
@@ -1550,7 +1535,6 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
     }
 
     #[cfg(not(any(
-        target_os = "macos",
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
@@ -1615,7 +1599,7 @@ mod tests {
         assert_eq!(extract_cstring(&bytes), "XYZ");
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     #[test]
     fn get_module_path_returns_unix_shared_object_path() {
         let bundle_path = unique_temp_dir("vst3-module").join("Example.vst3");
@@ -1634,7 +1618,7 @@ mod tests {
         let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent"));
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     #[test]
     fn get_module_path_errors_when_unix_module_is_missing() {
         let bundle_path = unique_temp_dir("missing-vst3").join("Missing.vst3");

@@ -547,24 +547,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bindgen"
-version = "0.72.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
-dependencies = [
- "bitflags 2.13.1",
- "cexpr",
- "clang-sys",
- "itertools 0.13.0",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash 2.1.3",
- "shlex 1.3.0",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1724,15 +1706,6 @@ dependencies = [
  "objc2-core-audio",
  "objc2-core-audio-types",
  "objc2-core-foundation",
-]
-
-[[package]]
-name = "coreaudio-sys"
-version = "0.2.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9b4739a805a62757a83e5654fa3faabec0442666b263bb2287d5a8185bfd953"
-dependencies = [
- "bindgen 0.72.1",
 ]
 
 [[package]]
@@ -5139,16 +5112,14 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.45"
+version = "0.2.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf609bb2512e501db6c19614fc570f73c0a1bf1240ecd78a08fc050fee00564d"
+checksum = "295b1e56db4ad46784ab654667d294392b254a14224dd95c2e7c945cc1b338db"
 dependencies = [
  "alsa",
  "arc-swap",
  "basedrop",
  "byteorder",
- "coreaudio-sys",
- "coremidi",
  "cpal",
  "ebur128",
  "jack",
@@ -5199,9 +5170,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-lv2"
-version = "0.0.1"
+version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed89351cf14bf20b24fe91a05fa1498f9b5b2f96cb4ee0585d45c04e3246b36d"
+checksum = "e446d615a24d8e2d2d77d22f70a184f224c8a952e0e56e8bd2cbf5b1a002c1ed"
 dependencies = [
  "dirs",
  "libloading 0.9.0",
@@ -9263,7 +9234,7 @@ version = "20.1.4-7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00d2581070380418ccc33b500f3739e4d4869421fdb477fcea51ff97c6253a52"
 dependencies = [
- "bindgen 0.71.1",
+ "bindgen",
  "cc",
  "paste",
  "thiserror 2.0.19",

@@ -1,14 +1,14 @@
 use super::*;
 
 impl Maolan {
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     pub(super) fn apply_hw_selected(&self, hw: &AudioDeviceOption) {
         let mut state = self.state.blocking_write();
         let selected = Self::selected_output_device_for_platform(&mut state, hw);
         state.selected_hw = Some(selected);
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(unix))]
     pub(super) fn apply_hw_selected(&self, hw: &String) {
         self.state.blocking_write().selected_hw = Some(hw.to_string());
     }
@@ -59,7 +59,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     pub(super) fn select_refreshed_device(
         available_devices: &mut Vec<AudioDeviceOption>,
         current: &AudioDeviceOption,
@@ -100,7 +100,7 @@ impl Maolan {
         hw.clone()
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     pub(super) fn update_bits_from_selected_device(
         state: &mut crate::state::StateData,
         selected: &AudioDeviceOption,
@@ -110,7 +110,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     pub(super) fn select_first_backend_output_device(
         state: &mut crate::state::StateData,
         discover: fn() -> Vec<AudioDeviceOption>,
@@ -126,7 +126,7 @@ impl Maolan {
         selected
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     pub(super) fn select_first_backend_input_device(
         state: &mut crate::state::StateData,
         discover: fn() -> Vec<AudioDeviceOption>,
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     fn select_refreshed_device_returns_clone_when_not_found() {
         let current = AudioDeviceOption::with_supported_caps(
             "hw:0".to_string(),
@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     fn update_bits_from_selected_device_sets_oss_bits() {
         let mut state = crate::state::StateData::default();
         let device = AudioDeviceOption::with_supported_caps(
