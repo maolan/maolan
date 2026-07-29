@@ -39,21 +39,21 @@ unsafe fn latency_samples_atomic(ptr: *mut u8) -> &'static std::sync::atomic::At
     unsafe { &*(ptr.add(SHM_LATENCY_SAMPLES_OFFSET) as *const std::sync::atomic::AtomicU32) }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn close_x11_gui_window(window: &mut Option<crate::gui_x11::x11::ContainerWindow>) {
     if let Some(window) = window.take() {
         drop(window);
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn abandon_x11_gui_window(window: &mut Option<crate::gui_x11::x11::ContainerWindow>) {
     if let Some(window) = window.take() {
         std::mem::forget(window);
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn floating_gui_parent_api() -> GuiParentApi {
     let forced_x11 = ["WINIT_UNIX_BACKEND", "GDK_BACKEND", "QT_QPA_PLATFORM"]
         .iter()
@@ -316,7 +316,7 @@ impl HostRuntime {
             plugin.gui_destroy();
         }
 
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         {
             let backend = floating_gui_parent_api();
             let apis: &[&str] = match backend {
@@ -351,23 +351,6 @@ impl HostRuntime {
             }
             if plugin.gui_is_api_supported("win32", true)
                 && plugin.gui_create("win32", true).is_ok()
-            {
-                return plugin.gui_show();
-            }
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            if let Some((ref api, true)) = plugin.gui_preferred_api()
-                && api == "cocoa"
-            {
-                plugin
-                    .gui_create(api, true)
-                    .and_then(|_| plugin.gui_show())?;
-                return Ok(());
-            }
-            if plugin.gui_is_api_supported("cocoa", true)
-                && plugin.gui_create("cocoa", true).is_ok()
             {
                 return plugin.gui_show();
             }
@@ -674,7 +657,7 @@ impl HostRuntime {
         let mut started_processing = false;
         #[cfg(windows)]
         let mut clap_gui_window: Option<ContainerWindow> = None;
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         let mut clap_gui_window_x11: Option<crate::gui_x11::x11::ContainerWindow> = None;
         let mut _resource_directory: Option<String> = None;
 
@@ -689,7 +672,7 @@ impl HostRuntime {
                 {
                     clap_gui_window = None;
                 }
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(unix)]
                 {
                     close_x11_gui_window(&mut clap_gui_window_x11);
                 }
@@ -824,7 +807,7 @@ impl HostRuntime {
                                     }
                                 }
                             }
-                            #[cfg(all(unix, not(target_os = "macos")))]
+                            #[cfg(unix)]
                             {
                                 let gui_mode = header.gui_mode();
 
@@ -943,30 +926,6 @@ impl HostRuntime {
                                     }
                                 }
                             }
-                            #[cfg(target_os = "macos")]
-                            {
-                                let gui_mode = header.gui_mode();
-                                let is_floating = gui_mode == GuiMode::Floating;
-                                let window_id = if is_floating {
-                                    0
-                                } else {
-                                    header.parent_window_usize() as u64
-                                };
-
-                                if plugin.gui_created() {
-                                    plugin.gui_destroy();
-                                }
-                                let create_result = plugin.gui_create("cocoa", is_floating);
-                                create_result
-                                    .and_then(|_| {
-                                        if window_id != 0 {
-                                            plugin.gui_set_parent(window_id)
-                                        } else {
-                                            Ok(())
-                                        }
-                                    })
-                                    .and_then(|_| plugin.gui_show())
-                            }
                         }
                     }
                     4 => {
@@ -985,7 +944,7 @@ impl HostRuntime {
                             }
                             clap_gui_window = None;
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         {
                             close_x11_gui_window(&mut clap_gui_window_x11);
                         }

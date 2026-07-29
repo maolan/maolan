@@ -1,6 +1,6 @@
 //! Shared X11 container-window helpers for hosting plugin GUIs.
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 pub mod x11 {
     use std::os::raw::{c_char, c_int, c_uint, c_ulong};
     use std::sync::Once;

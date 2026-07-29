@@ -8,19 +8,19 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 use maolan_lv2::raw::{
     LV2Feature, LV2UIControllerRaw, LV2UIDescriptorRaw, LV2UIHandle, LV2UIIdleInterface,
     LV2UIShowInterface, LV2UIWidget,
 };
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 const LV2_UI_X11_UI: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 const LV2_UI_PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
 
 const SHM_LATENCY_SAMPLES_OFFSET: usize = 84;
@@ -55,7 +55,7 @@ impl Drop for ComInitGuard {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 mod x11_ffi {
     use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong};
     pub type Atom = c_ulong;
@@ -162,16 +162,16 @@ mod x11_ffi {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 struct Vst3GuiWindow {
     display: *mut x11_ffi::Display,
     window: x11_ffi::Window,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 unsafe impl Send for Vst3GuiWindow {}
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 impl Drop for Vst3GuiWindow {
     fn drop(&mut self) {
         unsafe {
@@ -182,7 +182,7 @@ impl Drop for Vst3GuiWindow {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn create_vst3_gui(
     processor: &crate::vst3::Vst3Processor,
     plugin_path: &str,
@@ -788,7 +788,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
     let mut vst3_param_cache = HashMap::new();
     refresh_vst3_param_cache(&processor, &mut vst3_param_cache);
 
-    #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
+    #[cfg(any(windows, unix))]
     let mut vst3_gui_window: Option<Vst3GuiWindow> = None;
 
     loop {
@@ -824,7 +824,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
                     }
                 }
                 3 => {
-                    #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
+                    #[cfg(any(windows, unix))]
                     {
                         if vst3_gui_window.is_none() {
                             match create_vst3_gui(&processor, plugin_path, ptr) {
@@ -835,7 +835,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
                                 Err(e) => Err(e),
                             }
                         } else {
-                            #[cfg(all(unix, not(target_os = "macos")))]
+                            #[cfg(unix)]
                             if let Some(ref gw) = vst3_gui_window {
                                 unsafe {
                                     x11_ffi::XMapWindow(gw.display, gw.window);
@@ -854,11 +854,11 @@ pub fn run_vst3(args: Vst3RunArgs) {
                             processor.gui_show()
                         }
                     }
-                    #[cfg(not(any(windows, all(unix, not(target_os = "macos")))))]
+                    #[cfg(not(any(windows, unix)))]
                     Err("VST3 GUI not supported on this platform".to_string())
                 }
                 4 => {
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     if let Some(ref gw) = vst3_gui_window {
                         unsafe {
                             x11_ffi::XUnmapWindow(gw.display, gw.window);
@@ -1025,22 +1025,22 @@ fn write_lv2_echo_ring(
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 type Lv2UiDescriptorFn = unsafe extern "C" fn(index: u32) -> *const LV2UIDescriptorRaw;
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 #[derive(Clone, Copy)]
 struct Lv2UiWrite {
     port_index: u32,
     value: f32,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 struct Lv2UiController {
     writes: std::sync::Mutex<Vec<Lv2UiWrite>>,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 extern "C" fn lv2_ui_write_function(
     controller: LV2UIControllerRaw,
     port_index: libc::c_uint,
@@ -1064,14 +1064,14 @@ extern "C" fn lv2_ui_write_function(
         .push(Lv2UiWrite { port_index, value });
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 struct Lv2UiFeatureSet {
     _uris: Vec<std::ffi::CString>,
     _features: Vec<LV2Feature>,
     ptrs: Vec<*const LV2Feature>,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 impl Lv2UiFeatureSet {
     fn new(parent: Option<x11_ffi::Window>, show_interface: bool) -> Result<Self, String> {
         let mut uris =
@@ -1115,7 +1115,7 @@ impl Lv2UiFeatureSet {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 #[derive(Clone, Copy)]
 enum Lv2GuiSurface {
     X11 {
@@ -1129,7 +1129,7 @@ enum Lv2GuiSurface {
     },
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 struct Lv2GuiWindow {
     surface: Lv2GuiSurface,
     descriptor: *const LV2UIDescriptorRaw,
@@ -1140,10 +1140,10 @@ struct Lv2GuiWindow {
     controller: Box<Lv2UiController>,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 unsafe impl Send for Lv2GuiWindow {}
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 impl Lv2GuiWindow {
     fn show(&self) {
         match self.surface {
@@ -1261,7 +1261,7 @@ impl Lv2GuiWindow {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 impl Drop for Lv2GuiWindow {
     fn drop(&mut self) {
         unsafe {
@@ -1285,7 +1285,7 @@ impl Drop for Lv2GuiWindow {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn file_uri_to_path(uri: &str) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
     let path_start = rest.find('/')?;
@@ -1313,7 +1313,7 @@ fn file_uri_to_path(uri: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn load_lv2_ui_descriptor(
     ui: &crate::lv2::Lv2UiInfo,
 ) -> Result<(libloading::Library, *const LV2UIDescriptorRaw, String), String> {
@@ -1351,7 +1351,7 @@ fn load_lv2_ui_descriptor(
     Ok((lib, descriptor, ui_binary))
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn lv2_ui_interface<T>(descriptor: *const LV2UIDescriptorRaw, uri: &str) -> Option<*const T> {
     unsafe {
         (*descriptor).extension_data.and_then(|extension_data| {
@@ -1362,7 +1362,7 @@ fn lv2_ui_interface<T>(descriptor: *const LV2UIDescriptorRaw, uri: &str) -> Opti
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn instantiate_lv2_ui(
     ui: &crate::lv2::Lv2UiInfo,
     processor: &crate::lv2::Lv2Processor,
@@ -1460,7 +1460,7 @@ fn instantiate_lv2_ui(
     Ok(window)
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn create_lv2_x11_gui(
     processor: &crate::lv2::Lv2Processor,
     plugin_uri: &str,
@@ -1556,7 +1556,7 @@ fn create_lv2_x11_gui(
     result
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn create_lv2_external_gui(
     processor: &crate::lv2::Lv2Processor,
     plugin_uri: &str,
@@ -1565,26 +1565,26 @@ fn create_lv2_external_gui(
     instantiate_lv2_ui(ui, processor, plugin_uri, None, true)
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn lv2_ui_has_x11_class(ui: &crate::lv2::Lv2UiInfo) -> bool {
     ui.class_uris.iter().any(|class| class == LV2_UI_X11_UI)
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn lv2_ui_has_wayland_class(ui: &crate::lv2::Lv2UiInfo) -> bool {
     ui.class_uris
         .iter()
         .any(|class| class.to_ascii_lowercase().contains("wayland"))
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn lv2_ui_supports_show_interface(ui: &crate::lv2::Lv2UiInfo) -> bool {
     ui.extension_data_uris
         .iter()
         .any(|uri| uri == LV2_UI_SHOW_INTERFACE)
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn floating_gui_parent_api() -> GuiParentApi {
     let forced_x11 = ["WINIT_UNIX_BACKEND", "GDK_BACKEND", "QT_QPA_PLATFORM"]
         .iter()
@@ -1605,7 +1605,7 @@ fn floating_gui_parent_api() -> GuiParentApi {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn create_lv2_embedded_wayland_gui(
     processor: &crate::lv2::Lv2Processor,
     plugin_uri: &str,
@@ -1624,7 +1624,7 @@ fn create_lv2_embedded_wayland_gui(
     )
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn try_lv2_external_gui_by_backend(
     processor: &crate::lv2::Lv2Processor,
     plugin_uri: &str,
@@ -1648,7 +1648,7 @@ fn try_lv2_external_gui_by_backend(
     Err(errors)
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn create_lv2_gui(
     processor: &crate::lv2::Lv2Processor,
     plugin_uri: &str,
@@ -1728,7 +1728,7 @@ fn create_lv2_gui(
     create_lv2_x11_gui(processor, plugin_uri, ptr, ui)
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn pump_lv2_gui(
     window: &mut Option<Lv2GuiWindow>,
     processor: &mut crate::lv2::Lv2Processor,
@@ -2210,7 +2210,7 @@ pub fn run_lv2(
 
     let mut lv2_param_cache = HashMap::new();
     refresh_lv2_param_cache(&processor, &mut lv2_param_cache);
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     let mut lv2_gui_window: Option<Lv2GuiWindow> = None;
 
     loop {
@@ -2247,7 +2247,7 @@ pub fn run_lv2(
                     }
                 }
                 3 => {
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     {
                         if let Some(window) = &lv2_gui_window {
                             window.show();
@@ -2259,13 +2259,13 @@ pub fn run_lv2(
                             })
                         }
                     }
-                    #[cfg(any(not(unix), target_os = "macos"))]
+                    #[cfg(not(unix))]
                     {
                         Err("LV2 GUI is only supported on X11 hosts".to_string())
                     }
                 }
                 4 => {
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     {
                         if let Some(window) = &lv2_gui_window {
                             window.hide();
@@ -2334,7 +2334,7 @@ pub fn run_lv2(
         match wait_result {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(unix)]
                 pump_lv2_gui(
                     &mut lv2_gui_window,
                     &mut processor,
@@ -2358,7 +2358,7 @@ pub fn run_lv2(
         }
 
         apply_lv2_param_ring(&mut processor, ptr);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         pump_lv2_gui(
             &mut lv2_gui_window,
             &mut processor,

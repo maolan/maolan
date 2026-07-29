@@ -8,7 +8,7 @@ use maolan_widgets::curve_editor::{CurveEditorMessage, CurvePoint as CurveEditor
 pub use maolan_widgets::midi::{PianoControllerLane, PianoNrpnKind, PianoRpnKind};
 use std::path::PathBuf;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 use crate::state::AudioDeviceOption;
 use crate::state::{AudioBackendOption, KeyMode, NoteName};
 use std::fmt;
@@ -1040,9 +1040,9 @@ pub enum Message {
         target_os = "openbsd"
     ))]
     PreferencesDevicesLoaded {
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         output_devices: Vec<AudioDeviceOption>,
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(unix)]
         input_devices: Vec<AudioDeviceOption>,
         #[cfg(target_os = "windows")]
         output_devices: Vec<String>,
@@ -1334,11 +1334,11 @@ pub enum Message {
     PianoDeleteControllers {
         controller_indices: Vec<usize>,
     },
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     RefreshLv2Plugins,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     SelectLv2Plugin(String),
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     OpenLv2PluginUi {
         track_name: String,
         clip_idx: Option<usize>,
@@ -1385,11 +1385,11 @@ pub enum Message {
         plugin_id: String,
     },
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     HWSelected(AudioDeviceOption),
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(unix))]
     HWSelected(String),
-    #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
+    #[cfg(unix)]
     HWInputSelected(AudioDeviceOption),
     #[cfg(target_os = "windows")]
     HWInputSelected(String),

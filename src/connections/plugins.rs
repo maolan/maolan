@@ -79,7 +79,7 @@ impl Graph {
 
     pub(crate) fn plugin_node_instance_id(node: &PluginGraphNode) -> Option<usize> {
         match node {
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             PluginGraphNode::Lv2PluginInstance(id) => Some(*id),
             PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
                 Some(*id)
@@ -568,7 +568,7 @@ impl canvas::Program<Message> for Graph {
                                 };
                                 let plugin = &data.plugin_graph_plugins[plugin_idx];
                                 return match &plugin.node {
-                                    #[cfg(all(unix, not(target_os = "macos")))]
+                                    #[cfg(unix)]
                                     PluginGraphNode::Lv2PluginInstance(_) => {
                                         Some(Action::publish(Message::OpenLv2PluginUi {
                                             track_name,

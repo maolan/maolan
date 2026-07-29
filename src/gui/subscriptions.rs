@@ -69,13 +69,13 @@ impl Maolan {
 
         fn listener() -> impl Stream<Item = Message> {
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(unix)]
                 let initial_messages = vec![
                     Message::RefreshLv2Plugins,
                     Message::RefreshVst3Plugins,
                     Message::RefreshClapPlugins,
                 ];
-                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                #[cfg(not(unix))]
                 let initial_messages =
                     vec![Message::RefreshVst3Plugins, Message::RefreshClapPlugins];
                 let initial = stream::iter(initial_messages);

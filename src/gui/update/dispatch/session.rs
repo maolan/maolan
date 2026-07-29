@@ -145,8 +145,6 @@ impl Maolan {
                 self.pending_save_tracks.clear();
                 self.pending_save_clap_tracks.clear();
                 self.pending_save_clap_clips.clear();
-                #[cfg(target_os = "macos")]
-                self.pending_save_vst3_states.clear();
                 self.pending_peak_file_loads.clear();
                 self.pending_peak_rebuilds.clear();
                 self.midi_clip_previews.clear();
@@ -192,7 +190,7 @@ impl Maolan {
                     state.connection_view_selection = ConnectionViewSelection::None;
                     state.plugin_graph_track = None;
                     state.plugin_graph_clip = None;
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     {
                         state.plugin_graph_plugins.clear();
                         state.plugin_graph_connections.clear();

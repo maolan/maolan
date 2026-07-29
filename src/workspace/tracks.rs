@@ -90,7 +90,7 @@ fn automation_target_set_message(
             param_id,
             value,
         })),
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         TrackAutomationTarget::Lv2Parameter {
             instance_id, index, ..
         } => Some(Message::Request(Action::TrackSetLv2ControlValue {
@@ -99,7 +99,7 @@ fn automation_target_set_message(
             index,
             value,
         })),
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        #[cfg(not(unix))]
         TrackAutomationTarget::Lv2Parameter { .. } => None,
     }
 }
@@ -553,9 +553,7 @@ pub(super) fn track_context_menu_overlay(
     let mut plugin_submenu_items: Vec<Element<'static, Message>> = Vec::new();
     if let Some((plugins, _)) = state.plugin_graphs_by_track.get(&track_name) {
         for plugin in plugins {
-            if plugin.format.eq_ignore_ascii_case("LV2")
-                && !cfg!(all(unix, not(target_os = "macos")))
-            {
+            if plugin.format.eq_ignore_ascii_case("LV2") && !cfg!(unix) {
                 continue;
             }
             let plugin_label = format!("{} ({})", plugin.name, plugin.format);

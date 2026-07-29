@@ -261,11 +261,7 @@ impl Maolan {
                 Some(Show::TrackColor { ref track_name }) => {
                     self.wrap_with_log_window(self.track_color_view(track_name.clone()))
                 }
-                #[cfg(all(unix, not(target_os = "macos")))]
-                Some(Show::TrackPluginList) => {
-                    self.wrap_with_log_window(self.track_plugin_list_view())
-                }
-                #[cfg(target_os = "macos")]
+                #[cfg(unix)]
                 Some(Show::TrackPluginList) => {
                     self.wrap_with_log_window(self.track_plugin_list_view())
                 }

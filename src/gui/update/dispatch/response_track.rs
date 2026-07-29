@@ -83,7 +83,7 @@ impl Maolan {
                 );
                 true
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackSetLv2ControlValue {
                 track_name,
                 instance_id,
@@ -497,7 +497,7 @@ impl Maolan {
                 }
                 true
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackSetPluginBypassed {
                 track_name,
                 instance_id,
@@ -520,7 +520,7 @@ impl Maolan {
                 }
                 true
             }
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            #[cfg(not(unix))]
             Action::TrackSetPluginBypassed { .. } => true,
             _ => false,
         }

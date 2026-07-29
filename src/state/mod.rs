@@ -20,7 +20,7 @@ use crate::message::{
 pub use clip::{AudioClip, ClipPeaks, MIDIClip, generate_clip_id};
 pub use connection::Connection;
 use iced::{Length, Point};
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{
     ConnectableConnection, PluginGraphConnection, PluginGraphNode, PluginGraphPlugin,
@@ -555,7 +555,7 @@ impl From<maolan_engine::modulator::ModulatorTarget> for ModulatorTarget {
                 0.0,
                 127.0,
             ),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             maolan_engine::modulator::ModulatorTarget::Lv2Parameter {
                 track_name,
                 instance_id,
@@ -643,7 +643,7 @@ impl TryFrom<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
             TrackAutomationTarget::Lv2Parameter {
                 instance_id, index, ..
             } => {
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(unix)]
                 {
                     Ok(Self::Lv2Parameter {
                         track_name: t.track_name,
@@ -653,7 +653,7 @@ impl TryFrom<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
                         max: t.max,
                     })
                 }
-                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                #[cfg(not(unix))]
                 {
                     let _ = (instance_id, index);
                     Err(())
@@ -680,8 +680,6 @@ pub enum AudioBackendOption {
     Alsa,
     #[cfg(target_os = "windows")]
     Wasapi,
-    #[cfg(target_os = "macos")]
-    CoreAudio,
 }
 
 impl std::fmt::Display for AudioBackendOption {
@@ -697,8 +695,6 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Alsa => "ALSA",
             #[cfg(target_os = "windows")]
             Self::Wasapi => "WASAPI",
-            #[cfg(target_os = "macos")]
-            Self::CoreAudio => "CoreAudio",
         };
         f.write_str(label)
     }
@@ -713,7 +709,7 @@ impl AudioBackendOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 #[derive(Clone, Debug)]
 pub struct AudioDeviceOption {
     pub id: String,
@@ -726,7 +722,7 @@ pub struct AudioDeviceOption {
     pub supports_output: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 impl AudioDeviceOption {
     fn normalize_sample_rates(mut rates: Vec<i32>) -> Vec<i32> {
         rates.retain(|r| *r > 0);
@@ -797,7 +793,7 @@ impl AudioDeviceOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 impl std::fmt::Display for AudioDeviceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.supported_bits.is_empty() {
@@ -813,29 +809,29 @@ impl std::fmt::Display for AudioDeviceOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 impl PartialEq for AudioDeviceOption {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 impl Eq for AudioDeviceOption {}
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 impl std::hash::Hash for AudioDeviceOption {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 pub type OutputAudioDevice = AudioDeviceOption;
-#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+#[cfg(not(unix))]
 pub type OutputAudioDevice = String;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(unix)]
 pub type InputAudioDevice = AudioDeviceOption;
 #[cfg(target_os = "windows")]
 pub type InputAudioDevice = String;
@@ -1441,11 +1437,11 @@ pub struct StateData {
     pub jack_connecting: Option<String>,
     pub jack_node_positions: HashMap<String, Point>,
     pub jack_session_routing: Option<maolan_engine::message::JackGraphInfo>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pub lv2_plugins: Vec<Lv2PluginInfo>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pub lv2_plugins_loaded: bool,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pub lv2_plugins_unavailable: bool,
     pub vst3_plugins: Vec<Vst3PluginInfo>,
     pub vst3_plugins_loaded: bool,
@@ -1666,11 +1662,11 @@ impl Default for StateData {
             jack_connecting: None,
             jack_node_positions: HashMap::new(),
             jack_session_routing: None,
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             lv2_plugins: vec![],
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             lv2_plugins_loaded: false,
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             lv2_plugins_unavailable: false,
             vst3_plugins: vec![],
             vst3_plugins_loaded: false,
@@ -1883,14 +1879,11 @@ fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
     let devices = discover_alsa_output_devices();
     #[cfg(target_os = "windows")]
     let devices = discover_windows_audio_devices();
-    #[cfg(target_os = "macos")]
-    let devices = maolan_engine::discover_coreaudio_devices();
     #[cfg(not(any(
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "windows",
-        target_os = "macos"
+        target_os = "windows"
     )))]
     let devices = vec![];
     devices
@@ -1900,8 +1893,7 @@ fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "linux",
-    target_os = "windows",
-    target_os = "macos"
+    target_os = "windows"
 ))]
 fn initial_selected_output_hw(hw: &[OutputAudioDevice]) -> Option<OutputAudioDevice> {
     hw.first().cloned()
@@ -1911,8 +1903,7 @@ fn initial_selected_output_hw(hw: &[OutputAudioDevice]) -> Option<OutputAudioDev
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "linux",
-    target_os = "windows",
-    target_os = "macos"
+    target_os = "windows"
 )))]
 fn initial_selected_output_hw(_hw: &[OutputAudioDevice]) -> Option<OutputAudioDevice> {
     None
@@ -1968,8 +1959,6 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
         Some(AudioBackendOption::Alsa),
         #[cfg(target_os = "windows")]
         Some(AudioBackendOption::Wasapi),
-        #[cfg(target_os = "macos")]
-        Some(AudioBackendOption::CoreAudio),
     ]
     .into_iter()
     .flatten()
@@ -1986,8 +1975,6 @@ fn audio_backend_preference_rank(backend: &AudioBackendOption) -> usize {
         AudioBackendOption::Alsa => 0,
         #[cfg(target_os = "windows")]
         AudioBackendOption::Wasapi => 0,
-        #[cfg(target_os = "macos")]
-        AudioBackendOption::CoreAudio => 0,
         #[cfg(unix)]
         AudioBackendOption::Jack => 1,
     }
@@ -2005,7 +1992,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     fn audio_device_option_preferred_bits_returns_first() {
         let device = AudioDeviceOption::with_supported_caps(
             "hw:0".to_string(),
@@ -2017,7 +2004,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     fn audio_device_option_preferred_bits_empty() {
         let device = AudioDeviceOption::with_supported_caps(
             "hw:0".to_string(),
@@ -2029,7 +2016,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     fn normalize_sample_rates_removes_duplicates() {
         let rates = vec![48000, 44100, 48000, 48000];
         let normalized = AudioDeviceOption::normalize_sample_rates(rates);

@@ -130,7 +130,7 @@ fn push_track_plugin_graph_restore_actions(
                     continue;
                 };
                 match plugin.get("format").and_then(Value::as_str) {
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     Some("LV2") => {
                         let instance_id = next_instance_id;
                         next_instance_id += 1;
@@ -254,7 +254,7 @@ fn parse_plugin_node_with_runtime_nodes(
     match t {
         "track_input" => Some(PluginGraphNode::TrackInput),
         "track_output" => Some(PluginGraphNode::TrackOutput),
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         "lv2_plugin" => runtime_nodes
             .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
             .filter(|node| matches!(node, PluginGraphNode::Lv2PluginInstance(_)))
@@ -305,7 +305,7 @@ fn resolve_vst3_plugin_id(stored: &str, vst3_plugins: &[Vst3PluginInfo]) -> Opti
         .map(|info| info.id.clone())
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn lv2_state_from_json(value: &Value) -> Option<Vec<u8>> {
     if value.is_null() {
         return None;

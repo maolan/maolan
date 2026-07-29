@@ -30,7 +30,7 @@ impl Maolan {
                 }
                 Some(Task::none())
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::Lv2Plugins(plugins) => {
                 let blocklist = crate::plugin_blocklist::Blocklist::load();
                 let (filtered, blocked): (Vec<_>, Vec<_>) =
@@ -48,7 +48,7 @@ impl Maolan {
                 );
                 Some(Task::none())
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::Lv2PluginsUnavailable { error } => {
                 let mut state = self.state.blocking_write();
                 state.lv2_plugins = vec![];

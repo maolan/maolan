@@ -72,7 +72,7 @@ impl Maolan {
                     .map(|p| p.node.clone());
                 if let Some(node) = selected_node {
                     let task = match node {
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         PluginGraphNode::Lv2PluginInstance(_) => {
                             self.send(Action::TrackUnloadLv2PluginInstance {
                                 track_name: track_name.clone(),
@@ -766,13 +766,11 @@ impl Maolan {
                 self.state.blocking_write().apply_template_dialog = None;
             }
             Message::OpenUrl(ref url) => {
-                #[cfg(target_os = "macos")]
-                let _ = std::process::Command::new("open").arg(url).spawn();
                 #[cfg(target_os = "windows")]
                 let _ = std::process::Command::new("cmd")
                     .args(["/c", "start", "", url])
                     .spawn();
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(unix)]
                 let _ = std::process::Command::new("xdg-open").arg(url).spawn();
             }
             Message::ConfirmCloseSave => {
@@ -4193,7 +4191,7 @@ impl Maolan {
                                 .entry(track_name.clone())
                                 .or_default()
                                 .insert(plugin_id.clone(), clap_state.clone());
-                            #[cfg(all(unix, not(target_os = "macos")))]
+                            #[cfg(unix)]
                             {
                                 let state_json = serde_json::to_value(clap_state)
                                     .unwrap_or(serde_json::Value::Null);
@@ -4392,7 +4390,7 @@ impl Maolan {
                                 let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
                             }
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         Action::TrackLv2PluginControls {
                             track_name,
                             instance_id,
@@ -4478,7 +4476,7 @@ impl Maolan {
                                 return task;
                             }
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         Action::TrackLoadLv2Plugin { track_name, .. }
                         | Action::TrackSetLv2PluginState { track_name, .. }
                         | Action::TrackUnloadLv2PluginInstance { track_name, .. }
@@ -4510,22 +4508,12 @@ impl Maolan {
                             instance_id,
                             state,
                         } => {
-                            {
-                                let mut gui_state = self.state.blocking_write();
-                                gui_state
-                                    .vst3_states_by_track
-                                    .entry(track_name.clone())
-                                    .or_default()
-                                    .insert(*instance_id, state.clone());
-                            }
-                            #[cfg(target_os = "macos")]
-                            if self.pending_save_path.is_some() {
-                                self.pending_save_vst3_states
-                                    .remove(&(track_name.clone(), *instance_id));
-                                if let Some(task) = self.complete_pending_save(track_name) {
-                                    return task;
-                                }
-                            }
+                            let mut gui_state = self.state.blocking_write();
+                            gui_state
+                                .vst3_states_by_track
+                                .entry(track_name.clone())
+                                .or_default()
+                                .insert(*instance_id, state.clone());
                         }
                         Action::ClipVst3StateSnapshot {
                             track_name,
@@ -4551,7 +4539,7 @@ impl Maolan {
                                 clip.plugin_graph_json = Some(graph_json);
                             }
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         Action::TrackLv2Midnam {
                             track_name,
                             note_names,
@@ -4577,7 +4565,7 @@ impl Maolan {
                             }
                             self.workspace.set_midi_edit_midnam_note_names(note_names);
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         Action::ClipLv2StateSnapshot {
                             track_name,
                             clip_idx,
@@ -4721,7 +4709,7 @@ impl Maolan {
                                 target.track_name = new_name.clone();
                             }
 
-                            #[cfg(all(unix, not(target_os = "macos")))]
+                            #[cfg(unix)]
                             Self::rename_track_map_entry(
                                 &mut state.plugin_graphs_by_track,
                                 old_name,
@@ -4773,8 +4761,6 @@ impl Maolan {
                 self.pending_save_tracks.clear();
                 self.pending_save_clap_tracks.clear();
                 self.pending_save_clap_clips.clear();
-                #[cfg(target_os = "macos")]
-                self.pending_save_vst3_states.clear();
                 self.pending_save_is_template = false;
                 self.error(e.clone());
             }
@@ -5281,7 +5267,7 @@ impl Maolan {
                         crate::message::TrackAutomationTarget::MidiCc { channel, cc } => {
                             OfflineAutomationTarget::MidiCc { channel, cc }
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         crate::message::TrackAutomationTarget::Lv2Parameter {
                             instance_id,
                             index,
@@ -5293,7 +5279,7 @@ impl Maolan {
                             min,
                             max,
                         },
-                        #[cfg(not(all(unix, not(target_os = "macos"))))]
+                        #[cfg(not(unix))]
                         crate::message::TrackAutomationTarget::Lv2Parameter { .. } => continue,
                         crate::message::TrackAutomationTarget::Vst3Parameter {
                             instance_id,
@@ -5418,7 +5404,7 @@ impl Maolan {
                         crate::message::TrackAutomationTarget::MidiCc { channel, cc } => {
                             OfflineAutomationTarget::MidiCc { channel, cc }
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         crate::message::TrackAutomationTarget::Lv2Parameter {
                             instance_id,
                             index,
@@ -5430,7 +5416,7 @@ impl Maolan {
                             min,
                             max,
                         },
-                        #[cfg(not(all(unix, not(target_os = "macos"))))]
+                        #[cfg(not(unix))]
                         crate::message::TrackAutomationTarget::Lv2Parameter { .. } => continue,
                         crate::message::TrackAutomationTarget::Vst3Parameter {
                             instance_id,
@@ -5664,7 +5650,7 @@ impl Maolan {
                         self.pending_add_vst3_automation_paths
                             .insert((track_name.clone(), plugin_id.clone()));
                     }
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(unix)]
                     "LV2" => {
                         self.pending_add_lv2_automation_uris
                             .insert((track_name.clone(), plugin_id.clone()));
@@ -5846,7 +5832,7 @@ impl Maolan {
                                     instance_id,
                                 });
                             }
-                            #[cfg(all(unix, not(target_os = "macos")))]
+                            #[cfg(unix)]
                             if plugin.format.eq_ignore_ascii_case("LV2") {
                                 return self.send(Action::TrackGetLv2PluginControls {
                                     track_name,
@@ -6804,7 +6790,7 @@ impl Maolan {
                         return self.update(Message::RemoveSelectedTracks);
                     }
                     crate::state::View::TrackPlugins => {
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(unix)]
                         {
                             let (selected_plugins, selected_indices) = {
                                 let state = self.state.blocking_read();
@@ -10233,7 +10219,7 @@ impl Maolan {
                                 }),
                                 self.sync_piano_scrollbars(),
                             ];
-                            #[cfg(all(unix, not(target_os = "macos")))]
+                            #[cfg(unix)]
                             {
                                 let mut tasks = tasks;
                                 tasks.push(self.send(Action::TrackGetLv2Midnam {
@@ -10241,7 +10227,7 @@ impl Maolan {
                                 }));
                                 return Task::batch(tasks);
                             }
-                            #[cfg(not(all(unix, not(target_os = "macos"))))]
+                            #[cfg(not(unix))]
                             return Task::batch(tasks);
                         }
                     }
@@ -10420,11 +10406,11 @@ impl Maolan {
                 track_idx: _track_idx,
                 clip_idx: _clip_idx,
             } => {
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(unix)]
                 {
                     return self.open_clip_plugin_view(_track_idx.clone(), _clip_idx);
                 }
-                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                #[cfg(not(unix))]
                 {
                     return Task::none();
                 }

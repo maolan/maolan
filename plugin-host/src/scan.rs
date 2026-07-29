@@ -409,19 +409,10 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
     }
 }
 
-#[cfg(any(
-    target_os = "macos",
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "openbsd"
-))]
+#[cfg(unix)]
 fn default_clap_search_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    #[cfg(target_os = "macos")]
-    {
-        crate::paths::push_macos_audio_plugin_roots(&mut roots, "CLAP");
-    }
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(unix)]
     {
         crate::paths::push_unix_plugin_roots(&mut roots, "clap");
     }
@@ -436,7 +427,6 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
 }
 
 #[cfg(not(any(
-    target_os = "macos",
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
@@ -623,10 +613,6 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
                         || gui
                             .is_api_supported
                             .map(|f| f(plugin, c"win32".as_ptr(), true))
-                            .unwrap_or(false)
-                        || gui
-                            .is_api_supported
-                            .map(|f| f(plugin, c"cocoa".as_ptr(), true))
                             .unwrap_or(false);
                     if caps.has_gui {
                         caps.gui_apis = vec!["x11".to_string()];
