@@ -889,7 +889,7 @@ impl PluginInstance {
         tracing::info!(count, "Enumerating clap.file-reference entries");
         let mut refs = Vec::with_capacity(count as usize);
         for index in 0..count {
-            let mut buffer = vec![0i8; 2048];
+            let mut buffer = vec![0 as c_char; 2048];
             if unsafe { get_fn(self.plugin, index, buffer.as_mut_ptr(), buffer.len() as u32) } {
                 let cstr = unsafe { CStr::from_ptr(buffer.as_ptr()) };
                 if let Ok(s) = cstr.to_str() {

@@ -1,6 +1,6 @@
 #![allow(clippy::unnecessary_cast)]
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -167,7 +167,7 @@ impl PluginFactory {
         unsafe { self.factory.countClasses() }
     }
 
-    pub fn create_instance(&self, class_id: &[i8; 16]) -> Result<PluginInstance, String> {
+    pub fn create_instance(&self, class_id: &TUID) -> Result<PluginInstance, String> {
         use vst3::Steinberg::IPluginFactoryTrait;
 
         let mut instance_ptr: *mut c_void = std::ptr::null_mut();
@@ -175,7 +175,7 @@ impl PluginFactory {
         let result = unsafe {
             self.factory.createInstance(
                 class_id.as_ptr(),
-                IComponent::IID.as_ptr() as *const i8,
+                IComponent::IID.as_ptr().cast(),
                 &mut instance_ptr,
             )
         };
@@ -219,7 +219,7 @@ impl PluginFactory {
 
     pub fn create_edit_controller(
         &self,
-        class_id: &[i8; 16],
+        class_id: &TUID,
     ) -> Result<ComPtr<IEditController>, String> {
         use vst3::Steinberg::IPluginFactoryTrait;
 
@@ -228,7 +228,7 @@ impl PluginFactory {
         let result = unsafe {
             self.factory.createInstance(
                 class_id.as_ptr(),
-                IEditController::IID.as_ptr() as *const i8,
+                IEditController::IID.as_ptr().cast(),
                 &mut instance_ptr,
             )
         };
@@ -265,7 +265,7 @@ impl Drop for PluginFactory {
 pub struct ClassInfo {
     pub name: String,
     pub category: String,
-    pub cid: [i8; 16],
+    pub cid: TUID,
 }
 
 #[derive(Debug, Clone)]
@@ -486,7 +486,7 @@ impl PluginInstance {
             let vtbl = (*component_raw).vtbl;
             let query_interface = (*vtbl).base.base.queryInterface;
 
-            let iid = std::mem::transmute::<&[u8; 16], &[i8; 16]>(&IAudioProcessor::IID);
+            let iid = (&IAudioProcessor::IID as *const [u8; 16]).cast::<TUID>();
             query_interface(component_raw as *mut _, iid, &mut processor_ptr)
         };
 
@@ -500,7 +500,7 @@ impl PluginInstance {
             let component_raw = self.component.as_ptr();
             let vtbl = (*component_raw).vtbl;
             let query_interface = (*vtbl).base.base.queryInterface;
-            let iid = std::mem::transmute::<&[u8; 16], &[i8; 16]>(&IEditController::IID);
+            let iid = (&IEditController::IID as *const [u8; 16]).cast::<TUID>();
             query_interface(component_raw as *mut _, iid, &mut controller_ptr)
         };
         if query_result == kResultOk && !controller_ptr.is_null() {
@@ -1561,7 +1561,7 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
     }
 }
 
-fn extract_cstring(bytes: &[i8]) -> String {
+fn extract_cstring(bytes: &[c_char]) -> String {
     let len = bytes.iter().position(|&c| c == 0).unwrap_or(bytes.len());
     let u8_bytes: Vec<u8> = bytes[..len].iter().map(|&b| b as u8).collect();
     String::from_utf8_lossy(&u8_bytes).to_string()
