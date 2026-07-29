@@ -4,9 +4,9 @@ use maolan_engine::{
     message::Action,
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-use tracing::warn;
+use tracing::{info, warn};
 
 pub fn load_session_graph_restore_actions(
     session: &Value,
@@ -15,14 +15,82 @@ pub fn load_session_graph_restore_actions(
     vst3_plugins: &[Vst3PluginInfo],
 ) -> Result<Vec<Action>, String> {
     let mut actions = Vec::new();
+    let graphs = merged_session_graphs(session);
     push_track_plugin_graph_restore_actions(
         &mut actions,
-        session.get("graphs"),
+        Some(&graphs),
         valid_track_names,
         clap_plugins,
         vst3_plugins,
     )?;
     Ok(actions)
+}
+
+pub(crate) fn merged_session_graphs(session: &Value) -> Value {
+    let mut graphs = session
+        .get("graphs")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    if let Some(tracks) = session.get("tracks").and_then(Value::as_array) {
+        for track in tracks {
+            let Some(name) = track.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(legacy_graph) = legacy_track_graph(track) else {
+                continue;
+            };
+            if graphs
+                .get(name)
+                .is_none_or(|graph| !graph_has_restore_payload(graph))
+            {
+                info!(track_name = name, "Using legacy track plugin graph");
+                graphs.insert(name.to_string(), legacy_graph);
+            }
+        }
+    }
+
+    Value::Object(graphs)
+}
+
+fn legacy_track_graph(track: &Value) -> Option<Value> {
+    let plugins = track
+        .get("plugins")
+        .and_then(Value::as_array)
+        .filter(|plugins| !plugins.is_empty())
+        .map(|_| track["plugins"].clone());
+    let connections = track
+        .get("connections")
+        .and_then(Value::as_array)
+        .filter(|connections| !connections.is_empty())
+        .map(|_| track["connections"].clone());
+
+    if plugins.is_none() && connections.is_none() {
+        return None;
+    }
+
+    let mut graph = Map::new();
+    graph.insert(
+        "plugins".to_string(),
+        plugins.unwrap_or_else(|| Value::Array(Vec::new())),
+    );
+    graph.insert(
+        "connections".to_string(),
+        connections.unwrap_or_else(|| Value::Array(Vec::new())),
+    );
+    Some(Value::Object(graph))
+}
+
+pub(crate) fn graph_has_restore_payload(graph: &Value) -> bool {
+    graph
+        .get("plugins")
+        .and_then(Value::as_array)
+        .is_some_and(|plugins| !plugins.is_empty())
+        || graph
+            .get("connections")
+            .and_then(Value::as_array)
+            .is_some_and(|connections| !connections.is_empty())
 }
 
 fn push_track_plugin_graph_restore_actions(
@@ -44,6 +112,9 @@ fn push_track_plugin_graph_restore_actions(
                 "Skipping plugin graph for unknown track '{}' (valid tracks: {:?})",
                 track_name, valid_track_names
             );
+            continue;
+        }
+        if !graph_has_restore_payload(graph) {
             continue;
         }
         actions.push(Action::TrackClearDefaultPassthrough {
@@ -283,5 +354,77 @@ fn parse_kind(value: Option<&Value>) -> Option<Kind> {
         Some("audio") | Some("Audio") => Some(Kind::Audio),
         Some("midi") | Some("MIDI") => Some(Kind::MIDI),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use maolan_engine::message::PluginGraphNode;
+    use serde_json::json;
+
+    fn valid_tracks(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn empty_top_level_graph_uses_legacy_track_connections() {
+        let session = json!({
+            "graphs": {
+                "Synth": {
+                    "plugins": [],
+                    "connections": []
+                }
+            },
+            "tracks": [{
+                "name": "Synth",
+                "connections": [{
+                    "from_node": {"type": "track_input"},
+                    "from_port": 0,
+                    "to_node": {"type": "track_output"},
+                    "to_port": 0,
+                    "kind": "audio"
+                }]
+            }]
+        });
+
+        let actions =
+            load_session_graph_restore_actions(&session, &valid_tracks(&["Synth"]), &[], &[])
+                .unwrap();
+
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                Action::TrackClearDefaultPassthrough { track_name },
+                Action::TrackConnectPluginAudio {
+                    track_name: route_track,
+                    from_node: PluginGraphNode::TrackInput,
+                    from_port: 0,
+                    to_node: PluginGraphNode::TrackOutput,
+                    to_port: 0
+                }
+            ] if track_name == "Synth" && route_track == "Synth"
+        ));
+    }
+
+    #[test]
+    fn truly_empty_graph_does_not_clear_default_passthrough() {
+        let session = json!({
+            "graphs": {
+                "Synth": {
+                    "plugins": [],
+                    "connections": []
+                }
+            },
+            "tracks": [{
+                "name": "Synth"
+            }]
+        });
+
+        let actions =
+            load_session_graph_restore_actions(&session, &valid_tracks(&["Synth"]), &[], &[])
+                .unwrap();
+
+        assert!(actions.is_empty());
     }
 }
