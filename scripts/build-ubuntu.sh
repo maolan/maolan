@@ -251,7 +251,10 @@ sed 's|^Exec=/usr/bin/maolan|Exec=maolan|; s|^Icon=/usr/share/icons/hicolor/scal
 
 cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
 
-LINUXDEPLOY="$OUTPUT_DIR/linuxdeploy-x86_64.AppImage"
+# Keep the linuxdeploy helper outside the deliverables directory.
+LINUXDEPLOY_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/maolan"
+LINUXDEPLOY="$LINUXDEPLOY_CACHE/linuxdeploy-x86_64.AppImage"
+mkdir -p "$LINUXDEPLOY_CACHE"
 if [[ ! -f "$LINUXDEPLOY" ]]; then
     echo "Downloading linuxdeploy..."
     curl -L -o "$LINUXDEPLOY" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
