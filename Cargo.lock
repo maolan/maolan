@@ -5112,15 +5112,14 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.46"
+version = "0.2.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "295b1e56db4ad46784ab654667d294392b254a14224dd95c2e7c945cc1b338db"
+checksum = "1337bd74acc8941961237436996f8b75b5540ff732e2078741a91229717ce0ff"
 dependencies = [
  "alsa",
  "arc-swap",
  "basedrop",
  "byteorder",
- "cpal",
  "ebur128",
  "jack",
  "maolan-plugin-protocol",
@@ -5143,7 +5142,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wide",
- "windows-sys 0.61.2",
+ "windows 0.62.2",
 ]
 
 [[package]]
