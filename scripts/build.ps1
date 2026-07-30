@@ -4,9 +4,8 @@ $ErrorActionPreference = "Stop"
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-$target    = "x86_64-pc-windows-msvc"
-$targetDir = "C:\cargo-target"
-$nsisPath  = "C:\nsis-3.10\makensis.exe"
+$target   = "x86_64-pc-windows-msvc"
+$nsisPath = "C:\nsis-3.10\makensis.exe"
 $staging   = "C:\maolan-staging\daw"
 
 # ---------------------------------------------------------------------------
@@ -183,10 +182,10 @@ if (-not (Test-Path $vcRedist)) {
 # ---------------------------------------------------------------------------
 Write-Host "Cleaning old build artifacts..."
 Push-Location $PSScriptRoot
-cargo clean --target-dir $targetDir
+cargo clean
 
 Write-Host "Building maolan (release)..."
-cargo build --release --workspace --target $target --target-dir $targetDir
+cargo build --release --workspace --target $target
 Pop-Location
 
 # ---------------------------------------------------------------------------
@@ -194,9 +193,9 @@ Pop-Location
 # ---------------------------------------------------------------------------
 Write-Host "Staging files to $staging..."
 New-Item -ItemType Directory -Force $staging | Out-Null
-Copy-Item "$targetDir\$target\release\maolan.exe"     $staging -Force
-Copy-Item "$targetDir\$target\release\maolan-cli.exe" $staging -Force
-Copy-Item "$targetDir\$target\release\maolan-plugin-host.exe" $staging -Force
+Copy-Item "target\$target\release\maolan.exe"     $staging -Force
+Copy-Item "target\$target\release\maolan-cli.exe" $staging -Force
+Copy-Item "target\$target\release\maolan-plugin-host.exe" $staging -Force
 Copy-Item $vcRedist $staging -Force
 
 # ---------------------------------------------------------------------------

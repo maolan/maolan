@@ -913,21 +913,19 @@ impl Maolan {
                 self.editor_scroll_x = self.editor_scroll_relative_x();
                 return self.sync_editor_scrollbars();
             }
-            Message::TimelineZoomByScroll(delta) => {
-                if delta.abs() > f32::EPSILON {
-                    let factor = 1.12_f32.powf(delta.abs());
-                    self.zoom_visible_bars = if delta > 0.0 {
-                        self.zoom_visible_bars / factor
-                    } else {
-                        self.zoom_visible_bars * factor
-                    }
-                    .max(crate::gui::MIN_ZOOM_VISIBLE_BARS);
-                    let max_scroll = self.editor_max_scroll_samples();
-                    self.editor_scroll_origin_samples =
-                        self.editor_scroll_origin_samples.clamp(0.0, max_scroll);
-                    self.editor_scroll_x = self.editor_scroll_relative_x();
-                    return self.sync_editor_scrollbars();
+            Message::TimelineZoomByScroll(delta) if delta.abs() > f32::EPSILON => {
+                let factor = 1.12_f32.powf(delta.abs());
+                self.zoom_visible_bars = if delta > 0.0 {
+                    self.zoom_visible_bars / factor
+                } else {
+                    self.zoom_visible_bars * factor
                 }
+                .max(crate::gui::MIN_ZOOM_VISIBLE_BARS);
+                let max_scroll = self.editor_max_scroll_samples();
+                self.editor_scroll_origin_samples =
+                    self.editor_scroll_origin_samples.clamp(0.0, max_scroll);
+                self.editor_scroll_x = self.editor_scroll_relative_x();
+                return self.sync_editor_scrollbars();
             }
             Message::EditorScrollXChanged(value) => {
                 let x = value.clamp(0.0, 1.0);
@@ -8183,15 +8181,13 @@ impl Maolan {
                     kind,
                 });
             }
-            Message::PaneClipDropped { point } => {
-                if self.dragging_pane_clip.is_some() {
-                    return iced_drop::zones_on_point(
-                        Message::HandlePaneClipDropZones,
-                        point,
-                        None,
-                        None,
-                    );
-                }
+            Message::PaneClipDropped { point } if self.dragging_pane_clip.is_some() => {
+                return iced_drop::zones_on_point(
+                    Message::HandlePaneClipDropZones,
+                    point,
+                    None,
+                    None,
+                );
             }
             Message::HandlePaneClipDropZones(ref zones) => {
                 let Some(dragged) = self.dragging_pane_clip.take() else {
