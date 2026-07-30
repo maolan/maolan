@@ -251,7 +251,7 @@ sed 's|^Exec=/usr/bin/maolan|Exec=maolan|; s|^Icon=/usr/share/icons/hicolor/scal
 
 cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
 
-LINUXDEPLOY="$SOURCE_DIR/linuxdeploy-x86_64.AppImage"
+LINUXDEPLOY="$OUTPUT_DIR/linuxdeploy-x86_64.AppImage"
 if [[ ! -f "$LINUXDEPLOY" ]]; then
     echo "Downloading linuxdeploy..."
     curl -L -o "$LINUXDEPLOY" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
@@ -267,7 +267,15 @@ cd "$APPDIR_BASE"
     --exclude-library "libasound*" \
     --output appimage
 
-mv "$APPDIR_BASE/maolan-x86_64.AppImage" "$OUTPUT_DIR/$APPIMAGE_NAME"
+# linuxdeploy/appimagetool names the file from the .desktop Name field, so
+# pick up whatever single AppImage was produced rather than hard-coding the
+# basename.
+BUILT_APPIMAGE=("$APPDIR_BASE"/*.AppImage)
+if [[ ! -f "${BUILT_APPIMAGE[0]}" ]]; then
+    echo "Error: No AppImage was produced in $APPDIR_BASE" >&2
+    exit 1
+fi
+mv "${BUILT_APPIMAGE[0]}" "$OUTPUT_DIR/$APPIMAGE_NAME"
 chmod +x "$OUTPUT_DIR/$APPIMAGE_NAME"
 
 # ---------------------------------------------------------------------------
