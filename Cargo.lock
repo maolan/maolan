@@ -5069,7 +5069,7 @@ dependencies = [
 
 [[package]]
 name = "maolan"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "alsa",
  "chrono",

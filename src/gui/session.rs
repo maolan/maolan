@@ -271,6 +271,26 @@ impl Maolan {
         result
     }
 
+    fn plugin_positions_from_json(
+        value: &Value,
+        index_to_id: &std::collections::HashMap<usize, usize>,
+    ) -> std::collections::HashMap<usize, Point> {
+        let mut result = std::collections::HashMap::new();
+        if let Some(obj) = value.as_object() {
+            for (idx_str, pos_v) in obj {
+                if let (Some(idx), Some(pos_obj)) =
+                    (idx_str.parse::<usize>().ok(), pos_v.as_object())
+                    && let Some(&instance_id) = index_to_id.get(&idx)
+                {
+                    let x = pos_obj.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                    let y = pos_obj.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                    result.insert(instance_id, Point::new(x, y));
+                }
+            }
+        }
+        result
+    }
+
     /// Returns the default child->folder output connections that are currently
     /// missing. These are persisted so that disabling a child's feed to the
     /// folder output survives a session reload.
@@ -2075,6 +2095,13 @@ impl Maolan {
                         .plugin_graph_visible_controllers
                         .insert(track_name.clone(), controllers);
                 }
+                let positions =
+                    Self::plugin_positions_from_json(&graph["plugin_positions"], &index_to_id);
+                if !positions.is_empty() {
+                    connectable
+                        .plugin_graph_plugin_positions
+                        .insert(track_name.clone(), positions);
+                }
             }
         }
         #[cfg(not(unix))]
@@ -2131,6 +2158,13 @@ impl Maolan {
                     connectable
                         .plugin_graph_visible_controllers
                         .insert(track_name.clone(), controllers);
+                }
+                let positions =
+                    Self::plugin_positions_from_json(&graph["plugin_positions"], &index_to_id);
+                if !positions.is_empty() {
+                    connectable
+                        .plugin_graph_plugin_positions
+                        .insert(track_name.clone(), positions);
                 }
             }
         }
