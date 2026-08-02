@@ -196,7 +196,7 @@ URL:            https://github.com/maolan/maolan
 Source0:        maolan-files.tar.gz
 BuildArch:      $RPM_ARCH
 
-Requires:       jack-audio-connection-kit, alsa-lib
+Requires:       (jack-audio-connection-kit or pipewire-jack-audio-connection-kit), alsa-lib
 
 %description
 Maolan is a Rust DAW focused on recording, editing, routing,
