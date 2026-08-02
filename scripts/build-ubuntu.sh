@@ -203,7 +203,7 @@ Version: $PKG_VERSION
 Section: sound
 Priority: optional
 Architecture: $DEB_ARCH
-Depends: libjack-jackd2-0, libasound2t64
+Depends: libjack-jackd2-0 | pipewire-jack, libasound2t64
 Maintainer: Maolan Team <maolan@github.io>
 Description: Rust Digital Audio Workstation
  Maolan is a Rust DAW focused on recording, editing, routing,
