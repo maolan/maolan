@@ -6,29 +6,14 @@
 
 Maolan is a Rust DAW focused on recording, editing, routing, automation, export, and plugin hosting.
 
-[maolan.github.io](https://maolan.github.io)
+[maolan.rs](https://maolan.rs)
 
 ![workspace](assets/images/workspace.gif)
-
-## Current Scope
-
-Maolan currently includes:
-
-- Audio and MIDI tracks with timeline editing
-- Piano roll editing with note/controller/SysEx tools
-- Track and plugin automation
-- Plugin hosting for:
-  - CLAP
-  - VST3
-  - LV2 on Unix
-- Per-track plugin graph routing, including sidechains and MIDI paths
-- Freeze, flatten, offline bounce, and export workflows
-- Session templates, track templates, autosave recovery, and diagnostics
 
 ## Platform Notes
 
 - Unix builds support CLAP, VST3, and LV2.
-- Current keyboard handling is `Ctrl`-based across platforms.
+- Windows builds support CLAP and VST3.
 - Plugin compatibility is host-dependent and should be treated as evolving rather than guaranteed.
 
 ## Build
@@ -39,12 +24,7 @@ Maolan currently includes:
 
 For Unix audio integrations, install platform libraries as needed (for example `jack`, `alsa`, `rust`, and `cargo` where applicable).
 
-### Windows
-
-In the Windows environment execute the following:
-`powershell -ExecutionPolicy Bypass -File "\\172.16.0.254\repos\maolan\maolan\scripts\build.ps1"`
-
-### Compile and run (Unix)
+### Compile and run
 
 `maolan/` is a Cargo workspace. Build from that directory:
 
@@ -60,14 +40,6 @@ cargo run --release
 cd maolan
 cargo run --release -- --log-level debug
 ```
-
-## Documentation
-
-- [Features](../doc/src/features.md)
-- [Workflow](../doc/src/workflow.md)
-- [Shortcuts and Mouse Gestures](../doc/src/shortcuts.md)
-- [Plugin Routing and Sidechains](../doc/src/routing.md)
-- [History Audit Notes](../doc/src/history-audit.md)
 
 ## Project Notes
 
