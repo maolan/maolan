@@ -797,6 +797,11 @@ fn push_connection_restore_actions(
         }
     }
     for connection in saved_connections {
+        // Self-loops (e.g. Synth -> Synth) are rejected by the engine as
+        // circular routing, so skip them during restore.
+        if connection.from_track == connection.to_track {
+            continue;
+        }
         actions.push(Action::Connect {
             from_track: connection.from_track,
             from_port: connection.from_port,

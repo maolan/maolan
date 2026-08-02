@@ -3142,6 +3142,14 @@ impl Maolan {
                                 state.clap_plugins_by_track.remove(name);
                                 state.clap_states_by_track.remove(name);
                                 state.vst3_states_by_track.remove(name);
+                                state.session.slots.remove(name);
+                                state.selected_slots.retain(|(n, _)| *n != *name);
+                                state
+                                    .session_midi_learn_slots
+                                    .retain(|(n, _), _| *n != *name);
+                                state
+                                    .session_midi_learn_stop_track
+                                    .retain(|n, _| *n != *name);
                                 for track in &mut state.tracks {
                                     if track.parent_track.as_deref() == Some(name.as_str()) {
                                         track.parent_track = None;
@@ -4728,6 +4736,38 @@ impl Maolan {
                                 old_name,
                                 new_name,
                             );
+                            Self::rename_track_map_entry(
+                                &mut state.session.slots,
+                                old_name,
+                                new_name,
+                            );
+                            Self::rename_track_map_entry(
+                                &mut state.session_midi_learn_stop_track,
+                                old_name,
+                                new_name,
+                            );
+                            state.selected_slots = state
+                                .selected_slots
+                                .drain()
+                                .map(|(n, s)| {
+                                    if n == *old_name {
+                                        (new_name.clone(), s)
+                                    } else {
+                                        (n, s)
+                                    }
+                                })
+                                .collect();
+                            state.session_midi_learn_slots = state
+                                .session_midi_learn_slots
+                                .drain()
+                                .map(|((n, s), b)| {
+                                    if n == *old_name {
+                                        ((new_name.clone(), s), b)
+                                    } else {
+                                        ((n, s), b)
+                                    }
+                                })
+                                .collect();
                             state.message = format!("Renamed track to '{}'", new_name);
                             refresh_midi_clip_previews = true;
                         }

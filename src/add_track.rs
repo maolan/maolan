@@ -25,18 +25,29 @@ impl AddTrackView {
         Id::new("add-track-name-input")
     }
 
-    fn create_message(&self) -> Option<Message> {
+    fn total_io(&self) -> usize {
+        self.audio_ins + self.audio_outs + self.midi_ins + self.midi_outs
+    }
+
+    fn can_create(&self) -> bool {
         if self.name.trim().is_empty() {
-            return None;
+            return false;
         }
-        Some(Message::AddTrack(AddTrack::Submit))
+        // Folders do not need any I/O, but regular tracks must have at least
+        // one audio or MIDI input/output to be usable.
+        self.is_folder || self.total_io() > 0
+    }
+
+    fn create_message(&self) -> Option<Message> {
+        self.can_create()
+            .then_some(Message::AddTrack(AddTrack::Submit))
     }
 
     pub fn create_messages(&self) -> Vec<Message> {
-        let base_name = self.name.trim();
-        if base_name.is_empty() {
+        if !self.can_create() {
             return Vec::new();
         }
+        let base_name = self.name.trim();
 
         let template_name = self
             .selected_template
@@ -307,6 +318,16 @@ impl AddTrackView {
             );
         }
 
+        if !self.is_folder && self.total_io() == 0 {
+            col = col.push(
+                row![
+                    text("A track needs at least one audio or MIDI input/output.")
+                        .color(Color::from_rgb(0.95, 0.35, 0.35))
+                ]
+                .spacing(10),
+            );
+        }
+
         col = col.push(
             row![
                 create,
@@ -508,6 +529,51 @@ mod tests {
 
         let messages = view.create_messages();
         assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn create_message_returns_none_when_track_has_no_io() {
+        let mut view = AddTrackView::default();
+        view.name = "Muted Track".to_string();
+        view.audio_ins = 0;
+        view.audio_outs = 0;
+        view.midi_ins = 0;
+        view.midi_outs = 0;
+
+        assert!(view.create_message().is_none());
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn create_messages_returns_empty_when_track_has_no_io() {
+        let mut view = AddTrackView::default();
+        view.name = "Muted Track".to_string();
+        view.audio_ins = 0;
+        view.audio_outs = 0;
+        view.midi_ins = 0;
+        view.midi_outs = 0;
+
+        assert!(view.create_messages().is_empty());
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn create_messages_allows_folder_with_no_io() {
+        let mut view = AddTrackView::default();
+        view.name = "Empty Folder".to_string();
+        view.is_folder = true;
+        view.audio_ins = 0;
+        view.audio_outs = 0;
+        view.midi_ins = 0;
+        view.midi_outs = 0;
+
+        let messages = view.create_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(matches!(
+            messages[0],
+            Message::Request(Action::AddTrack { folder: true, .. })
+        ));
     }
 
     #[test]

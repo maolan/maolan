@@ -1,3 +1,4 @@
+use crate::consts::state_ids::METRONOME_TRACK_ID;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -102,6 +103,10 @@ pub struct SessionMatrix {
     pub scenes: Vec<Scene>,
     #[serde(default)]
     pub slots: HashMap<String, Vec<ClipSlot>>,
+    /// Throwaway storage for the metronome track. The session view never shows
+    /// the metronome, so its slots are kept out of the serialized `slots` map.
+    #[serde(skip, default)]
+    metronome_slots: Vec<ClipSlot>,
 }
 
 impl Default for SessionMatrix {
@@ -109,6 +114,7 @@ impl Default for SessionMatrix {
         Self {
             scenes: default_scenes(),
             slots: HashMap::new(),
+            metronome_slots: Vec::new(),
         }
     }
 }
@@ -125,6 +131,16 @@ fn default_scenes() -> Vec<Scene> {
 impl SessionMatrix {
     pub fn ensure_track_slots(&mut self, track_name: &str) -> &mut Vec<ClipSlot> {
         let scene_count = self.scenes.len().max(1);
+        if track_name == METRONOME_TRACK_ID {
+            if self.metronome_slots.len() < scene_count {
+                self.metronome_slots.resize_with(scene_count, || ClipSlot {
+                    clip: None,
+                    play_stop_icon: default_play_stop_icon(),
+                    clip_name: None,
+                });
+            }
+            return &mut self.metronome_slots;
+        }
         self.slots.entry(track_name.to_string()).or_insert_with(|| {
             (0..scene_count)
                 .map(|_| ClipSlot {
