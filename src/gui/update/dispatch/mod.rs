@@ -1210,6 +1210,7 @@ impl Maolan {
                                         pitch: new_pitch,
                                         velocity: note.velocity,
                                         channel: note.channel,
+                                        mpe: mpe_widgets_to_engine(&note.mpe),
                                     },
                                 )
                             })
@@ -1243,24 +1244,12 @@ impl Maolan {
                             .note_indices
                             .iter()
                             .filter_map(|&idx| piano.notes.get(idx))
-                            .map(|note| maolan_engine::message::MidiNoteData {
-                                start_sample: note.start_sample,
-                                length_samples: note.length_samples,
-                                pitch: note.pitch,
-                                velocity: note.velocity,
-                                channel: note.channel,
-                            })
+                            .map(piano_note_to_engine)
                             .collect();
                         let old_notes: Vec<maolan_engine::message::MidiNoteData> = dragging
                             .original_notes
                             .iter()
-                            .map(|note| maolan_engine::message::MidiNoteData {
-                                start_sample: note.start_sample,
-                                length_samples: note.length_samples,
-                                pitch: note.pitch,
-                                velocity: note.velocity,
-                                channel: note.channel,
-                            })
+                            .map(piano_note_to_engine)
                             .collect();
 
                         drop(state);
@@ -1564,20 +1553,8 @@ impl Maolan {
                         note.start_sample = new_start;
                         note.length_samples = new_len;
 
-                        let new_note = maolan_engine::message::MidiNoteData {
-                            start_sample: note.start_sample,
-                            length_samples: note.length_samples,
-                            pitch: note.pitch,
-                            velocity: note.velocity,
-                            channel: note.channel,
-                        };
-                        let old_note = maolan_engine::message::MidiNoteData {
-                            start_sample: original.start_sample,
-                            length_samples: original.length_samples,
-                            pitch: original.pitch,
-                            velocity: original.velocity,
-                            channel: original.channel,
-                        };
+                        let new_note = piano_note_to_engine(note);
+                        let old_note = piano_note_to_engine(original);
 
                         drop(state);
                         return self.send(Action::ModifyMidiNotes {
@@ -1619,26 +1596,14 @@ impl Maolan {
                     let Some(note) = piano.notes.get_mut(idx) else {
                         continue;
                     };
-                    let old_note = maolan_engine::message::MidiNoteData {
-                        start_sample: note.start_sample,
-                        length_samples: note.length_samples,
-                        pitch: note.pitch,
-                        velocity: note.velocity,
-                        channel: note.channel,
-                    };
+                    let old_note = piano_note_to_engine(note);
                     let new_velocity =
                         (i16::from(note.velocity) + i16::from(delta)).clamp(0, 127) as u8;
                     if new_velocity == note.velocity {
                         continue;
                     }
                     note.velocity = new_velocity;
-                    let new_note = maolan_engine::message::MidiNoteData {
-                        start_sample: note.start_sample,
-                        length_samples: note.length_samples,
-                        pitch: note.pitch,
-                        velocity: note.velocity,
-                        channel: note.channel,
-                    };
+                    let new_note = piano_note_to_engine(note);
                     changed_indices.push(idx);
                     new_notes.push(new_note);
                     old_notes.push(old_note);
@@ -1672,21 +1637,9 @@ impl Maolan {
                 if note.velocity == velocity {
                     return Task::none();
                 }
-                let old_note = maolan_engine::message::MidiNoteData {
-                    start_sample: note.start_sample,
-                    length_samples: note.length_samples,
-                    pitch: note.pitch,
-                    velocity: note.velocity,
-                    channel: note.channel,
-                };
+                let old_note = piano_note_to_engine(note);
                 note.velocity = velocity;
-                let new_note = maolan_engine::message::MidiNoteData {
-                    start_sample: note.start_sample,
-                    length_samples: note.length_samples,
-                    pitch: note.pitch,
-                    velocity: note.velocity,
-                    channel: note.channel,
-                };
+                let new_note = piano_note_to_engine(note);
                 let track_name = piano.track_idx.clone();
                 let clip_idx = piano.clip_index;
                 drop(state);
@@ -2176,6 +2129,7 @@ impl Maolan {
                         pitch,
                         velocity: 100,
                         channel: 0,
+                        mpe: Default::default(),
                     };
                     state.piano_selected_notes.clear();
                     drop(state);
@@ -2201,18 +2155,10 @@ impl Maolan {
                         selected_indices
                             .iter()
                             .filter_map(|&idx| {
-                                piano.notes.get(idx).map(|note| {
-                                    (
-                                        idx,
-                                        maolan_engine::message::MidiNoteData {
-                                            start_sample: note.start_sample,
-                                            length_samples: note.length_samples,
-                                            pitch: note.pitch,
-                                            velocity: note.velocity,
-                                            channel: note.channel,
-                                        },
-                                    )
-                                })
+                                piano
+                                    .notes
+                                    .get(idx)
+                                    .map(|note| (idx, piano_note_to_engine(note)))
                             })
                             .collect();
 
@@ -2243,18 +2189,10 @@ impl Maolan {
                         selected_indices
                             .iter()
                             .filter_map(|&idx| {
-                                piano.notes.get(idx).map(|note| {
-                                    (
-                                        idx,
-                                        maolan_engine::message::MidiNoteData {
-                                            start_sample: note.start_sample,
-                                            length_samples: note.length_samples,
-                                            pitch: note.pitch,
-                                            velocity: note.velocity,
-                                            channel: note.channel,
-                                        },
-                                    )
-                                })
+                                piano
+                                    .notes
+                                    .get(idx)
+                                    .map(|note| (idx, piano_note_to_engine(note)))
                             })
                             .collect();
 
@@ -2316,6 +2254,7 @@ impl Maolan {
                                 pitch,
                                 velocity: 100,
                                 channel: 0,
+                                mpe: Default::default(),
                             },
                         )],
                     });
@@ -2327,13 +2266,7 @@ impl Maolan {
                     let track_name = piano.track_idx.clone();
                     let clip_idx = piano.clip_index;
                     if let Some(note) = piano.notes.get(note_index) {
-                        let deleted_note = maolan_engine::message::MidiNoteData {
-                            start_sample: note.start_sample,
-                            length_samples: note.length_samples,
-                            pitch: note.pitch,
-                            velocity: note.velocity,
-                            channel: note.channel,
-                        };
+                        let deleted_note = piano_note_to_engine(note);
                         state.piano_selected_notes.clear();
                         drop(state);
                         return self.send(Action::DeleteMidiNotes {
@@ -2355,13 +2288,7 @@ impl Maolan {
                 {
                     let track_name = piano.track_idx.clone();
                     let clip_idx = piano.clip_index;
-                    let old_note = maolan_engine::message::MidiNoteData {
-                        start_sample: note.start_sample,
-                        length_samples: note.length_samples,
-                        pitch: note.pitch,
-                        velocity: note.velocity,
-                        channel: note.channel,
-                    };
+                    let old_note = piano_note_to_engine(note);
                     let tempo = state.tempo.max(1.0) as f64;
                     let tsig_num = state.time_signature_num.max(1) as f64;
                     let tsig_denom = state.time_signature_denom.max(1) as f64;
@@ -2387,6 +2314,7 @@ impl Maolan {
                         pitch: old_note.pitch,
                         velocity: old_note.velocity,
                         channel: old_note.channel,
+                        mpe: mpe_widgets_to_engine(&note.mpe),
                     };
                     drop(state);
                     return self.send(Action::ModifyMidiNotes {
@@ -2517,6 +2445,163 @@ impl Maolan {
                     });
                 }
             }
+            Message::PianoSetMpeValue {
+                note_index,
+                lane,
+                point_index,
+                value,
+            } => {
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let Some(note) = piano.notes.get_mut(note_index) else {
+                    return Task::none();
+                };
+                let value_max = if matches!(lane, crate::message::PianoControllerLane::MpePitchBend)
+                {
+                    16383
+                } else {
+                    127
+                };
+                let clamped = (value as usize).min(value_max) as u16;
+                let old_note = piano_note_to_engine(&*note);
+                {
+                    let curve = match lane {
+                        crate::message::PianoControllerLane::MpePitchBend => {
+                            &mut note.mpe.pitch_bend
+                        }
+                        crate::message::PianoControllerLane::MpePressure => &mut note.mpe.pressure,
+                        crate::message::PianoControllerLane::MpeTimbre => &mut note.mpe.timbre,
+                        _ => return Task::none(),
+                    };
+                    let Some(point) = curve.points.get_mut(point_index) else {
+                        return Task::none();
+                    };
+                    if point.value == clamped {
+                        return Task::none();
+                    }
+                    point.value = clamped;
+                }
+                let new_note = piano_note_to_engine(&*note);
+                let track_name = piano.track_idx.clone();
+                let clip_idx = piano.clip_index;
+                drop(state);
+                return self.send(Action::ModifyMidiNotes {
+                    track_name,
+                    clip_index: clip_idx,
+                    note_indices: vec![note_index],
+                    new_notes: vec![new_note],
+                    old_notes: vec![old_note],
+                });
+            }
+            Message::PianoInsertMpePoints {
+                note_index,
+                lane,
+                points,
+            } => {
+                if points.is_empty() {
+                    return Task::none();
+                }
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let Some(note) = piano.notes.get_mut(note_index) else {
+                    return Task::none();
+                };
+                let old_note = piano_note_to_engine(&*note);
+                let value_max = if matches!(lane, crate::message::PianoControllerLane::MpePitchBend)
+                {
+                    16383
+                } else {
+                    127
+                };
+                {
+                    let curve = match lane {
+                        crate::message::PianoControllerLane::MpePitchBend => {
+                            &mut note.mpe.pitch_bend
+                        }
+                        crate::message::PianoControllerLane::MpePressure => &mut note.mpe.pressure,
+                        crate::message::PianoControllerLane::MpeTimbre => &mut note.mpe.timbre,
+                        _ => return Task::none(),
+                    };
+                    for mut point in points {
+                        point.value = (point.value as usize).min(value_max) as u16;
+                        curve.points.push(point);
+                    }
+                    curve.points.sort_unstable_by_key(|p| p.sample_offset);
+                }
+                let new_note = piano_note_to_engine(&*note);
+                let track_name = piano.track_idx.clone();
+                let clip_idx = piano.clip_index;
+                drop(state);
+                return self.send(Action::ModifyMidiNotes {
+                    track_name,
+                    clip_index: clip_idx,
+                    note_indices: vec![note_index],
+                    new_notes: vec![new_note],
+                    old_notes: vec![old_note],
+                });
+            }
+            Message::PianoDeleteMpePoints {
+                note_index,
+                lane,
+                point_indices,
+            } => {
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let Some(note) = piano.notes.get_mut(note_index) else {
+                    return Task::none();
+                };
+                let old_note = piano_note_to_engine(&*note);
+                let old_len = match lane {
+                    crate::message::PianoControllerLane::MpePitchBend => {
+                        old_note.mpe.pitch_bend.points.len()
+                    }
+                    crate::message::PianoControllerLane::MpePressure => {
+                        old_note.mpe.pressure.points.len()
+                    }
+                    crate::message::PianoControllerLane::MpeTimbre => {
+                        old_note.mpe.timbre.points.len()
+                    }
+                    _ => return Task::none(),
+                };
+                {
+                    let curve = match lane {
+                        crate::message::PianoControllerLane::MpePitchBend => {
+                            &mut note.mpe.pitch_bend
+                        }
+                        crate::message::PianoControllerLane::MpePressure => &mut note.mpe.pressure,
+                        crate::message::PianoControllerLane::MpeTimbre => &mut note.mpe.timbre,
+                        _ => return Task::none(),
+                    };
+                    let mut indices = point_indices.clone();
+                    indices.sort_unstable();
+                    indices.dedup();
+                    for idx in indices.into_iter().rev() {
+                        if idx < curve.points.len() {
+                            curve.points.remove(idx);
+                        }
+                    }
+                    if curve.points.len() == old_len {
+                        return Task::none();
+                    }
+                }
+                let new_note = piano_note_to_engine(&*note);
+                let track_name = piano.track_idx.clone();
+                let clip_idx = piano.clip_index;
+                drop(state);
+                return self.send(Action::ModifyMidiNotes {
+                    track_name,
+                    clip_index: clip_idx,
+                    note_indices: vec![note_index],
+                    new_notes: vec![new_note],
+                    old_notes: vec![old_note],
+                });
+            }
             Message::PianoQuantizeSelectedNotes => {
                 let interval = self.snap_interval_samples().max(1);
                 return self.selected_piano_notes_edit(move |_idx, note| {
@@ -2591,6 +2676,7 @@ impl Maolan {
                                 pitch,
                                 velocity: note.velocity,
                                 channel: note.channel,
+                                mpe: Default::default(),
                             },
                         ));
                         next_index = next_index.saturating_add(1);
@@ -4106,16 +4192,7 @@ impl Maolan {
                                 for i in sorted_indices {
                                     let (idx, note) = &notes[i];
                                     let insert_at = (*idx).min(piano.notes.len());
-                                    piano.notes.insert(
-                                        insert_at,
-                                        crate::state::PianoNote {
-                                            start_sample: note.start_sample,
-                                            length_samples: note.length_samples,
-                                            pitch: note.pitch,
-                                            velocity: note.velocity,
-                                            channel: note.channel,
-                                        },
-                                    );
+                                    piano.notes.insert(insert_at, engine_note_to_widgets(note));
                                 }
                                 state.piano_selected_notes.clear();
                             }
@@ -4994,6 +5071,50 @@ impl Maolan {
                     track_name: track_name.clone(),
                     lane: 0,
                     channel: engine_channel,
+                });
+            }
+            Message::MpeConfigShow { ref track_name } => {
+                self.state.blocking_write().track_context_menu = None;
+                return Task::done(Message::Show(Show::MpeConfig {
+                    track_name: track_name.clone(),
+                }));
+            }
+            Message::MpeConfigSetZone {
+                ref track_name,
+                manager_channel,
+                member_count,
+            } => {
+                {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        track
+                            .mpe_state
+                            .configure_zone(manager_channel, member_count);
+                    }
+                }
+                return self.send(Action::TrackSetMpeZone {
+                    track_name: track_name.clone(),
+                    manager_channel,
+                    member_count,
+                });
+            }
+            Message::MpeConfigSetPitchBendSensitivity {
+                ref track_name,
+                channel,
+                semitones,
+            } => {
+                {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        track
+                            .mpe_state
+                            .set_pitch_bend_sensitivity(channel, semitones);
+                    }
+                }
+                return self.send(Action::TrackSetMpePitchBendSensitivity {
+                    track_name: track_name.clone(),
+                    channel,
+                    semitones,
                 });
             }
             Message::TrackAddReturn(ref track_name) => {
@@ -10488,6 +10609,7 @@ impl Maolan {
             pitch,
             velocity,
             channel,
+            mpe: Default::default(),
         };
 
         self.step_recording_cursor_samples = end_sample;

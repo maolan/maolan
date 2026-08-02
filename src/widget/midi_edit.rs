@@ -641,6 +641,47 @@ impl MIDIEdit {
                     );
                 }
             }
+            PianoControllerLane::MpePitchBend
+            | PianoControllerLane::MpePressure
+            | PianoControllerLane::MpeTimbre => {
+                let value_max = if matches!(controller_lane, PianoControllerLane::MpePitchBend) {
+                    16383.0
+                } else {
+                    127.0
+                };
+                let selected: std::collections::HashSet<usize> =
+                    state.piano_selected_notes.iter().copied().collect();
+                for (idx, note) in roll.notes.iter().enumerate() {
+                    if !selected.contains(&idx) {
+                        continue;
+                    }
+                    let color = piano::note_color(note.velocity, note.channel);
+                    let curve = match controller_lane {
+                        PianoControllerLane::MpePitchBend => &note.mpe.pitch_bend,
+                        PianoControllerLane::MpePressure => &note.mpe.pressure,
+                        PianoControllerLane::MpeTimbre => &note.mpe.timbre,
+                        _ => unreachable!(),
+                    };
+                    for point in &curve.points {
+                        let x = (note.start_sample.saturating_add(point.sample_offset) as f32
+                            * pps_ctrl)
+                            .max(0.0);
+                        let normalized = (point.value as f32 / value_max).clamp(0.0, 1.0);
+                        let y = ctrl_h - (normalized * ctrl_h).max(2.0);
+                        ctrl_layers.push(
+                            pin(container("")
+                                .width(Length::Fixed(2.0))
+                                .height(Length::Fixed(2.0))
+                                .style(move |_theme| container::Style {
+                                    background: Some(Background::Color(color)),
+                                    ..container::Style::default()
+                                }))
+                            .position(Point::new(x, y))
+                            .into(),
+                        );
+                    }
+                }
+            }
         }
 
         if let Some(x) = playhead_x {
@@ -692,6 +733,9 @@ impl MIDIEdit {
                 PianoControllerLane::Rpn,
                 PianoControllerLane::Nrpn,
                 PianoControllerLane::SysEx,
+                PianoControllerLane::MpePitchBend,
+                PianoControllerLane::MpePressure,
+                PianoControllerLane::MpeTimbre,
             ],
             Some(state.piano_controller_lane),
             Message::PianoControllerLaneSelected,
@@ -814,6 +858,24 @@ impl MIDIEdit {
                 picker.into()
             }
             PianoControllerLane::SysEx => text("SysEx events")
+                .size(10)
+                .style(|_theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
+                })
+                .into(),
+            PianoControllerLane::MpePitchBend => text("Pitch bend per selected note")
+                .size(10)
+                .style(|_theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
+                })
+                .into(),
+            PianoControllerLane::MpePressure => text("Pressure per selected note")
+                .size(10)
+                .style(|_theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
+                })
+                .into(),
+            PianoControllerLane::MpeTimbre => text("Timbre (CC74) per selected note")
                 .size(10)
                 .style(|_theme| iced::widget::text::Style {
                     color: Some(Color::from_rgb(0.86, 0.86, 0.9)),

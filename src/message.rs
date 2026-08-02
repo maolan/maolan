@@ -5,7 +5,9 @@ use iced::{
 };
 use maolan_engine::{kind::Kind, message::Action};
 use maolan_widgets::curve_editor::{CurveEditorMessage, CurvePoint as CurveEditorPoint};
-pub use maolan_widgets::midi::{PianoControllerLane, PianoNrpnKind, PianoRpnKind};
+pub use maolan_widgets::midi::{
+    MpeExpressionPoint, PianoControllerLane, PianoNrpnKind, PianoRpnKind,
+};
 use std::path::PathBuf;
 
 #[cfg(unix)]
@@ -30,6 +32,7 @@ pub enum Show {
     Open,
     About,
     TrackColor { track_name: String },
+    MpeConfig { track_name: String },
     ApplyTemplate { track_name: String },
     BranchManager,
     BranchTrackList(String),
@@ -1310,6 +1313,19 @@ pub enum Message {
         track_name: String,
         channel: MidiLaneChannelSelection,
     },
+    MpeConfigShow {
+        track_name: String,
+    },
+    MpeConfigSetZone {
+        track_name: String,
+        manager_channel: u8,
+        member_count: u8,
+    },
+    MpeConfigSetPitchBendSensitivity {
+        track_name: String,
+        channel: u8,
+        semitones: u8,
+    },
     PianoVelocityKindSelected(PianoVelocityKind),
     PianoRpnKindSelected(PianoRpnKind),
     PianoNrpnKindSelected(PianoNrpnKind),
@@ -1333,6 +1349,22 @@ pub enum Message {
     },
     PianoDeleteControllers {
         controller_indices: Vec<usize>,
+    },
+    PianoSetMpeValue {
+        note_index: usize,
+        lane: PianoControllerLane,
+        point_index: usize,
+        value: u16,
+    },
+    PianoInsertMpePoints {
+        note_index: usize,
+        lane: PianoControllerLane,
+        points: Vec<MpeExpressionPoint>,
+    },
+    PianoDeleteMpePoints {
+        note_index: usize,
+        lane: PianoControllerLane,
+        point_indices: Vec<usize>,
     },
     #[cfg(unix)]
     RefreshLv2Plugins,

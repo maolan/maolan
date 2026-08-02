@@ -207,6 +207,37 @@ impl Maolan {
         }
     }
 
+    fn push_mpe_restore_actions(
+        track_name: &str,
+        mpe_state: &maolan_engine::midi::mpe::MpeState,
+        actions: &mut Vec<maolan_engine::message::Action>,
+    ) {
+        for zone in [mpe_state.lower(), mpe_state.upper()].into_iter().flatten() {
+            let member_count = zone.member_channels.clone().count().min(15) as u8;
+            actions.push(maolan_engine::message::Action::TrackSetMpeZone {
+                track_name: track_name.to_string(),
+                manager_channel: zone.manager_channel,
+                member_count,
+            });
+            actions.push(
+                maolan_engine::message::Action::TrackSetMpePitchBendSensitivity {
+                    track_name: track_name.to_string(),
+                    channel: zone.manager_channel,
+                    semitones: zone.manager_pitch_bend_semitones,
+                },
+            );
+            for member_channel in zone.member_channels.clone() {
+                actions.push(
+                    maolan_engine::message::Action::TrackSetMpePitchBendSensitivity {
+                        track_name: track_name.to_string(),
+                        channel: member_channel,
+                        semitones: zone.member_pitch_bend_semitones,
+                    },
+                );
+            }
+        }
+    }
+
     fn visible_controllers_to_json(
         visible_controllers: &std::collections::HashMap<
             String,
@@ -2823,6 +2854,11 @@ impl Maolan {
                 }
                 for _ in primary_audio_outs.min(audio_outs)..audio_outs {
                     restore_actions.push(Action::TrackAddAudioOutput(name.clone()));
+                }
+                if let Ok(mpe_state) = serde_json::from_value::<maolan_engine::midi::mpe::MpeState>(
+                    track["mpe_state"].clone(),
+                ) {
+                    Self::push_mpe_restore_actions(&name, &mpe_state, &mut restore_actions);
                 }
                 if let Some(value) = track["level"].as_f64()
                     && value.is_finite()

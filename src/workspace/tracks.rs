@@ -307,6 +307,12 @@ pub(super) fn track_context_menu_overlay(
         menu::menu_item("Add Return", Message::TrackAddReturn(track_name.clone())),
         menu::menu_item("Add Send", Message::TrackAddSend(track_name.clone())),
         menu::menu_item(
+            "MPE Configuration",
+            Message::MpeConfigShow {
+                track_name: track_name.clone(),
+            },
+        ),
+        menu::menu_item(
             "MIDI Learn Volume",
             Message::TrackMidiLearnArm {
                 track_name: track_name.clone(),

@@ -206,6 +206,12 @@ impl Maolan {
                 });
                 Task::none()
             }
+            Show::MpeConfig { track_name } => {
+                self.modal = Some(Show::MpeConfig {
+                    track_name: track_name.clone(),
+                });
+                Task::none()
+            }
             Show::ApplyTemplate { track_name } => {
                 self.modal = Some(Show::ApplyTemplate {
                     track_name: track_name.clone(),

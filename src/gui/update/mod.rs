@@ -27,6 +27,7 @@ use crate::{
     state::{
         ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
         TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
+        engine_note_to_widgets, mpe_engine_to_widgets, mpe_widgets_to_engine, piano_note_to_engine,
     },
     ui_timing::DOUBLE_CLICK,
     widget::midi_edit::{CTRL_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, SYSEX_SCROLL_ID},
@@ -1335,6 +1336,7 @@ impl Maolan {
                 pitch: note.pitch,
                 velocity: note.velocity,
                 channel: note.channel,
+                mpe: mpe_widgets_to_engine(&note.mpe),
             };
             let mut new_note = edit(idx, &old_note);
             if new_note.length_samples == 0 {
@@ -1345,6 +1347,7 @@ impl Maolan {
                 && new_note.pitch == old_note.pitch
                 && new_note.velocity == old_note.velocity
                 && new_note.channel == old_note.channel
+                && new_note.mpe == old_note.mpe
             {
                 continue;
             }
@@ -1353,6 +1356,7 @@ impl Maolan {
             note.pitch = new_note.pitch;
             note.velocity = new_note.velocity;
             note.channel = new_note.channel;
+            note.mpe = mpe_engine_to_widgets(&new_note.mpe);
             changed_indices.push(idx);
             new_notes.push(new_note);
             old_notes.push(old_note);

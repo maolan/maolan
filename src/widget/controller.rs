@@ -1,6 +1,6 @@
 use crate::{
     consts::message_lists::{PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL},
-    message::{Message, PianoControllerLane, PianoNrpnKind, PianoRpnKind},
+    message::{Message, MpeExpressionPoint, PianoControllerLane, PianoNrpnKind, PianoRpnKind},
     state::{PianoControllerPoint, PianoNote, PianoSysExPoint, State},
     widget::{curve::CurvePoint, piano::PianoRollInteraction},
 };
@@ -28,6 +28,11 @@ pub struct ControllerHitTest<'a> {
 pub enum ControllerAdjustTarget {
     Controller(usize),
     Velocity(usize),
+    Mpe {
+        note_index: usize,
+        point_index: usize,
+        lane: PianoControllerLane,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +40,15 @@ pub enum ControllerEraseTarget {
     Controller(usize),
     Velocity(usize),
     ControllerRange,
+    Mpe {
+        note_index: usize,
+        point_index: usize,
+        lane: PianoControllerLane,
+    },
+    MpeRange {
+        note_index: usize,
+        lane: PianoControllerLane,
+    },
 }
 
 #[derive(Default, Debug)]
@@ -50,7 +64,7 @@ pub enum ControllerDragMode {
     Adjusting {
         target: ControllerAdjustTarget,
         start_y: f32,
-        start_value: u8,
+        start_value: u16,
         current_y: f32,
     },
     Drawing {
@@ -167,6 +181,115 @@ impl ControllerRollInteraction {
             }
         }
         best.map(|(idx, _)| idx)
+    }
+
+    fn mpe_point_at_position(
+        &self,
+        position: Point,
+        pane_h: f32,
+        pps: f32,
+        lane: PianoControllerLane,
+        notes: &[PianoNote],
+        selected_notes: &std::collections::HashSet<usize>,
+    ) -> Option<(usize, usize, u16)> {
+        let value_max = if matches!(lane, PianoControllerLane::MpePitchBend) {
+            16383.0
+        } else {
+            127.0
+        };
+        let mut best: Option<(usize, usize, f32)> = None;
+        for &note_idx in selected_notes {
+            let note = match notes.get(note_idx) {
+                Some(n) => n,
+                None => continue,
+            };
+            let curve = match lane {
+                PianoControllerLane::MpePitchBend => &note.mpe.pitch_bend,
+                PianoControllerLane::MpePressure => &note.mpe.pressure,
+                PianoControllerLane::MpeTimbre => &note.mpe.timbre,
+                _ => return None,
+            };
+            for (point_idx, point) in curve.points.iter().enumerate() {
+                let x =
+                    (note.start_sample.saturating_add(point.sample_offset) as f32 * pps).max(0.0);
+                let normalized = (point.value as f32 / value_max).clamp(0.0, 1.0);
+                let y = pane_h - (normalized * pane_h).max(2.0);
+                let dx = position.x - x;
+                let dy = position.y - y;
+                let dist_sq = dx * dx + dy * dy;
+                if dist_sq > 25.0 {
+                    continue;
+                }
+                match best {
+                    Some((_, _, best_dist)) if dist_sq >= best_dist => {}
+                    _ => best = Some((note_idx, point_idx, dist_sq)),
+                }
+            }
+        }
+        best.map(|(note_idx, point_idx, _)| {
+            let curve = match lane {
+                PianoControllerLane::MpePitchBend => &notes[note_idx].mpe.pitch_bend,
+                PianoControllerLane::MpePressure => &notes[note_idx].mpe.pressure,
+                PianoControllerLane::MpeTimbre => &notes[note_idx].mpe.timbre,
+                _ => unreachable!(),
+            };
+            (note_idx, point_idx, curve.points[point_idx].value)
+        })
+    }
+
+    fn mpe_note_at_position(
+        &self,
+        position: Point,
+        pps: f32,
+        notes: &[PianoNote],
+        selected_notes: &std::collections::HashSet<usize>,
+    ) -> Option<usize> {
+        let mut best: Option<(usize, f32)> = None;
+        for &note_idx in selected_notes {
+            let note = match notes.get(note_idx) {
+                Some(n) => n,
+                None => continue,
+            };
+            let start_x = note.start_sample as f32 * pps;
+            let end_x = (note.start_sample.saturating_add(note.length_samples)) as f32 * pps;
+            if position.x < start_x || position.x > end_x {
+                continue;
+            }
+            let dist = (position.x - start_x).abs();
+            match best {
+                Some((_, best_dist)) if dist >= best_dist => {}
+                _ => best = Some((note_idx, dist)),
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
+
+    fn mpe_point_indices_in_sample_range(
+        &self,
+        start_x: f32,
+        end_x: f32,
+        pps: f32,
+        lane: PianoControllerLane,
+        note: &PianoNote,
+    ) -> Vec<usize> {
+        let sample_start = ((start_x.min(end_x) / pps).floor().max(0.0)) as usize;
+        let sample_end = ((start_x.max(end_x) / pps).ceil().max(0.0)) as usize;
+        let curve = match lane {
+            PianoControllerLane::MpePitchBend => &note.mpe.pitch_bend,
+            PianoControllerLane::MpePressure => &note.mpe.pressure,
+            PianoControllerLane::MpeTimbre => &note.mpe.timbre,
+            _ => return vec![],
+        };
+        curve
+            .points
+            .iter()
+            .enumerate()
+            .filter(|(_, point)| {
+                let sample = note.start_sample.saturating_add(point.sample_offset);
+                sample >= sample_start && sample <= sample_end
+            })
+            .map(|(idx, _)| idx)
+            .collect()
     }
 
     fn controller_indices_in_sample_range(
@@ -315,7 +438,11 @@ pub fn lane_curve_points(
             }
             points
         }
-        PianoControllerLane::Velocity | PianoControllerLane::SysEx => vec![],
+        PianoControllerLane::Velocity
+        | PianoControllerLane::SysEx
+        | PianoControllerLane::MpePitchBend
+        | PianoControllerLane::MpePressure
+        | PianoControllerLane::MpeTimbre => vec![],
     }
 }
 
@@ -344,6 +471,9 @@ impl Program<Message> for ControllerRollInteraction {
                 .position(|kind| *kind == app_state.piano_nrpn_kind),
             PianoControllerLane::Velocity => None,
             PianoControllerLane::SysEx => None,
+            PianoControllerLane::MpePitchBend
+            | PianoControllerLane::MpePressure
+            | PianoControllerLane::MpeTimbre => None,
         };
         let controllers = &roll.controllers;
         let sysexes = &roll.sysexes;
@@ -388,24 +518,55 @@ impl Program<Message> for ControllerRollInteraction {
                     }
                     state.last_sysex_click = None;
                 }
-                let target = if matches!(lane, PianoControllerLane::Velocity) {
-                    self.velocity_note_at_position(position, row_h, pps, notes)
-                        .and_then(|idx| notes.get(idx).map(|n| (idx, n.velocity)))
-                        .map(|(idx, velocity)| (ControllerAdjustTarget::Velocity(idx), velocity))
-                } else {
-                    self.controller_at_position(
-                        position,
-                        ControllerHitTest {
-                            lane,
-                            pane_h: bounds.height,
+                let target: Option<(ControllerAdjustTarget, u16)> =
+                    if matches!(lane, PianoControllerLane::Velocity) {
+                        self.velocity_note_at_position(position, row_h, pps, notes)
+                            .and_then(|idx| notes.get(idx).map(|n| (idx, n.velocity)))
+                            .map(|(idx, velocity)| {
+                                (ControllerAdjustTarget::Velocity(idx), u16::from(velocity))
+                            })
+                    } else if matches!(
+                        lane,
+                        PianoControllerLane::MpePitchBend
+                            | PianoControllerLane::MpePressure
+                            | PianoControllerLane::MpeTimbre
+                    ) {
+                        let selected: std::collections::HashSet<usize> =
+                            app_state.piano_selected_notes.iter().copied().collect();
+                        self.mpe_point_at_position(
+                            position,
+                            bounds.height,
                             pps,
-                            selected_row,
-                            controllers,
-                        },
-                    )
-                    .and_then(|idx| controllers.get(idx).map(|c| (idx, c.value)))
-                    .map(|(idx, value)| (ControllerAdjustTarget::Controller(idx), value))
-                };
+                            lane,
+                            notes,
+                            &selected,
+                        )
+                        .map(|(note_index, point_index, value)| {
+                            (
+                                ControllerAdjustTarget::Mpe {
+                                    note_index,
+                                    point_index,
+                                    lane,
+                                },
+                                value,
+                            )
+                        })
+                    } else {
+                        self.controller_at_position(
+                            position,
+                            ControllerHitTest {
+                                lane,
+                                pane_h: bounds.height,
+                                pps,
+                                selected_row,
+                                controllers,
+                            },
+                        )
+                        .and_then(|idx| controllers.get(idx).map(|c| (idx, c.value)))
+                        .map(|(idx, value)| {
+                            (ControllerAdjustTarget::Controller(idx), u16::from(value))
+                        })
+                    };
                 if let Some((target, start_value)) = target {
                     state.mode = ControllerDragMode::Adjusting {
                         target,
@@ -425,6 +586,27 @@ impl Program<Message> for ControllerRollInteraction {
                 let target = if matches!(lane, PianoControllerLane::Velocity) {
                     self.velocity_note_at_position(position, row_h, pps, notes)
                         .map(ControllerEraseTarget::Velocity)
+                } else if matches!(
+                    lane,
+                    PianoControllerLane::MpePitchBend
+                        | PianoControllerLane::MpePressure
+                        | PianoControllerLane::MpeTimbre
+                ) {
+                    let selected: std::collections::HashSet<usize> =
+                        app_state.piano_selected_notes.iter().copied().collect();
+                    self.mpe_point_at_position(position, bounds.height, pps, lane, notes, &selected)
+                        .map(|(note_index, point_index, _)| ControllerEraseTarget::Mpe {
+                            note_index,
+                            point_index,
+                            lane,
+                        })
+                        .or_else(|| {
+                            self.mpe_note_at_position(position, pps, notes, &selected)
+                                .map(|note_index| ControllerEraseTarget::MpeRange {
+                                    note_index,
+                                    lane,
+                                })
+                        })
                 } else {
                     self.controller_at_position(
                         position,
@@ -543,18 +725,42 @@ impl Program<Message> for ControllerRollInteraction {
                         current_y = position.y;
                     }
                     let delta = ((start_y - current_y) / 4.0).round() as i16;
-                    let value = (i16::from(start_value) + delta).clamp(0, 127) as u8;
                     let msg = match target {
                         ControllerAdjustTarget::Controller(controller_index) => {
+                            let value =
+                                (i32::from(start_value) + i32::from(delta)).clamp(0, 127) as u8;
                             Message::PianoSetControllerValue {
                                 controller_index,
                                 value,
                             }
                         }
-                        ControllerAdjustTarget::Velocity(note_index) => Message::PianoSetVelocity {
+                        ControllerAdjustTarget::Velocity(note_index) => {
+                            let velocity =
+                                (i32::from(start_value) + i32::from(delta)).clamp(0, 127) as u8;
+                            Message::PianoSetVelocity {
+                                note_index,
+                                velocity,
+                            }
+                        }
+                        ControllerAdjustTarget::Mpe {
                             note_index,
-                            velocity: value,
-                        },
+                            point_index,
+                            lane,
+                        } => {
+                            let (min, max) = if matches!(lane, PianoControllerLane::MpePitchBend) {
+                                (0, 16383)
+                            } else {
+                                (0, 127)
+                            };
+                            let value =
+                                (i32::from(start_value) + i32::from(delta)).clamp(min, max) as u16;
+                            Message::PianoSetMpeValue {
+                                note_index,
+                                lane,
+                                point_index,
+                                value,
+                            }
+                        }
                     };
                     return Some(CanvasAction::publish(msg).and_capture());
                 }
@@ -644,6 +850,35 @@ impl Program<Message> for ControllerRollInteraction {
                             }
                             Message::PianoDeleteControllers { controller_indices }
                         }
+                        ControllerEraseTarget::Mpe {
+                            note_index,
+                            point_index,
+                            lane,
+                        } if drag_delta < 3.0 => Message::PianoDeleteMpePoints {
+                            note_index,
+                            lane,
+                            point_indices: vec![point_index],
+                        },
+                        ControllerEraseTarget::Mpe {
+                            note_index, lane, ..
+                        }
+                        | ControllerEraseTarget::MpeRange { note_index, lane } => {
+                            let note = match notes.get(note_index) {
+                                Some(n) => n,
+                                None => return Some(CanvasAction::capture()),
+                            };
+                            let point_indices = self.mpe_point_indices_in_sample_range(
+                                start.x, current.x, pps, lane, note,
+                            );
+                            if point_indices.is_empty() {
+                                return Some(CanvasAction::capture());
+                            }
+                            Message::PianoDeleteMpePoints {
+                                note_index,
+                                lane,
+                                point_indices,
+                            }
+                        }
                     };
                     return Some(CanvasAction::publish(msg).and_capture());
                 }
@@ -682,6 +917,68 @@ impl Program<Message> for ControllerRollInteraction {
                         }
                         PianoControllerLane::Velocity | PianoControllerLane::SysEx => {
                             return Some(CanvasAction::capture());
+                        }
+                        PianoControllerLane::MpePitchBend
+                        | PianoControllerLane::MpePressure
+                        | PianoControllerLane::MpeTimbre => {
+                            let selected: std::collections::HashSet<usize> =
+                                app_state.piano_selected_notes.iter().copied().collect();
+                            let Some(note_index) =
+                                self.mpe_note_at_position(start, pps, notes, &selected)
+                            else {
+                                return Some(CanvasAction::capture());
+                            };
+                            let note = match notes.get(note_index) {
+                                Some(n) => n,
+                                None => return Some(CanvasAction::capture()),
+                            };
+                            let value_max = if matches!(lane, PianoControllerLane::MpePitchBend) {
+                                16383.0
+                            } else {
+                                127.0
+                            };
+                            let value_from_y = |y: f32| -> u16 {
+                                if bounds.height <= f32::EPSILON {
+                                    return (value_max / 2.0) as u16;
+                                }
+                                let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
+                                (t * value_max).round() as u16
+                            };
+                            let sample_from_x = |x: f32| -> usize {
+                                ((x / pps).round().max(0.0) as usize)
+                                    .min(note.start_sample.saturating_add(note.length_samples))
+                            };
+                            let mut points: Vec<MpeExpressionPoint> = Vec::new();
+                            let dx = current.x - start.x;
+                            let steps = (dx.abs() / 8.0).ceil().max(1.0) as usize;
+                            for step in 0..=steps {
+                                let t = if steps == 0 {
+                                    0.0
+                                } else {
+                                    step as f32 / steps as f32
+                                };
+                                let x = start.x + dx * t;
+                                let y = start.y + (current.y - start.y) * t;
+                                let sample = sample_from_x(x);
+                                let sample_offset = sample.saturating_sub(note.start_sample);
+                                points.push(MpeExpressionPoint {
+                                    sample_offset,
+                                    value: value_from_y(y),
+                                });
+                            }
+                            points.sort_unstable_by_key(|p| p.sample_offset);
+                            points.dedup_by_key(|p| p.sample_offset);
+                            if points.is_empty() {
+                                return Some(CanvasAction::request_redraw().and_capture());
+                            }
+                            return Some(
+                                CanvasAction::publish(Message::PianoInsertMpePoints {
+                                    note_index,
+                                    lane,
+                                    points,
+                                })
+                                .and_capture(),
+                            );
                         }
                     };
                     let new_controllers = controllers_lane::build_drawn_controllers(
@@ -754,10 +1051,14 @@ impl Program<Message> for ControllerRollInteraction {
                         };
                     }
                     let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
-                    if matches!(lane, PianoControllerLane::Rpn | PianoControllerLane::Nrpn) {
-                        (t * 16383.0).round().clamp(0.0, 16383.0) as u16
-                    } else {
-                        (t * 127.0).round().clamp(0.0, 127.0) as u16
+                    match lane {
+                        PianoControllerLane::Rpn | PianoControllerLane::Nrpn => {
+                            (t * 16383.0).round().clamp(0.0, 16383.0) as u16
+                        }
+                        PianoControllerLane::MpePitchBend => {
+                            (t * 16383.0).round().clamp(0.0, 16383.0) as u16
+                        }
+                        _ => (t * 127.0).round().clamp(0.0, 127.0) as u16,
                     }
                 };
                 let start_value = value_from_y(start.y);
@@ -793,19 +1094,49 @@ impl Program<Message> for ControllerRollInteraction {
                 };
                 let pps = (self.pixels_per_sample * app_state.piano_zoom_x).max(0.0001);
                 let delta = ((start_y - current_y) / 4.0).round() as i16;
-                let preview_value = (i16::from(start_value) + delta).clamp(0, 127) as u8;
-                let x = match target {
+                let (preview_value, value_max, x) = match target {
                     ControllerAdjustTarget::Controller(idx) => {
-                        roll.controllers.get(idx).map(|c| c.sample as f32 * pps)
+                        let value =
+                            (i32::from(start_value) + i32::from(delta)).clamp(0, 127) as u16;
+                        let x = roll.controllers.get(idx).map(|c| c.sample as f32 * pps);
+                        (value, 127.0, x)
                     }
                     ControllerAdjustTarget::Velocity(idx) => {
-                        roll.notes.get(idx).map(|n| n.start_sample as f32 * pps)
+                        let value =
+                            (i32::from(start_value) + i32::from(delta)).clamp(0, 127) as u16;
+                        let x = roll.notes.get(idx).map(|n| n.start_sample as f32 * pps);
+                        (value, 127.0, x)
+                    }
+                    ControllerAdjustTarget::Mpe {
+                        note_index,
+                        point_index,
+                        lane,
+                    } => {
+                        let value_max = if matches!(lane, PianoControllerLane::MpePitchBend) {
+                            16383
+                        } else {
+                            127
+                        };
+                        let value =
+                            (i32::from(start_value) + i32::from(delta)).clamp(0, value_max) as u16;
+                        let x = roll.notes.get(note_index).and_then(|n| {
+                            let curve = match lane {
+                                PianoControllerLane::MpePitchBend => &n.mpe.pitch_bend,
+                                PianoControllerLane::MpePressure => &n.mpe.pressure,
+                                PianoControllerLane::MpeTimbre => &n.mpe.timbre,
+                                _ => return None,
+                            };
+                            curve.points.get(point_index).map(|p| {
+                                (n.start_sample.saturating_add(p.sample_offset)) as f32 * pps
+                            })
+                        });
+                        (value, value_max as f32, x)
                     }
                 };
                 let Some(x) = x else {
                     return vec![];
                 };
-                let old_stem_h = (bounds.height * (start_value as f32 / 127.0)).max(1.0);
+                let old_stem_h = (bounds.height * (start_value as f32 / value_max)).max(1.0);
                 let old_stem_y = bounds.height - old_stem_h;
                 let erase_rect = Path::rectangle(
                     Point::new((x - 1.0).max(0.0), old_stem_y),
@@ -813,7 +1144,7 @@ impl Program<Message> for ControllerRollInteraction {
                 );
                 frame.fill(&erase_rect, Color::from_rgba(0.16, 0.16, 0.18, 1.0));
 
-                let stem_h = (bounds.height * (preview_value as f32 / 127.0)).max(1.0);
+                let stem_h = (bounds.height * (preview_value as f32 / value_max)).max(1.0);
                 let stem_y = bounds.height - stem_h;
                 let rect = Path::rectangle(Point::new(x, stem_y), Size::new(3.0, stem_h));
                 frame.fill(&rect, Color::from_rgba(1.0, 0.85, 0.2, 0.95));
