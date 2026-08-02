@@ -1,5 +1,6 @@
 use super::{CLIENT, Maolan};
 use crate::{
+    consts::state_ids::METRONOME_TRACK_ID,
     message::Message,
     state::{AudioBackendOption, Connection, ConnectionViewSelection},
 };
@@ -1802,12 +1803,18 @@ impl Maolan {
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
         let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
         let jack_routing = Self::jack_routing_for_save(&state);
+        let connections: Vec<Connection> = state
+            .connections
+            .iter()
+            .filter(|conn| conn.from_track != conn.to_track)
+            .cloned()
+            .collect();
         let result = json!({
             "tracks": tracks_json,
             "unused_audio_clips": serde_json::to_value(&state.unused_audio_clips).unwrap_or(Value::Array(vec![])),
             "unused_midi_clips": serde_json::to_value(&state.unused_midi_clips).unwrap_or(Value::Array(vec![])),
             "modulators": &self.modulators,
-            "connections": &state.connections,
+            "connections": connections,
             "jack_routing": jack_routing,
             "graphs": graphs,
             "metadata": {
@@ -1881,22 +1888,10 @@ impl Maolan {
                 "stop": state.global_midi_learn_stop,
                 "record_toggle": state.global_midi_learn_record_toggle,
             },
-            "midi_learn_session": Self::session_midi_learn_json(&state)
+            "midi_learn_session": Self::session_midi_learn_json(&state),
+            "session_matrix": state.session.clone(),
         });
         serde_json::to_writer_pretty(file, &result)?;
-        let session_json_path = session_root.join("session.json");
-        let session_file = File::create(&session_json_path)?;
-        let session_matrix = {
-            let state = self.state.blocking_read();
-            state.session.clone()
-        };
-        serde_json::to_writer_pretty(
-            session_file,
-            &json!({
-                "version": 1,
-                "matrix": session_matrix,
-            }),
-        )?;
         let commit_dir = session_root
             .join(".maolan_commits")
             .join(&self.session_branch);
@@ -1995,44 +1990,35 @@ impl Maolan {
             state.jack_session_routing = loaded_jack_routing.clone();
         }
         {
-            let session_json_path = session_root.join("session.json");
             let mut state = self.state.blocking_write();
-            state.session = if session_json_path.exists() {
-                match File::open(&session_json_path) {
-                    Ok(file) => {
-                        let reader = BufReader::new(file);
-                        match serde_json::from_reader::<_, serde_json::Value>(reader) {
-                            Ok(value) => value
-                                .get("matrix")
-                                .and_then(|matrix| {
-                                    serde_json::from_value::<crate::state::SessionMatrix>(
-                                        matrix.clone(),
-                                    )
-                                    .ok()
-                                })
-                                .unwrap_or_default(),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to parse session.json at {}: {}",
-                                    session_json_path.display(),
-                                    e
-                                );
-                                crate::state::SessionMatrix::default()
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to open session.json at {}: {}",
-                            session_json_path.display(),
-                            e
-                        );
-                        crate::state::SessionMatrix::default()
-                    }
-                }
-            } else {
-                crate::state::SessionMatrix::default()
+            state.session = session
+                .get("session_matrix")
+                .and_then(|matrix| {
+                    serde_json::from_value::<crate::state::SessionMatrix>(matrix.clone()).ok()
+                })
+                .unwrap_or_default();
+        }
+        // Drop any session slots, selected slots, or session MIDI-learn bindings
+        // that refer to tracks which no longer exist.
+        {
+            let track_names: std::collections::HashSet<String> = {
+                let state = self.state.blocking_read();
+                state.tracks.iter().map(|t| t.name.clone()).collect()
             };
+            let mut state = self.state.blocking_write();
+            state
+                .session
+                .slots
+                .retain(|name, _| name != METRONOME_TRACK_ID && track_names.contains(name));
+            state
+                .selected_slots
+                .retain(|(name, _)| name != METRONOME_TRACK_ID && track_names.contains(name));
+            state
+                .session_midi_learn_slots
+                .retain(|(name, _), _| name != METRONOME_TRACK_ID && track_names.contains(name));
+            state
+                .session_midi_learn_stop_track
+                .retain(|name, _| name != METRONOME_TRACK_ID && track_names.contains(name));
         }
         #[cfg(unix)]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {

@@ -2261,11 +2261,14 @@ impl Maolan {
     fn referenced_session_media_paths_from_file(path: &Path) -> io::Result<HashSet<String>> {
         #[derive(serde::Deserialize)]
         struct SessionFileTracks {
+            #[serde(default)]
             tracks: Vec<crate::state::Track>,
             #[serde(default)]
             unused_audio_clips: Vec<crate::state::AudioClip>,
             #[serde(default)]
             unused_midi_clips: Vec<crate::state::MIDIClip>,
+            #[serde(default)]
+            session_matrix: Option<crate::state::SessionMatrix>,
         }
 
         let file = std::fs::File::open(path)?;
@@ -2278,6 +2281,35 @@ impl Maolan {
             &session.unused_audio_clips,
             &session.unused_midi_clips,
         );
+
+        // Session slots reference clips by id. Make sure media files for those
+        // clips survive cleanup, even when the clip lives in the unused pool.
+        if let Some(matrix) = session.session_matrix {
+            let mut clip_id_to_name: std::collections::HashMap<&str, &str> =
+                std::collections::HashMap::new();
+            for track in &session.tracks {
+                for clip in &track.audio.clips {
+                    clip_id_to_name.insert(&clip.id, &clip.name);
+                }
+                for clip in &track.midi.clips {
+                    clip_id_to_name.insert(&clip.id, &clip.name);
+                }
+            }
+            for clip in &session.unused_audio_clips {
+                clip_id_to_name.insert(&clip.id, &clip.name);
+            }
+            for clip in &session.unused_midi_clips {
+                clip_id_to_name.insert(&clip.id, &clip.name);
+            }
+            for slot in matrix.slots.values().flat_map(|slots| slots.iter()) {
+                if let Some(clip_ref) = &slot.clip
+                    && let Some(name) = clip_id_to_name.get(clip_ref.clip_id.as_str())
+                {
+                    Self::insert_referenced_session_media_path(&mut referenced, name);
+                }
+            }
+        }
+
         Ok(referenced)
     }
 
@@ -8133,6 +8165,60 @@ mod tests {
         });
         let other_branch = serde_json::json!({
             "tracks": serde_json::to_value(vec![&other_track]).expect("serialize track"),
+        });
+        fs::write(
+            session_root.join("other.json"),
+            serde_json::to_string(&other_branch).expect("serialize branch"),
+        )
+        .expect("write other branch");
+
+        let report = Maolan::delete_unused_session_media_files_for(&state, "main", &session_root)
+            .expect("cleanup");
+
+        assert!(report.deleted_clips.is_empty());
+        assert!(report.deleted_files.is_empty());
+        assert!(session_root.join("audio/keep.wav").exists());
+        assert_eq!(state.blocking_read().unused_audio_clips.len(), 1);
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn delete_unused_session_media_files_keeps_clip_referenced_by_other_branch_session_slot() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_test_cleanup_slot_{unique}"));
+        fs::create_dir_all(session_root.join("audio")).expect("create temp audio dir");
+        fs::write(session_root.join("audio/keep.wav"), b"x").expect("seed media");
+
+        let mut data = crate::state::StateData::default();
+        data.unused_audio_clips.push(crate::state::AudioClip {
+            id: "clip-1".to_string(),
+            name: "audio/keep.wav".to_string(),
+            ..Default::default()
+        });
+        let state: crate::state::State = std::sync::Arc::new(tokio::sync::RwLock::new(data));
+
+        let mut matrix = crate::state::SessionMatrix::default();
+        matrix.ensure_track_slots("Track");
+        matrix.slot_mut("Track", 0).unwrap().clip = Some(crate::state::SlotClipRef {
+            clip_id: "clip-1".to_string(),
+            launch_mode: crate::state::LaunchMode::Toggle,
+            launch_quantization: crate::state::LaunchQuantization::Bar,
+            loop_enabled: true,
+            loop_start_samples: 0,
+            loop_end_samples: 0,
+        });
+        let other_branch = serde_json::json!({
+            "unused_audio_clips": serde_json::to_value(vec![crate::state::AudioClip {
+                id: "clip-1".to_string(),
+                name: "audio/keep.wav".to_string(),
+                ..Default::default()
+            }])
+            .expect("serialize clip"),
+            "session_matrix": serde_json::to_value(matrix).expect("serialize matrix"),
         });
         fs::write(
             session_root.join("other.json"),
