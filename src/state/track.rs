@@ -1,6 +1,7 @@
 use super::{AudioClip, MIDIClip};
 use crate::message::{MidiEditorViewMode, TrackAutomationMode, TrackAutomationTarget};
 use iced::{Color, Point};
+use maolan_engine::midi::mpe::MpeState;
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::consts::state_track::{
@@ -261,6 +262,8 @@ pub struct Track {
     #[serde(default)]
     pub midi_lane_channels: Vec<Option<u8>>,
     #[serde(default)]
+    pub mpe_state: MpeState,
+    #[serde(default)]
     pub frozen_audio_backup: Vec<AudioClip>,
     #[serde(default)]
     pub frozen_midi_backup: Vec<MIDIClip>,
@@ -324,6 +327,7 @@ impl Track {
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
             midi_lane_channels: vec![None; midi_ins],
+            mpe_state: MpeState::new(),
             primary_audio_ins: audio_ins,
             primary_audio_outs: audio_outs,
             frozen_audio_backup: vec![],

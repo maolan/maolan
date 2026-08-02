@@ -509,6 +509,7 @@ mod tests {
             pitch: 60,
             velocity: 100,
             channel: 0,
+            mpe: Default::default(),
         };
         let state = piano_state_with_note(note);
         let interaction = PianoRollInteraction::new(state, 1.0);
@@ -554,6 +555,7 @@ mod tests {
             pitch: 60,
             velocity: 100,
             channel: 0,
+            mpe: Default::default(),
         };
         let state = piano_state_with_note(note);
         let interaction = PianoRollInteraction::new(state, 1.0);

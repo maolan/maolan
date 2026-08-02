@@ -4757,6 +4757,7 @@ impl Maolan {
                                             pitch,
                                             velocity: start_vel,
                                             channel,
+                                            mpe: Default::default(),
                                         });
                                     }
                                 } else {
@@ -4781,6 +4782,7 @@ impl Maolan {
                                         pitch,
                                         velocity: start_vel,
                                         channel,
+                                        mpe: Default::default(),
                                     });
                                 }
                             }
@@ -4832,6 +4834,7 @@ impl Maolan {
                     pitch,
                     velocity,
                     channel,
+                    mpe: Default::default(),
                 });
             }
         }
@@ -6954,6 +6957,112 @@ impl Maolan {
             ]
             .align_x(iced::Alignment::Start)
             .spacing(12),
+        )
+        .style(|_theme| crate::style::app_background())
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    fn mpe_config_view(&self, track_name: String) -> iced::Element<'_, Message> {
+        let state = self.state.blocking_read();
+        let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
+            drop(state);
+            return container(text("Track not found"))
+                .style(|_theme| crate::style::app_background())
+                .padding(20)
+                .into();
+        };
+        let mpe_state = track.mpe_state.clone();
+        let lower_member_count = mpe_state
+            .lower()
+            .map(|z| z.member_channels.clone().count() as u8)
+            .unwrap_or(0);
+        let upper_member_count = mpe_state
+            .upper()
+            .map(|z| z.member_channels.clone().count() as u8)
+            .unwrap_or(0);
+        let lower_sensitivity = mpe_state
+            .lower()
+            .map(|z| z.manager_pitch_bend_semitones)
+            .unwrap_or(maolan_engine::midi::mpe::MpeZone::DEFAULT_MANAGER_PITCH_BEND_SEMITONES);
+        let upper_sensitivity = mpe_state
+            .upper()
+            .map(|z| z.manager_pitch_bend_semitones)
+            .unwrap_or(maolan_engine::midi::mpe::MpeZone::DEFAULT_MANAGER_PITCH_BEND_SEMITONES);
+        drop(state);
+
+        let count_options: Vec<u8> = (0..=15).collect();
+        let sensitivity_options: Vec<u8> = (0..=96).collect();
+        let track_name_lower_count = track_name.clone();
+        let track_name_lower_sens = track_name.clone();
+        let track_name_upper_count = track_name.clone();
+        let track_name_upper_sens = track_name.clone();
+
+        container(
+            column![
+                text(format!("MPE Configuration for {}", track_name)).size(16),
+                row![
+                    text("Lower").width(Length::Fixed(80.0)),
+                    text("member channels"),
+                    pick_list(
+                        count_options.clone(),
+                        Some(lower_member_count),
+                        move |count| Message::MpeConfigSetZone {
+                            track_name: track_name_lower_count.clone(),
+                            manager_channel: 0,
+                            member_count: count,
+                        },
+                    )
+                    .width(Length::Fixed(80.0)),
+                    text("pitch-bend semitones"),
+                    pick_list(
+                        sensitivity_options.clone(),
+                        Some(lower_sensitivity),
+                        move |semitones| Message::MpeConfigSetPitchBendSensitivity {
+                            track_name: track_name_lower_sens.clone(),
+                            channel: 0,
+                            semitones,
+                        },
+                    )
+                    .width(Length::Fixed(80.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Upper").width(Length::Fixed(80.0)),
+                    text("member channels"),
+                    pick_list(
+                        count_options.clone(),
+                        Some(upper_member_count),
+                        move |count| Message::MpeConfigSetZone {
+                            track_name: track_name_upper_count.clone(),
+                            manager_channel: 15,
+                            member_count: count,
+                        },
+                    )
+                    .width(Length::Fixed(80.0)),
+                    text("pitch-bend semitones"),
+                    pick_list(
+                        sensitivity_options.clone(),
+                        Some(upper_sensitivity),
+                        move |semitones| Message::MpeConfigSetPitchBendSensitivity {
+                            track_name: track_name_upper_sens.clone(),
+                            channel: 15,
+                            semitones,
+                        },
+                    )
+                    .width(Length::Fixed(80.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                text("Set member channels to 0 to disable a zone.").size(12),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(16),
         )
         .style(|_theme| crate::style::app_background())
         .padding(20)

@@ -32,6 +32,78 @@ use maolan_engine::{
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
 pub use maolan_widgets::midi::{PianoControllerPoint, PianoNote, PianoSysExPoint};
+
+pub fn mpe_widgets_to_engine(
+    mpe: &maolan_widgets::midi::MpeNoteExpression,
+) -> maolan_engine::message::MpeNoteExpression {
+    maolan_engine::message::MpeNoteExpression {
+        pitch_bend: mpe_curve_widgets_to_engine(&mpe.pitch_bend),
+        pressure: mpe_curve_widgets_to_engine(&mpe.pressure),
+        timbre: mpe_curve_widgets_to_engine(&mpe.timbre),
+    }
+}
+
+pub fn mpe_curve_widgets_to_engine(
+    curve: &maolan_widgets::midi::MpeExpressionCurve,
+) -> maolan_engine::message::MpeExpressionCurve {
+    maolan_engine::message::MpeExpressionCurve {
+        points: curve
+            .points
+            .iter()
+            .map(|p| maolan_engine::message::MpeExpressionPoint {
+                sample_offset: p.sample_offset,
+                value: p.value,
+            })
+            .collect(),
+    }
+}
+
+pub fn mpe_engine_to_widgets(
+    mpe: &maolan_engine::message::MpeNoteExpression,
+) -> maolan_widgets::midi::MpeNoteExpression {
+    maolan_widgets::midi::MpeNoteExpression {
+        pitch_bend: mpe_curve_engine_to_widgets(&mpe.pitch_bend),
+        pressure: mpe_curve_engine_to_widgets(&mpe.pressure),
+        timbre: mpe_curve_engine_to_widgets(&mpe.timbre),
+    }
+}
+
+pub fn mpe_curve_engine_to_widgets(
+    curve: &maolan_engine::message::MpeExpressionCurve,
+) -> maolan_widgets::midi::MpeExpressionCurve {
+    maolan_widgets::midi::MpeExpressionCurve {
+        points: curve
+            .points
+            .iter()
+            .map(|p| maolan_widgets::midi::MpeExpressionPoint {
+                sample_offset: p.sample_offset,
+                value: p.value,
+            })
+            .collect(),
+    }
+}
+
+pub fn piano_note_to_engine(note: &PianoNote) -> maolan_engine::message::MidiNoteData {
+    maolan_engine::message::MidiNoteData {
+        start_sample: note.start_sample,
+        length_samples: note.length_samples,
+        pitch: note.pitch,
+        velocity: note.velocity,
+        channel: note.channel,
+        mpe: mpe_widgets_to_engine(&note.mpe),
+    }
+}
+
+pub fn engine_note_to_widgets(note: &maolan_engine::message::MidiNoteData) -> PianoNote {
+    PianoNote {
+        start_sample: note.start_sample,
+        length_samples: note.length_samples,
+        pitch: note.pitch,
+        velocity: note.velocity,
+        channel: note.channel,
+        mpe: mpe_engine_to_widgets(&note.mpe),
+    }
+}
 #[cfg(target_os = "windows")]
 pub(crate) use platform::{
     discover_windows_audio_devices, discover_windows_input_devices,
