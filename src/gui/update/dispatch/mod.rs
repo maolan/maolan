@@ -2217,7 +2217,7 @@ impl Maolan {
                     } else {
                         state.piano_selected_notes.insert(note_index);
                     }
-                } else {
+                } else if !state.piano_selected_notes.contains(&note_index) {
                     state.piano_selected_notes.clear();
                     state.piano_selected_notes.insert(note_index);
                 }
@@ -2282,19 +2282,47 @@ impl Maolan {
                 note_index,
                 delta_samples,
             } => {
-                let state = self.state.blocking_read();
-                if let Some(piano) = state.piano.as_ref()
-                    && let Some(note) = piano.notes.get(note_index)
-                {
+                let (track_name, clip_idx, samples_per_beat, samples_per_bar, target_indices) = {
+                    let state = self.state.blocking_read();
+                    let Some(piano) = state.piano.as_ref() else {
+                        return Task::none();
+                    };
                     let track_name = piano.track_idx.clone();
                     let clip_idx = piano.clip_index;
-                    let old_note = piano_note_to_engine(note);
                     let tempo = state.tempo.max(1.0) as f64;
                     let tsig_num = state.time_signature_num.max(1) as f64;
                     let tsig_denom = state.time_signature_denom.max(1) as f64;
                     let samples_per_beat =
                         (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
+                    let target_indices: Vec<usize> = if state.piano_selected_notes.is_empty() {
+                        vec![note_index]
+                    } else {
+                        state.piano_selected_notes.iter().copied().collect()
+                    };
+                    (
+                        track_name,
+                        clip_idx,
+                        samples_per_beat,
+                        samples_per_bar,
+                        target_indices,
+                    )
+                };
+
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+
+                let mut note_indices = Vec::new();
+                let mut new_notes = Vec::new();
+                let mut old_notes = Vec::new();
+
+                for idx in target_indices {
+                    let Some(note) = piano.notes.get(idx) else {
+                        continue;
+                    };
+                    let old_note = piano_note_to_engine(note);
                     let raw_start = if delta_samples < 0 {
                         old_note
                             .start_sample
@@ -2308,21 +2336,25 @@ impl Maolan {
                         samples_per_beat,
                         samples_per_bar,
                     ) as usize;
-                    let new_note = maolan_engine::message::MidiNoteData {
-                        start_sample: new_start,
-                        length_samples: old_note.length_samples,
-                        pitch: old_note.pitch,
-                        velocity: old_note.velocity,
-                        channel: old_note.channel,
-                        mpe: mpe_widgets_to_engine(&note.mpe),
-                    };
-                    drop(state);
+                    if let Some(note) = piano.notes.get_mut(idx) {
+                        note.start_sample = new_start;
+                    }
+                    let mut new_note = old_note.clone();
+                    new_note.start_sample = new_start;
+
+                    note_indices.push(idx);
+                    new_notes.push(new_note);
+                    old_notes.push(old_note);
+                }
+
+                drop(state);
+                if !note_indices.is_empty() {
                     return self.send(Action::ModifyMidiNotes {
                         track_name,
                         clip_index: clip_idx,
-                        note_indices: vec![note_index],
-                        new_notes: vec![new_note],
-                        old_notes: vec![old_note],
+                        note_indices,
+                        new_notes,
+                        old_notes,
                     });
                 }
             }
@@ -10825,5 +10857,126 @@ mod tests {
         assert!((m.targets[0].min - -90.0).abs() < f32::EPSILON);
         assert!((m.targets[0].max - 20.0).abs() < f32::EPSILON);
         assert!(app.state.blocking_read().modulator_target_dialog.is_none());
+    }
+
+    fn app_with_drum_notes(notes: Vec<crate::state::PianoNote>) -> Maolan {
+        let state = crate::state::State::default();
+        {
+            let mut guard = state.blocking_write();
+            guard.piano = Some(crate::state::PianoData {
+                track_idx: "Drums".to_string(),
+                clip_index: 0,
+                clip_start_samples: 0,
+                clip_length_samples: 1000,
+                notes,
+                controllers: Vec::new(),
+                sysexes: Vec::new(),
+                midnam_note_names: std::collections::HashMap::new(),
+            });
+            guard.piano_selected_notes = std::collections::HashSet::new();
+        }
+        Maolan {
+            state,
+            ..Maolan::default()
+        }
+    }
+
+    #[test]
+    fn drum_click_on_selected_note_preserves_multi_selection() {
+        let mut app = app_with_drum_notes(vec![
+            crate::state::PianoNote {
+                start_sample: 100,
+                length_samples: 10,
+                pitch: 36,
+                velocity: 100,
+                channel: 0,
+                mpe: Default::default(),
+            },
+            crate::state::PianoNote {
+                start_sample: 200,
+                length_samples: 10,
+                pitch: 38,
+                velocity: 100,
+                channel: 0,
+                mpe: Default::default(),
+            },
+        ]);
+        app.state.blocking_write().piano_selected_notes = [0, 1].iter().copied().collect();
+
+        let _ = app.update(Message::DrumNoteSelected(0));
+
+        let state = app.state.blocking_read();
+        assert_eq!(state.piano_selected_notes.len(), 2);
+        assert!(state.piano_selected_notes.contains(&0));
+        assert!(state.piano_selected_notes.contains(&1));
+    }
+
+    #[test]
+    fn drum_note_move_moves_all_selected_notes() {
+        let mut app = app_with_drum_notes(vec![
+            crate::state::PianoNote {
+                start_sample: 100,
+                length_samples: 10,
+                pitch: 36,
+                velocity: 100,
+                channel: 0,
+                mpe: Default::default(),
+            },
+            crate::state::PianoNote {
+                start_sample: 200,
+                length_samples: 10,
+                pitch: 38,
+                velocity: 100,
+                channel: 0,
+                mpe: Default::default(),
+            },
+        ]);
+        app.state.blocking_write().piano_selected_notes = [0, 1].iter().copied().collect();
+        app.midi_snap_mode = crate::message::SnapMode::NoSnap;
+
+        let _ = app.update(Message::DrumNoteMove {
+            note_index: 0,
+            delta_samples: 50,
+        });
+
+        let state = app.state.blocking_read();
+        let piano = state.piano.as_ref().unwrap();
+        assert_eq!(piano.notes[0].start_sample, 150);
+        assert_eq!(piano.notes[1].start_sample, 250);
+    }
+
+    #[test]
+    fn piano_click_on_selected_note_preserves_multi_selection() {
+        let mut app = app_with_drum_notes(vec![
+            crate::state::PianoNote {
+                start_sample: 100,
+                length_samples: 10,
+                pitch: 60,
+                velocity: 100,
+                channel: 0,
+                mpe: Default::default(),
+            },
+            crate::state::PianoNote {
+                start_sample: 200,
+                length_samples: 10,
+                pitch: 64,
+                velocity: 100,
+                channel: 0,
+                mpe: Default::default(),
+            },
+        ]);
+        app.state.blocking_write().piano_selected_notes = [0, 1].iter().copied().collect();
+
+        let _ = app.update(Message::PianoNoteClick {
+            note_index: 0,
+            position: Point::new(10.0, 20.0),
+        });
+
+        let state = app.state.blocking_read();
+        assert_eq!(state.piano_selected_notes.len(), 2);
+        let dragging = state.piano_dragging_notes.as_ref().unwrap();
+        assert_eq!(dragging.note_indices.len(), 2);
+        assert!(dragging.note_indices.contains(&0));
+        assert!(dragging.note_indices.contains(&1));
     }
 }

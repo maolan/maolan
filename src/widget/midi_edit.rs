@@ -288,6 +288,7 @@ impl MIDIEdit {
                 drum_rows.clone(),
                 drum_row_h,
                 state.piano_selecting_rect,
+                state.piano_selected_notes.clone(),
             );
             let drum_canvas: Element<'_, maolan_widgets::drum::DrumMessage> =
                 iced::widget::canvas(drum_interaction)
