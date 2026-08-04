@@ -106,6 +106,8 @@ impl Maolan {
                     maolan_generate::DEFAULT_CFG_SCALE.to_string();
                 self.generate_audio_steps_input = 10;
                 self.generate_audio_seconds_total_input = 180;
+                self.generate_audio_acestep_lm =
+                    crate::message::GenerateAudioAceStepLmOption::default();
                 {
                     let state = self.state.blocking_read();
                     self.generate_audio_key_root = state.musical_key.root;
@@ -115,6 +117,30 @@ impl Maolan {
                 self.generate_audio_progress = 0.0;
                 self.generate_audio_operation = None;
                 self.modal = Some(Show::GenerateAudio);
+                Task::none()
+            }
+            Show::GenerateMidi => {
+                self.generate_midi_prompt_editor = text_editor::Content::new();
+                self.generate_midi_model = crate::message::GenerateMidiModelOption::TextToMidi;
+                self.generate_midi_backend = crate::message::BurnBackendOption::Vulkan;
+                {
+                    let state = self.state.blocking_read();
+                    self.generate_midi_key_root = state.musical_key.root;
+                    self.generate_midi_key_mode = state.musical_key.mode;
+                    self.generate_midi_bpm_input = format!("{:.1}", state.tempo);
+                    self.generate_midi_time_signature_num_input =
+                        state.time_signature_num.to_string();
+                    self.generate_midi_time_signature_denom_input =
+                        state.time_signature_denom.to_string();
+                }
+                self.generate_midi_length_seconds_input = "10".to_string();
+                self.generate_midi_max_tokens_input = "1024".to_string();
+                self.generate_midi_top_p_input = "0.98".to_string();
+                self.generate_midi_seed_input = "0".to_string();
+                self.generate_midi_in_progress = false;
+                self.generate_midi_progress = 0.0;
+                self.generate_midi_operation = None;
+                self.modal = Some(Show::GenerateMidi);
                 Task::none()
             }
             Show::ExportSettings => {

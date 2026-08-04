@@ -178,7 +178,8 @@ impl Menu {
                             .has_selected_track
                             .then_some(Message::RemoveSelectedTracks)
                     )),
-                    (menu_item("Generate audio", Message::Show(Show::GenerateAudio)))
+                    (menu_item("Generate audio", Message::Show(Show::GenerateAudio))),
+                    (menu_item("Generate MIDI", Message::Show(Show::GenerateMidi)))
                 ))
             }),
             (menu_dropdown("View", Message::None), {
