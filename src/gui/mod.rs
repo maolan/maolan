@@ -23,8 +23,9 @@ use crate::{
     menu,
     message::{
         BurnBackendOption, DraggedClip, ExportBitDepth, ExportDither, ExportFormat,
-        ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message,
-        PreferencesDeviceOption, Show, SnapMode, TrackAutomationTarget,
+        ExportNormalizeMode, ExportRenderMode, GenerateAudioAceStepLmOption,
+        GenerateAudioModelOption, GenerateMidiModelOption, Message, PreferencesDeviceOption, Show,
+        SnapMode, TrackAutomationTarget,
     },
     platform_caps,
     state::{
@@ -285,6 +286,8 @@ struct BurnGenerateRequest {
     output_path: PathBuf,
     tags: Option<String>,
     backend: BurnBackendOption,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acestep_lm: Option<GenerateAudioAceStepLmOption>,
     cfg_scale: f32,
     ode_steps: usize,
     length: usize,
@@ -738,6 +741,7 @@ pub struct Maolan {
     import_current_filename: String,
     import_current_operation: Option<String>,
     generate_audio_model: GenerateAudioModelOption,
+    generate_audio_acestep_lm: GenerateAudioAceStepLmOption,
     generate_audio_prompt_editor: text_editor::Content,
     log_viewer_content: text_editor::Content,
     log_viewer_highlights: LogHighlightSettings,
@@ -756,6 +760,24 @@ pub struct Maolan {
     generate_audio_abort_handle: Option<tokio::task::AbortHandle>,
     #[cfg(unix)]
     generate_audio_process_id: Option<u32>,
+    generate_midi_model: GenerateMidiModelOption,
+    generate_midi_prompt_editor: text_editor::Content,
+    generate_midi_backend: BurnBackendOption,
+    generate_midi_key_root: NoteName,
+    generate_midi_key_mode: KeyMode,
+    generate_midi_bpm_input: String,
+    generate_midi_time_signature_num_input: String,
+    generate_midi_time_signature_denom_input: String,
+    generate_midi_length_seconds_input: String,
+    generate_midi_max_tokens_input: String,
+    generate_midi_top_p_input: String,
+    generate_midi_seed_input: String,
+    generate_midi_in_progress: bool,
+    generate_midi_progress: f32,
+    generate_midi_operation: Option<String>,
+    generate_midi_abort_handle: Option<tokio::task::AbortHandle>,
+    #[cfg(unix)]
+    generate_midi_process_id: Option<u32>,
     clip_pitch_correction_in_progress: bool,
     clip_pitch_correction_progress: f32,
     clip_pitch_correction_clip_name: String,
@@ -1049,6 +1071,7 @@ impl Default for Maolan {
             import_current_filename: String::new(),
             import_current_operation: None,
             generate_audio_model: GenerateAudioModelOption::HappyNewYear,
+            generate_audio_acestep_lm: GenerateAudioAceStepLmOption::default(),
             generate_audio_prompt_editor: text_editor::Content::new(),
             log_viewer_content: text_editor::Content::with_text(
                 "[INFO] Thank you for using Maolan!",
@@ -1069,6 +1092,24 @@ impl Default for Maolan {
             generate_audio_abort_handle: None,
             #[cfg(unix)]
             generate_audio_process_id: None,
+            generate_midi_model: GenerateMidiModelOption::TextToMidi,
+            generate_midi_prompt_editor: text_editor::Content::new(),
+            generate_midi_backend: BurnBackendOption::Vulkan,
+            generate_midi_key_root: NoteName::C,
+            generate_midi_key_mode: KeyMode::Major,
+            generate_midi_bpm_input: "120".to_string(),
+            generate_midi_time_signature_num_input: "4".to_string(),
+            generate_midi_time_signature_denom_input: "4".to_string(),
+            generate_midi_length_seconds_input: "10".to_string(),
+            generate_midi_max_tokens_input: "1024".to_string(),
+            generate_midi_top_p_input: "0.98".to_string(),
+            generate_midi_seed_input: "0".to_string(),
+            generate_midi_in_progress: false,
+            generate_midi_progress: 0.0,
+            generate_midi_operation: None,
+            generate_midi_abort_handle: None,
+            #[cfg(unix)]
+            generate_midi_process_id: None,
             clip_pitch_correction_in_progress: false,
             clip_pitch_correction_progress: 0.0,
             clip_pitch_correction_clip_name: String::new(),
@@ -1277,8 +1318,8 @@ impl Maolan {
     }
 
     #[cfg(unix)]
-    fn spawn_generate_process(
-        request: &BurnGenerateRequest,
+    fn spawn_generate_process<T: serde::Serialize>(
+        request: &T,
     ) -> Result<(u32, BurnGenerateProcessHandle), String> {
         use std::io::{BufRead, BufReader};
         use std::os::fd::OwnedFd;
@@ -1411,7 +1452,7 @@ impl Maolan {
     }
 
     #[cfg(not(unix))]
-    fn spawn_generate_process(_request: &BurnGenerateRequest) -> Result<(u32, ()), String> {
+    fn spawn_generate_process<T: serde::Serialize>(_request: &T) -> Result<(u32, ()), String> {
         Err("Generated audio via generate is only available on Unix platforms".to_string())
     }
 
@@ -6572,6 +6613,22 @@ impl Maolan {
                     ]
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
+                    if self.generate_audio_model.uses_acestep_lm_selector() {
+                        row![
+                            text("LM:"),
+                            pick_list(
+                                GenerateAudioAceStepLmOption::ALL.to_vec(),
+                                Some(self.generate_audio_acestep_lm),
+                                Message::GenerateAudioAceStepLmSelected
+                            )
+                            .placeholder("Choose LM")
+                            .width(Length::Fill),
+                        ]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center)
+                    } else {
+                        row![]
+                    },
                     text_editor(&self.generate_audio_prompt_editor)
                         .on_action(Message::GenerateAudioPromptAction)
                         .height(Length::Fixed(120.0))
@@ -6642,6 +6699,187 @@ impl Maolan {
                         container(progress_bar(
                             0.0..=1.0,
                             self.generate_audio_progress.clamp(0.0, 1.0),
+                        ))
+                        .width(Length::Fill)
+                    } else {
+                        container(progress_bar(0.0..=1.0, 0.0)).width(Length::Fill)
+                    },
+                    row![generate_button, cancel_button].spacing(10),
+                ]
+                .align_x(iced::Alignment::Start)
+                .spacing(12),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .style(|_theme| crate::style::app_background())
+        .padding(12)
+        .width(Length::Fixed(360.0))
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn generate_midi_view(&self) -> iced::Element<'_, Message> {
+        let session_ready = self.session_dir.is_some();
+        let progress_label = if self.generate_midi_in_progress {
+            if let Some(operation) = self.generate_midi_operation.as_deref() {
+                format!(
+                    "{} ({:.0}%)",
+                    operation,
+                    (self.generate_midi_progress * 100.0).clamp(0.0, 100.0)
+                )
+            } else {
+                format!(
+                    "Generating ({:.0}%)",
+                    (self.generate_midi_progress * 100.0).clamp(0.0, 100.0)
+                )
+            }
+        } else {
+            "Open or save a session before generating MIDI.".to_string()
+        };
+        let generate_button = if self.generate_midi_in_progress || !session_ready {
+            button("Generate")
+        } else {
+            button("Generate").on_press(Message::GenerateMidiSubmit)
+        };
+        let cancel_button = if self.generate_midi_in_progress {
+            button("Cancel")
+                .on_press(Message::GenerateMidiCancel)
+                .style(button::danger)
+        } else {
+            button("Close")
+                .on_press(Message::Cancel)
+                .style(button::secondary)
+        };
+
+        let model_specific_inputs: iced::Element<'_, Message> = match self.generate_midi_model {
+            GenerateMidiModelOption::TextToMidi => column![
+                row![
+                    text("Length (s):"),
+                    text_input("10", &self.generate_midi_length_seconds_input)
+                        .on_input(Message::GenerateMidiLengthSecondsInput)
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Seed:"),
+                    text_input("0", &self.generate_midi_seed_input)
+                        .on_input(Message::GenerateMidiSeedInput)
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+            ]
+            .spacing(12)
+            .into(),
+            GenerateMidiModelOption::MidiLlm => column![
+                row![
+                    text("Max tokens:"),
+                    text_input("1024", &self.generate_midi_max_tokens_input)
+                        .on_input(Message::GenerateMidiMaxTokensInput)
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Top-p:"),
+                    text_input("0.98", &self.generate_midi_top_p_input)
+                        .on_input(Message::GenerateMidiTopPInput)
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Seed:"),
+                    text_input("0", &self.generate_midi_seed_input)
+                        .on_input(Message::GenerateMidiSeedInput)
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+            ]
+            .spacing(12)
+            .into(),
+        };
+
+        container(
+            scrollable(
+                column![
+                    text("Generate MIDI").size(16),
+                    row![
+                        text("Model:"),
+                        pick_list(
+                            GenerateMidiModelOption::ALL.to_vec(),
+                            Some(self.generate_midi_model),
+                            Message::GenerateMidiModelSelected
+                        )
+                        .placeholder("Choose model")
+                        .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    text_editor(&self.generate_midi_prompt_editor)
+                        .on_action(Message::GenerateMidiPromptAction)
+                        .height(Length::Fixed(120.0))
+                        .placeholder("Prompt"),
+                    row![
+                        text("Backend:"),
+                        pick_list(
+                            BurnBackendOption::ALL.to_vec(),
+                            Some(self.generate_midi_backend),
+                            Message::GenerateMidiBackendSelected
+                        )
+                        .placeholder("Choose backend")
+                        .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Key:"),
+                        pick_list(
+                            NoteName::ALL.to_vec(),
+                            Some(self.generate_midi_key_root),
+                            Message::GenerateMidiKeyRootChanged
+                        )
+                        .placeholder("Root")
+                        .width(Length::Fill),
+                        pick_list(
+                            KeyMode::ALL.to_vec(),
+                            Some(self.generate_midi_key_mode),
+                            Message::GenerateMidiKeyModeChanged
+                        )
+                        .placeholder("Mode")
+                        .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("BPM:"),
+                        text_input("120", &self.generate_midi_bpm_input)
+                            .on_input(Message::GenerateMidiBpmInput)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Time signature:"),
+                        text_input("4", &self.generate_midi_time_signature_num_input)
+                            .on_input(Message::GenerateMidiTimeSignatureNumInput)
+                            .width(Length::Fill),
+                        text("/"),
+                        text_input("4", &self.generate_midi_time_signature_denom_input)
+                            .on_input(Message::GenerateMidiTimeSignatureDenomInput)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    model_specific_inputs,
+                    text(progress_label),
+                    if self.generate_midi_in_progress {
+                        container(progress_bar(
+                            0.0..=1.0,
+                            self.generate_midi_progress.clamp(0.0, 1.0),
                         ))
                         .width(Length::Fill)
                     } else {

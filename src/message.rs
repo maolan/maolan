@@ -21,6 +21,7 @@ pub enum Show {
     AddFolder,
     TrackPluginList,
     GenerateAudio,
+    GenerateMidi,
     ExportSettings,
     SessionMetadata,
     Preferences,
@@ -84,6 +85,10 @@ impl GenerateAudioModelOption {
         Self::AceStepTurbo,
         Self::AceStepSft,
     ];
+
+    pub fn uses_acestep_lm_selector(self) -> bool {
+        matches!(self, Self::AceStepTurbo)
+    }
 }
 
 impl fmt::Display for GenerateAudioModelOption {
@@ -93,6 +98,52 @@ impl fmt::Display for GenerateAudioModelOption {
             Self::Rl => write!(f, "RL"),
             Self::AceStepTurbo => write!(f, "acestep-turbo"),
             Self::AceStepSft => write!(f, "acestep-sft"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GenerateMidiModelOption {
+    #[serde(rename = "text-to-midi")]
+    TextToMidi,
+    #[serde(rename = "midi-llm")]
+    MidiLlm,
+}
+
+impl GenerateMidiModelOption {
+    pub const ALL: [Self; 2] = [Self::TextToMidi, Self::MidiLlm];
+}
+
+impl fmt::Display for GenerateMidiModelOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TextToMidi => write!(f, "text-to-midi"),
+            Self::MidiLlm => write!(f, "midi-llm"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum GenerateAudioAceStepLmOption {
+    #[serde(rename = "0.6B")]
+    #[default]
+    B0_6,
+    #[serde(rename = "1.7B")]
+    B1_7,
+    #[serde(rename = "4B")]
+    B4,
+}
+
+impl GenerateAudioAceStepLmOption {
+    pub const ALL: [Self; 3] = [Self::B0_6, Self::B1_7, Self::B4];
+}
+
+impl fmt::Display for GenerateAudioAceStepLmOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::B0_6 => write!(f, "0.6B"),
+            Self::B1_7 => write!(f, "1.7B"),
+            Self::B4 => write!(f, "4B"),
         }
     }
 }
@@ -856,6 +907,7 @@ pub enum Message {
     RecoverAutosaveIgnore,
     OpenExporter,
     GenerateAudioModelSelected(GenerateAudioModelOption),
+    GenerateAudioAceStepLmSelected(GenerateAudioAceStepLmOption),
     GenerateAudioPromptAction(text_editor::Action),
 
     GenerateAudioTagsInput(String),
@@ -873,6 +925,25 @@ pub enum Message {
     },
     GenerateAudioCancel,
     GenerateAudioFinished(Result<String, String>),
+    GenerateMidiModelSelected(GenerateMidiModelOption),
+    GenerateMidiPromptAction(text_editor::Action),
+    GenerateMidiBackendSelected(BurnBackendOption),
+    GenerateMidiKeyRootChanged(NoteName),
+    GenerateMidiKeyModeChanged(KeyMode),
+    GenerateMidiBpmInput(String),
+    GenerateMidiTimeSignatureNumInput(String),
+    GenerateMidiTimeSignatureDenomInput(String),
+    GenerateMidiLengthSecondsInput(String),
+    GenerateMidiMaxTokensInput(String),
+    GenerateMidiTopPInput(String),
+    GenerateMidiSeedInput(String),
+    GenerateMidiSubmit,
+    GenerateMidiProgress {
+        progress: f32,
+        operation: Option<String>,
+    },
+    GenerateMidiCancel,
+    GenerateMidiFinished(Result<String, String>),
     MidiLearnMappingsPanelToggle,
     MidiLearnMappingsReportRequest,
     MidiLearnMappingsExportRequest,
