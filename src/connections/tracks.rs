@@ -2467,6 +2467,59 @@ impl canvas::Program<Message> for Graph {
 
                         if let Some((to_t_name, to_p)) = target_port {
                             if self.effective_folder(&data).is_some()
+                                && ((from_t == HW_IN_ID && to_t_name == HW_OUT_ID && !is_input)
+                                    || (from_t == HW_OUT_ID && to_t_name == HW_IN_ID && is_input))
+                            {
+                                let (input_port, output_port) = if from_t == HW_IN_ID {
+                                    (from_p, to_p)
+                                } else {
+                                    (to_p, from_p)
+                                };
+                                return self.connectable_connection_actions(
+                                    &data,
+                                    ConnectableRef::TrackInput,
+                                    input_port,
+                                    ConnectableRef::TrackOutput,
+                                    output_port,
+                                    kind,
+                                );
+                            }
+
+                            if from_t == to_t_name
+                                && let Some(track) = data.tracks.iter().find(|t| t.name == from_t)
+                            {
+                                let (input_port, output_port) = if is_input {
+                                    (
+                                        Self::track_port_to_engine_index(track, from_p, true).1,
+                                        Self::track_port_to_engine_index(track, to_p, false).1,
+                                    )
+                                } else {
+                                    (
+                                        Self::track_port_to_engine_index(track, to_p, true).1,
+                                        Self::track_port_to_engine_index(track, from_p, false).1,
+                                    )
+                                };
+                                let action = if kind == Kind::Audio {
+                                    EngineAction::TrackConnectAudio {
+                                        track_name: from_t,
+                                        from: ConnectableRef::TrackInput,
+                                        from_port: input_port,
+                                        to: ConnectableRef::TrackOutput,
+                                        to_port: output_port,
+                                    }
+                                } else {
+                                    EngineAction::TrackConnectMidi {
+                                        track_name: from_t,
+                                        from: ConnectableRef::TrackInput,
+                                        from_port: input_port,
+                                        to: ConnectableRef::TrackOutput,
+                                        to_port: output_port,
+                                    }
+                                };
+                                return Some(Action::publish(Message::Request(action)));
+                            }
+
+                            if self.effective_folder(&data).is_some()
                                 && visible_names.contains(&from_t)
                                 && (to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID)
                                 && let Some(source_track) =
@@ -4936,6 +4989,152 @@ mod tests {
             })) if track_name == "folder"
                 && from == ConnectableRef::ChildTrack("Synth".to_string())
                 && to == ConnectableRef::TrackOutput
+        ));
+    }
+
+    #[test]
+    fn releasing_folder_input_on_folder_output_creates_internal_passthrough() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor_pos = {
+            let mut data = state.blocking_write();
+            let mut folder = crate::state::Track::new("folder".to_string(), 0.0, 2, 2, 0, 0);
+            folder.is_folder = true;
+            data.tracks.push(folder);
+            data.connections_folder = Some("folder".to_string());
+            data.plugin_graph_track = Some("folder".to_string());
+            data.connecting = Some(Connecting {
+                from_track: HW_IN_ID.to_string(),
+                from_port: 0,
+                kind: Kind::Audio,
+                point: Point::new(100.0, 100.0),
+                is_input: false,
+            });
+            Graph::folder_output_port_position(&data.tracks[0], 0, bounds, FOLDER_HW_WIDTH)
+        };
+
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(cursor_pos),
+            )
+            .expect("action");
+
+        let (message, _status) = action_message(action);
+        assert!(matches!(
+            message,
+            Some(Message::Request(EngineAction::TrackConnectAudio {
+                track_name,
+                from: ConnectableRef::TrackInput,
+                from_port: 0,
+                to: ConnectableRef::TrackOutput,
+                to_port: 0,
+            })) if track_name == "folder"
+        ));
+    }
+
+    #[test]
+    fn releasing_viewed_track_output_on_its_input_creates_internal_passthrough() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor_pos = {
+            let mut data = state.blocking_write();
+            data.tracks.push(crate::state::Track::new(
+                "Synth".to_string(),
+                0.0,
+                2,
+                2,
+                0,
+                0,
+            ));
+            data.plugin_graph_track = Some("Synth".to_string());
+            data.connecting = Some(Connecting {
+                from_track: "Synth".to_string(),
+                from_port: 0,
+                kind: Kind::Audio,
+                point: Point::new(100.0, 100.0),
+                is_input: false,
+            });
+            let track = &data.tracks[0];
+            Graph::track_port_position(track, 0, track.position, Graph::track_box_size(track))
+        };
+
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(cursor_pos),
+            )
+            .expect("action");
+
+        let (message, _status) = action_message(action);
+        assert!(matches!(
+            message,
+            Some(Message::Request(EngineAction::TrackConnectAudio {
+                track_name,
+                from: ConnectableRef::TrackInput,
+                from_port: 0,
+                to: ConnectableRef::TrackOutput,
+                to_port: 0,
+            })) if track_name == "Synth"
+        ));
+    }
+
+    #[test]
+    fn releasing_child_track_input_on_its_output_creates_child_internal_passthrough() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor_pos = {
+            let mut data = state.blocking_write();
+            let mut folder = crate::state::Track::new("folder".to_string(), 0.0, 2, 2, 0, 0);
+            folder.is_folder = true;
+            let mut synth = crate::state::Track::new("Synth".to_string(), 0.0, 2, 2, 0, 0);
+            synth.parent_track = Some("folder".to_string());
+            data.tracks.push(folder);
+            data.tracks.push(synth);
+            data.connections_folder = Some("folder".to_string());
+            data.plugin_graph_track = Some("folder".to_string());
+            data.connecting = Some(Connecting {
+                from_track: "Synth".to_string(),
+                from_port: 0,
+                kind: Kind::Audio,
+                point: Point::new(100.0, 100.0),
+                is_input: true,
+            });
+            let track = &data.tracks[1];
+            Graph::track_output_port_position(
+                track,
+                0,
+                track.position,
+                Graph::track_box_size(track),
+            )
+        };
+
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let action = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(cursor_pos),
+            )
+            .expect("action");
+
+        let (message, _status) = action_message(action);
+        assert!(matches!(
+            message,
+            Some(Message::Request(EngineAction::TrackConnectAudio {
+                track_name,
+                from: ConnectableRef::TrackInput,
+                from_port: 0,
+                to: ConnectableRef::TrackOutput,
+                to_port: 0,
+            })) if track_name == "Synth"
         ));
     }
 

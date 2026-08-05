@@ -9220,6 +9220,197 @@ mod tests {
     }
 
     #[test]
+    fn remove_selected_plugin_graph_connection_works_without_loaded_hw() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.hw_loaded = false;
+            state.view = crate::state::View::TrackPlugins;
+            state.plugin_graph_track = Some("Track".to_string());
+            state.plugin_graph_selected_connections.insert(0);
+            state
+                .plugin_graph_connections
+                .push(maolan_engine::message::PluginGraphConnection {
+                    from_node: maolan_engine::message::PluginGraphNode::TrackInput,
+                    from_port: 0,
+                    to_node: maolan_engine::message::PluginGraphNode::TrackOutput,
+                    to_port: 0,
+                    kind: Kind::Audio,
+                });
+        }
+
+        let _ = app.update(Message::Remove);
+
+        assert!(
+            app.state
+                .blocking_read()
+                .plugin_graph_selected_connections
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn remove_prefers_selected_connection_over_selected_viewed_track() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.view = crate::state::View::Workspace;
+            state.hw_loaded = true;
+            state.selected.insert("Synth".to_string());
+            state.plugin_graph_track = Some("Synth".to_string());
+            state.connection_view_selection =
+                crate::state::ConnectionViewSelection::Connections(HashSet::from([0]));
+            state.connections.push(crate::state::Connection {
+                from_track: "Synth".to_string(),
+                from_port: 0,
+                to_track: "master".to_string(),
+                to_port: 0,
+                kind: Kind::Audio,
+            });
+        }
+
+        let _ = app.update(Message::Remove);
+
+        let state = app.state.blocking_read();
+        assert!(matches!(
+            state.connection_view_selection,
+            crate::state::ConnectionViewSelection::None
+        ));
+        assert_ne!(
+            state.message,
+            "Cannot delete 'Synth' while its connections are being viewed"
+        );
+    }
+
+    #[test]
+    fn track_connect_response_updates_internal_graph_cache_not_track_connections() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::Response(Ok(Action::TrackConnectAudio {
+            track_name: "Synth".to_string(),
+            from: ConnectableRef::TrackInput,
+            from_port: 0,
+            to: ConnectableRef::TrackOutput,
+            to_port: 0,
+        })));
+
+        let state = app.state.blocking_read();
+        assert!(state.connections.is_empty());
+        let cached = state.connectable_connections_by_track.get("Synth").unwrap();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].from, ConnectableRef::TrackInput);
+        assert_eq!(cached[0].to, ConnectableRef::TrackOutput);
+        assert_eq!(
+            state.message,
+            "Connected Synth track input:0 -> track output:0"
+        );
+    }
+
+    #[test]
+    fn track_disconnect_response_reports_internal_graph_not_hardware_route() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.plugin_graph_track = Some("Synth".to_string());
+            state.connectable_connections.push(ConnectableConnection {
+                from: ConnectableRef::TrackInput,
+                from_port: 0,
+                to: ConnectableRef::TrackOutput,
+                to_port: 0,
+                kind: Kind::Audio,
+            });
+            let connectable_connections = state.connectable_connections.clone();
+            state
+                .connectable_connections_by_track
+                .insert("Synth".to_string(), connectable_connections);
+        }
+
+        let _ = app.update(Message::Response(Ok(Action::TrackDisconnectAudio {
+            track_name: "Synth".to_string(),
+            from: ConnectableRef::TrackInput,
+            from_port: 0,
+            to: ConnectableRef::TrackOutput,
+            to_port: 0,
+        })));
+
+        let state = app.state.blocking_read();
+        assert!(state.connections.is_empty());
+        assert!(state.connectable_connections.is_empty());
+        assert_eq!(
+            state.message,
+            "Disconnected Synth track input:0 -> track output:0"
+        );
+        assert!(!state.message.contains("hw:in"));
+        assert!(!state.message.contains("hw:out"));
+    }
+
+    #[test]
+    fn plugin_connect_response_updates_active_plugin_graph_immediately() {
+        let mut app = Maolan::default();
+        app.state.blocking_write().plugin_graph_track = Some("Synth".to_string());
+
+        let _ = app.update(Message::Response(Ok(Action::TrackConnectPluginAudio {
+            track_name: "Synth".to_string(),
+            from_node: maolan_engine::message::PluginGraphNode::TrackInput,
+            from_port: 0,
+            to_node: maolan_engine::message::PluginGraphNode::TrackOutput,
+            to_port: 0,
+        })));
+
+        let state = app.state.blocking_read();
+        assert_eq!(state.plugin_graph_connections.len(), 1);
+        assert_eq!(
+            state.plugin_graph_connections[0].from_node,
+            maolan_engine::message::PluginGraphNode::TrackInput
+        );
+        assert_eq!(
+            state.plugin_graph_connections[0].to_node,
+            maolan_engine::message::PluginGraphNode::TrackOutput
+        );
+        assert_eq!(
+            state.message,
+            "Connected Synth track input:0 -> track output:0"
+        );
+    }
+
+    #[test]
+    fn plugin_disconnect_response_updates_active_plugin_graph_immediately() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.plugin_graph_track = Some("Synth".to_string());
+            state
+                .plugin_graph_connections
+                .push(maolan_engine::message::PluginGraphConnection {
+                    from_node: maolan_engine::message::PluginGraphNode::TrackInput,
+                    from_port: 0,
+                    to_node: maolan_engine::message::PluginGraphNode::TrackOutput,
+                    to_port: 0,
+                    kind: Kind::Audio,
+                });
+            let plugin_graph_connections = state.plugin_graph_connections.clone();
+            state
+                .plugin_graphs_by_track
+                .insert("Synth".to_string(), (Vec::new(), plugin_graph_connections));
+        }
+
+        let _ = app.update(Message::Response(Ok(Action::TrackDisconnectPluginAudio {
+            track_name: "Synth".to_string(),
+            from_node: maolan_engine::message::PluginGraphNode::TrackInput,
+            from_port: 0,
+            to_node: maolan_engine::message::PluginGraphNode::TrackOutput,
+            to_port: 0,
+        })));
+
+        let state = app.state.blocking_read();
+        assert!(state.plugin_graph_connections.is_empty());
+        assert_eq!(
+            state.message,
+            "Disconnected Synth track input:0 -> track output:0"
+        );
+    }
+
+    #[test]
     fn track_selection_select_track_ctrl_adds_to_existing_selection() {
         let mut app = Maolan::default();
         {

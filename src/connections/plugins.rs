@@ -8,7 +8,7 @@ use crate::{
     connections::selection::is_bezier_hit,
     consts::connections_plugins::*,
     message::Message,
-    state::{MovingPlugin, PluginConnecting, State},
+    state::{MovingPlugin, PluginConnecting, State, Track},
     ui_timing::DOUBLE_CLICK,
 };
 use iced::{
@@ -23,7 +23,10 @@ use iced::{
     },
 };
 use maolan_engine::kind::Kind;
-use maolan_engine::message::{Action as EngineAction, PluginGraphNode, PluginGraphPlugin};
+use maolan_engine::message::{
+    Action as EngineAction, ConnectableConnection, ConnectableRef, PluginGraphNode,
+    PluginGraphPlugin,
+};
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -86,6 +89,25 @@ impl Graph {
             }
             PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => None,
         }
+    }
+
+    fn connectable_passthrough_points(
+        track: &Track,
+        in_rect: Rectangle,
+        out_rect: Rectangle,
+        conn: &ConnectableConnection,
+    ) -> Option<(Point, Point)> {
+        if !matches!(conn.from, ConnectableRef::TrackInput)
+            || !matches!(conn.to, ConnectableRef::TrackOutput)
+        {
+            return None;
+        }
+        let start_y = Self::track_input_port_y(track, in_rect, conn.kind, conn.from_port)?;
+        let end_y = Self::track_output_port_y(track, out_rect, conn.kind, conn.to_port)?;
+        Some((
+            Point::new(in_rect.x + in_rect.width, start_y),
+            Point::new(out_rect.x, end_y),
+        ))
     }
 
     fn plugin_pos(
@@ -518,6 +540,27 @@ impl canvas::Program<Message> for Graph {
                             break;
                         }
                     }
+                    let mut clicked_connectable_connection = None;
+                    if clicked_connection.is_none() {
+                        let Some(track) = data
+                            .tracks
+                            .iter()
+                            .find(|t| Some(&t.name) == data.plugin_graph_track.as_ref())
+                        else {
+                            return Some(Action::request_redraw());
+                        };
+                        for (idx, conn) in data.connectable_connections.iter().enumerate() {
+                            let Some((start, end)) = Self::connectable_passthrough_points(
+                                track, in_rect, out_rect, conn,
+                            ) else {
+                                continue;
+                            };
+                            if is_bezier_hit(start, end, cursor_position, 100, 12.0) {
+                                clicked_connectable_connection = Some(idx);
+                                break;
+                            }
+                        }
+                    }
                     if let Some(idx) = clicked_connection {
                         let ctrl = data.ctrl;
                         crate::connections::selection::select_connection_indices(
@@ -527,6 +570,17 @@ impl canvas::Program<Message> for Graph {
                         );
                         data.plugin_graph_selected_plugins.clear();
                         data.plugin_graph_selected_connectable_connections.clear();
+                        return Some(Action::request_redraw());
+                    }
+                    if let Some(idx) = clicked_connectable_connection {
+                        let ctrl = data.ctrl;
+                        crate::connections::selection::select_connection_indices(
+                            &mut data.plugin_graph_selected_connectable_connections,
+                            idx,
+                            ctrl,
+                        );
+                        data.plugin_graph_selected_connections.clear();
+                        data.plugin_graph_selected_plugins.clear();
                         return Some(Action::request_redraw());
                     }
 
@@ -1321,6 +1375,45 @@ impl canvas::Program<Message> for Graph {
                 );
             }
 
+            for (conn_idx, conn) in data.connectable_connections.iter().enumerate() {
+                let Some((start, end)) =
+                    Self::connectable_passthrough_points(track, in_rect, out_rect, conn)
+                else {
+                    continue;
+                };
+                let dist = (end.x - start.x).abs() / 2.0;
+                let is_hovered = cursor_position
+                    .is_some_and(|cursor| is_bezier_hit(start, end, cursor, 100, 12.0));
+                let is_selected = data
+                    .plugin_graph_selected_connectable_connections
+                    .contains(&conn_idx);
+                frame.stroke(
+                    &Path::new(|p| {
+                        p.move_to(start);
+                        p.bezier_curve_to(
+                            Point::new(start.x + dist, start.y),
+                            Point::new(end.x - dist, end.y),
+                            end,
+                        );
+                    }),
+                    canvas::Stroke::default()
+                        .with_color(if is_selected {
+                            conn_selected
+                        } else if conn.kind == Kind::MIDI {
+                            conn_midi
+                        } else {
+                            conn_audio
+                        })
+                        .with_width(if is_selected {
+                            4.0
+                        } else if is_hovered {
+                            3.0
+                        } else {
+                            2.0
+                        }),
+                );
+            }
+
             if let Some(connecting) = &data.plugin_graph_connecting {
                 let preview_count = if data.shift {
                     let source_count = match &connecting.from_node {
@@ -1518,6 +1611,114 @@ mod tests {
                 .map(|moving| moving.instance_id),
             Some(7)
         );
+    }
+
+    #[test]
+    fn releasing_track_input_on_track_output_creates_plugin_passthrough() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(700.0, 400.0));
+        let cursor_pos = {
+            let mut data = state.blocking_write();
+            data.tracks.push(crate::state::Track::new(
+                "Synth".to_string(),
+                0.0,
+                2,
+                2,
+                0,
+                0,
+            ));
+            data.plugin_graph_track = Some("Synth".to_string());
+            data.plugin_graph_connecting = Some(PluginConnecting {
+                from_node: PluginGraphNode::TrackInput,
+                from_port: 0,
+                kind: Kind::Audio,
+                point: Point::new(100.0, 100.0),
+                is_input: false,
+            });
+            let track = &data.tracks[0];
+            let out_rect = Graph::track_output_rect(bounds);
+            Point::new(
+                out_rect.x,
+                Graph::track_output_port_y(track, out_rect, Kind::Audio, 0).unwrap(),
+            )
+        };
+        let graph = Graph::new(state.clone());
+
+        let action = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(cursor_pos),
+            )
+            .expect("action");
+
+        let (message, _status) = action_message(action);
+        assert!(matches!(
+            message,
+            Some(Message::Request(EngineAction::TrackConnectPluginAudio {
+                track_name,
+                from_node: PluginGraphNode::TrackInput,
+                from_port: 0,
+                to_node: PluginGraphNode::TrackOutput,
+                to_port: 0,
+            })) if track_name == "Synth"
+        ));
+    }
+
+    #[test]
+    fn clicking_connectable_passthrough_selects_it() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(700.0, 400.0));
+        let cursor_pos = {
+            let mut data = state.blocking_write();
+            data.tracks.push(crate::state::Track::new(
+                "Synth".to_string(),
+                0.0,
+                2,
+                2,
+                0,
+                0,
+            ));
+            data.plugin_graph_track = Some("Synth".to_string());
+            data.connectable_connections
+                .push(maolan_engine::message::ConnectableConnection {
+                    from: ConnectableRef::TrackInput,
+                    from_port: 0,
+                    to: ConnectableRef::TrackOutput,
+                    to_port: 0,
+                    kind: Kind::Audio,
+                });
+            let track = &data.tracks[0];
+            let in_rect = Graph::track_input_rect(bounds);
+            let out_rect = Graph::track_output_rect(bounds);
+            let (start, end) = Graph::connectable_passthrough_points(
+                track,
+                in_rect,
+                out_rect,
+                &data.connectable_connections[0],
+            )
+            .unwrap();
+            Point::new((start.x + end.x) * 0.5, (start.y + end.y) * 0.5)
+        };
+        let graph = Graph::new(state.clone());
+
+        let action = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(cursor_pos),
+            )
+            .expect("action");
+
+        let (_message, _status) = action_message(action);
+        let data = state.blocking_read();
+        assert!(
+            data.plugin_graph_selected_connectable_connections
+                .contains(&0)
+        );
+        assert!(data.plugin_graph_selected_connections.is_empty());
     }
 
     #[test]

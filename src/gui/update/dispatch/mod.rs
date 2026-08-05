@@ -3012,6 +3012,25 @@ impl Maolan {
                 let handled_response_state = self.handle_response_engine_state_action(a);
                 let handled_response_track = self.handle_response_track_action(a);
                 let handled_response_timing = self.handle_response_timing_state_action(a);
+                if handled_response_state {
+                    match a {
+                        Action::TrackConnectPluginAudio { track_name, .. }
+                        | Action::TrackDisconnectPluginAudio { track_name, .. }
+                        | Action::TrackConnectPluginMidi { track_name, .. }
+                        | Action::TrackDisconnectPluginMidi { track_name, .. }
+                        | Action::TrackConnectAudio { track_name, .. }
+                        | Action::TrackDisconnectAudio { track_name, .. }
+                        | Action::TrackConnectMidi { track_name, .. }
+                        | Action::TrackDisconnectMidi { track_name, .. } => {
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
+                                return task;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if matches!(a, Action::EndSessionRestore) {
                     let sync_actions = self.cleanup_session_slot_references();
                     for action in sync_actions {
@@ -5939,12 +5958,34 @@ impl Maolan {
                 return self.send_track_automation_lanes(track_name);
             }
             Message::RemoveSelectedTracks => {
+                let (selected, viewed) = {
+                    let state = self.state.blocking_read();
+                    let viewed = state
+                        .plugin_graph_clip
+                        .is_none()
+                        .then(|| state.plugin_graph_track.clone())
+                        .flatten();
+                    (state.selected.clone(), viewed)
+                };
+                let mut removed_viewed = false;
                 let mut actions = vec![Action::BeginHistoryGroup];
-                for name in &self.state.blocking_read().selected {
+                for name in &selected {
+                    if viewed.as_deref() == Some(name.as_str()) {
+                        removed_viewed = true;
+                        continue;
+                    }
                     actions.push(Action::RemoveTrack(name.clone()));
                 }
-                actions.push(Action::EndHistoryGroup);
-                return Self::restore_actions_task(actions);
+                if removed_viewed && let Some(viewed) = viewed {
+                    self.state.blocking_write().message = format!(
+                        "Cannot delete '{}' while its connections are being viewed",
+                        viewed
+                    );
+                }
+                if actions.len() > 1 {
+                    actions.push(Action::EndHistoryGroup);
+                    return Self::restore_actions_task(actions);
+                }
             }
             Message::ConnectionViewSelectTrack(ref idx) => {
                 let ctrl = self.state.blocking_read().ctrl;
@@ -6857,15 +6898,33 @@ impl Maolan {
                 let state = self.state.blocking_read();
                 match &state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) => {
+                        let viewed = state
+                            .plugin_graph_clip
+                            .is_none()
+                            .then(|| state.plugin_graph_track.clone())
+                            .flatten();
+                        let mut removed_viewed = false;
                         let mut actions = vec![Action::BeginHistoryGroup];
                         for name in set {
+                            if viewed.as_deref() == Some(name.as_str()) {
+                                removed_viewed = true;
+                                continue;
+                            }
                             actions.push(Action::RemoveTrack(name.clone()));
                         }
                         drop(state);
+                        if removed_viewed && let Some(viewed) = viewed {
+                            self.state.blocking_write().message = format!(
+                                "Cannot delete '{}' while its connections are being viewed",
+                                viewed
+                            );
+                        }
                         self.state.blocking_write().connection_view_selection =
                             ConnectionViewSelection::None;
-                        actions.push(Action::EndHistoryGroup);
-                        return Self::restore_actions_task(actions);
+                        if actions.len() > 1 {
+                            actions.push(Action::EndHistoryGroup);
+                            return Self::restore_actions_task(actions);
+                        }
                     }
                     ConnectionViewSelection::Connections(set) => {
                         let actions = connections::selection::track_disconnect_actions(&state, set);
@@ -6883,9 +6942,6 @@ impl Maolan {
             }
 
             Message::Remove => {
-                if !self.state.blocking_read().hw_loaded {
-                    return Task::none();
-                }
                 if !self.selected_tempo_points.is_empty() {
                     return self.update(Message::TempoSelectionDelete);
                 }
@@ -6958,6 +7014,16 @@ impl Maolan {
                     }
                     actions.push(Action::EndHistoryGroup);
                     return Self::restore_actions_task(actions);
+                }
+                let has_selected_track_connections = {
+                    let state = self.state.blocking_read();
+                    matches!(
+                        &state.connection_view_selection,
+                        ConnectionViewSelection::Connections(set) if !set.is_empty()
+                    )
+                };
+                if has_selected_track_connections {
+                    return self.update(Message::RemoveSelected);
                 }
                 let view = self.state.blocking_read().view.clone();
                 match view {
@@ -7049,6 +7115,10 @@ impl Maolan {
                     | crate::state::View::Session => {
                         return Task::none();
                     }
+                }
+
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
                 }
             }
             Message::TrackResizeStart(ref index) => {

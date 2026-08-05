@@ -639,17 +639,27 @@ impl Maolan {
                         }
                     };
 
-                    let mut content = column![self.menu.view(MenuViewState {
-                        has_selected_track: !self.state.blocking_read().selected.is_empty(),
-                        tracks_visible: self.tracks_visible,
-                        editor_visible: self.editor_visible,
-                        mixer_visible: self.mixer_visible,
-                        toolbar_visible: self.toolbar_visible,
-                        log_visible: self.show_log_window,
-                        shortcuts_pane_visible: self.shortcuts_pane_visible,
-                        modulators_pane_visible: self.modulators_pane_visible,
-                        clips_pane_visible: self.clips_pane_visible,
-                    }),];
+                    let menu_state = {
+                        let state = self.state.blocking_read();
+                        MenuViewState {
+                            has_selected_track: !state.selected.is_empty(),
+                            selected_tracks: state.selected.clone(),
+                            viewing_track_connections: state
+                                .plugin_graph_clip
+                                .is_none()
+                                .then(|| state.plugin_graph_track.clone())
+                                .flatten(),
+                            tracks_visible: self.tracks_visible,
+                            editor_visible: self.editor_visible,
+                            mixer_visible: self.mixer_visible,
+                            toolbar_visible: self.toolbar_visible,
+                            log_visible: self.show_log_window,
+                            shortcuts_pane_visible: self.shortcuts_pane_visible,
+                            modulators_pane_visible: self.modulators_pane_visible,
+                            clips_pane_visible: self.clips_pane_visible,
+                        }
+                    };
+                    let mut content = column![self.menu.view(menu_state),];
                     if self.toolbar_visible {
                         content = content.push(self.toolbar.view(ToolbarViewState {
                             playing: self.playing,
