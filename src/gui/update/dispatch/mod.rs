@@ -3006,6 +3006,9 @@ impl Maolan {
                     } => {
                         tracing::info!(%track_name, instance_id, "DAW received CLAP state dirty");
                         self.engine_dirty = true;
+                        if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            return task;
+                        }
                     }
                     _ => {}
                 }
