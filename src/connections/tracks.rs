@@ -642,6 +642,60 @@ impl Graph {
         }
     }
 
+    fn plugin_graph_preview_count(&self, data: &StateData, connecting: &PluginConnecting) -> usize {
+        if !data.shift {
+            return 1;
+        }
+        match &connecting.from_node {
+            PluginGraphNode::TrackInput => self
+                .folder_track(data)
+                .map(|track| {
+                    if connecting.kind == Kind::Audio {
+                        track.primary_audio_ins()
+                    } else {
+                        track.midi.ins
+                    }
+                    .saturating_sub(connecting.from_port)
+                })
+                .unwrap_or(0)
+                .max(1),
+            PluginGraphNode::TrackOutput => self
+                .folder_track(data)
+                .map(|track| {
+                    if connecting.kind == Kind::Audio {
+                        track.primary_audio_outs()
+                    } else {
+                        track.midi.outs
+                    }
+                    .saturating_sub(connecting.from_port)
+                })
+                .unwrap_or(0)
+                .max(1),
+            node => PluginGraph::plugin_node_instance_id(node)
+                .and_then(|id| {
+                    data.plugin_graph_plugins
+                        .iter()
+                        .find(|p| p.instance_id == id)
+                })
+                .map(|plugin| {
+                    if connecting.kind == Kind::Audio {
+                        if connecting.is_input {
+                            plugin.main_audio_inputs
+                        } else {
+                            plugin.main_audio_outputs
+                        }
+                    } else if connecting.is_input {
+                        plugin.midi_inputs
+                    } else {
+                        plugin.midi_outputs
+                    }
+                    .saturating_sub(connecting.from_port)
+                    .max(1)
+                })
+                .unwrap_or(1),
+        }
+    }
+
     fn connectable_ref_to_plugin_node(ref_: &ConnectableRef) -> Option<PluginGraphNode> {
         match ref_ {
             ConnectableRef::TrackInput => Some(PluginGraphNode::TrackInput),
@@ -3850,33 +3904,39 @@ impl canvas::Program<Message> for Graph {
             }
 
             if let Some(connecting) = &data.plugin_graph_connecting {
-                let start = self.plugin_graph_node_port_position(
-                    &data,
-                    &connecting.from_node,
-                    connecting.from_port,
-                    connecting.is_input,
-                    bounds,
-                    hw_width,
-                );
-                if let Some(start) = start {
-                    let end = connecting.point;
-                    let start_edge =
-                        Self::plugin_graph_node_edge(&connecting.from_node, connecting.is_input);
-                    let end_edge = if connecting.is_input {
-                        TrackPortEdge::Right
-                    } else {
-                        TrackPortEdge::Left
-                    };
-                    let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
-                    frame.stroke(
-                        &Path::new(|p| {
-                            p.move_to(start);
-                            p.bezier_curve_to(c1, c2, end);
-                        }),
-                        canvas::Stroke::default()
-                            .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
-                            .with_width(2.0),
+                let preview_count = self.plugin_graph_preview_count(&data, connecting);
+                for offset in 0..preview_count {
+                    let from_port = connecting.from_port + offset;
+                    let start = self.plugin_graph_node_port_position(
+                        &data,
+                        &connecting.from_node,
+                        from_port,
+                        connecting.is_input,
+                        bounds,
+                        hw_width,
                     );
+                    if let Some(start) = start {
+                        let end = connecting.point;
+                        let start_edge = Self::plugin_graph_node_edge(
+                            &connecting.from_node,
+                            connecting.is_input,
+                        );
+                        let end_edge = if connecting.is_input {
+                            TrackPortEdge::Right
+                        } else {
+                            TrackPortEdge::Left
+                        };
+                        let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
+                        frame.stroke(
+                            &Path::new(|p| {
+                                p.move_to(start);
+                                p.bezier_curve_to(c1, c2, end);
+                            }),
+                            canvas::Stroke::default()
+                                .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
+                                .with_width(2.0),
+                        );
+                    }
                 }
             }
 

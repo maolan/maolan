@@ -3025,8 +3025,9 @@ impl Maolan {
                         | Action::TrackDisconnectAudio { track_name, .. }
                         | Action::TrackConnectMidi { track_name, .. }
                         | Action::TrackDisconnectMidi { track_name, .. } => {
-                            if let Some(task) =
-                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            if !self.session_restore_in_progress
+                                && let Some(task) =
+                                    self.maybe_refresh_plugin_graph_for_track(track_name)
                             {
                                 return task;
                             }
