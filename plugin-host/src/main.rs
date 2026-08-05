@@ -1,5 +1,3 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
-
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
