@@ -5,6 +5,7 @@ use iced_aw::{
     menu_bar, menu_items,
 };
 use maolan_engine::message::GlobalMidiLearnTarget;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub use maolan_widgets::menu::{
@@ -17,9 +18,11 @@ pub struct Menu {
     recent_session_paths: Vec<String>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct MenuViewState {
     pub has_selected_track: bool,
+    pub selected_tracks: HashSet<String>,
+    pub viewing_track_connections: Option<String>,
     pub tracks_visible: bool,
     pub editor_visible: bool,
     pub mixer_visible: bool,
@@ -177,6 +180,11 @@ impl Menu {
                         state
                             .has_selected_track
                             .then_some(Message::RemoveSelectedTracks)
+                            .filter(|_| {
+                                state
+                                    .viewing_track_connections
+                                    .is_none_or(|viewed| !state.selected_tracks.contains(&viewed))
+                            })
                     )),
                     (menu_item("Generate audio", Message::Show(Show::GenerateAudio))),
                     (menu_item("Generate MIDI", Message::Show(Show::GenerateMidi)))

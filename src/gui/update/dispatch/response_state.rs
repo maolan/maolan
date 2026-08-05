@@ -1,5 +1,8 @@
 use super::*;
 use crate::state::SlotPlayState;
+use maolan_engine::message::{
+    ConnectableConnection, ConnectableRef, PluginGraphConnection, PluginGraphNode,
+};
 
 impl Maolan {
     pub(super) fn handle_response_engine_state_action(&mut self, action: &Action) -> bool {
@@ -12,6 +15,9 @@ impl Maolan {
                 kind,
             } => {
                 let mut state = self.state.blocking_write();
+                if from_track == to_track && from_track != "hw:in" && to_track != "hw:out" {
+                    return true;
+                }
                 state.connections.push(crate::state::Connection {
                     from_track: from_track.clone(),
                     from_port: *from_port,
@@ -30,6 +36,9 @@ impl Maolan {
             } => {
                 let mut state = self.state.blocking_write();
                 let original_len = state.connections.len();
+                if from_track == to_track && from_track != "hw:in" && to_track != "hw:out" {
+                    return true;
+                }
 
                 state.connections.retain(|conn| {
                     !(conn.from_track == from_track.as_str()
@@ -40,6 +49,215 @@ impl Maolan {
                 });
                 if state.connections.len() < original_len {
                     state.message = format!("Disconnected {} from {}", from_track, to_track);
+                }
+                true
+            }
+            Action::TrackConnectPluginAudio {
+                track_name,
+                from_node,
+                from_port,
+                to_node,
+                to_port,
+            }
+            | Action::TrackConnectPluginMidi {
+                track_name,
+                from_node,
+                from_port,
+                to_node,
+                to_port,
+            } => {
+                let mut state = self.state.blocking_write();
+                let connection = PluginGraphConnection {
+                    from_node: from_node.clone(),
+                    from_port: *from_port,
+                    to_node: to_node.clone(),
+                    to_port: *to_port,
+                    kind: action_to_kind(action),
+                };
+                let cached_plugins = state
+                    .plugin_graphs_by_track
+                    .entry(track_name.clone())
+                    .or_default();
+                if !cached_plugins
+                    .1
+                    .iter()
+                    .any(|existing| existing == &connection)
+                {
+                    cached_plugins.1.push(connection.clone());
+                }
+                if state.plugin_graph_clip.is_none()
+                    && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
+                    && !state
+                        .plugin_graph_connections
+                        .iter()
+                        .any(|existing| existing == &connection)
+                {
+                    state.plugin_graph_connections.push(connection);
+                }
+                state.message = format!(
+                    "Connected {} {}:{} -> {}:{}",
+                    track_name,
+                    plugin_node_label(from_node),
+                    from_port,
+                    plugin_node_label(to_node),
+                    to_port
+                );
+                true
+            }
+            Action::TrackDisconnectPluginAudio {
+                track_name,
+                from_node,
+                from_port,
+                to_node,
+                to_port,
+            }
+            | Action::TrackDisconnectPluginMidi {
+                track_name,
+                from_node,
+                from_port,
+                to_node,
+                to_port,
+            } => {
+                let mut state = self.state.blocking_write();
+                let kind = action_to_kind(action);
+                if let Some((_, cached_connections)) =
+                    state.plugin_graphs_by_track.get_mut(track_name)
+                {
+                    cached_connections.retain(|conn| {
+                        !(conn.from_node == *from_node
+                            && conn.from_port == *from_port
+                            && conn.to_node == *to_node
+                            && conn.to_port == *to_port
+                            && conn.kind == kind)
+                    });
+                }
+                if state.plugin_graph_clip.is_none()
+                    && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
+                {
+                    state.plugin_graph_connections.retain(|conn| {
+                        !(conn.from_node == *from_node
+                            && conn.from_port == *from_port
+                            && conn.to_node == *to_node
+                            && conn.to_port == *to_port
+                            && conn.kind == kind)
+                    });
+                }
+                state.message = format!(
+                    "Disconnected {} {}:{} -> {}:{}",
+                    track_name,
+                    plugin_node_label(from_node),
+                    from_port,
+                    plugin_node_label(to_node),
+                    to_port
+                );
+                true
+            }
+            Action::TrackConnectAudio {
+                track_name,
+                from,
+                from_port,
+                to,
+                to_port,
+            }
+            | Action::TrackConnectMidi {
+                track_name,
+                from,
+                from_port,
+                to,
+                to_port,
+            } => {
+                let mut state = self.state.blocking_write();
+                let connection = ConnectableConnection {
+                    from: from.clone(),
+                    from_port: *from_port,
+                    to: to.clone(),
+                    to_port: *to_port,
+                    kind: action_to_kind(action),
+                };
+                let track_connections = state
+                    .connectable_connections_by_track
+                    .entry(track_name.clone())
+                    .or_default();
+                if !track_connections
+                    .iter()
+                    .any(|existing| existing == &connection)
+                {
+                    track_connections.push(connection.clone());
+                }
+                if state.plugin_graph_clip.is_none()
+                    && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
+                    && !state
+                        .connectable_connections
+                        .iter()
+                        .any(|existing| existing == &connection)
+                {
+                    state.connectable_connections.push(connection);
+                }
+                state.message = format!(
+                    "Connected {} {}:{} -> {}:{}",
+                    track_name,
+                    connectable_label(from),
+                    from_port,
+                    connectable_label(to),
+                    to_port
+                );
+                true
+            }
+            Action::TrackDisconnectAudio {
+                track_name,
+                from,
+                from_port,
+                to,
+                to_port,
+            }
+            | Action::TrackDisconnectMidi {
+                track_name,
+                from,
+                from_port,
+                to,
+                to_port,
+            } => {
+                let mut state = self.state.blocking_write();
+                let kind = action_to_kind(action);
+                if let Some(cached) = state.connectable_connections_by_track.get_mut(track_name) {
+                    cached.retain(|conn| {
+                        !(conn.from == *from
+                            && conn.from_port == *from_port
+                            && conn.to == *to
+                            && conn.to_port == *to_port
+                            && conn.kind == kind)
+                    });
+                }
+                if state.plugin_graph_clip.is_none()
+                    && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
+                {
+                    let original_len = state.connectable_connections.len();
+                    state.connectable_connections.retain(|conn| {
+                        !(conn.from == *from
+                            && conn.from_port == *from_port
+                            && conn.to == *to
+                            && conn.to_port == *to_port
+                            && conn.kind == kind)
+                    });
+                    if state.connectable_connections.len() < original_len {
+                        state.message = format!(
+                            "Disconnected {} {}:{} -> {}:{}",
+                            track_name,
+                            connectable_label(from),
+                            from_port,
+                            connectable_label(to),
+                            to_port
+                        );
+                    }
+                } else {
+                    state.message = format!(
+                        "Disconnected {} {}:{} -> {}:{}",
+                        track_name,
+                        connectable_label(from),
+                        from_port,
+                        connectable_label(to),
+                        to_port
+                    );
                 }
                 true
             }
@@ -253,5 +471,46 @@ impl Maolan {
             }
             _ => false,
         }
+    }
+}
+
+fn action_to_kind(action: &maolan_engine::message::Action) -> maolan_engine::kind::Kind {
+    match action {
+        maolan_engine::message::Action::TrackConnectAudio { .. }
+        | maolan_engine::message::Action::TrackDisconnectAudio { .. }
+        | maolan_engine::message::Action::TrackConnectPluginAudio { .. }
+        | maolan_engine::message::Action::TrackDisconnectPluginAudio { .. } => {
+            maolan_engine::kind::Kind::Audio
+        }
+        maolan_engine::message::Action::TrackConnectMidi { .. }
+        | maolan_engine::message::Action::TrackDisconnectMidi { .. }
+        | maolan_engine::message::Action::TrackConnectPluginMidi { .. }
+        | maolan_engine::message::Action::TrackDisconnectPluginMidi { .. } => {
+            maolan_engine::kind::Kind::MIDI
+        }
+        _ => maolan_engine::kind::Kind::Audio,
+    }
+}
+
+fn connectable_label(connectable: &ConnectableRef) -> String {
+    match connectable {
+        ConnectableRef::TrackInput => "track input".to_string(),
+        ConnectableRef::TrackOutput => "track output".to_string(),
+        ConnectableRef::ChildTrack(name) => format!("child '{name}'"),
+        ConnectableRef::ClapPlugin(id) => format!("CLAP plugin {id}"),
+        ConnectableRef::Vst3Plugin(id) => format!("VST3 plugin {id}"),
+        #[cfg(unix)]
+        ConnectableRef::Lv2Plugin(id) => format!("LV2 plugin {id}"),
+    }
+}
+
+fn plugin_node_label(node: &PluginGraphNode) -> String {
+    match node {
+        PluginGraphNode::TrackInput => "track input".to_string(),
+        PluginGraphNode::TrackOutput => "track output".to_string(),
+        PluginGraphNode::ClapPluginInstance(id) => format!("CLAP plugin {id}"),
+        PluginGraphNode::Vst3PluginInstance(id) => format!("VST3 plugin {id}"),
+        #[cfg(unix)]
+        PluginGraphNode::Lv2PluginInstance(id) => format!("LV2 plugin {id}"),
     }
 }
