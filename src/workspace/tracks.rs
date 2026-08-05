@@ -562,14 +562,13 @@ pub(super) fn track_context_menu_overlay(
             if plugin.format.eq_ignore_ascii_case("LV2") && !cfg!(unix) {
                 continue;
             }
-            let plugin_label = format!("{} ({})", plugin.name, plugin.format);
             let plugin_submenu_key = crate::state::TrackContextSubmenu::Plugin {
                 instance_id: plugin.instance_id,
                 format: plugin.format.clone(),
             };
             let is_active = menu_state.submenu == Some(plugin_submenu_key.clone());
             automation_items.push(context_submenu_item(
-                plugin_label.clone(),
+                plugin.name.clone(),
                 plugin_submenu_key.clone(),
                 is_active,
             ));

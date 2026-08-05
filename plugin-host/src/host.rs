@@ -22,6 +22,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 static PARAMS_FLUSH_REQUESTED: AtomicBool = AtomicBool::new(false);
+const REQUEST_CLAP_AUDIO_PORTS: u32 = 12;
 
 pub fn request_params_flush() {
     PARAMS_FLUSH_REQUESTED.store(true, Ordering::Release);
@@ -188,6 +189,14 @@ impl PortBuffers {
             _input_ptrs: input_ptrs,
             _output_ptrs: output_ptrs,
         })
+    }
+
+    fn audio_input_channels(&self) -> u32 {
+        self.inputs.iter().map(|p| p.channel_count).sum()
+    }
+
+    fn audio_output_channels(&self) -> u32 {
+        self.outputs.iter().map(|p| p.channel_count).sum()
     }
 }
 
@@ -552,11 +561,11 @@ impl HostRuntime {
 
         let audio_in_channels = port_buffers
             .as_ref()
-            .map(|pb| pb.inputs.iter().map(|p| p.channel_count).sum::<u32>())
+            .map(PortBuffers::audio_input_channels)
             .unwrap_or(0);
         let audio_out_channels = port_buffers
             .as_ref()
-            .map(|pb| pb.outputs.iter().map(|p| p.channel_count).sum::<u32>())
+            .map(PortBuffers::audio_output_channels)
             .unwrap_or(0);
         let (midi_in_ports, midi_out_ports) = unsafe {
             let ext = (*plugin.plugin_ptr()).get_extension.map(|f| {
@@ -1003,6 +1012,26 @@ impl HostRuntime {
                             Err(e) => Err(e),
                         }
                     }
+                    REQUEST_CLAP_AUDIO_PORTS => {
+                        let num_in = header.num_input_channels.load(Ordering::Acquire) as usize;
+                        let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
+                        port_buffers =
+                            PortBuffers::from_plugin(plugin.plugin_ptr(), ptr, num_in, num_out);
+                        if let Some(pb) = port_buffers.as_ref() {
+                            unsafe {
+                                maolan_plugin_protocol::protocol::write_port_counts_to_scratch(
+                                    ptr,
+                                    pb.audio_input_channels(),
+                                    pb.audio_output_channels(),
+                                    header.midi_in_port_count.load(Ordering::Acquire),
+                                    header.midi_out_port_count.load(Ordering::Acquire),
+                                );
+                            }
+                            Ok(())
+                        } else {
+                            Err("CLAP audio port enumeration failed".to_string())
+                        }
+                    }
                     _ => Err(format!("Unknown request type: {req}")),
                 };
                 header
@@ -1016,6 +1045,7 @@ impl HostRuntime {
                         | 7
                         | maolan_plugin_protocol::protocol::REQUEST_CLAP_PARAMETERS
                         | maolan_plugin_protocol::protocol::REQUEST_CLAP_NOTE_NAMES
+                        | REQUEST_CLAP_AUDIO_PORTS
                 ) {
                     let _ = self.events.signal_daw();
                 }
@@ -1076,6 +1106,17 @@ impl HostRuntime {
 
             if AUDIO_PORTS_RESCAN_REQUESTED.swap(false, Ordering::Acquire) {
                 port_buffers = PortBuffers::from_plugin(plugin.plugin_ptr(), ptr, num_in, num_out);
+                if let Some(pb) = port_buffers.as_ref() {
+                    unsafe {
+                        maolan_plugin_protocol::protocol::write_port_counts_to_scratch(
+                            ptr,
+                            pb.audio_input_channels(),
+                            pb.audio_output_channels(),
+                            header.midi_in_port_count.load(Ordering::Acquire),
+                            header.midi_out_port_count.load(Ordering::Acquire),
+                        );
+                    }
+                }
             }
 
             if let Some(ref mut pb) = port_buffers {

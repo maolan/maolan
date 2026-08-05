@@ -4338,10 +4338,7 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     frame.fill_text(Text {
-                        content: Self::trim_label_to_width(
-                            &format!("{} ({})", plugin.name, plugin.format),
-                            size.width,
-                        ),
+                        content: Self::trim_label_to_width(&plugin.name, size.width),
                         position: Point::new(
                             pos.x + size.width / 2.0,
                             pos.y + size.height / 2.0 - 8.0,
