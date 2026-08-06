@@ -44,8 +44,10 @@ impl Default for TestOptions {
     }
 }
 
-fn print_verbose(verbose: bool, _msg: &str) {
-    if verbose {}
+fn print_verbose(verbose: bool, msg: &str) {
+    if verbose {
+        eprintln!("[maolan-test] {msg}");
+    }
 }
 
 fn parse_options(args: impl IntoIterator<Item = String>) -> Result<TestOptions, String> {
@@ -234,7 +236,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(message) if message.starts_with("Usage: ") => {
             return Ok(());
         }
-        Err(_message) => {
+        Err(message) => {
+            eprintln!("[maolan-test] option error: {message}");
             std::process::exit(1);
         }
     };
@@ -273,6 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     if !hw_ok {
+        eprintln!("[maolan-test] audio device did not become ready");
         let _ = client.send(EngineMessage::Request(Action::Quit)).await;
         std::process::exit(1);
     }
@@ -324,7 +328,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     if !plugin_loaded {
-        if let Some(_err) = state.plugin_load_error {}
+        if let Some(err) = state.plugin_load_error {
+            eprintln!("[maolan-test] plugin load error: {err}");
+        } else {
+            eprintln!("[maolan-test] plugin did not load in time");
+        }
         let _ = client.send(EngineMessage::Request(Action::Quit)).await;
         std::process::exit(1);
     }
