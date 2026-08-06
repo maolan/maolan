@@ -291,10 +291,15 @@ impl Graph {
     }
 
     fn plugin_port_color(plugin: &PluginGraphPlugin, port_idx: usize, is_input: bool) -> Color {
-        if is_input {
-            PluginGraph::plugin_input_port_color(plugin, port_idx)
-        } else {
-            PluginGraph::plugin_output_port_color(plugin, port_idx)
+        match Self::plugin_port_kind(plugin, port_idx, is_input) {
+            Kind::MIDI => midi_port_color(),
+            Kind::Audio => {
+                if is_input {
+                    PluginGraph::plugin_input_port_color(plugin, port_idx)
+                } else {
+                    PluginGraph::plugin_output_port_color(plugin, port_idx)
+                }
+            }
         }
     }
 
