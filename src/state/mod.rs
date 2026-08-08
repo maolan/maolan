@@ -1570,7 +1570,8 @@ pub struct StateData {
     pub piano_dragging_notes: Option<DraggingNotes>,
     pub piano_resizing_note: Option<ResizingNote>,
     pub piano_selecting_rect: Option<(Point, Point)>,
-    pub piano_creating_note: Option<(Point, Point)>,
+    pub piano_creating_note: Option<CreatingPianoNote>,
+    pub piano_painted_notes: HashSet<PaintedMidiNoteKey>,
     pub piano_controller_lane: PianoControllerLane,
     pub piano_controller_kind: u8,
     pub piano_velocity_kind: PianoVelocityKind,
@@ -1627,6 +1628,19 @@ pub struct ResizingNote {
     pub start_point: Point,
     pub current_point: Point,
     pub original_note: PianoNote,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PaintedMidiNoteKey {
+    pub start_sample: usize,
+    pub pitch: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CreatingPianoNote {
+    pub start_point: Point,
+    pub current_point: Point,
+    pub repeat: bool,
 }
 
 impl Default for StateData {
@@ -1796,6 +1810,7 @@ impl Default for StateData {
             piano_resizing_note: None,
             piano_selecting_rect: None,
             piano_creating_note: None,
+            piano_painted_notes: HashSet::new(),
             piano_controller_lane: PianoControllerLane::Controller,
             piano_controller_kind: 1,
             piano_velocity_kind: PianoVelocityKind::NoteVelocity,

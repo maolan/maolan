@@ -1434,7 +1434,6 @@ unsafe extern "C" fn host_gui_closed(_host: *const ClapHost, was_destroyed: bool
 }
 
 unsafe extern "C" fn host_state_mark_dirty(host: *const ClapHost) {
-    tracing::info!("Plugin called clap_host_state.mark_dirty()");
     if host.is_null() {
         tracing::warn!("host_state_mark_dirty: host is null");
         return;
@@ -1454,7 +1453,6 @@ unsafe extern "C" fn host_state_mark_dirty(host: *const ClapHost) {
             .state_dirty
             .store(1, std::sync::atomic::Ordering::Release);
     }
-    tracing::info!("host_state_mark_dirty: set state_dirty=1");
 }
 
 unsafe extern "C" fn host_file_reference_changed(_host: *const ClapHost) {

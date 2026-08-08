@@ -47,6 +47,10 @@ impl PianoRollInteraction {
         None
     }
 
+    fn local_position(bounds: Rectangle, position: Point) -> Point {
+        Point::new(position.x - bounds.x, position.y - bounds.y)
+    }
+
     pub fn velocity_delta_from_scroll(delta: &mouse::ScrollDelta) -> i8 {
         let raw = match delta {
             mouse::ScrollDelta::Lines { y, .. } => *y,
@@ -64,6 +68,7 @@ impl PianoRollInteraction {
 pub struct PianoRollInteractionState {
     pub dragging_mode: DraggingMode,
     pub drag_start: Option<Point>,
+    pub drag_current: Option<Point>,
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
@@ -107,6 +112,7 @@ impl Program<Message> for PianoRollInteraction {
                         let resize_handle_w = 6.0;
                         if position.x <= note_x + resize_handle_w {
                             state.drag_start = Some(position);
+                            state.drag_current = Some(position);
                             state.dragging_mode = DraggingMode::ResizingNote;
                             return Some(
                                 CanvasAction::publish(Message::PianoNoteResizeStart {
@@ -119,6 +125,7 @@ impl Program<Message> for PianoRollInteraction {
                         }
                         if position.x >= note_x + note_w - resize_handle_w {
                             state.drag_start = Some(position);
+                            state.drag_current = Some(position);
                             state.dragging_mode = DraggingMode::ResizingNote;
                             return Some(
                                 CanvasAction::publish(Message::PianoNoteResizeStart {
@@ -130,6 +137,7 @@ impl Program<Message> for PianoRollInteraction {
                             );
                         }
                         state.drag_start = Some(position);
+                        state.drag_current = Some(position);
                         state.dragging_mode = DraggingMode::DraggingNotes;
                         return Some(
                             CanvasAction::publish(Message::PianoNoteClick {
@@ -140,6 +148,7 @@ impl Program<Message> for PianoRollInteraction {
                         );
                     } else {
                         state.drag_start = Some(position);
+                        state.drag_current = Some(position);
                         state.dragging_mode = DraggingMode::SelectingRect;
                         return Some(
                             CanvasAction::publish(Message::PianoSelectRectStart { position })
@@ -151,10 +160,14 @@ impl Program<Message> for PianoRollInteraction {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if let Some(position) = cursor.position_in(bounds) {
                     state.drag_start = Some(position);
+                    state.drag_current = Some(position);
                     state.dragging_mode = DraggingMode::CreatingNote;
                     return Some(
-                        CanvasAction::publish(Message::PianoCreateNoteStart { position })
-                            .and_capture(),
+                        CanvasAction::publish(Message::PianoCreateNoteStart {
+                            position,
+                            repeat: app_state.shift,
+                        })
+                        .and_capture(),
                     );
                 }
             }
@@ -170,10 +183,10 @@ impl Program<Message> for PianoRollInteraction {
                     );
                 }
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let Some(position) = cursor.position_in(bounds)
-                    && state.drag_start.is_some()
-                {
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                if state.drag_start.is_some() {
+                    let position = Self::local_position(bounds, *position);
+                    state.drag_current = Some(position);
                     match state.dragging_mode {
                         DraggingMode::SelectingRect => {
                             return Some(CanvasAction::publish(Message::PianoSelectRectDrag {
@@ -233,7 +246,16 @@ impl Program<Message> for PianoRollInteraction {
                         return Some(CanvasAction::publish(Message::PianoNoteResizeEnd));
                     }
                     DraggingMode::CreatingNote => {
-                        return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
+                        let position = cursor.position_in(bounds).unwrap_or_else(|| {
+                            state
+                                .drag_current
+                                .or(state.drag_start)
+                                .unwrap_or_else(|| Point::new(0.0, 0.0))
+                        });
+                        state.drag_current = None;
+                        return Some(CanvasAction::publish(Message::PianoCreateNoteEnd {
+                            position,
+                        }));
                     }
                     DraggingMode::None => {}
                 }
@@ -242,12 +264,21 @@ impl Program<Message> for PianoRollInteraction {
                 if state.drag_start.is_some() =>
             {
                 let mode = state.dragging_mode;
+                let release_position = cursor.position_in(bounds).unwrap_or_else(|| {
+                    state
+                        .drag_current
+                        .or(state.drag_start)
+                        .unwrap_or_else(|| Point::new(0.0, 0.0))
+                });
                 state.drag_start = None;
+                state.drag_current = None;
                 state.dragging_mode = DraggingMode::None;
 
                 match mode {
                     DraggingMode::CreatingNote => {
-                        return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
+                        return Some(CanvasAction::publish(Message::PianoCreateNoteEnd {
+                            position: release_position,
+                        }));
                     }
                     DraggingMode::None => {}
                     DraggingMode::SelectingRect
@@ -437,7 +468,9 @@ impl Program<Message> for PianoRollInteraction {
             }
         }
 
-        if let Some((start, end)) = creating_note {
+        if let Some(creating) = creating_note {
+            let start = creating.start_point;
+            let end = creating.current_point;
             let start_x = start.x.min(end.x).max(0.0);
             let end_x = start.x.max(end.x).max(0.0);
             let y_row = (start.y / row_h).floor().max(0.0);
@@ -493,6 +526,26 @@ mod tests {
                 clip_start_samples: 0,
                 clip_length_samples: 256,
                 notes: vec![note],
+                controllers: Vec::new(),
+                sysexes: Vec::new(),
+                midnam_note_names: HashMap::new(),
+            });
+        }
+        state
+    }
+
+    fn piano_state_without_notes() -> State {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        {
+            let mut data = state.blocking_write();
+            data.piano_zoom_x = 1.0;
+            data.piano_zoom_y = 1.0;
+            data.piano = Some(crate::state::PianoData {
+                track_idx: "Track".to_string(),
+                clip_index: 0,
+                clip_start_samples: 0,
+                clip_length_samples: 256,
+                notes: Vec::new(),
                 controllers: Vec::new(),
                 sysexes: Vec::new(),
                 midnam_note_names: HashMap::new(),
@@ -586,5 +639,52 @@ mod tests {
             other => panic!("unexpected message: {other:?}"),
         }
         assert_eq!(status, event::Status::Captured);
+    }
+
+    #[test]
+    fn piano_roll_right_drag_publishes_create_drag_when_cursor_unavailable() {
+        let state = piano_state_without_notes();
+        let interaction = PianoRollInteraction::new(state, 1.0);
+        let mut interaction_state = PianoRollInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 600.0));
+        let press_cursor = mouse::Cursor::Available(Point::new(10.0, 20.0));
+
+        let press = interaction
+            .update(
+                &mut interaction_state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+                bounds,
+                press_cursor,
+            )
+            .expect("press action");
+
+        let (message, status) = action_message(press);
+        match message {
+            Some(Message::PianoCreateNoteStart { position, repeat }) => {
+                assert_eq!(position, Point::new(10.0, 20.0));
+                assert!(!repeat);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+
+        let drag = interaction
+            .update(
+                &mut interaction_state,
+                &Event::Mouse(mouse::Event::CursorMoved {
+                    position: Point::new(40.0, 20.0),
+                }),
+                bounds,
+                mouse::Cursor::Unavailable,
+            )
+            .expect("drag action");
+
+        let (message, _status) = action_message(drag);
+        match message {
+            Some(Message::PianoCreateNoteDrag { position }) => {
+                assert_eq!(position, Point::new(40.0, 20.0));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
     }
 }

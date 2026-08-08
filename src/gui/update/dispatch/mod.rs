@@ -33,6 +33,216 @@ struct MoveClipSnapArgs<'a> {
 }
 
 impl Maolan {
+    fn midi_paint_interval_samples(
+        snap_mode: SnapMode,
+        samples_per_beat: f64,
+        samples_per_bar: f64,
+    ) -> f64 {
+        match snap_mode {
+            SnapMode::NoSnap | SnapMode::Clips => (samples_per_beat / 4.0).max(1.0),
+            _ => snap_mode.interval_samples(samples_per_beat, samples_per_bar),
+        }
+    }
+
+    fn insert_painted_midi_notes_between(
+        &mut self,
+        raw_start_sample: f64,
+        raw_end_sample: f64,
+        pitch: u8,
+    ) -> Task<Message> {
+        let mut state = self.state.blocking_write();
+        let Some(piano) = state.piano.as_ref() else {
+            return Task::none();
+        };
+
+        let tempo = state.tempo.max(1.0) as f64;
+        let tsig_num = state.time_signature_num.max(1) as f64;
+        let tsig_denom = state.time_signature_denom.max(1) as f64;
+        let samples_per_beat = (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+        let samples_per_bar = samples_per_beat * tsig_num;
+        let length_samples = Self::midi_paint_interval_samples(
+            self.midi_snap_mode,
+            samples_per_beat,
+            samples_per_bar,
+        ) as usize;
+        let interval = length_samples.max(1);
+        let min_raw = raw_start_sample.min(raw_end_sample).max(0.0);
+        let max_raw = raw_start_sample.max(raw_end_sample).max(0.0);
+        let first = if matches!(self.midi_snap_mode, SnapMode::NoSnap | SnapMode::Clips) {
+            ((min_raw / interval as f64).floor() as usize).saturating_mul(interval)
+        } else {
+            self.midi_snap_mode
+                .snap_sample(min_raw, samples_per_beat, samples_per_bar)
+                .max(0.0) as usize
+        };
+        let last = if matches!(self.midi_snap_mode, SnapMode::NoSnap | SnapMode::Clips) {
+            ((max_raw / interval as f64).floor() as usize).saturating_mul(interval)
+        } else {
+            self.midi_snap_mode
+                .snap_sample(max_raw, samples_per_beat, samples_per_bar)
+                .max(0.0) as usize
+        };
+
+        let track_name = piano.track_idx.clone();
+        let clip_idx = piano.clip_index;
+        let insert_base = piano
+            .notes
+            .len()
+            .saturating_add(state.piano_painted_notes.len());
+        let existing_notes: std::collections::HashSet<(usize, u8)> = piano
+            .notes
+            .iter()
+            .map(|note| (note.start_sample, note.pitch))
+            .collect();
+        let mut notes = Vec::new();
+        let mut sample = first;
+        while sample <= last {
+            let key = crate::state::PaintedMidiNoteKey {
+                start_sample: sample,
+                pitch,
+            };
+            if !state.piano_painted_notes.contains(&key)
+                && !existing_notes.contains(&(sample, pitch))
+            {
+                let insert_idx = insert_base.saturating_add(notes.len());
+                state.piano_painted_notes.insert(key);
+                notes.push((
+                    insert_idx,
+                    maolan_engine::message::MidiNoteData {
+                        start_sample: sample,
+                        length_samples: interval,
+                        pitch,
+                        velocity: 100,
+                        channel: 0,
+                        mpe: Default::default(),
+                    },
+                ));
+            }
+            let Some(next) = sample.checked_add(interval) else {
+                break;
+            };
+            if next == sample {
+                break;
+            }
+            sample = next;
+        }
+
+        if notes.is_empty() {
+            return Task::none();
+        }
+        drop(state);
+
+        self.send(Action::InsertMidiNotes {
+            track_name,
+            clip_index: clip_idx,
+            notes,
+        })
+    }
+
+    fn insert_stretched_midi_note_between(
+        &mut self,
+        raw_start_sample: f64,
+        raw_end_sample: f64,
+        pitch: u8,
+    ) -> Task<Message> {
+        let state = self.state.blocking_read();
+        let Some(piano) = state.piano.as_ref() else {
+            return Task::none();
+        };
+
+        let tempo = state.tempo.max(1.0) as f64;
+        let tsig_num = state.time_signature_num.max(1) as f64;
+        let tsig_denom = state.time_signature_denom.max(1) as f64;
+        let samples_per_beat = (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+        let samples_per_bar = samples_per_beat * tsig_num;
+        let snap_interval = self
+            .midi_snap_mode
+            .interval_samples(samples_per_beat, samples_per_bar)
+            .max(1.0);
+
+        let start_raw = raw_start_sample.min(raw_end_sample).max(0.0);
+        let end_raw = raw_start_sample.max(raw_end_sample).max(0.0);
+        let start_sample = self
+            .midi_snap_mode
+            .snap_sample(start_raw, samples_per_beat, samples_per_bar)
+            .max(0.0) as usize;
+        let mut end_sample = self
+            .midi_snap_mode
+            .snap_sample(end_raw, samples_per_beat, samples_per_bar)
+            .max(0.0) as usize;
+        let min_len = snap_interval as usize;
+        if end_sample <= start_sample {
+            end_sample = start_sample.saturating_add(min_len);
+        }
+        let length_samples = end_sample.saturating_sub(start_sample).max(min_len);
+
+        let track_name = piano.track_idx.clone();
+        let clip_idx = piano.clip_index;
+        let insert_idx = piano.notes.len();
+        drop(state);
+
+        self.send(Action::InsertMidiNotes {
+            track_name,
+            clip_index: clip_idx,
+            notes: vec![(
+                insert_idx,
+                maolan_engine::message::MidiNoteData {
+                    start_sample,
+                    length_samples,
+                    pitch,
+                    velocity: 100,
+                    channel: 0,
+                    mpe: Default::default(),
+                },
+            )],
+        })
+    }
+
+    fn piano_position_to_raw_sample_and_pitch(
+        &self,
+        state: &crate::state::StateData,
+        position: Point,
+    ) -> (f64, u8) {
+        let zoom_x = state.piano_zoom_x;
+        let zoom_y = state.piano_zoom_y;
+        let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
+        let tracks_width = match state.tracks_width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
+        };
+        let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
+        let tempo = state.tempo.max(1.0) as f64;
+        let tsig_num = state.time_signature_num.max(1) as f64;
+        let tsig_denom = state.time_signature_denom.max(1) as f64;
+        let samples_per_beat = (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+        let samples_per_bar = samples_per_beat * tsig_num;
+        let total_samples = (samples_per_bar * self.zoom_visible_bars as f64).max(1.0);
+        let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+
+        let raw_start_sample = (position.x.max(0.0) / pps).floor().max(0.0) as f64;
+        let pitch_row = (position.y / row_h).floor();
+        let pitch_row = pitch_row.clamp(0.0, f32::from(PITCH_MAX)) as usize;
+        let pitch = PITCH_MAX.saturating_sub(pitch_row as u8);
+
+        (raw_start_sample, pitch)
+    }
+
+    fn insert_painted_piano_notes_between(&mut self, start: Point, end: Point) -> Task<Message> {
+        let state = self.state.blocking_read();
+        let (raw_start_sample, pitch) = self.piano_position_to_raw_sample_and_pitch(&state, start);
+        let (raw_end_sample, _) = self.piano_position_to_raw_sample_and_pitch(&state, end);
+        drop(state);
+        self.insert_painted_midi_notes_between(raw_start_sample, raw_end_sample, pitch)
+    }
+
+    fn insert_stretched_piano_note_between(&mut self, start: Point, end: Point) -> Task<Message> {
+        let state = self.state.blocking_read();
+        let (raw_start_sample, pitch) = self.piano_position_to_raw_sample_and_pitch(&state, start);
+        let (raw_end_sample, _) = self.piano_position_to_raw_sample_and_pitch(&state, end);
+        drop(state);
+        self.insert_stretched_midi_note_between(raw_start_sample, raw_end_sample, pitch)
+    }
+
     fn active_workspace_cursor(&self) -> Point {
         let state = self.state.blocking_read();
         state.editor_cursor.unwrap_or(state.cursor)
@@ -2051,94 +2261,37 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.piano_selecting_rect = None;
             }
-            Message::PianoCreateNoteStart { position } => {
+            Message::PianoCreateNoteStart { position, repeat } => {
                 let mut state = self.state.blocking_write();
                 state.piano_selected_notes.clear();
-                state.piano_creating_note = Some((position, position));
+                state.piano_creating_note = Some(crate::state::CreatingPianoNote {
+                    start_point: position,
+                    current_point: position,
+                    repeat,
+                });
+                state.piano_painted_notes.clear();
             }
             Message::PianoCreateNoteDrag { position } => {
                 let mut state = self.state.blocking_write();
-                if let Some((start, _)) = state.piano_creating_note {
-                    state.piano_creating_note = Some((start, position));
-                }
-            }
-            Message::PianoCreateNoteEnd => {
-                let mut state = self.state.blocking_write();
-                let Some((start, end)) = state.piano_creating_note.take() else {
+                let Some(mut creating) = state.piano_creating_note else {
                     return Task::none();
                 };
-
-                let zoom_x = state.piano_zoom_x;
-                let zoom_y = state.piano_zoom_y;
-                let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
-                let tracks_width = match state.tracks_width {
-                    Length::Fixed(v) => v,
-                    _ => 200.0,
+                creating.current_point = position;
+                state.piano_creating_note = Some(creating);
+            }
+            Message::PianoCreateNoteEnd { position } => {
+                let mut state = self.state.blocking_write();
+                let creating = state.piano_creating_note.take();
+                state.piano_creating_note = None;
+                state.piano_painted_notes.clear();
+                drop(state);
+                let Some(creating) = creating else {
+                    return Task::none();
                 };
-                let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                let tempo = state.tempo.max(1.0) as f64;
-                let tsig_num = state.time_signature_num.max(1) as f64;
-                let tsig_denom = state.time_signature_denom.max(1) as f64;
-                let samples_per_beat = (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
-                let samples_per_bar = samples_per_beat * tsig_num;
-                let total_samples = (samples_per_bar * self.zoom_visible_bars as f64).max(1.0);
-                let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
-
-                let x0 = start.x.min(end.x).max(0.0);
-                let x1 = start.x.max(end.x).max(0.0);
-                let raw_start = (x0 / pps).floor().max(0.0) as usize;
-                let raw_end = (x1 / pps).ceil().max(raw_start as f32 + 1.0) as usize;
-                let snap_interval = match self.midi_snap_mode {
-                    crate::message::SnapMode::NoSnap => 1.0,
-                    crate::message::SnapMode::Clips => 1.0,
-                    crate::message::SnapMode::Bar => samples_per_bar.max(1.0),
-                    crate::message::SnapMode::Beat => samples_per_beat.max(1.0),
-                    crate::message::SnapMode::Eighth => (samples_per_beat / 2.0).max(1.0),
-                    crate::message::SnapMode::Sixteenth => (samples_per_beat / 4.0).max(1.0),
-                    crate::message::SnapMode::ThirtySecond => (samples_per_beat / 8.0).max(1.0),
-                    crate::message::SnapMode::SixtyFourth => (samples_per_beat / 16.0).max(1.0),
-                };
-                let snap_sample = |sample: f32| -> usize {
-                    if matches!(
-                        self.midi_snap_mode,
-                        crate::message::SnapMode::NoSnap | crate::message::SnapMode::Clips
-                    ) {
-                        return sample.max(0.0) as usize;
-                    }
-                    ((sample.max(0.0) as f64 / snap_interval).round() * snap_interval) as usize
-                };
-                let start_sample = snap_sample(raw_start as f32);
-                let mut end_sample = snap_sample(raw_end as f32);
-                let min_len = snap_interval.max(1.0) as usize;
-                if end_sample <= start_sample {
-                    end_sample = start_sample.saturating_add(min_len);
+                if creating.repeat {
+                    return self.insert_painted_piano_notes_between(creating.start_point, position);
                 }
-                let length_samples = end_sample.saturating_sub(start_sample).max(min_len);
-
-                let pitch_row = (start.y / row_h).floor();
-                let pitch_row = pitch_row.clamp(0.0, f32::from(PITCH_MAX)) as usize;
-                let pitch = PITCH_MAX.saturating_sub(pitch_row as u8);
-
-                if let Some(piano) = state.piano.as_ref() {
-                    let track_name = piano.track_idx.clone();
-                    let clip_idx = piano.clip_index;
-                    let insert_idx = piano.notes.len();
-                    let note = maolan_engine::message::MidiNoteData {
-                        start_sample,
-                        length_samples,
-                        pitch,
-                        velocity: 100,
-                        channel: 0,
-                        mpe: Default::default(),
-                    };
-                    state.piano_selected_notes.clear();
-                    drop(state);
-                    return self.send(Action::InsertMidiNotes {
-                        track_name,
-                        clip_index: clip_idx,
-                        notes: vec![(insert_idx, note)],
-                    });
-                }
+                return self.insert_stretched_piano_note_between(creating.start_point, position);
             }
             Message::PianoDeleteSelectedNotes => {
                 let mut state = self.state.blocking_write();
@@ -2224,41 +2377,23 @@ impl Maolan {
             }
             Message::DrumNoteCreate {
                 start_sample,
+                end_sample,
                 pitch,
+                repeat,
             } => {
-                let state = self.state.blocking_read();
-                if let Some(piano) = state.piano.as_ref() {
-                    let track_name = piano.track_idx.clone();
-                    let clip_idx = piano.clip_index;
-                    let tempo = state.tempo.max(1.0) as f64;
-                    let tsig_num = state.time_signature_num.max(1) as f64;
-                    let tsig_denom = state.time_signature_denom.max(1) as f64;
-                    let samples_per_beat =
-                        (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
-                    let samples_per_bar = samples_per_beat * tsig_num;
-                    let snapped_start = self.midi_snap_mode.snap_sample(
+                if repeat {
+                    self.state.blocking_write().piano_painted_notes.clear();
+                    return self.insert_painted_midi_notes_between(
                         start_sample as f64,
-                        samples_per_beat,
-                        samples_per_bar,
-                    ) as usize;
-                    let length_samples = (samples_per_beat / 4.0).max(1.0) as usize;
-                    drop(state);
-                    return self.send(Action::InsertMidiNotes {
-                        track_name,
-                        clip_index: clip_idx,
-                        notes: vec![(
-                            0,
-                            maolan_engine::message::MidiNoteData {
-                                start_sample: snapped_start,
-                                length_samples,
-                                pitch,
-                                velocity: 100,
-                                channel: 0,
-                                mpe: Default::default(),
-                            },
-                        )],
-                    });
+                        end_sample as f64,
+                        pitch,
+                    );
                 }
+                return self.insert_stretched_midi_note_between(
+                    start_sample as f64,
+                    end_sample as f64,
+                    pitch,
+                );
             }
             Message::DrumNoteDelete(note_index) => {
                 let mut state = self.state.blocking_write();
