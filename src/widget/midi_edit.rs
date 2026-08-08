@@ -281,7 +281,7 @@ impl MIDIEdit {
                 );
             }
 
-            let drum_interaction = maolan_widgets::drum::DrumRollInteraction::new(
+            let mut drum_interaction = maolan_widgets::drum::DrumRollInteraction::new(
                 roll.notes.clone(),
                 pixels_per_sample,
                 zoom_x,
@@ -290,6 +290,7 @@ impl MIDIEdit {
                 state.piano_selecting_rect,
                 state.piano_selected_notes.clone(),
             );
+            drum_interaction.repeat_create = state.shift;
             let drum_canvas: Element<'_, maolan_widgets::drum::DrumMessage> =
                 iced::widget::canvas(drum_interaction)
                     .width(Length::Fixed(notes_w))
@@ -304,10 +305,14 @@ impl MIDIEdit {
                 }
                 maolan_widgets::drum::DrumMessage::NoteCreate {
                     start_sample,
+                    end_sample,
                     pitch,
+                    repeat,
                 } => Message::DrumNoteCreate {
                     start_sample,
+                    end_sample,
                     pitch,
+                    repeat,
                 },
                 maolan_widgets::drum::DrumMessage::NoteDelete(idx) => Message::DrumNoteDelete(idx),
                 maolan_widgets::drum::DrumMessage::NoteMove {
