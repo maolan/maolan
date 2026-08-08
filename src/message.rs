@@ -1319,11 +1319,14 @@ pub enum Message {
     PianoSelectRectEnd,
     PianoCreateNoteStart {
         position: Point,
+        repeat: bool,
     },
     PianoCreateNoteDrag {
         position: Point,
     },
-    PianoCreateNoteEnd,
+    PianoCreateNoteEnd {
+        position: Point,
+    },
     PianoAdjustVelocity {
         note_index: usize,
         delta: i8,
@@ -1357,7 +1360,9 @@ pub enum Message {
     DrumNoteSelected(usize),
     DrumNoteCreate {
         start_sample: usize,
+        end_sample: usize,
         pitch: u8,
+        repeat: bool,
     },
     DrumNoteDelete(usize),
     DrumNoteMove {
