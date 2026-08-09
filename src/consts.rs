@@ -243,10 +243,11 @@ pub mod message_lists {
         PianoNrpnKind, PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
     };
 
-    pub const SNAP_MODE_ALL: [SnapMode; 8] = [
+    pub const SNAP_MODE_ALL: [SnapMode; 9] = [
         SnapMode::NoSnap,
         SnapMode::Clips,
         SnapMode::Bar,
+        SnapMode::BarHalf,
         SnapMode::Beat,
         SnapMode::Eighth,
         SnapMode::Sixteenth,
@@ -408,7 +409,7 @@ mod tests {
 
     #[test]
     fn message_lists_are_populated() {
-        assert_eq!(message_lists::SNAP_MODE_ALL.len(), 8);
+        assert_eq!(message_lists::SNAP_MODE_ALL.len(), 9);
         assert_eq!(message_lists::PIANO_SCALE_ROOT_ALL.len(), 12);
         assert_eq!(message_lists::PIANO_CHORD_KIND_ALL.len(), 5);
         assert_eq!(message_lists::EXPORT_BIT_DEPTH_ALL.len(), 4);

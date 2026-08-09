@@ -154,6 +154,8 @@ pub enum SnapMode {
     NoSnap,
     Clips,
     Bar,
+    #[serde(alias = "Bar/2", alias = "Half")]
+    BarHalf,
     Beat,
     Eighth,
     Sixteenth,
@@ -167,6 +169,7 @@ impl fmt::Display for SnapMode {
             Self::NoSnap => write!(f, "No Snap"),
             Self::Clips => write!(f, "Clips"),
             Self::Bar => write!(f, "Bar"),
+            Self::BarHalf => write!(f, "Half"),
             Self::Beat => write!(f, "Beat"),
             Self::Eighth => write!(f, "1/8"),
             Self::Sixteenth => write!(f, "1/16"),
@@ -182,6 +185,7 @@ impl SnapMode {
             SnapMode::NoSnap => 1.0,
             SnapMode::Clips => 1.0,
             SnapMode::Bar => samples_per_bar.max(1.0),
+            SnapMode::BarHalf => (samples_per_bar / 2.0).max(1.0),
             SnapMode::Beat => samples_per_beat.max(1.0),
             SnapMode::Eighth => (samples_per_beat / 2.0).max(1.0),
             SnapMode::Sixteenth => (samples_per_beat / 4.0).max(1.0),
@@ -223,7 +227,9 @@ impl SnapMode {
     pub fn launch_quantization(self) -> maolan_engine::message::LaunchQuantization {
         use maolan_engine::message::LaunchQuantization;
         match self {
-            SnapMode::NoSnap | SnapMode::Clips | SnapMode::Bar => LaunchQuantization::Bar,
+            SnapMode::NoSnap | SnapMode::Clips | SnapMode::Bar | SnapMode::BarHalf => {
+                LaunchQuantization::Bar
+            }
             SnapMode::Beat => LaunchQuantization::Beat,
             SnapMode::Eighth => LaunchQuantization::Eighth,
             SnapMode::Sixteenth => LaunchQuantization::Sixteenth,
@@ -1065,6 +1071,7 @@ pub enum Message {
     ToggleTransport,
     ZoomSliderChanged(f32),
     TimelineZoomByScroll(f32),
+    PianoTimelineZoomByScroll(f32),
     PianoZoomXChanged(f32),
     PianoZoomYChanged(f32),
     PianoScrollChanged {
@@ -1368,6 +1375,7 @@ pub enum Message {
     DrumNoteMove {
         note_index: usize,
         delta_samples: i64,
+        target_pitch: u8,
     },
     DrumSelectRectStart {
         position: iced::Point,
@@ -1778,6 +1786,11 @@ mod tests {
     }
 
     #[test]
+    fn snap_mode_interval_samples_half() {
+        assert_eq!(SnapMode::BarHalf.interval_samples(480.0, 1920.0), 960.0);
+    }
+
+    #[test]
     fn snap_mode_interval_samples_beat() {
         assert_eq!(SnapMode::Beat.interval_samples(480.0, 1920.0), 480.0);
     }
@@ -1872,6 +1885,7 @@ mod tests {
     fn snap_mode_display() {
         assert_eq!(format!("{}", SnapMode::NoSnap), "No Snap");
         assert_eq!(format!("{}", SnapMode::Bar), "Bar");
+        assert_eq!(format!("{}", SnapMode::BarHalf), "Half");
         assert_eq!(format!("{}", SnapMode::Beat), "Beat");
         assert_eq!(format!("{}", SnapMode::Eighth), "1/8");
         assert_eq!(format!("{}", SnapMode::Sixteenth), "1/16");

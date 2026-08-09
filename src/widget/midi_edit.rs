@@ -1,8 +1,8 @@
 use crate::{
     consts::{
         widget_piano::{
-            H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_NOTE_COUNT,
-            NOTES_PER_OCTAVE, OCTAVES, TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+            KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_NOTE_COUNT, NOTES_PER_OCTAVE, OCTAVES,
+            TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
         },
         workspace::PLAYHEAD_WIDTH_PX,
     },
@@ -58,14 +58,6 @@ impl MIDIEdit {
 
     pub fn set_midnam_note_names(&mut self, names: &HashMap<u8, String>) {
         self.midnam_note_names = names.clone();
-    }
-
-    fn zoom_x_to_slider(zoom_x: f32) -> f32 {
-        (H_ZOOM_MIN + H_ZOOM_MAX - zoom_x).clamp(H_ZOOM_MIN, H_ZOOM_MAX)
-    }
-
-    fn slider_to_zoom_x(slider_value: f32) -> f32 {
-        (H_ZOOM_MIN + H_ZOOM_MAX - slider_value).clamp(H_ZOOM_MIN, H_ZOOM_MAX)
     }
 
     fn populated_menu_item(
@@ -245,9 +237,10 @@ impl MIDIEdit {
                 }
             }
 
-            for note in &roll.notes {
+            for (note_idx, note) in roll.notes.iter().enumerate() {
                 if let Some(row_idx) = drum_rows.iter().position(|&p| p == note.pitch) {
                     let color = maolan_widgets::piano::note_color(note.velocity, note.channel);
+                    let is_selected = state.piano_selected_notes.contains(&note_idx);
                     let x = note.start_sample as f32 * pps;
                     let y = row_idx as f32 * drum_row_h + (drum_row_h - 10.0) / 2.0;
                     drum_layers.push(
@@ -256,7 +249,15 @@ impl MIDIEdit {
                             .height(Length::Fixed(10.0))
                             .style(move |_theme| container::Style {
                                 background: Some(Background::Color(color)),
-                                border: Border::default().rounded(5.0),
+                                border: if is_selected {
+                                    Border {
+                                        color: Color::from_rgb(0.9, 0.7, 0.3),
+                                        width: 2.0,
+                                        radius: 5.0.into(),
+                                    }
+                                } else {
+                                    Border::default().rounded(5.0)
+                                },
                                 ..container::Style::default()
                             }))
                         .position(Point::new(x, y))
@@ -318,9 +319,11 @@ impl MIDIEdit {
                 maolan_widgets::drum::DrumMessage::NoteMove {
                     note_index,
                     delta_samples,
+                    target_pitch,
                 } => Message::DrumNoteMove {
                     note_index,
                     delta_samples,
+                    target_pitch,
                 },
                 maolan_widgets::drum::DrumMessage::AdjustVelocity { note_index, delta } => {
                     Message::PianoAdjustVelocity { note_index, delta }
@@ -1107,18 +1110,7 @@ impl MIDIEdit {
                         container("")
                             .width(Length::Fixed(KEYBOARD_WIDTH))
                             .height(Length::Fixed(16.0)),
-                        row![
-                            h_scroll,
-                            slider(
-                                H_ZOOM_MIN..=H_ZOOM_MAX,
-                                Self::zoom_x_to_slider(zoom_x),
-                                |value| Message::PianoZoomXChanged(Self::slider_to_zoom_x(value)),
-                            )
-                            .step(0.1_f32)
-                            .width(Length::Fixed(100.0)),
-                        ]
-                        .spacing(8)
-                        .width(Length::Fill),
+                        h_scroll,
                     ]
                 ]
                 .spacing(3)
@@ -1154,26 +1146,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::sync::RwLock;
-
-    #[test]
-    fn zoom_x_to_slider_roundtrip() {
-        let original = 1.0;
-        let slider = MIDIEdit::zoom_x_to_slider(original);
-        let back = MIDIEdit::slider_to_zoom_x(slider);
-        assert!((back - original).abs() < 0.001, "Roundtrip failed");
-    }
-
-    #[test]
-    fn zoom_x_to_slider_clamps_min() {
-        let result = MIDIEdit::zoom_x_to_slider(0.1);
-        assert!(result >= H_ZOOM_MIN);
-    }
-
-    #[test]
-    fn zoom_x_to_slider_clamps_max() {
-        let result = MIDIEdit::zoom_x_to_slider(100.0);
-        assert!(result <= H_ZOOM_MAX);
-    }
 
     #[test]
     fn midi_edit_new_creates_instance() {
