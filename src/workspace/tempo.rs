@@ -27,6 +27,21 @@ fn clip_kind_key(kind: maolan_engine::kind::Kind) -> u8 {
 pub struct Tempo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimelineZoomTarget {
+    Workspace,
+    Piano,
+}
+
+impl TimelineZoomTarget {
+    pub fn message(self, delta: f32) -> Message {
+        match self {
+            Self::Workspace => Message::TimelineZoomByScroll(delta),
+            Self::Piano => Message::PianoTimelineZoomByScroll(delta),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 enum MarkerLane {
     Marker,
@@ -107,6 +122,7 @@ struct TempoCanvas {
     clip_start_samples: usize,
     sample_rate: f64,
     markers: Vec<(usize, String)>,
+    zoom_target: TimelineZoomTarget,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +146,7 @@ pub struct TempoViewArgs {
     pub clip_start_samples: usize,
     pub sample_rate: f64,
     pub markers: Vec<(usize, String)>,
+    pub zoom_target: TimelineZoomTarget,
 }
 
 impl Tempo {
@@ -148,11 +165,12 @@ impl Tempo {
             SnapMode::NoSnap => 0,
             SnapMode::Clips => 1,
             SnapMode::Bar => 2,
-            SnapMode::Beat => 3,
-            SnapMode::Eighth => 4,
-            SnapMode::Sixteenth => 5,
-            SnapMode::ThirtySecond => 6,
-            SnapMode::SixtyFourth => 7,
+            SnapMode::BarHalf => 3,
+            SnapMode::Beat => 4,
+            SnapMode::Eighth => 5,
+            SnapMode::Sixteenth => 6,
+            SnapMode::ThirtySecond => 7,
+            SnapMode::SixtyFourth => 8,
         }
     }
 
@@ -185,6 +203,7 @@ impl Tempo {
             clip_start_samples: args.clip_start_samples,
             sample_rate: args.sample_rate,
             markers: args.markers,
+            zoom_target: args.zoom_target,
         })
         .width(Length::Fixed(args.content_width.max(1.0)))
         .height(Length::Fill)
@@ -213,6 +232,7 @@ impl canvas::Program<Message> for TempoCanvas {
                 SnapMode::NoSnap => 1.0,
                 SnapMode::Clips => 1.0,
                 SnapMode::Bar => self.samples_per_bar.max(1.0),
+                SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
                 SnapMode::Beat => self.samples_per_beat.max(1.0),
                 SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
                 SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
@@ -530,7 +550,8 @@ impl canvas::Program<Message> for TempoCanvas {
                         let snap_interval = match self.snap_mode {
                             SnapMode::NoSnap => 1.0,
                             SnapMode::Clips => 1.0,
-                            SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
+                            SnapMode::Bar => self.samples_per_bar.max(1.0),
+                            SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
                             SnapMode::Beat => self.samples_per_beat.max(1.0),
                             SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
                             SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
@@ -692,7 +713,8 @@ impl canvas::Program<Message> for TempoCanvas {
                         let snap_interval = match self.snap_mode {
                             SnapMode::NoSnap => 1.0,
                             SnapMode::Clips => 1.0,
-                            SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
+                            SnapMode::Bar => self.samples_per_bar.max(1.0),
+                            SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
                             SnapMode::Beat => self.samples_per_beat.max(1.0),
                             SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
                             SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
@@ -890,8 +912,7 @@ impl canvas::Program<Message> for TempoCanvas {
                         return Some(CanvasAction::capture());
                     }
                     return Some(
-                        CanvasAction::publish(Message::TimelineZoomByScroll(scroll_y))
-                            .and_capture(),
+                        CanvasAction::publish(self.zoom_target.message(scroll_y)).and_capture(),
                     );
                 }
             }
@@ -1615,11 +1636,12 @@ mod tests {
         assert_eq!(Tempo::snap_mode_key(SnapMode::NoSnap), 0);
         assert_eq!(Tempo::snap_mode_key(SnapMode::Clips), 1);
         assert_eq!(Tempo::snap_mode_key(SnapMode::Bar), 2);
-        assert_eq!(Tempo::snap_mode_key(SnapMode::Beat), 3);
-        assert_eq!(Tempo::snap_mode_key(SnapMode::Eighth), 4);
-        assert_eq!(Tempo::snap_mode_key(SnapMode::Sixteenth), 5);
-        assert_eq!(Tempo::snap_mode_key(SnapMode::ThirtySecond), 6);
-        assert_eq!(Tempo::snap_mode_key(SnapMode::SixtyFourth), 7);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::BarHalf), 3);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Beat), 4);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Eighth), 5);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Sixteenth), 6);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::ThirtySecond), 7);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::SixtyFourth), 8);
     }
 
     #[test]
@@ -1657,6 +1679,7 @@ mod tests {
             clip_start_samples: 0,
             sample_rate: 48_000.0,
             markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();
@@ -1676,6 +1699,52 @@ mod tests {
         let (message, status) = action_message(action);
         assert_eq!(status, event::Status::Captured);
         assert!(matches!(message, Some(Message::TimelineZoomByScroll(1.0))));
+    }
+
+    #[test]
+    fn wheel_over_piano_timeline_publishes_piano_zoom_message() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: None,
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Piano,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(LEFT_HIT_WIDTH + 20.0, 10.0));
+
+        let action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+                }),
+                bounds,
+                cursor,
+            )
+            .expect("wheel over piano timeline publishes action");
+
+        let (message, status) = action_message(action);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(Message::PianoTimelineZoomByScroll(1.0))
+        ));
     }
 
     #[test]
@@ -1699,6 +1768,7 @@ mod tests {
             clip_start_samples: 0,
             sample_rate: 48_000.0,
             markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();
@@ -1745,6 +1815,7 @@ mod tests {
             clip_start_samples: 0,
             sample_rate: 48_000.0,
             markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();
@@ -1823,6 +1894,7 @@ mod tests {
             clip_start_samples: 0,
             sample_rate: 48_000.0,
             markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();
@@ -1881,6 +1953,7 @@ mod tests {
             clip_start_samples: 0,
             sample_rate: 48_000.0,
             markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();
@@ -1957,6 +2030,7 @@ mod tests {
             clip_start_samples: 0,
             sample_rate: 48_000.0,
             markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();

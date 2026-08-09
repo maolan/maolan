@@ -35,7 +35,7 @@ use maolan_widgets::{
 };
 use ruler::RulerViewArgs;
 use std::{collections::HashMap, path::PathBuf};
-use tempo::TempoViewArgs;
+use tempo::{TempoViewArgs, TimelineZoomTarget};
 
 pub use crate::consts::workspace_ids::{
     EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID, PIANO_TEMPO_SCROLL_ID,
@@ -583,6 +583,7 @@ impl Workspace {
             clip_start_samples: 0,
             sample_rate,
             markers: markers.clone(),
+            zoom_target: TimelineZoomTarget::Workspace,
         }))
         .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
         .direction(scrollable::Direction::Horizontal(
@@ -599,9 +600,11 @@ impl Workspace {
             clip_snap_edges: clip_snap_edges.clone(),
             snap_mode,
             samples_per_beat,
+            samples_per_bar: samples_per_bar as f64,
             content_width: editor_content_width,
             timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
             clip_start_samples: 0,
+            zoom_target: TimelineZoomTarget::Workspace,
         }))
         .id(Id::new(WORKSPACE_RULER_SCROLL_ID))
         .direction(scrollable::Direction::Horizontal(
@@ -1008,6 +1011,7 @@ impl Workspace {
                         clip_start_samples: 0,
                         sample_rate,
                         markers,
+                        zoom_target: TimelineZoomTarget::Piano,
                     })))
                     .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
@@ -1039,9 +1043,11 @@ impl Workspace {
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
+                        samples_per_bar: samples_per_bar as f64,
                         content_width: timeline_content_width,
                         timeline_left_inset_px: 0.0,
                         clip_start_samples,
+                        zoom_target: TimelineZoomTarget::Piano,
                     })))
                     .id(Id::new(PIANO_RULER_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
@@ -1163,6 +1169,7 @@ impl Workspace {
                         clip_start_samples: 0,
                         sample_rate,
                         markers,
+                        zoom_target: TimelineZoomTarget::Piano,
                     })))
                     .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
@@ -1194,9 +1201,11 @@ impl Workspace {
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
+                        samples_per_bar: samples_per_bar as f64,
                         content_width: timeline_content_width,
                         timeline_left_inset_px: 0.0,
                         clip_start_samples: 0,
+                        zoom_target: TimelineZoomTarget::Piano,
                     })))
                     .id(Id::new(PIANO_RULER_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(

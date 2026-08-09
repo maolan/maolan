@@ -1,5 +1,4 @@
-use super::ClipSnapEdge;
-use super::timeline_x_to_sample_f32;
+use super::{ClipSnapEdge, tempo::TimelineZoomTarget, timeline_x_to_sample_f32};
 use crate::consts::workspace::{
     BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
 };
@@ -68,8 +67,10 @@ struct RulerCanvas {
     clip_snap_edges: Vec<ClipSnapEdge>,
     snap_mode: SnapMode,
     samples_per_beat: f64,
+    samples_per_bar: f64,
     timeline_left_inset_px: f32,
     clip_start_samples: usize,
+    zoom_target: TimelineZoomTarget,
 }
 
 pub struct RulerViewArgs {
@@ -80,9 +81,11 @@ pub struct RulerViewArgs {
     pub clip_snap_edges: Vec<ClipSnapEdge>,
     pub snap_mode: SnapMode,
     pub samples_per_beat: f64,
+    pub samples_per_bar: f64,
     pub content_width: f32,
     pub timeline_left_inset_px: f32,
     pub clip_start_samples: usize,
+    pub zoom_target: TimelineZoomTarget,
 }
 
 impl Ruler {
@@ -112,11 +115,12 @@ impl Ruler {
             SnapMode::NoSnap => 0,
             SnapMode::Clips => 1,
             SnapMode::Bar => 2,
-            SnapMode::Beat => 3,
-            SnapMode::Eighth => 4,
-            SnapMode::Sixteenth => 5,
-            SnapMode::ThirtySecond => 6,
-            SnapMode::SixtyFourth => 7,
+            SnapMode::BarHalf => 3,
+            SnapMode::Beat => 4,
+            SnapMode::Eighth => 5,
+            SnapMode::Sixteenth => 6,
+            SnapMode::ThirtySecond => 7,
+            SnapMode::SixtyFourth => 8,
         }
     }
 
@@ -129,9 +133,11 @@ impl Ruler {
             clip_snap_edges,
             snap_mode,
             samples_per_beat,
+            samples_per_bar,
             content_width,
             timeline_left_inset_px,
             clip_start_samples,
+            zoom_target,
         } = args;
         canvas(RulerCanvas {
             playhead_x,
@@ -141,8 +147,10 @@ impl Ruler {
             clip_snap_edges,
             snap_mode,
             samples_per_beat,
+            samples_per_bar,
             timeline_left_inset_px,
             clip_start_samples,
+            zoom_target,
         })
         .width(Length::Fixed(content_width.max(1.0)))
         .height(Length::Fill)
@@ -206,7 +214,8 @@ impl canvas::Program<Message> for RulerCanvas {
             let interval = match self.snap_mode {
                 SnapMode::NoSnap => 1.0,
                 SnapMode::Clips => 1.0,
-                SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
+                SnapMode::Bar => self.samples_per_bar.max(1.0),
+                SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
                 SnapMode::Beat => self.samples_per_beat.max(1.0),
                 SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
                 SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
@@ -327,7 +336,8 @@ impl canvas::Program<Message> for RulerCanvas {
                 let snap_interval = match self.snap_mode {
                     SnapMode::NoSnap => 1.0,
                     SnapMode::Clips => 1.0,
-                    SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
+                    SnapMode::Bar => self.samples_per_bar.max(1.0),
+                    SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
                     SnapMode::Beat => self.samples_per_beat.max(1.0),
                     SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
                     SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
@@ -383,7 +393,8 @@ impl canvas::Program<Message> for RulerCanvas {
                 let snap_interval = match self.snap_mode {
                     SnapMode::NoSnap => 1.0,
                     SnapMode::Clips => 1.0,
-                    SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
+                    SnapMode::Bar => self.samples_per_bar.max(1.0),
+                    SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
                     SnapMode::Beat => self.samples_per_beat.max(1.0),
                     SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
                     SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
@@ -463,6 +474,18 @@ impl canvas::Program<Message> for RulerCanvas {
                             .and_capture(),
                     );
                 }
+            }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor_position.is_some() => {
+                let scroll_y = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => *y,
+                    mouse::ScrollDelta::Pixels { y, .. } => *y / 40.0,
+                };
+                if scroll_y.abs() < f32::EPSILON {
+                    return Some(CanvasAction::capture());
+                }
+                return Some(
+                    CanvasAction::publish(self.zoom_target.message(scroll_y)).and_capture(),
+                );
             }
             _ => {}
         }
@@ -693,8 +716,10 @@ mod tests {
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
             timeline_left_inset_px: 0.0,
             clip_start_samples: 0,
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 40.0));
         let mut state = RulerState::default();
@@ -747,8 +772,10 @@ mod tests {
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
             timeline_left_inset_px: 0.0,
             clip_start_samples: 0,
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         assert!(canvas.beat_pixels > 0.0);
     }
@@ -783,8 +810,10 @@ mod tests {
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
             timeline_left_inset_px: 0.0,
             clip_start_samples: 0,
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 40.0));
         let mut state = RulerState::default();
@@ -848,8 +877,10 @@ mod tests {
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
             timeline_left_inset_px: 0.0,
             clip_start_samples: 0,
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 40.0));
         let mut state = RulerState::default();
@@ -896,8 +927,10 @@ mod tests {
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
             timeline_left_inset_px: 0.0,
             clip_start_samples: 0,
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 40.0));
         let mut state = RulerState::default();
@@ -961,8 +994,10 @@ mod tests {
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
             timeline_left_inset_px: 0.0,
             clip_start_samples: 0,
+            zoom_target: TimelineZoomTarget::Workspace,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 40.0));
         let mut state = RulerState::default();

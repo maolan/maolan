@@ -9902,12 +9902,13 @@ mod tests {
 
         let _ = app.update(Message::PianoZoomXChanged(3.0));
         let _ = app.update(Message::PianoZoomYChanged(2.0));
+        let _ = app.update(Message::PianoTimelineZoomByScroll(1.0));
         let _ = app.update(Message::PianoScrollChanged { x: 1.5, y: -1.0 });
         let _ = app.update(Message::PianoScrollXChanged(0.25));
         let _ = app.update(Message::PianoScrollYChanged(0.75));
 
         let state = app.state.blocking_read();
-        assert_eq!(state.piano_zoom_x, 3.0);
+        assert!(state.piano_zoom_x > 3.0);
         assert_eq!(state.piano_zoom_y, 2.0);
         assert_eq!(state.piano_scroll_x, 0.25);
         assert_eq!(state.piano_scroll_y, 0.75);
