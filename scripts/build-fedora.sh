@@ -74,12 +74,27 @@ RPM_ARCH="$(uname -m)"
 PKG_NAME="maolan"
 RPM_NAME="${PKG_NAME}-${PKG_VERSION}-1.fc${VERSION_ID}.${RPM_ARCH}.rpm"
 
+pipewire_installed() {
+    rpm -q pipewire &>/dev/null
+}
+
+if pipewire_installed; then
+    JACK_DEVEL_PACKAGE="pipewire-jack-audio-connection-kit-devel"
+    JACK_RUNTIME_REQUIRE="pipewire-jack-audio-connection-kit"
+    JACK_PROVIDER_LABEL="PipeWire JACK"
+else
+    JACK_DEVEL_PACKAGE="jack-audio-connection-kit-devel"
+    JACK_RUNTIME_REQUIRE="jack-audio-connection-kit"
+    JACK_PROVIDER_LABEL="JACK"
+fi
+
 echo "========================================"
 echo "Building Maolan .rpm package"
 echo "Version: $PKG_VERSION"
 echo "Architecture: $RPM_ARCH"
 echo "Source: $SOURCE_DIR"
 echo "Output: $OUTPUT_DIR/$RPM_NAME"
+echo "JACK provider: $JACK_PROVIDER_LABEL"
 echo "========================================"
 
 # ---------------------------------------------------------------------------
@@ -91,7 +106,7 @@ sudo dnf install -y \
     pkgconf-pkg-config \
     gcc \
     gcc-c++ \
-    jack-audio-connection-kit-devel \
+    "$JACK_DEVEL_PACKAGE" \
     alsa-lib-devel \
     git \
     rpm-build \
@@ -196,7 +211,7 @@ URL:            https://github.com/maolan/maolan
 Source0:        maolan-files.tar.gz
 BuildArch:      $RPM_ARCH
 
-Requires:       (jack-audio-connection-kit or pipewire-jack-audio-connection-kit), alsa-lib
+Requires:       $JACK_RUNTIME_REQUIRE, alsa-lib
 
 %description
 Maolan is a Rust DAW focused on recording, editing, routing,
