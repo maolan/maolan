@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# build-ubuntu.sh — Build a .deb package and an AppImage for Maolan DAW on Ubuntu.
+# build-ubuntu.sh — Build a .deb package for Maolan DAW on Ubuntu.
 #
 # Usage:
 #   ./scripts/build-ubuntu.sh [OPTIONS]
 #
 # Options:
 #   -s, --source-dir DIR     Path to maolan source directory (default: parent of this script)
-#   -o, --output-dir DIR     Where to write the .deb and .AppImage files (default: ./dist)
+#   -o, --output-dir DIR     Where to write the .deb file (default: ./dist)
 #   -v, --version VERSION    Override package version (default: read from Cargo.toml)
 #   -t, --target-dir DIR     Local target directory (useful when source is on NFS)
 #   -h, --help               Show this help message
 #
 # The script installs build dependencies via apt, installs Rust via rustup if missing,
-# builds the release binaries, produces a .deb package using dpkg-deb, and builds an
-# AppImage using linuxdeploy.
+# builds the release binaries, and produces a .deb package using dpkg-deb.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$(dirname "$SCRIPT_DIR")"
@@ -24,7 +23,7 @@ OVERRIDE_VERSION=""
 TARGET_DIR=""
 
 usage() {
-    sed -n '2,16p' "$0" | sed 's/^# //'
+    sed -n '4,17p' "$0" | sed 's/^# //'
     exit 0
 }
 
@@ -72,30 +71,41 @@ fi
 DEB_ARCH="$(dpkg --print-architecture)"
 PKG_NAME="maolan"
 DEB_NAME="${PKG_NAME}-${PKG_VERSION}-ubuntu.${DEB_ARCH}.deb"
-APPIMAGE_NAME="${PKG_NAME}-${PKG_VERSION}-x86_64.AppImage"
+
+pipewire_installed() {
+    dpkg-query -W -f='${Status}' pipewire 2>/dev/null | grep -q "install ok installed"
+}
+
+if pipewire_installed; then
+    JACK_RUNTIME_PACKAGE="pipewire-jack"
+    JACK_BUILD_PACKAGES=(pipewire-jack libjack-jackd2-dev)
+    JACK_PROVIDER_LABEL="PipeWire JACK"
+else
+    JACK_RUNTIME_PACKAGE="jackd2"
+    JACK_BUILD_PACKAGES=(jackd2 libjack-jackd2-dev)
+    JACK_PROVIDER_LABEL="JACK"
+fi
 
 echo "========================================"
-echo "Building Maolan .deb package and AppImage"
+echo "Building Maolan .deb package"
 echo "Version: $PKG_VERSION"
 echo "Architecture: $DEB_ARCH"
 echo "Source: $SOURCE_DIR"
-echo "Deb output: $OUTPUT_DIR/$DEB_NAME"
-echo "AppImage output: $OUTPUT_DIR/$APPIMAGE_NAME"
+echo "Output: $OUTPUT_DIR/$DEB_NAME"
+echo "JACK provider: $JACK_PROVIDER_LABEL"
 echo "========================================"
 
 # ---------------------------------------------------------------------------
 # 1. Install system build dependencies
 # ---------------------------------------------------------------------------
 echo ""
-echo "[1/7] Installing build dependencies..."
+echo "[1/6] Installing build dependencies..."
 sudo apt-get update
 sudo apt-get install -y \
     pkg-config \
     build-essential \
-    jackd2 \
-    libjack-jackd2-dev \
+    "${JACK_BUILD_PACKAGES[@]}" \
     libasound2-dev \
-    libfuse2 \
     curl \
     ca-certificates \
     git
@@ -104,7 +114,7 @@ sudo apt-get install -y \
 # 2. Install Rust if missing
 # ---------------------------------------------------------------------------
 echo ""
-echo "[2/7] Checking Rust toolchain..."
+echo "[2/6] Checking Rust toolchain..."
 if ! command -v cargo &>/dev/null; then
     echo "Rust not found. Installing via rustup..."
     export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
@@ -124,7 +134,7 @@ fi
 # 3. Build release binaries
 # ---------------------------------------------------------------------------
 echo ""
-echo "[3/7] Building release binaries..."
+echo "[3/6] Building release binaries..."
 cd "$SOURCE_DIR"
 
 CARGO_ARGS=("--release")
@@ -160,11 +170,10 @@ echo "Build completed successfully."
 # 4. Prepare Debian package staging area
 # ---------------------------------------------------------------------------
 echo ""
-echo "[4/7] Preparing Debian package structure..."
+echo "[4/6] Preparing Debian package structure..."
 
 STAGING_DIR="$(mktemp -d)"
-APPDIR_BASE="$(mktemp -d)"
-trap "rm -rf '$STAGING_DIR' '$APPDIR_BASE'" EXIT
+trap "rm -rf '$STAGING_DIR'" EXIT
 
 mkdir -p "$STAGING_DIR/DEBIAN"
 mkdir -p "$STAGING_DIR/usr/bin"
@@ -203,7 +212,7 @@ Version: $PKG_VERSION
 Section: sound
 Priority: optional
 Architecture: $DEB_ARCH
-Depends: libjack-jackd2-0 | pipewire-jack, libasound2t64
+Depends: $JACK_RUNTIME_PACKAGE, libasound2t64
 Maintainer: Maolan Team <maolan@github.io>
 Description: Rust Digital Audio Workstation
  Maolan is a Rust DAW focused on recording, editing, routing,
@@ -222,77 +231,23 @@ License: BSD-2-Clause
 EOF
 
 # ---------------------------------------------------------------------------
-# 6. Build the .deb package
+# 5. Build the .deb package
 # ---------------------------------------------------------------------------
 echo ""
-echo "[5/7] Building .deb package..."
+echo "[5/6] Building .deb package..."
 mkdir -p "$OUTPUT_DIR"
 fakeroot dpkg-deb --build "$STAGING_DIR" "$OUTPUT_DIR/$DEB_NAME"
 
 # ---------------------------------------------------------------------------
-# 7. Build the AppImage
+# 6. Verify the package
 # ---------------------------------------------------------------------------
 echo ""
-echo "[6/7] Building AppImage..."
-
-APPDIR="$APPDIR_BASE/AppDir"
-mkdir -p "$APPDIR/usr/bin"
-mkdir -p "$APPDIR/usr/share/applications"
-mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
-
-cp "$BIN_DIR/maolan"     "$APPDIR/usr/bin/"
-cp "$BIN_DIR/maolan-cli" "$APPDIR/usr/bin/"
-cp "$BIN_DIR/maolan-osc" "$APPDIR/usr/bin/"
-cp "$BIN_DIR/maolan-plugin-host" "$APPDIR/usr/bin/"
-
-# AppImage desktop entry uses relative Exec/Icon paths
-sed 's|^Exec=/usr/bin/maolan|Exec=maolan|; s|^Icon=/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg|Icon=maolan-icon|' \
-    "$SOURCE_DIR/assets/desktop/maolan-linux.desktop" > "$APPDIR/usr/share/applications/maolan.desktop"
-
-cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
-
-# Keep the linuxdeploy helper outside the deliverables directory.
-LINUXDEPLOY_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/maolan"
-LINUXDEPLOY="$LINUXDEPLOY_CACHE/linuxdeploy-x86_64.AppImage"
-mkdir -p "$LINUXDEPLOY_CACHE"
-if [[ ! -f "$LINUXDEPLOY" ]]; then
-    echo "Downloading linuxdeploy..."
-    curl -L -o "$LINUXDEPLOY" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
-    chmod +x "$LINUXDEPLOY"
-fi
-
-cd "$APPDIR_BASE"
-"$LINUXDEPLOY" --appimage-extract-and-run \
-    --appdir "$APPDIR" \
-    --desktop-file "$APPDIR/usr/share/applications/maolan.desktop" \
-    --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg" \
-    --exclude-library "libjack*" \
-    --exclude-library "libasound*" \
-    --output appimage
-
-# linuxdeploy/appimagetool names the file from the .desktop Name field, so
-# pick up whatever single AppImage was produced rather than hard-coding the
-# basename.
-BUILT_APPIMAGE=("$APPDIR_BASE"/*.AppImage)
-if [[ ! -f "${BUILT_APPIMAGE[0]}" ]]; then
-    echo "Error: No AppImage was produced in $APPDIR_BASE" >&2
-    exit 1
-fi
-mv "${BUILT_APPIMAGE[0]}" "$OUTPUT_DIR/$APPIMAGE_NAME"
-chmod +x "$OUTPUT_DIR/$APPIMAGE_NAME"
-
-# ---------------------------------------------------------------------------
-# 8. Verify the outputs
-# ---------------------------------------------------------------------------
-echo ""
-echo "[7/7] Verifying outputs..."
+echo "[6/6] Verifying package..."
 dpkg-deb --info "$OUTPUT_DIR/$DEB_NAME"
 dpkg-deb --contents "$OUTPUT_DIR/$DEB_NAME"
-ls -lh "$OUTPUT_DIR/$APPIMAGE_NAME"
 
 echo ""
 echo "========================================"
-echo "Packages built successfully:"
+echo "Package built successfully:"
 echo "  $OUTPUT_DIR/$DEB_NAME"
-echo "  $OUTPUT_DIR/$APPIMAGE_NAME"
 echo "========================================"
