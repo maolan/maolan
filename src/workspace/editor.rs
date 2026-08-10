@@ -3,6 +3,7 @@ use crate::{
     consts::{
         state_ids::METRONOME_TRACK_ID,
         state_track::{TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT},
+        widget_piano::PITCH_MAX,
         workspace::{AUDIO_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BASE, MIN_TICK_SPACING_PX},
     },
     message::{DraggedClip, Message, SnapMode},
@@ -696,6 +697,122 @@ fn track_lane_background_overlay(
     .into()
 }
 
+#[derive(Default)]
+struct DrumClipNotesCanvasState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
+#[derive(Clone)]
+struct DrumClipNotesCanvas {
+    notes: Arc<Vec<crate::state::PianoNote>>,
+    clip_offset_samples: usize,
+    clip_visible_length_samples: usize,
+}
+
+impl DrumClipNotesCanvas {
+    fn shape_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.clip_offset_samples.hash(&mut hasher);
+        self.clip_visible_length_samples.hash(&mut hasher);
+        self.notes.len().hash(&mut hasher);
+        if let Some(first) = self.notes.first() {
+            first.start_sample.hash(&mut hasher);
+            first.length_samples.hash(&mut hasher);
+            first.pitch.hash(&mut hasher);
+            first.velocity.hash(&mut hasher);
+        }
+        if let Some(last) = self.notes.last() {
+            last.start_sample.hash(&mut hasher);
+            last.length_samples.hash(&mut hasher);
+            last.pitch.hash(&mut hasher);
+            last.velocity.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
+impl canvas::Program<Message> for DrumClipNotesCanvas {
+    type State = DrumClipNotesCanvasState;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if self.notes.is_empty() || bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let hash = self.shape_hash(bounds);
+        if state.last_hash.get() != hash {
+            state.cache.clear();
+            state.last_hash.set(hash);
+        }
+
+        let geom = state.cache.draw(renderer, bounds.size(), |frame| {
+            let inner_w = bounds.width.max(1.0);
+            let inner_h = bounds.height.max(1.0);
+            let visible_start = self.clip_offset_samples;
+            let visible_len = self.clip_visible_length_samples.max(1);
+            let visible_end = visible_start.saturating_add(visible_len);
+            let clip_len = visible_len as f32;
+            let note_color = Color::from_rgba(0.68, 0.92, 0.40, 0.86);
+            let note_edge = Color::from_rgba(0.86, 0.98, 0.62, 0.96);
+            let radius = (inner_h * 0.0275).clamp(0.5, 1.25).min(inner_w * 0.5);
+            let usable_h = (inner_h - radius * 2.0).max(1.0);
+
+            for note in self.notes.iter() {
+                let note_start = note.start_sample;
+                let note_end = note.start_sample.saturating_add(note.length_samples.max(1));
+                if note_end <= visible_start || note_start >= visible_end {
+                    continue;
+                }
+                let clipped_start = note_start.max(visible_start);
+                let rel_start = clipped_start.saturating_sub(visible_start);
+                let x = (rel_start as f32 / clip_len) * inner_w;
+                let pitch_pos = (i16::from(PITCH_MAX) - i16::from(note.pitch.min(PITCH_MAX)))
+                    as f32
+                    / (f32::from(PITCH_MAX) + 1.0);
+                let center_x = (x + radius).clamp(radius, (inner_w - radius).max(radius));
+                let center_y = radius + pitch_pos * usable_h;
+                let circle = Path::circle(Point::new(center_x, center_y), radius);
+                frame.fill(&circle, note_color);
+                frame.stroke(
+                    &circle,
+                    canvas::Stroke::default()
+                        .with_color(note_edge)
+                        .with_width(0.5),
+                );
+            }
+        });
+
+        vec![geom]
+    }
+}
+
+fn drum_clip_notes_overlay(
+    notes: Arc<Vec<crate::state::PianoNote>>,
+    clip_offset_samples: usize,
+    clip_visible_length_samples: usize,
+    clip_width: f32,
+    clip_height: f32,
+) -> Element<'static, Message> {
+    canvas(DrumClipNotesCanvas {
+        notes,
+        clip_offset_samples,
+        clip_visible_length_samples,
+    })
+    .width(Length::Fixed(clip_width))
+    .height(Length::Fixed(clip_height))
+    .into()
+}
+
 fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Message> {
     let TrackElementViewArgs {
         state,
@@ -1122,6 +1239,15 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let midi_notes_for_clip = midi_clip_previews
                 .and_then(|map| map.get(&(track_name_cloned.clone(), index)))
                 .cloned();
+            let drum_clip_notes = matches!(
+                track.midi.editor_view_mode,
+                crate::message::MidiEditorViewMode::DrumGrid
+            );
+            let widget_midi_notes = if drum_clip_notes {
+                None
+            } else {
+                midi_notes_for_clip.clone()
+            };
 
             if !dragged_to_other_track {
                 let track_name_for_drag = track_name_cloned.clone();
@@ -1131,7 +1257,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .with_label(display_clip_label.clone())
                         .selected(is_selected)
                         .hovered_handles(midi_left_handle_hovered, midi_right_handle_hovered)
-                        .with_notes(midi_notes_for_clip.clone())
+                        .with_notes(widget_midi_notes.clone())
                         .interactive(WidgetMIDIClipInteraction {
                             on_select: Message::SelectClip {
                                 track_idx: track_name_cloned.clone(),
@@ -1199,6 +1325,19 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
                 );
+                if drum_clip_notes && let Some(notes) = midi_notes_for_clip.clone() {
+                    clips.push(
+                        pin(drum_clip_notes_overlay(
+                            notes,
+                            clip.offset,
+                            clip.length.max(1),
+                            clip_width,
+                            clip_height,
+                        ))
+                        .position(Point::new(dragged_start * pixels_per_sample, lane_top))
+                        .into(),
+                    );
+                }
             }
 
             if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
@@ -1244,12 +1383,25 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     pin(MIDIClipWidget::new(widget_midi_clip_data(clip))
                         .with_size(clip_width, clip_height)
                         .with_label(display_clip_label.clone())
-                        .with_notes(midi_notes_for_clip.clone())
+                        .with_notes(widget_midi_notes.clone())
                         .preview(preview_fill, preview_border, 8.0)
                         .into_element())
                     .position(Point::new(preview_start * pixels_per_sample, lane_top))
                     .into(),
                 );
+                if drum_clip_notes && let Some(notes) = midi_notes_for_clip.clone() {
+                    clips.push(
+                        pin(drum_clip_notes_overlay(
+                            notes,
+                            clip.offset,
+                            clip.length.max(1),
+                            clip_width,
+                            clip_height,
+                        ))
+                        .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                        .into(),
+                    );
+                }
             }
             if active_clip_snap_targets.contains(&crate::state::ClipId {
                 track_idx: track_name_cloned.clone(),
@@ -1427,6 +1579,18 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             &MIDIClipWidget::<Message>::clean_name(&source_clip.name),
                             clip_width,
                         );
+                        let midi_notes_for_clip = midi_clip_previews
+                            .and_then(|map| map.get(&(source_track.name.clone(), clip_index)))
+                            .cloned();
+                        let drum_clip_notes = matches!(
+                            track.midi.editor_view_mode,
+                            crate::message::MidiEditorViewMode::DrumGrid
+                        );
+                        let widget_midi_notes = if drum_clip_notes {
+                            None
+                        } else {
+                            midi_notes_for_clip.clone()
+                        };
                         clips.push(
                             pin(MIDIClipWidget::new(widget_midi_clip_data(source_clip))
                                 .with_size(
@@ -1434,6 +1598,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                     (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0),
                                 )
                                 .with_label(display_clip_label)
+                                .with_notes(widget_midi_notes)
                                 .preview(
                                     if active_target_valid {
                                         preview_fill
@@ -1447,6 +1612,19 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             .position(Point::new(preview_start * pixels_per_sample, lane_top))
                             .into(),
                         );
+                        if drum_clip_notes && let Some(notes) = midi_notes_for_clip {
+                            clips.push(
+                                pin(drum_clip_notes_overlay(
+                                    notes,
+                                    source_clip.offset,
+                                    source_clip.length.max(1),
+                                    clip_width,
+                                    (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0),
+                                ))
+                                .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                                .into(),
+                            );
+                        }
                     }
                 }
             }
