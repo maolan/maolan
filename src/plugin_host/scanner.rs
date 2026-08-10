@@ -1,4 +1,5 @@
 use crate::plugin_blocklist::Blocklist;
+use maolan_engine::plugins::ipc::hide_console_window;
 use maolan_plugin_host::scan::{ScanDiagnostic, ScanOutput, ScanResult};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -24,6 +25,7 @@ pub fn scan_plugin_file(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     append_parent_log_level(&mut cmd);
+    hide_console_window(&mut cmd);
 
     let mut child = cmd
         .spawn()
