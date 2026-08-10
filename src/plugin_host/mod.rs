@@ -7,6 +7,7 @@ use maolan_plugin_host::events::EventPair;
 use maolan_plugin_host::protocol::*;
 use maolan_plugin_host::shm::ShmMapping;
 
+use maolan_engine::plugins::ipc::hide_console_window;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::Ordering;
@@ -59,6 +60,7 @@ fn spawn_plugin_host(
         cmd.env("HOME", home);
     }
     append_parent_log_level(&mut cmd);
+    hide_console_window(&mut cmd);
     cmd.stdin(Stdio::null()).stdout(Stdio::null());
 
     if cfg!(test) {
