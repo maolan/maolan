@@ -36,6 +36,26 @@ struct MoveClipSnapArgs<'a> {
 }
 
 impl Maolan {
+    fn preserve_plugin_graph_states_from_cache(
+        track_name: &str,
+        state: &crate::state::StateData,
+        plugins: &mut [maolan_engine::message::PluginGraphPlugin],
+    ) {
+        let Some((cached_plugins, _)) = state.plugin_graphs_by_track.get(track_name) else {
+            return;
+        };
+
+        for plugin in plugins.iter_mut().filter(|plugin| plugin.state.is_none()) {
+            if let Some(cached_state) = cached_plugins
+                .iter()
+                .find(|cached| cached.instance_id == plugin.instance_id)
+                .and_then(|cached| cached.state.clone())
+            {
+                plugin.state = Some(cached_state);
+            }
+        }
+    }
+
     fn piano_timeline_viewport_width(&self) -> f32 {
         (self.size.width
             - TOOLS_STRIP_WIDTH
@@ -3320,17 +3340,34 @@ impl Maolan {
                     Action::TrackClapStateDirty {
                         track_name,
                         instance_id,
+                    } => {
+                        tracing::info!(%track_name, instance_id, "DAW received CLAP state dirty");
+                        self.engine_dirty = true;
+                        let mut tasks = vec![self.send(Action::TrackClapSnapshotState {
+                            track_name: track_name.clone(),
+                            instance_id: *instance_id,
+                        })];
+                        if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            tasks.push(task);
+                        }
+                        return Task::batch(tasks);
                     }
-                    | Action::ClipClapStateDirty {
+                    Action::ClipClapStateDirty {
                         track_name,
-                        clip_idx: _,
+                        clip_idx,
                         instance_id,
                     } => {
                         tracing::info!(%track_name, instance_id, "DAW received CLAP state dirty");
                         self.engine_dirty = true;
+                        let mut tasks = vec![self.send(Action::ClipClapSnapshotState {
+                            track_name: track_name.clone(),
+                            clip_idx: *clip_idx,
+                            instance_id: *instance_id,
+                        })];
                         if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
-                            return task;
+                            tasks.push(task);
                         }
+                        return Task::batch(tasks);
                     }
                     _ => {}
                 }
@@ -5086,7 +5123,7 @@ impl Maolan {
                                 restore_in_progress = self.session_restore_in_progress,
                                 "received TrackPluginGraph"
                             );
-                            let mut state = self.state.blocking_write();
+                            let state = self.state.blocking_write();
                             let keep_restore_cache = self.session_restore_in_progress
                                 && plugins.is_empty()
                                 && state
@@ -5096,9 +5133,18 @@ impl Maolan {
                             if keep_restore_cache {
                                 return Task::none();
                             }
-                            state
-                                .plugin_graphs_by_track
-                                .insert(track_name.clone(), (plugins.clone(), connections.clone()));
+                            let mut plugins = plugins.clone();
+                            drop(state);
+
+                            let pending_queries =
+                                self.queue_pending_graph_automation_queries(track_name, &plugins);
+
+                            let mut state = self.state.blocking_write();
+                            Self::preserve_plugin_graph_states_from_cache(
+                                track_name,
+                                &state,
+                                &mut plugins,
+                            );
                             state
                                 .connectable_connections_by_track
                                 .insert(track_name.clone(), connectable_connections.clone());
@@ -5125,10 +5171,11 @@ impl Maolan {
                                         .or_insert(fallback);
                                 }
                             }
+                            state
+                                .plugin_graphs_by_track
+                                .insert(track_name.clone(), (plugins, connections.clone()));
                             drop(state);
 
-                            let pending_queries =
-                                self.queue_pending_graph_automation_queries(track_name, plugins);
                             if !pending_queries.is_empty() {
                                 return Task::batch(pending_queries);
                             }
@@ -11509,6 +11556,42 @@ impl Maolan {
 mod tests {
     use super::*;
     use iced::Point;
+    use serde_json::json;
+
+    #[test]
+    fn plugin_graph_refresh_preserves_cached_plugin_state() {
+        use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
+
+        fn plugin(instance_id: usize, state: Option<serde_json::Value>) -> PluginGraphPlugin {
+            PluginGraphPlugin {
+                node: PluginGraphNode::ClapPluginInstance(instance_id),
+                instance_id,
+                format: "CLAP".to_string(),
+                uri: "/tmp/maolan_plugins.clap".to_string(),
+                plugin_id: "rs.maolan.kick".to_string(),
+                name: "Maolan Kick".to_string(),
+                main_audio_inputs: 0,
+                main_audio_outputs: 2,
+                audio_inputs: 0,
+                audio_outputs: 2,
+                midi_inputs: 1,
+                midi_outputs: 0,
+                state,
+                bypassed: false,
+            }
+        }
+
+        let mut state = crate::state::StateData::default();
+        state.plugin_graphs_by_track.insert(
+            "Kick".to_string(),
+            (vec![plugin(7, Some(json!({"bytes": [1, 2, 3]})))], vec![]),
+        );
+        let mut refreshed = vec![plugin(7, None)];
+
+        Maolan::preserve_plugin_graph_states_from_cache("Kick", &state, &mut refreshed);
+
+        assert_eq!(refreshed[0].state, Some(json!({"bytes": [1, 2, 3]})));
+    }
 
     #[test]
     fn active_workspace_cursor_prefers_editor_cursor() {
