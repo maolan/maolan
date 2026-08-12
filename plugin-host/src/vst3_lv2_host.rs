@@ -2236,6 +2236,11 @@ pub fn run_lv2(
     let header = unsafe { header_ref(mapping.as_ptr()) };
     let ptr = mapping.as_ptr();
 
+    // Provide a sensible fallback for the synthetic test plugins; real LV2
+    // plugins overwrite these with their actual audio port counts below.
+    header.num_input_channels.store(1, Ordering::Release);
+    header.num_output_channels.store(1, Ordering::Release);
+
     match plugin_uri {
         "__test__" => {
             let scratch = unsafe { scratch_ptr(mapping.as_ptr()) };
@@ -2278,6 +2283,12 @@ pub fn run_lv2(
     header
         .midi_out_port_count
         .store(processor.midi_output_count() as u32, Ordering::Release);
+    header
+        .num_input_channels
+        .store(processor.audio_input_count() as u32, Ordering::Release);
+    header
+        .num_output_channels
+        .store(processor.audio_output_count() as u32, Ordering::Release);
     unsafe {
         latency_samples_atomic(ptr).store(processor.latency_samples(), Ordering::Release);
     }
