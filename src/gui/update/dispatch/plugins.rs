@@ -215,7 +215,7 @@ impl Maolan {
 
             Message::ShowClapPluginUi {
                 ref track_name,
-                clip_idx: _,
+                clip_idx,
                 instance_id,
                 plugin_id,
             } => {
@@ -225,20 +225,27 @@ impl Maolan {
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
-                tracing::info!(%track_name, instance_id, "DAW requesting CLAP UI");
                 self.info(format!(
                     "Requesting CLAP UI for track '{}' instance {}",
                     track_name, instance_id
                 ));
-                Some(self.send(Action::TrackShowClapGui {
-                    track_name: track_name.clone(),
-                    instance_id,
-                }))
+                if let Some(clip_idx) = clip_idx {
+                    Some(self.send(Action::ClipShowClapGui {
+                        track_name: track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                    }))
+                } else {
+                    Some(self.send(Action::TrackShowClapGui {
+                        track_name: track_name.clone(),
+                        instance_id,
+                    }))
+                }
             }
             #[cfg(unix)]
             Message::OpenLv2PluginUi {
                 ref track_name,
-                clip_idx: _,
+                clip_idx,
                 instance_id,
             } => {
                 if self.session_restore_in_progress {
@@ -246,10 +253,18 @@ impl Maolan {
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
-                Some(self.send(Action::TrackShowLv2Gui {
-                    track_name: track_name.clone(),
-                    instance_id,
-                }))
+                if let Some(clip_idx) = clip_idx {
+                    Some(self.send(Action::ClipShowLv2Gui {
+                        track_name: track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                    }))
+                } else {
+                    Some(self.send(Action::TrackShowLv2Gui {
+                        track_name: track_name.clone(),
+                        instance_id,
+                    }))
+                }
             }
             Message::ClipConnectPlugin {
                 ref from_node,
@@ -309,7 +324,7 @@ impl Maolan {
             }
             Message::OpenVst3PluginUi {
                 ref track_name,
-                clip_idx: _,
+                clip_idx,
                 instance_id,
                 plugin_id,
             } => {
@@ -323,10 +338,18 @@ impl Maolan {
                     "Requesting VST3 UI for track '{}' instance {}",
                     track_name, instance_id
                 ));
-                Some(self.send(Action::TrackShowVst3Gui {
-                    track_name: track_name.clone(),
-                    instance_id,
-                }))
+                if let Some(clip_idx) = clip_idx {
+                    Some(self.send(Action::ClipShowVst3Gui {
+                        track_name: track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                    }))
+                } else {
+                    Some(self.send(Action::TrackShowVst3Gui {
+                        track_name: track_name.clone(),
+                        instance_id,
+                    }))
+                }
             }
             Message::SendMessageFinished(Err(_e)) => None,
             Message::SendMessageFinished(Ok(())) => None,
