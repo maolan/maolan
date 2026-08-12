@@ -22,6 +22,10 @@ const LV2_UI_PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
 const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
 #[cfg(unix)]
 const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
+#[cfg(unix)]
+const LV2_UI_RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
+#[cfg(unix)]
+const LV2_INSTANCE_ACCESS: &str = "http://lv2plug.in/ns/ext/instance-access";
 
 const SHM_LATENCY_SAMPLES_OFFSET: usize = 84;
 
@@ -128,6 +132,7 @@ mod x11_ffi {
         ) -> Window;
         pub fn XStoreName(display: *mut Display, w: Window, name: *const c_char) -> c_int;
         pub fn XMapWindow(display: *mut Display, w: Window) -> c_int;
+        pub fn XMapRaised(display: *mut Display, w: Window) -> c_int;
         pub fn XUnmapWindow(display: *mut Display, w: Window) -> c_int;
         pub fn XDestroyWindow(display: *mut Display, w: Window) -> c_int;
         pub fn XSelectInput(display: *mut Display, w: Window, event_mask: c_long) -> c_int;
@@ -1065,41 +1070,93 @@ extern "C" fn lv2_ui_write_function(
 }
 
 #[cfg(unix)]
+#[repr(C)]
+struct Lv2UiResize {
+    handle: LV2UIWidget,
+    ui_resize: extern "C" fn(handle: LV2UIWidget, width: u32, height: u32) -> u32,
+}
+
+#[cfg(unix)]
+extern "C" fn lv2_ui_resize_noop(_handle: LV2UIWidget, _width: u32, _height: u32) -> u32 {
+    // Return 0 to indicate the resize request was handled (no-op is fine).
+    0
+}
+
+#[cfg(unix)]
 struct Lv2UiFeatureSet {
     _uris: Vec<std::ffi::CString>,
     _features: Vec<LV2Feature>,
     ptrs: Vec<*const LV2Feature>,
+    _resize: Option<Box<Lv2UiResize>>,
 }
 
 #[cfg(unix)]
 impl Lv2UiFeatureSet {
-    fn new(parent: Option<x11_ffi::Window>, show_interface: bool) -> Result<Self, String> {
-        let mut uris =
-            vec![std::ffi::CString::new(LV2_UI_IDLE_INTERFACE).map_err(|e| e.to_string())?];
-        if parent.is_some() {
-            uris.push(std::ffi::CString::new(LV2_UI_PARENT).map_err(|e| e.to_string())?);
-        }
-        if show_interface {
-            uris.push(std::ffi::CString::new(LV2_UI_SHOW_INTERFACE).map_err(|e| e.to_string())?);
+    fn new(
+        parent: Option<x11_ffi::Window>,
+        show_interface: bool,
+        instance_access: Option<usize>,
+    ) -> Result<Self, String> {
+        let mut entries: Vec<(std::ffi::CString, LV2Feature)> = Vec::new();
+        entries.push((
+            std::ffi::CString::new(LV2_UI_IDLE_INTERFACE).map_err(|e| e.to_string())?,
+            LV2Feature {
+                uri: std::ptr::null(),
+                data: std::ptr::null_mut(),
+            },
+        ));
+
+        let mut resize_box: Option<Box<Lv2UiResize>> = None;
+        if let Some(parent) = parent {
+            entries.push((
+                std::ffi::CString::new(LV2_UI_PARENT).map_err(|e| e.to_string())?,
+                LV2Feature {
+                    uri: std::ptr::null(),
+                    data: parent as usize as *mut libc::c_void,
+                },
+            ));
+            let resize = Box::new(Lv2UiResize {
+                handle: std::ptr::null_mut(),
+                ui_resize: lv2_ui_resize_noop,
+            });
+            entries.push((
+                std::ffi::CString::new(LV2_UI_RESIZE).map_err(|e| e.to_string())?,
+                LV2Feature {
+                    uri: std::ptr::null(),
+                    data: resize.as_ref() as *const Lv2UiResize as *mut libc::c_void,
+                },
+            ));
+            resize_box = Some(resize);
         }
 
-        let mut features = Vec::with_capacity(uris.len());
-        features.push(LV2Feature {
-            uri: uris[0].as_ptr(),
-            data: std::ptr::null_mut(),
-        });
-        if let Some(parent) = parent {
-            features.push(LV2Feature {
-                uri: uris[1].as_ptr(),
-                data: parent as usize as *mut libc::c_void,
-            });
-        }
         if show_interface {
-            features.push(LV2Feature {
-                uri: uris.last().expect("show interface URI exists").as_ptr(),
-                data: std::ptr::null_mut(),
-            });
+            entries.push((
+                std::ffi::CString::new(LV2_UI_SHOW_INTERFACE).map_err(|e| e.to_string())?,
+                LV2Feature {
+                    uri: std::ptr::null(),
+                    data: std::ptr::null_mut(),
+                },
+            ));
         }
+
+        if let Some(handle) = instance_access {
+            entries.push((
+                std::ffi::CString::new(LV2_INSTANCE_ACCESS).map_err(|e| e.to_string())?,
+                LV2Feature {
+                    uri: std::ptr::null(),
+                    data: handle as *mut libc::c_void,
+                },
+            ));
+        }
+
+        let mut uris = Vec::with_capacity(entries.len());
+        let mut features = Vec::with_capacity(entries.len());
+        for (uri, mut feature) in entries {
+            feature.uri = uri.as_ptr();
+            uris.push(uri);
+            features.push(feature);
+        }
+
         let mut ptrs: Vec<*const LV2Feature> =
             features.iter().map(|feature| feature as *const _).collect();
         ptrs.push(std::ptr::null());
@@ -1107,6 +1164,7 @@ impl Lv2UiFeatureSet {
             _uris: uris,
             _features: features,
             ptrs,
+            _resize: resize_box,
         })
     }
 
@@ -1369,6 +1427,7 @@ fn instantiate_lv2_ui(
     plugin_uri: &str,
     parent: Option<x11_ffi::Window>,
     show_interface: bool,
+    instance_access: Option<usize>,
 ) -> Result<Lv2GuiWindow, String> {
     let mut ui_bundle = file_uri_to_path(&ui.bundle_uri)
         .ok_or_else(|| format!("LV2 GUI: unsupported UI bundle URI '{}'", ui.bundle_uri))?;
@@ -1377,7 +1436,7 @@ fn instantiate_lv2_ui(
     }
 
     let (lib, descriptor, ui_binary) = load_lv2_ui_descriptor(ui)?;
-    let features = Lv2UiFeatureSet::new(parent, show_interface)?;
+    let features = Lv2UiFeatureSet::new(parent, show_interface, instance_access)?;
     let controller = Box::new(Lv2UiController {
         writes: std::sync::Mutex::new(Vec::new()),
     });
@@ -1526,7 +1585,14 @@ fn create_lv2_x11_gui(
     }
 
     let result = (|| {
-        let mut window = instantiate_lv2_ui(ui, processor, plugin_uri, Some(container), false)?;
+        let mut window = instantiate_lv2_ui(
+            ui,
+            processor,
+            plugin_uri,
+            Some(container),
+            false,
+            processor.instance_access_handle(),
+        )?;
         let widget = match window.surface {
             Lv2GuiSurface::X11 { child, .. } => child,
             Lv2GuiSurface::External { .. } => return Ok(window),
@@ -1534,7 +1600,8 @@ fn create_lv2_x11_gui(
         unsafe {
             x11_ffi::XReparentWindow(display, widget, container, 0, 0);
             x11_ffi::XMapWindow(display, widget);
-            x11_ffi::XMapWindow(display, container);
+            x11_ffi::XMapRaised(display, container);
+            x11_ffi::XSync(display, 0);
             x11_ffi::XFlush(display);
         }
         window.surface = Lv2GuiSurface::X11 {
@@ -1562,7 +1629,14 @@ fn create_lv2_external_gui(
     plugin_uri: &str,
     ui: &crate::lv2::Lv2UiInfo,
 ) -> Result<Lv2GuiWindow, String> {
-    instantiate_lv2_ui(ui, processor, plugin_uri, None, true)
+    instantiate_lv2_ui(
+        ui,
+        processor,
+        plugin_uri,
+        None,
+        true,
+        processor.instance_access_handle(),
+    )
 }
 
 #[cfg(unix)]
@@ -1621,6 +1695,7 @@ fn create_lv2_embedded_wayland_gui(
         plugin_uri,
         Some(parent as x11_ffi::Window),
         false,
+        processor.instance_access_handle(),
     )
 }
 
