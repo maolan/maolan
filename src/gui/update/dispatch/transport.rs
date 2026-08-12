@@ -73,17 +73,11 @@ impl Maolan {
                     return self.stop_live_session_play();
                 }
                 self.toolbar.update(&message);
-                let was_playing = self.playing;
                 self.playing = true;
                 self.paused = true;
                 self.pending_transport_position = None;
                 self.last_playback_tick = None;
-
-                let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(false))];
-                if !was_playing {
-                    tasks.push(self.send(Action::Play));
-                }
-                Task::batch(tasks)
+                self.send(Action::Pause)
             }
             Message::TransportStop => {
                 if session_view_active {
