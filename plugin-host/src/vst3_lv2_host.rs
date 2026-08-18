@@ -10,8 +10,8 @@ use std::time::Duration;
 
 #[cfg(unix)]
 use maolan_lv2::raw::{
-    LV2Feature, LV2UIControllerRaw, LV2UIDescriptorRaw, LV2UIHandle, LV2UIIdleInterface,
-    LV2UIShowInterface, LV2UIWidget,
+    LV2_URID__MAP, LV2_URID__UNMAP, LV2Feature, LV2UIControllerRaw, LV2UIDescriptorRaw,
+    LV2UIHandle, LV2UIIdleInterface, LV2UIShowInterface, LV2UIWidget,
 };
 
 #[cfg(unix)]
@@ -1096,6 +1096,7 @@ impl Lv2UiFeatureSet {
         parent: Option<x11_ffi::Window>,
         show_interface: bool,
         instance_access: Option<usize>,
+        urid_features: [&LV2Feature; 2],
     ) -> Result<Self, String> {
         let mut entries: Vec<(std::ffi::CString, LV2Feature)> = Vec::new();
         entries.push((
@@ -1103,6 +1104,20 @@ impl Lv2UiFeatureSet {
             LV2Feature {
                 uri: std::ptr::null(),
                 data: std::ptr::null_mut(),
+            },
+        ));
+        entries.push((
+            std::ffi::CString::new(LV2_URID__MAP).map_err(|e| e.to_string())?,
+            LV2Feature {
+                uri: urid_features[0].uri,
+                data: urid_features[0].data,
+            },
+        ));
+        entries.push((
+            std::ffi::CString::new(LV2_URID__UNMAP).map_err(|e| e.to_string())?,
+            LV2Feature {
+                uri: urid_features[1].uri,
+                data: urid_features[1].data,
             },
         ));
 
@@ -1436,7 +1451,12 @@ fn instantiate_lv2_ui(
     }
 
     let (lib, descriptor, ui_binary) = load_lv2_ui_descriptor(ui)?;
-    let features = Lv2UiFeatureSet::new(parent, show_interface, instance_access)?;
+    let features = Lv2UiFeatureSet::new(
+        parent,
+        show_interface,
+        instance_access,
+        processor.urid_features(),
+    )?;
     let controller = Box::new(Lv2UiController {
         writes: std::sync::Mutex::new(Vec::new()),
     });

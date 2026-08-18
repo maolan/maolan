@@ -1163,6 +1163,13 @@ impl Lv2Processor {
         }
     }
 
+    pub fn urid_features(&self) -> [&LV2Feature; 2] {
+        [
+            self._urid_feature.map_feature(),
+            self._urid_feature.unmap_feature(),
+        ]
+    }
+
     fn state_feature_ptrs(&self) -> [*const LV2Feature; 6] {
         let sp = self._state_path_feature.feature_ptrs();
         [
