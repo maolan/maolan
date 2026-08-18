@@ -5642,7 +5642,7 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-host"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "arc-swap",
  "crossbeam-channel",
