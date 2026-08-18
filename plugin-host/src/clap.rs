@@ -775,7 +775,10 @@ impl PluginInstance {
     }
 
     pub fn start_processing(&self) -> Result<(), String> {
-        let start = unsafe { (*self.plugin).start_processing }.ok_or("start_processing is null")?;
+        let start = match unsafe { (*self.plugin).start_processing } {
+            Some(f) => f,
+            None => return Ok(()),
+        };
         if unsafe { start(self.plugin) } {
             Ok(())
         } else {
