@@ -1,4 +1,4 @@
-use iced::{Background, Border, Color, gradient, widget::container};
+use maolan_widgets::iced::{Background, Border, Color, gradient, widget::container};
 
 fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::from_rgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
@@ -24,7 +24,7 @@ pub fn darken(color: Color, amount: f32) -> Color {
 
 pub const STRIP_CORNER_RADIUS: f32 = 7.0;
 
-pub fn strip(selected: bool, color: Option<iced::Color>) -> container::Style {
+pub fn strip(selected: bool, color: Option<maolan_widgets::iced::Color>) -> container::Style {
     let border_color = if selected {
         rgb(114, 170, 240)
     } else {

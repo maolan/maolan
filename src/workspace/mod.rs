@@ -22,14 +22,14 @@ use crate::{
 };
 use cursor_override::CursorOverride;
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
-use iced::{
+use maolan_widgets::iced::{
     Alignment, Background, Color, Element, Length, Point, Theme,
     advanced::mouse,
     widget::{
         Id, Space, Stack, button, column, container, lazy, mouse_area, pin, row, scrollable, text,
     },
 };
-use iced_drop::droppable;
+use maolan_widgets::iced_drop::droppable;
 use maolan_widgets::{
     horizontal_scrollbar::HorizontalScrollbar, vertical_scrollbar::VerticalScrollbar,
 };
@@ -791,14 +791,14 @@ impl Workspace {
                     container(h_scroll)
                         .width(Length::Fill)
                         .height(Length::Fixed(16.0))
-                        .padding(iced::Padding {
+                        .padding(maolan_widgets::iced::Padding {
                             left: 8.0,
                             ..Default::default()
                         }),
                     Space::new().width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH)),
                 ]
                 .height(Length::Fill)
-                .align_y(iced::alignment::Vertical::Bottom),
+                .align_y(maolan_widgets::iced::alignment::Vertical::Bottom),
             )
             .width(Length::Fill)
             .height(Length::Fill)

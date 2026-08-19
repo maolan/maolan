@@ -1,6 +1,6 @@
-use iced::advanced::text::Renderer as TextRenderer;
-use iced::widget::{Text, text};
-use iced::{Font, Theme};
+use maolan_widgets::iced::advanced::text::Renderer as TextRenderer;
+use maolan_widgets::iced::widget::{Text, text};
+use maolan_widgets::iced::{Font, Theme};
 
 pub const LUCIDE_METRONOME_FONT_BYTES: &[u8] =
     include_bytes!("../../assets/fonts/lucide-metronome.ttf");

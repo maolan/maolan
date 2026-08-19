@@ -1,12 +1,12 @@
 use crate::consts::state_ids::METRONOME_TRACK_ID;
 use crate::message::Message;
 use crate::state::{AudioClip, MIDIClip, SessionMatrix, Track};
-use iced::{
+use maolan_engine::kind::Kind;
+use maolan_widgets::iced::{
     Background, Border, Color, Element, Length,
     widget::{column, container, scrollable, text},
 };
-use iced_drop::droppable;
-use maolan_engine::kind::Kind;
+use maolan_widgets::iced_drop::droppable;
 use std::collections::HashSet;
 
 pub struct ClipsPane;

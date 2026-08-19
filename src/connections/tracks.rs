@@ -18,7 +18,11 @@ use crate::{
     },
     ui_timing::DOUBLE_CLICK,
 };
-use iced::{
+use maolan_engine::{
+    kind::Kind,
+    message::{Action as EngineAction, ConnectableRef, PluginGraphNode, PluginGraphPlugin},
+};
+use maolan_widgets::iced::{
     Color, Point, Rectangle, Renderer, Theme,
     advanced::graphics::gradient,
     alignment::{Horizontal, Vertical},
@@ -28,10 +32,6 @@ use iced::{
         canvas,
         canvas::{Action, Frame, Geometry, Path, Text},
     },
-};
-use maolan_engine::{
-    kind::Kind,
-    message::{Action as EngineAction, ConnectableRef, PluginGraphNode, PluginGraphPlugin},
 };
 use std::time::Instant;
 
@@ -220,12 +220,12 @@ impl Graph {
 
     const TRACK_NODE_SIZE: f32 = 140.0;
 
-    fn track_box_size(_track: &crate::state::Track) -> iced::Size {
-        iced::Size::new(Self::TRACK_NODE_SIZE, Self::TRACK_NODE_SIZE)
+    fn track_box_size(_track: &crate::state::Track) -> maolan_widgets::iced::Size {
+        maolan_widgets::iced::Size::new(Self::TRACK_NODE_SIZE, Self::TRACK_NODE_SIZE)
     }
 
-    fn plugin_box_size(plugin: &PluginGraphPlugin) -> iced::Size {
-        iced::Size::new(PLUGIN_W, PluginGraph::plugin_height(plugin))
+    fn plugin_box_size(plugin: &PluginGraphPlugin) -> maolan_widgets::iced::Size {
+        maolan_widgets::iced::Size::new(PLUGIN_W, PluginGraph::plugin_height(plugin))
     }
 
     fn plugin_node_position(
@@ -330,7 +330,7 @@ impl Graph {
             .clamp(4.0, (bounds.height - height - 4.0).max(4.0));
         Rectangle::new(
             Point::new(x, y),
-            iced::Size::new(CONTROLLER_MENU_WIDTH, height),
+            maolan_widgets::iced::Size::new(CONTROLLER_MENU_WIDTH, height),
         )
     }
 
@@ -421,7 +421,7 @@ impl Graph {
             let y = start_y + i as f32 * (CONTROLLER_BAR_HEIGHT + gap);
             let rect = Rectangle::new(
                 Point::new(pos.x, y),
-                iced::Size::new(bar_w, CONTROLLER_BAR_HEIGHT),
+                maolan_widgets::iced::Size::new(bar_w, CONTROLLER_BAR_HEIGHT),
             );
             let param = params.and_then(|p| p.iter().find(|p| p.param_id == controller.param_id));
             result.push(VisibleController {
@@ -1208,7 +1208,10 @@ impl Graph {
         } else {
             Point::new(bounds.width - hw_width, 0.0)
         };
-        let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
+        let rect = Path::rectangle(
+            pos,
+            maolan_widgets::iced::Size::new(hw_width, bounds.height),
+        );
         frame.fill(&rect, style.fill);
         frame.stroke(
             &rect,
@@ -1292,7 +1295,7 @@ impl Graph {
         track: &crate::state::Track,
         flat_port: usize,
         pos: Point,
-        size: iced::Size,
+        size: maolan_widgets::iced::Size,
     ) -> Point {
         let edge = Self::track_port_edge(track, flat_port, true);
         let (kind, engine_port) = Self::track_port_to_engine_index(track, flat_port, true);
@@ -1320,7 +1323,7 @@ impl Graph {
         track: &crate::state::Track,
         flat_port: usize,
         pos: Point,
-        size: iced::Size,
+        size: maolan_widgets::iced::Size,
     ) -> Point {
         let edge = Self::track_port_edge(track, flat_port, false);
         let (kind, engine_port) = Self::track_port_to_engine_index(track, flat_port, false);
@@ -1384,7 +1387,7 @@ impl Graph {
         let box_w = Self::midi_box_width(label);
         Rectangle::new(
             Point::new(80.0, 10.0 + index as f32 * (box_h + gap)),
-            iced::Size::new(box_w, box_h),
+            maolan_widgets::iced::Size::new(box_w, box_h),
         )
     }
 
@@ -1402,7 +1405,7 @@ impl Graph {
                 bounds.width - hw_width - 10.0 - box_w,
                 10.0 + index as f32 * (box_h + gap),
             ),
-            iced::Size::new(box_w, box_h),
+            maolan_widgets::iced::Size::new(box_w, box_h),
         )
     }
 
@@ -1614,8 +1617,11 @@ impl canvas::Program<Message> for Graph {
                                 return Some(Action::capture());
                             }
                         }
-                        if Rectangle::new(pos, iced::Size::new(hw_width, bounds.height))
-                            .contains(cursor_position)
+                        if Rectangle::new(
+                            pos,
+                            maolan_widgets::iced::Size::new(hw_width, bounds.height),
+                        )
+                        .contains(cursor_position)
                         {
                             let now = Instant::now();
                             if let Some((last_track, last_time)) =
@@ -1653,8 +1659,11 @@ impl canvas::Program<Message> for Graph {
                                 return Some(Action::capture());
                             }
                         }
-                        if Rectangle::new(pos, iced::Size::new(hw_width, bounds.height))
-                            .contains(cursor_position)
+                        if Rectangle::new(
+                            pos,
+                            maolan_widgets::iced::Size::new(hw_width, bounds.height),
+                        )
+                        .contains(cursor_position)
                         {
                             let now = Instant::now();
                             if let Some((last_track, last_time)) =
@@ -1707,7 +1716,10 @@ impl canvas::Program<Message> for Graph {
                                 .unwrap_or(Point::new(default_rect.x, default_rect.y));
                             let rect = Rectangle::new(
                                 pos,
-                                iced::Size::new(default_rect.width, default_rect.height),
+                                maolan_widgets::iced::Size::new(
+                                    default_rect.width,
+                                    default_rect.height,
+                                ),
                             );
                             if rect.contains(cursor_position) {
                                 data.moving_track = Some(MovingTrack {
@@ -1756,7 +1768,10 @@ impl canvas::Program<Message> for Graph {
                                 .unwrap_or(Point::new(default_rect.x, default_rect.y));
                             let rect = Rectangle::new(
                                 pos,
-                                iced::Size::new(default_rect.width, default_rect.height),
+                                maolan_widgets::iced::Size::new(
+                                    default_rect.width,
+                                    default_rect.height,
+                                ),
                             );
                             if rect.contains(cursor_position) {
                                 data.moving_track = Some(MovingTrack {
@@ -3339,25 +3354,26 @@ impl canvas::Program<Message> for Graph {
         let midi_hw_box_gap = 6.0;
         let cursor_position = cursor.position_in(bounds);
         let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
-        let draw_gradient_box = |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
-            frame.fill(&Path::rectangle(pos, size), base);
+        let draw_gradient_box =
+            |frame: &mut Frame, pos: Point, size: maolan_widgets::iced::Size, base: Color| {
+                frame.fill(&Path::rectangle(pos, size), base);
 
-            let top_h = (size.height * 0.45).max(4.0).min(size.height);
-            let bottom_h = (size.height * 0.28).max(3.0).min(size.height);
-            frame.fill(
-                &Path::rectangle(pos, iced::Size::new(size.width, top_h)),
-                Color::from_rgba(1.0, 1.0, 1.0, 0.05),
-            );
-            frame.fill(
-                &Path::rectangle(
-                    Point::new(pos.x, pos.y + size.height - bottom_h),
-                    iced::Size::new(size.width, bottom_h),
-                ),
-                Color::from_rgba(0.0, 0.0, 0.0, 0.08),
-            );
-        };
+                let top_h = (size.height * 0.45).max(4.0).min(size.height);
+                let bottom_h = (size.height * 0.28).max(3.0).min(size.height);
+                frame.fill(
+                    &Path::rectangle(pos, maolan_widgets::iced::Size::new(size.width, top_h)),
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.05),
+                );
+                frame.fill(
+                    &Path::rectangle(
+                        Point::new(pos.x, pos.y + size.height - bottom_h),
+                        maolan_widgets::iced::Size::new(size.width, bottom_h),
+                    ),
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.08),
+                );
+            };
         let draw_true_gradient_box =
-            |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
+            |frame: &mut Frame, pos: Point, size: maolan_widgets::iced::Size, base: Color| {
                 let path = Path::rectangle(pos, size);
                 let brighten = |c: Color, amount: f32| Color {
                     r: (c.r + amount).min(1.0),
@@ -3965,7 +3981,10 @@ impl canvas::Program<Message> for Graph {
                 && let Some(hw_in) = &data.hw_in
             {
                 let pos = Point::new(0.0, 0.0);
-                let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
+                let rect = Path::rectangle(
+                    pos,
+                    maolan_widgets::iced::Size::new(hw_width, bounds.height),
+                );
                 frame.fill(&rect, edge_panel);
                 frame.stroke(
                     &rect,
@@ -4020,7 +4039,10 @@ impl canvas::Program<Message> for Graph {
                 && let Some(hw_out) = &data.hw_out
             {
                 let pos = Point::new(bounds.width - hw_width, 0.0);
-                let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
+                let rect = Path::rectangle(
+                    pos,
+                    maolan_widgets::iced::Size::new(hw_width, bounds.height),
+                );
                 frame.fill(&rect, edge_panel);
                 frame.stroke(
                     &rect,
@@ -4085,7 +4107,7 @@ impl canvas::Program<Message> for Graph {
                         .is_some_and(|mt| mt.track_idx == selected_id);
                     let rect = Path::rectangle(
                         pos,
-                        iced::Size::new(default_rect.width, default_rect.height),
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
                     );
                     let fill_color = if is_selected {
                         midi_box_selected_fill
@@ -4100,7 +4122,7 @@ impl canvas::Program<Message> for Graph {
                     draw_gradient_box(
                         &mut frame,
                         pos,
-                        iced::Size::new(default_rect.width, default_rect.height),
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
                         fill_color,
                     );
                     frame.stroke(
@@ -4167,7 +4189,7 @@ impl canvas::Program<Message> for Graph {
                         .is_some_and(|mt| mt.track_idx == selected_id);
                     let rect = Path::rectangle(
                         pos,
-                        iced::Size::new(default_rect.width, default_rect.height),
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
                     );
                     let fill_color = if is_selected {
                         midi_box_selected_fill
@@ -4182,7 +4204,7 @@ impl canvas::Program<Message> for Graph {
                     draw_gradient_box(
                         &mut frame,
                         pos,
-                        iced::Size::new(default_rect.width, default_rect.height),
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
                         fill_color,
                     );
                     frame.stroke(
@@ -4435,7 +4457,7 @@ impl canvas::Program<Message> for Graph {
                         frame.fill(
                             &Path::rectangle(
                                 Point::new(hit.rect.x, hit.rect.y),
-                                iced::Size::new(hit.rect.width, hit.rect.height),
+                                maolan_widgets::iced::Size::new(hit.rect.width, hit.rect.height),
                             ),
                             track_bg,
                         );
@@ -4443,7 +4465,7 @@ impl canvas::Program<Message> for Graph {
                             frame.fill(
                                 &Path::rectangle(
                                     Point::new(hit.rect.x, hit.rect.y),
-                                    iced::Size::new(fill_width, hit.rect.height),
+                                    maolan_widgets::iced::Size::new(fill_width, hit.rect.height),
                                 ),
                                 track_fill,
                             );
@@ -4451,7 +4473,7 @@ impl canvas::Program<Message> for Graph {
                         frame.stroke(
                             &Path::rectangle(
                                 Point::new(hit.rect.x, hit.rect.y),
-                                iced::Size::new(hit.rect.width, hit.rect.height),
+                                maolan_widgets::iced::Size::new(hit.rect.width, hit.rect.height),
                             ),
                             canvas::Stroke::default()
                                 .with_color(border_color)
@@ -4461,7 +4483,7 @@ impl canvas::Program<Message> for Graph {
                             frame.fill(
                                 &Path::rectangle(
                                     Point::new(hit.rect.x + fill_width - 1.0, hit.rect.y),
-                                    iced::Size::new(2.0, hit.rect.height),
+                                    maolan_widgets::iced::Size::new(2.0, hit.rect.height),
                                 ),
                                 Color::WHITE,
                             );
@@ -4504,14 +4526,20 @@ impl canvas::Program<Message> for Graph {
                             frame.fill(
                                 &Path::rectangle(
                                     Point::new(hit.rect.x, hit.rect.y),
-                                    iced::Size::new(hit.rect.width, hit.rect.height),
+                                    maolan_widgets::iced::Size::new(
+                                        hit.rect.width,
+                                        hit.rect.height,
+                                    ),
                                 ),
                                 highlight,
                             );
                             frame.stroke(
                                 &Path::rectangle(
                                     Point::new(hit.rect.x, hit.rect.y),
-                                    iced::Size::new(hit.rect.width, hit.rect.height),
+                                    maolan_widgets::iced::Size::new(
+                                        hit.rect.width,
+                                        hit.rect.height,
+                                    ),
                                 ),
                                 canvas::Stroke::default()
                                     .with_color(highlight_border)
@@ -4534,14 +4562,14 @@ impl canvas::Program<Message> for Graph {
                 frame.fill(
                     &Path::rectangle(
                         Point::new(rect.x, rect.y),
-                        iced::Size::new(rect.width, rect.height),
+                        maolan_widgets::iced::Size::new(rect.width, rect.height),
                     ),
                     menu_bg,
                 );
                 frame.stroke(
                     &Path::rectangle(
                         Point::new(rect.x, rect.y),
-                        iced::Size::new(rect.width, rect.height),
+                        maolan_widgets::iced::Size::new(rect.width, rect.height),
                     ),
                     canvas::Stroke::default()
                         .with_color(menu_border)
@@ -4566,7 +4594,10 @@ impl canvas::Program<Message> for Graph {
                             let item_y = rect.y + idx as f32 * CONTROLLER_MENU_ITEM_HEIGHT;
                             let item_rect = Rectangle::new(
                                 Point::new(rect.x, item_y),
-                                iced::Size::new(rect.width, CONTROLLER_MENU_ITEM_HEIGHT),
+                                maolan_widgets::iced::Size::new(
+                                    rect.width,
+                                    CONTROLLER_MENU_ITEM_HEIGHT,
+                                ),
                             );
                             let fill = if menu.hovered == Some(idx) {
                                 menu_hover
@@ -4576,7 +4607,10 @@ impl canvas::Program<Message> for Graph {
                             frame.fill(
                                 &Path::rectangle(
                                     Point::new(item_rect.x, item_rect.y),
-                                    iced::Size::new(item_rect.width, item_rect.height),
+                                    maolan_widgets::iced::Size::new(
+                                        item_rect.width,
+                                        item_rect.height,
+                                    ),
                                 ),
                                 fill,
                             );
@@ -4617,8 +4651,8 @@ impl canvas::Program<Message> for Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::widget::canvas::Program;
-    use iced::{Point, Rectangle, Size, event, mouse};
+    use maolan_widgets::iced::widget::canvas::Program;
+    use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 

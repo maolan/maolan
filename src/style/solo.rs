@@ -1,4 +1,4 @@
-use iced::{Color, Theme, widget::button::Style};
+use maolan_widgets::iced::{Color, Theme, widget::button::Style};
 
 pub fn style(theme: &Theme, soloed: bool, border_only: bool) -> Style {
     super::track_toggle_button_style(

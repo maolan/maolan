@@ -10,7 +10,9 @@ use crate::{
     message::Message,
     state::State,
 };
-use iced::{
+use maolan_engine::kind::Kind;
+use maolan_engine::message::Action as EngineAction;
+use maolan_widgets::iced::{
     Color, Point, Rectangle, Renderer, Theme,
     alignment::{Horizontal, Vertical},
     event::Event,
@@ -20,8 +22,6 @@ use iced::{
         stroke::{LineCap, LineJoin},
     },
 };
-use maolan_engine::kind::Kind;
-use maolan_engine::message::Action as EngineAction;
 use std::collections::HashMap;
 
 const TOOLBAR_H: f32 = 44.0;
@@ -88,14 +88,17 @@ impl Graph {
             (
                 "add_input",
                 "+",
-                Rectangle::new(Point::new(0.0, 8.0), iced::Size::new(NODE_W, BUTTON_H)),
+                Rectangle::new(
+                    Point::new(0.0, 8.0),
+                    maolan_widgets::iced::Size::new(NODE_W, BUTTON_H),
+                ),
             ),
             (
                 "add_output",
                 "+",
                 Rectangle::new(
                     Point::new(bounds.width - NODE_W, 8.0),
-                    iced::Size::new(NODE_W, BUTTON_H),
+                    maolan_widgets::iced::Size::new(NODE_W, BUTTON_H),
                 ),
             ),
         ]
@@ -106,7 +109,7 @@ impl Graph {
         let graph_h = (bounds.height - graph_top - 24.0).max(260.0);
         Rectangle::new(
             Point::new(0.0, graph_top),
-            iced::Size::new(bounds.width, graph_h),
+            maolan_widgets::iced::Size::new(bounds.width, graph_h),
         )
     }
 
@@ -114,7 +117,10 @@ impl Graph {
         let graph = Self::graph_rect(bounds);
         let x = (bounds.width - MAOLAN_SIZE) / 2.0;
         let y = graph.y + (graph.height - height) / 2.0;
-        Rectangle::new(Point::new(x, y), iced::Size::new(MAOLAN_SIZE, height))
+        Rectangle::new(
+            Point::new(x, y),
+            maolan_widgets::iced::Size::new(MAOLAN_SIZE, height),
+        )
     }
 
     fn client_name(port_name: &str) -> &str {
@@ -281,14 +287,17 @@ impl Graph {
             let mut rect = match id.as_str() {
                 "hw:in" => Rectangle::new(
                     Point::new(0.0, graph_rect.y),
-                    iced::Size::new(NODE_W, graph_rect.height),
+                    maolan_widgets::iced::Size::new(NODE_W, graph_rect.height),
                 ),
                 "hw:out" => Rectangle::new(
                     Point::new(bounds.width - NODE_W, graph_rect.y),
-                    iced::Size::new(NODE_W, graph_rect.height),
+                    maolan_widgets::iced::Size::new(NODE_W, graph_rect.height),
                 ),
                 "maolan" => Self::default_maolan_rect(bounds, dynamic_height),
-                _ => Rectangle::new(Point::ORIGIN, iced::Size::new(CLIENT_W, dynamic_height)),
+                _ => Rectangle::new(
+                    Point::ORIGIN,
+                    maolan_widgets::iced::Size::new(CLIENT_W, dynamic_height),
+                ),
             };
             let draggable = id != "hw:in" && id != "hw:out";
             if draggable {
@@ -578,7 +587,10 @@ impl canvas::Program<Message> for Graph {
                         .find(|node| node.id == moving.id)
                         .map(|node| node.rect)
                         .unwrap_or_else(|| {
-                            Rectangle::new(Point::ORIGIN, iced::Size::new(CLIENT_W, MIN_PLUGIN_H))
+                            Rectangle::new(
+                                Point::ORIGIN,
+                                maolan_widgets::iced::Size::new(CLIENT_W, MIN_PLUGIN_H),
+                            )
                         });
                     let position = Point::new(
                         cursor_position.x - moving.offset_x,
@@ -736,9 +748,9 @@ impl canvas::Program<Message> for Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::widget::canvas::Program;
-    use iced::{Size, event};
     use maolan_engine::message::{JackGraphInfo, JackPortInfo};
+    use maolan_widgets::iced::widget::canvas::Program;
+    use maolan_widgets::iced::{Size, event};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 

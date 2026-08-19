@@ -1,7 +1,7 @@
 use super::*;
 use crate::state::SlotPlayState;
-use iced::widget::Id;
-use iced_drop::zones_on_point;
+use maolan_widgets::iced::widget::Id;
+use maolan_widgets::iced_drop::zones_on_point;
 
 impl Maolan {
     pub(super) fn handle_live_session_message(

@@ -1,5 +1,5 @@
 use crate::message::Message;
-use iced::{
+use maolan_widgets::iced::{
     Color, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{canvas::Cache, canvas::Frame, canvas::Geometry, canvas::Path, canvas::Program},
 };

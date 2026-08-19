@@ -1,6 +1,6 @@
 use crate::message::{Message, ModulatorChange};
 use crate::state::{Modulator, ModulatorRate, ModulatorShape, MusicalDivision};
-use iced::{
+use maolan_widgets::iced::{
     Alignment, Background, Border, Color, Element, Length,
     widget::{
         button, checkbox, column, container, mouse_area, pick_list, row, scrollable, slider, text,

@@ -1,4 +1,4 @@
-use iced::{Color, Theme, widget::button::Style};
+use maolan_widgets::iced::{Color, Theme, widget::button::Style};
 
 pub fn style(theme: &Theme, active: bool) -> Style {
     super::track_icon_button_style(theme, active, Color::from_rgb(0.51, 0.68, 0.92))

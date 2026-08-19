@@ -11,7 +11,12 @@ use crate::{
     state::{MovingPlugin, PluginConnecting, State, Track},
     ui_timing::DOUBLE_CLICK,
 };
-use iced::{
+use maolan_engine::kind::Kind;
+use maolan_engine::message::{
+    Action as EngineAction, ConnectableConnection, ConnectableRef, PluginGraphNode,
+    PluginGraphPlugin,
+};
+use maolan_widgets::iced::{
     Color, Point, Rectangle, Renderer, Theme,
     advanced::graphics::gradient,
     alignment::{Horizontal, Vertical},
@@ -21,11 +26,6 @@ use iced::{
         canvas,
         canvas::{Action, Frame, Geometry, Path, Text},
     },
-};
-use maolan_engine::kind::Kind;
-use maolan_engine::message::{
-    Action as EngineAction, ConnectableConnection, ConnectableRef, PluginGraphNode,
-    PluginGraphPlugin,
 };
 use std::collections::HashSet;
 use std::time::Instant;
@@ -137,7 +137,7 @@ impl Graph {
     fn track_input_rect(bounds: Rectangle) -> Rectangle {
         Rectangle::new(
             Point::new(TRACK_IO_MARGIN_X, bounds.height / 2.0 - TRACK_IO_H / 2.0),
-            iced::Size::new(TRACK_IO_W, TRACK_IO_H),
+            maolan_widgets::iced::Size::new(TRACK_IO_W, TRACK_IO_H),
         )
     }
 
@@ -147,7 +147,7 @@ impl Graph {
                 bounds.width - TRACK_IO_MARGIN_X - TRACK_IO_W,
                 bounds.height / 2.0 - TRACK_IO_H / 2.0,
             ),
-            iced::Size::new(TRACK_IO_W, TRACK_IO_H),
+            maolan_widgets::iced::Size::new(TRACK_IO_W, TRACK_IO_H),
         )
     }
 
@@ -589,7 +589,7 @@ impl canvas::Program<Message> for Graph {
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                         let rect = Rectangle::new(
                             pos,
-                            iced::Size::new(PLUGIN_W, Self::plugin_height(plugin)),
+                            maolan_widgets::iced::Size::new(PLUGIN_W, Self::plugin_height(plugin)),
                         );
                         if rect.contains(cursor_position) {
                             clicked_plugin = Some((idx, plugin.instance_id, pos));
@@ -897,7 +897,7 @@ impl canvas::Program<Message> for Graph {
         let cursor_position = cursor.position_in(bounds);
         let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
         let draw_true_gradient_box =
-            |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
+            |frame: &mut Frame, pos: Point, size: maolan_widgets::iced::Size, base: Color| {
                 let path = Path::rectangle(pos, size);
                 let brighten = |c: Color, amount: f32| Color {
                     r: (c.r + amount).min(1.0),
@@ -1122,14 +1122,15 @@ impl canvas::Program<Message> for Graph {
             for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate() {
                 let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                 let plugin_h = Self::plugin_height(plugin);
-                let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
+                let rect =
+                    Path::rectangle(pos, maolan_widgets::iced::Size::new(PLUGIN_W, plugin_h));
                 if plugin.bypassed {
                     frame.fill(&rect, bypass_fill);
                 } else {
                     draw_true_gradient_box(
                         &mut frame,
                         pos,
-                        iced::Size::new(PLUGIN_W, plugin_h),
+                        maolan_widgets::iced::Size::new(PLUGIN_W, plugin_h),
                         node_fill,
                     );
                 }
@@ -1541,8 +1542,8 @@ impl canvas::Program<Message> for Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::widget::canvas::Program;
-    use iced::{Point, Rectangle, Size, event, mouse};
+    use maolan_widgets::iced::widget::canvas::Program;
+    use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 

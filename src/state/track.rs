@@ -1,7 +1,7 @@
 use super::{AudioClip, MIDIClip};
 use crate::message::{MidiEditorViewMode, TrackAutomationMode, TrackAutomationTarget};
-use iced::{Color, Point};
 use maolan_engine::midi::mpe::MpeState;
+use maolan_widgets::iced::{Color, Point};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::consts::state_track::{
@@ -167,7 +167,7 @@ struct PointDef {
 }
 
 mod color_option_def {
-    use iced::Color;
+    use maolan_widgets::iced::Color;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(value: &Option<Color>, serializer: S) -> Result<S::Ok, S::Error>

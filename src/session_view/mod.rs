@@ -6,8 +6,9 @@ use crate::{
     state::{SessionMatrix, SlotPlayState, SlotRuntimes, Track},
     style,
 };
-use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Program};
-use iced::{
+use maolan_engine::message::MidiLearnBinding;
+use maolan_widgets::iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Program};
+use maolan_widgets::iced::{
     Alignment, Background, Border, Color, Length, Point, Radians, Rectangle, Renderer, Theme,
     mouse,
     widget::{
@@ -15,8 +16,7 @@ use iced::{
         scrollable, text,
     },
 };
-use iced_fonts::lucide::{play, square};
-use maolan_engine::message::MidiLearnBinding;
+use maolan_widgets::iced_fonts::lucide::{play, square};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -135,7 +135,7 @@ impl SessionView {
         Self
     }
 
-    pub fn view(input: SessionViewInput) -> iced::Element<'static, Message> {
+    pub fn view(input: SessionViewInput) -> maolan_widgets::iced::Element<'static, Message> {
         let mut render_input = input;
         render_input
             .tracks
@@ -144,7 +144,7 @@ impl SessionView {
         lazy(hash, move |_| Self::build_body(render_input.clone())).into()
     }
 
-    fn build_body(args: SessionViewInput) -> iced::Element<'static, Message> {
+    fn build_body(args: SessionViewInput) -> maolan_widgets::iced::Element<'static, Message> {
         let mut strips = Row::new()
             .spacing(2)
             .padding([8, 6])
@@ -170,19 +170,20 @@ impl SessionView {
                 scrollable::Scrollbar::new(),
             ));
 
-        let body: iced::Element<'static, Message> = if let Some(master) = &args.master_track {
-            let master_width =
-                crate::workspace::Workspace::mixer_strip_width(master.audio.outs.max(1));
-            let empty_children = HashMap::new();
-            let master_strip = track_strip(master, &args, master_width, &empty_children, false);
-            row![track_strips, master_strip]
-                .spacing(2)
-                .align_y(Alignment::Start)
-                .height(Length::Fill)
-                .into()
-        } else {
-            track_strips.into()
-        };
+        let body: maolan_widgets::iced::Element<'static, Message> =
+            if let Some(master) = &args.master_track {
+                let master_width =
+                    crate::workspace::Workspace::mixer_strip_width(master.audio.outs.max(1));
+                let empty_children = HashMap::new();
+                let master_strip = track_strip(master, &args, master_width, &empty_children, false);
+                row![track_strips, master_strip]
+                    .spacing(2)
+                    .align_y(Alignment::Start)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                track_strips.into()
+            };
 
         container(body)
             .width(Length::Fill)
@@ -205,9 +206,9 @@ const SCENE_CONTEXT_MENU_WIDTH: f32 = 140.0;
 
 fn scene_context_menu_overlay(
     menu_state: &crate::state::SessionSceneContextMenuState,
-) -> iced::Element<'static, Message> {
+) -> maolan_widgets::iced::Element<'static, Message> {
     let scene_index = menu_state.scene_index;
-    let items: Vec<iced::Element<'static, Message>> = vec![
+    let items: Vec<maolan_widgets::iced::Element<'static, Message>> = vec![
         menu::menu_item("Rename", Message::SessionSceneRenameShow(scene_index)),
         menu::menu_item("Remove", Message::SessionSceneRemove(scene_index)),
     ];
@@ -282,22 +283,22 @@ fn slot_button(
     slot: SlotState,
     master: MasterSlot,
     label: String,
-) -> iced::Element<'static, Message> {
+) -> maolan_widgets::iced::Element<'static, Message> {
     let is_master = master != MasterSlot::No;
-    let icon_content: iced::Element<'static, Message> = match slot.play_stop_icon {
+    let icon_content: maolan_widgets::iced::Element<'static, Message> = match slot.play_stop_icon {
         Some(true) => play().size(14).color(Color::WHITE).into(),
         Some(false) => square().size(14).color(Color::WHITE).into(),
         None => square().size(14).color(Color::TRANSPARENT).into(),
     };
     let next_icon = Some(!slot.play_stop_icon.unwrap_or(true));
-    let label_element: iced::Element<'static, Message> =
+    let label_element: maolan_widgets::iced::Element<'static, Message> =
         container(text(label).size(12).color(Color::WHITE).width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .center_y(Length::Fill)
             .clip(true)
             .into();
-    let slot_row: iced::Element<'static, Message> = if is_master {
+    let slot_row: maolan_widgets::iced::Element<'static, Message> = if is_master {
         row![label_element]
             .align_y(Alignment::Center)
             .width(Length::Fill)
@@ -325,7 +326,7 @@ fn slot_button(
     } else {
         slot_container.id(Id::from(slot_zone_id(&track_name, scene_index)))
     };
-    let slot_content: iced::Element<'static, Message> = slot_container.into();
+    let slot_content: maolan_widgets::iced::Element<'static, Message> = slot_container.into();
     if is_master {
         mouse_area(slot_content)
             .on_press(Message::SessionScenePressed(scene_index))
@@ -525,7 +526,7 @@ fn track_strip(
     width: f32,
     children_by_parent: &HashMap<String, Vec<&Track>>,
     last_child_of_parent: bool,
-) -> iced::Element<'static, Message> {
+) -> maolan_widgets::iced::Element<'static, Message> {
     let track_color = track.color;
     let selected = if track.is_master {
         args.selected.contains("hw:out")
@@ -539,7 +540,7 @@ fn track_strip(
     let header = strip_header(track);
     let mut body = column![header]
         .spacing(4)
-        .padding(iced::Padding::new(4.0).bottom(0.0))
+        .padding(maolan_widgets::iced::Padding::new(4.0).bottom(0.0))
         .height(Length::Fill);
     if !track.is_folder {
         let mut slots = Column::new().spacing(2).height(Length::Fill);
@@ -590,7 +591,7 @@ fn track_strip(
         let scene_index = active_scene_for_track(track, args.selected_scene, &args.slot_runtimes);
         let (current_loop, total_loops) = clip_loop_count(track, args, scene_index);
         let fill = clip_play_fill(track, args, scene_index);
-        let bottom_bar: iced::Element<'static, Message> = container(
+        let bottom_bar: maolan_widgets::iced::Element<'static, Message> = container(
             row![
                 Canvas::new(PieCircle { fill })
                     .width(Length::Fixed(14.0))
@@ -616,7 +617,9 @@ fn track_strip(
         .width(Length::Fixed(width))
         .height(Length::Fill);
 
-    let content: iced::Element<'static, Message> = if track.is_folder && track.folder_open {
+    let content: maolan_widgets::iced::Element<'static, Message> = if track.is_folder
+        && track.folder_open
+    {
         if let Some(children) = children_by_parent.get(&track.name) {
             let mut child_strips = Row::new()
                 .spacing(2)
@@ -652,7 +655,7 @@ fn track_strip(
     } else {
         track.name.clone()
     };
-    let strip: iced::Element<'static, Message> = container(content)
+    let strip: maolan_widgets::iced::Element<'static, Message> = container(content)
         .height(Length::Fill)
         .style(move |_theme| style::mixer::strip(selected, track_color))
         .into();
@@ -660,13 +663,13 @@ fn track_strip(
     // bottom edges of a strip whose immediate parent folder is selected with
     // flush bars above and below the strip. The far-right child additionally
     // gets a right-edge bar spanning the full height so the corners meet.
-    let strip: iced::Element<'static, Message> = if parent_selected {
+    let strip: maolan_widgets::iced::Element<'static, Message> = if parent_selected {
         let bar = || {
             container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
                 .width(Length::Fill)
                 .style(|_| style::mixer::strip_parent_edge_highlight())
         };
-        let with_hbars: iced::Element<'static, Message> =
+        let with_hbars: maolan_widgets::iced::Element<'static, Message> =
             column![bar(), strip, bar()].height(Length::Fill).into();
         if last_child_of_parent {
             // Inset the right-edge bar by the strip corner radius so it does
@@ -717,8 +720,8 @@ fn track_strip(
     strip
 }
 
-fn strip_header(track: &Track) -> iced::Element<'static, Message> {
-    let folder_toggle: iced::Element<'static, Message> = if track.is_folder {
+fn strip_header(track: &Track) -> maolan_widgets::iced::Element<'static, Message> {
+    let folder_toggle: maolan_widgets::iced::Element<'static, Message> = if track.is_folder {
         let icon = if track.folder_open { "▶" } else { "▼" };
         button(
             container(text(icon).size(10))
@@ -743,7 +746,7 @@ fn strip_header(track: &Track) -> iced::Element<'static, Message> {
         Space::new().width(Length::Fixed(0.0)).into()
     };
 
-    let add_scene_button: iced::Element<'static, Message> = if track.is_master {
+    let add_scene_button: maolan_widgets::iced::Element<'static, Message> = if track.is_master {
         button(
             container(text("+").size(10))
                 .width(Length::Fill)

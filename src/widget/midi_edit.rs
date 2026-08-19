@@ -15,14 +15,14 @@ use crate::{
         piano::{self, PianoRollInteraction},
     },
 };
-use iced::{
+use maolan_widgets::iced::{
     Background, Border, Color, Element, Length, Point,
     widget::{
-        Id, Stack, button, canvas, column, container, pick_list, pin, row, scrollable, slider,
-        text, text_input, vertical_slider,
+        Id, Stack, button, canvas, checkbox, column, container, mouse_area, pick_list, pin, row,
+        scrollable, slider, text, text_input, vertical_slider,
     },
 };
-use iced_aw::{
+use maolan_widgets::iced_aw::{
     menu::{DrawPath, Item, Menu as IcedMenu},
     menu_bar,
 };
@@ -32,7 +32,7 @@ use maolan_widgets::{
         NoteArea, PianoGridScrollCallbacks, PianoGridScrollLayout, PianoGridScrolls,
         piano_grid_scrollers,
     },
-    piano::OctaveKeyboard,
+    piano::{OctaveKeyboard, Orientation},
     piano_roll::PianoRoll,
     vertical_scrollbar::VerticalScrollbar,
 };
@@ -66,21 +66,19 @@ impl MIDIEdit {
         populated: bool,
     ) -> Element<'static, Message> {
         let label = label.into();
-        button(
-            text(label)
-                .width(Length::Fill)
-                .style(move |_theme| iced::widget::text::Style {
-                    color: Some(if populated {
-                        Color::from_rgb(0.60, 0.88, 0.45)
-                    } else {
-                        Color::from_rgb(0.86, 0.86, 0.9)
-                    }),
+        button(text(label).width(Length::Fill).style(move |_theme| {
+            maolan_widgets::iced::widget::text::Style {
+                color: Some(if populated {
+                    Color::from_rgb(0.60, 0.88, 0.45)
+                } else {
+                    Color::from_rgb(0.86, 0.86, 0.9)
                 }),
-        )
+            }
+        }))
         .padding([4, 8])
         .width(Length::Fill)
         .style(move |_theme, status| {
-            use iced::widget::button::{Status, Style};
+            use maolan_widgets::iced::widget::button::{Status, Style};
 
             let background = match status {
                 Status::Hovered => {
@@ -150,7 +148,13 @@ impl MIDIEdit {
         let notes_content: Element<'_, Message>;
         let notes_h: f32;
 
-        let midnam_note_names = self.midnam_note_names.clone();
+        let show_note_names = state.piano_show_note_names;
+        let empty_names: HashMap<u8, String> = HashMap::new();
+        let visible_names = if show_note_names {
+            &self.midnam_note_names
+        } else {
+            &empty_names
+        };
 
         let editor_view_mode = state
             .piano
@@ -175,9 +179,11 @@ impl MIDIEdit {
                     drum_rows.push(*pitch);
                 }
             }
-            for pitch in midnam_note_names.keys() {
-                if !drum_rows.contains(pitch) {
-                    drum_rows.push(*pitch);
+            if show_note_names {
+                for pitch in visible_names.keys() {
+                    if !drum_rows.contains(pitch) {
+                        drum_rows.push(*pitch);
+                    }
                 }
             }
             drum_rows.sort();
@@ -293,7 +299,7 @@ impl MIDIEdit {
             );
             drum_interaction.repeat_create = state.shift;
             let drum_canvas: Element<'_, maolan_widgets::drum::DrumMessage> =
-                iced::widget::canvas(drum_interaction)
+                maolan_widgets::iced::widget::canvas(drum_interaction)
                     .width(Length::Fixed(notes_w))
                     .height(Length::Fixed(notes_h))
                     .into();
@@ -351,34 +357,45 @@ impl MIDIEdit {
                 .iter()
                 .enumerate()
                 .fold(column![], |col, (idx, pitch)| {
-                    let name = midnam_note_names.get(pitch).cloned().unwrap_or_else(|| {
-                        crate::consts::gm_drum_map::GM_DRUM_MAP
-                            .iter()
-                            .find(|(p, _)| *p == *pitch)
-                            .map(|&(_, name): &(u8, &str)| name.to_string())
+                    let name = if show_note_names {
+                        visible_names
+                            .get(pitch)
+                            .cloned()
+                            .or_else(|| {
+                                crate::consts::gm_drum_map::GM_DRUM_MAP
+                                    .iter()
+                                    .find(|(p, _)| *p == *pitch)
+                                    .map(|&(_, name): &(u8, &str)| name.to_string())
+                            })
                             .unwrap_or_else(|| format!("Note {}", pitch))
-                    });
+                    } else {
+                        format!("Note {}", pitch)
+                    };
                     col.push(
-                        container(
-                            row![
-                                text(format!("{}", pitch))
-                                    .size(9)
-                                    .width(Length::Fixed(28.0)),
-                                text(name).size(10).width(Length::Fill),
-                            ]
-                            .spacing(2),
+                        mouse_area(
+                            container(
+                                row![
+                                    text(format!("{}", pitch))
+                                        .size(9)
+                                        .width(Length::Fixed(28.0)),
+                                    text(name).size(10).width(Length::Fill),
+                                ]
+                                .spacing(2),
+                            )
+                            .width(Length::Fill)
+                            .height(Length::Fixed(drum_row_h))
+                            .padding([2, 4])
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(if idx % 2 == 0 {
+                                    Color::from_rgba(0.10, 0.10, 0.12, 1.0)
+                                } else {
+                                    Color::from_rgba(0.13, 0.13, 0.15, 1.0)
+                                })),
+                                ..container::Style::default()
+                            }),
                         )
-                        .width(Length::Fill)
-                        .height(Length::Fixed(drum_row_h))
-                        .padding([2, 4])
-                        .style(move |_theme| container::Style {
-                            background: Some(Background::Color(if idx % 2 == 0 {
-                                Color::from_rgba(0.10, 0.10, 0.12, 1.0)
-                            } else {
-                                Color::from_rgba(0.13, 0.13, 0.15, 1.0)
-                            })),
-                            ..container::Style::default()
-                        }),
+                        .on_press(Message::DrumKeyPressed(*pitch, 100))
+                        .on_release(Message::DrumKeyReleased(*pitch)),
                     )
                 });
 
@@ -418,7 +435,7 @@ impl MIDIEdit {
                         zoom_y,
                         pixels_per_sample,
                         zoom_x,
-                        iced::widget::canvas(PianoRollInteraction::new(
+                        maolan_widgets::iced::widget::canvas(PianoRollInteraction::new(
                             self.state.clone(),
                             pixels_per_sample,
                         ))
@@ -458,19 +475,22 @@ impl MIDIEdit {
                     * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
                         * zoom_y)
                         .max(1.0);
-                let names = midnam_note_names.clone();
+                let names = visible_names.clone();
                 col.push(
                     container(
-                        iced::widget::canvas(OctaveKeyboard::new(
-                            octave,
-                            names,
-                            Message::PianoKeyPressed,
-                            Message::PianoKeyReleased,
-                        ))
+                        maolan_widgets::iced::widget::canvas(
+                            OctaveKeyboard::new(
+                                octave,
+                                names,
+                                Message::PianoKeyPressed,
+                                Message::PianoKeyReleased,
+                            )
+                            .with_orientation(Orientation::Degree270),
+                        )
                         .width(Length::Fixed(KEYBOARD_WIDTH))
                         .height(Length::Fixed(octave_h)),
                     )
-                    .id(Id::from(format!("kb_{octave}_{}", midnam_note_names.len())))
+                    .id(Id::from(format!("kb_{octave}_{}", visible_names.len())))
                     .padding(0),
                 )
             });
@@ -714,14 +734,16 @@ impl MIDIEdit {
         }
 
         ctrl_layers.push(
-            pin(iced::widget::canvas(ControllerRollInteraction::new(
-                self.state.clone(),
-                pixels_per_sample,
-                (samples_per_bar as f64 * state.tempo as f64 / 240.0).max(1.0),
-                samples_per_bar,
-            ))
-            .width(Length::Fixed(ctrl_w))
-            .height(Length::Fixed(ctrl_h)))
+            pin(
+                maolan_widgets::iced::widget::canvas(ControllerRollInteraction::new(
+                    self.state.clone(),
+                    pixels_per_sample,
+                    (samples_per_bar as f64 * state.tempo as f64 / 240.0).max(1.0),
+                    samples_per_bar,
+                ))
+                .width(Length::Fixed(ctrl_w))
+                .height(Length::Fixed(ctrl_h)),
+            )
             .position(Point::new(0.0, 0.0))
             .into(),
         );
@@ -868,25 +890,25 @@ impl MIDIEdit {
             }
             PianoControllerLane::SysEx => text("SysEx events")
                 .size(10)
-                .style(|_theme| iced::widget::text::Style {
+                .style(|_theme| maolan_widgets::iced::widget::text::Style {
                     color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
                 })
                 .into(),
             PianoControllerLane::MpePitchBend => text("Pitch bend per selected note")
                 .size(10)
-                .style(|_theme| iced::widget::text::Style {
+                .style(|_theme| maolan_widgets::iced::widget::text::Style {
                     color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
                 })
                 .into(),
             PianoControllerLane::MpePressure => text("Pressure per selected note")
                 .size(10)
-                .style(|_theme| iced::widget::text::Style {
+                .style(|_theme| maolan_widgets::iced::widget::text::Style {
                     color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
                 })
                 .into(),
             PianoControllerLane::MpeTimbre => text("Timbre (CC74) per selected note")
                 .size(10)
-                .style(|_theme| iced::widget::text::Style {
+                .style(|_theme| maolan_widgets::iced::widget::text::Style {
                     color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
                 })
                 .into(),
@@ -959,19 +981,21 @@ impl MIDIEdit {
                 col.push(
                     button(text(label).size(11))
                         .on_press(Message::PianoSysExSelect(Some(idx)))
-                        .style(move |_theme, _status| iced::widget::button::Style {
-                            background: Some(Background::Color(if is_selected {
-                                Color::from_rgba(0.38, 0.28, 0.18, 1.0)
-                            } else {
-                                Color::from_rgba(0.17, 0.17, 0.19, 1.0)
-                            })),
-                            text_color: if is_selected {
-                                Color::from_rgb(1.0, 0.86, 0.6)
-                            } else {
-                                Color::from_rgb(0.82, 0.82, 0.86)
+                        .style(
+                            move |_theme, _status| maolan_widgets::iced::widget::button::Style {
+                                background: Some(Background::Color(if is_selected {
+                                    Color::from_rgba(0.38, 0.28, 0.18, 1.0)
+                                } else {
+                                    Color::from_rgba(0.17, 0.17, 0.19, 1.0)
+                                })),
+                                text_color: if is_selected {
+                                    Color::from_rgb(1.0, 0.86, 0.6)
+                                } else {
+                                    Color::from_rgb(0.82, 0.82, 0.86)
+                                },
+                                ..Default::default()
                             },
-                            ..Default::default()
-                        })
+                        )
                         .width(Length::Fill),
                 )
             });
@@ -1033,6 +1057,11 @@ impl MIDIEdit {
                     Message::MidiEditorViewModeSelected,
                 )
                 .width(Length::Fill),
+                checkbox(show_note_names)
+                    .label("Note names")
+                    .on_toggle(Message::PianoShowNoteNames)
+                    .size(14)
+                    .width(Length::Fill),
                 row![button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),]
                     .spacing(6),
                 row![

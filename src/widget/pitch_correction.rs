@@ -10,7 +10,7 @@ use crate::{
     },
     widget::piano,
 };
-use iced::{
+use maolan_widgets::iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
         button, canvas,
@@ -143,7 +143,7 @@ impl PitchCorrection {
                 canvas(OctaveKeyboard::new(
                     octave,
                     HashMap::new(),
-                    |_| Message::None,
+                    |_, _| Message::None,
                     |_| Message::None,
                 ))
                 .width(Length::Fixed(KEYBOARD_WIDTH))
@@ -481,7 +481,7 @@ impl Program<Message> for PitchRollCanvas {
             let rect = Path::rounded_rectangle(
                 Point::new(rect_bounds.x, rect_bounds.y),
                 Size::new(rect_bounds.width, rect_bounds.height),
-                iced::border::Radius::from(2.0),
+                maolan_widgets::iced::border::Radius::from(2.0),
             );
             frame.fill(&rect, PitchCorrection::pitch_color(display_point));
             if self.selected_points.contains(&idx) {
@@ -521,7 +521,7 @@ impl Program<Message> for PitchRollCanvas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::{Point, Rectangle, event, mouse};
+    use maolan_widgets::iced::{Point, Rectangle, event, mouse};
 
     fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();

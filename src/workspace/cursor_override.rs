@@ -1,4 +1,4 @@
-use iced::{
+use maolan_widgets::iced::{
     Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector,
     advanced::{
         Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
@@ -24,11 +24,11 @@ impl<'a, Message> CursorOverride<'a, Message> {
 }
 
 impl<Message> Widget<Message, Theme, Renderer> for CursorOverride<'_, Message> {
-    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+    fn tag(&self) -> maolan_widgets::iced::advanced::widget::tree::Tag {
         self.content.as_widget().tag()
     }
 
-    fn state(&self) -> iced::advanced::widget::tree::State {
+    fn state(&self) -> maolan_widgets::iced::advanced::widget::tree::State {
         self.content.as_widget().state()
     }
 

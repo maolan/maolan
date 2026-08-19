@@ -19,7 +19,6 @@ use crate::message::{
 
 pub use clip::{AudioClip, ClipPeaks, MIDIClip, generate_clip_id};
 pub use connection::Connection;
-use iced::{Length, Point};
 #[cfg(unix)]
 use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{
@@ -31,6 +30,7 @@ use maolan_engine::{
     kind::Kind,
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
+use maolan_widgets::iced::{Length, Point};
 pub use maolan_widgets::midi::{PianoControllerPoint, PianoNote, PianoSysExPoint};
 
 pub fn mpe_widgets_to_engine(
@@ -1588,6 +1588,7 @@ pub struct StateData {
     pub piano_humanize_time_amount: f32,
     pub piano_humanize_velocity_amount: f32,
     pub piano_groove_amount: f32,
+    pub piano_show_note_names: bool,
     pub tempo: f32,
     pub time_signature_num: u8,
     pub time_signature_denom: u8,
@@ -1827,6 +1828,7 @@ impl Default for StateData {
             piano_humanize_time_amount: 1.0,
             piano_humanize_velocity_amount: 1.0,
             piano_groove_amount: 1.0,
+            piano_show_note_names: true,
             tempo: 120.0,
             time_signature_num: 4,
             time_signature_denom: 4,
@@ -2129,7 +2131,7 @@ mod tests {
                 clip_idx: 0,
                 kind: maolan_engine::kind::Kind::Audio,
             },
-            anchor: iced::Point::new(100.0, 100.0),
+            anchor: maolan_widgets::iced::Point::new(100.0, 100.0),
         };
         assert!((state.anchor.x - 100.0).abs() < f32::EPSILON);
     }
@@ -2138,7 +2140,7 @@ mod tests {
     fn track_context_menu_state_creation() {
         let state = TrackContextMenuState {
             track_name: "Drums".to_string(),
-            anchor: iced::Point::new(50.0, 50.0),
+            anchor: maolan_widgets::iced::Point::new(50.0, 50.0),
             submenu: None,
         };
         assert_eq!(state.track_name, "Drums");

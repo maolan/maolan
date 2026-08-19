@@ -76,16 +76,16 @@ pub use track::template_save as track_template_save;
 #[cfg(not(miri))]
 use gui::Maolan;
 #[cfg(not(miri))]
-use iced::window;
+use maolan_widgets::iced::window;
 #[cfg(not(miri))]
-use iced::{Pixels, Settings, Theme};
+use maolan_widgets::iced::{Pixels, Settings, Theme};
 #[cfg(not(miri))]
-use iced_fonts::LUCIDE_FONT_BYTES;
+use maolan_widgets::iced_fonts::LUCIDE_FONT_BYTES;
 #[cfg(not(miri))]
 use tracing_subscriber::{filter::LevelFilter, fmt::Layer as FmtLayer, prelude::*};
 
 #[cfg(not(miri))]
-pub fn main() -> iced::Result {
+pub fn main() -> maolan_widgets::iced::Result {
     let log_level = parse_log_level_from_env();
     if let Some(level) = log_level {
         let layer = FmtLayer::new()
@@ -121,7 +121,7 @@ fn parse_log_level_from_env() -> Option<tracing::Level> {
 }
 
 #[cfg(not(miri))]
-fn run_app() -> iced::Result {
+fn run_app() -> maolan_widgets::iced::Result {
     let config = config::Config::load().unwrap_or_default();
 
     let icon = window::icon::from_file_data(crate::consts::main::ICON_BYTES, None).ok();
@@ -131,7 +131,7 @@ fn run_app() -> iced::Result {
         ..Default::default()
     };
 
-    iced::application(Maolan::new, Maolan::update, Maolan::view)
+    maolan_widgets::iced::application(Maolan::new, Maolan::update, Maolan::view)
         .title(Maolan::title)
         .settings(settings)
         .theme(Theme::Dark)

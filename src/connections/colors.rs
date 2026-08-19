@@ -1,4 +1,4 @@
-use iced::Color;
+use maolan_widgets::iced::Color;
 
 pub fn audio_port_color() -> Color {
     Color::from_rgb(0.2, 0.5, 1.0)

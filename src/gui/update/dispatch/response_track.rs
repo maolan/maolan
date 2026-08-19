@@ -218,7 +218,8 @@ impl Maolan {
                     .iter_mut()
                     .find(|t| t.name == *track_name)
                 {
-                    track.color = color.map(|c| iced::Color::from_rgba(c.r, c.g, c.b, c.a));
+                    track.color =
+                        color.map(|c| maolan_widgets::iced::Color::from_rgba(c.r, c.g, c.b, c.a));
                 }
                 true
             }

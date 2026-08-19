@@ -1,5 +1,5 @@
 use super::*;
-use iced::widget::text_editor;
+use maolan_widgets::iced::widget::text_editor;
 
 impl Maolan {
     pub(super) fn handle_show_message(&mut self, show: &Show) -> Task<Message> {
@@ -73,7 +73,9 @@ impl Maolan {
                         async { crate::gui::scan_track_and_folder_templates() },
                         |(tracks, folders)| Message::TrackTemplatesLoaded(tracks, folders),
                     ),
-                    iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
+                    maolan_widgets::iced::widget::operation::focus(
+                        crate::add_track::AddTrackView::name_input_id(),
+                    ),
                 ])
             }
             Show::AddFolder => {
@@ -88,7 +90,9 @@ impl Maolan {
                         async { crate::gui::scan_track_and_folder_templates() },
                         |(tracks, folders)| Message::TrackTemplatesLoaded(tracks, folders),
                     ),
-                    iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
+                    maolan_widgets::iced::widget::operation::focus(
+                        crate::add_track::AddTrackView::name_input_id(),
+                    ),
                 ])
             }
             Show::TrackPluginList => {

@@ -9,14 +9,6 @@ use crate::{
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State, StateData, Track},
 };
-use iced::{
-    Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
-    widget::{
-        Space, Stack, canvas,
-        canvas::{Frame, Geometry, Path},
-        column, container, mouse_area, pin, text,
-    },
-};
 use maolan_engine::kind::Kind;
 use maolan_widgets::clip::{
     AudioClip as AudioClipWidget, AudioClipData as WidgetAudioClipData,
@@ -25,6 +17,14 @@ use maolan_widgets::clip::{
     MIDIClipInteraction as WidgetMIDIClipInteraction,
 };
 use maolan_widgets::curve_editor::{CurveEditor, CurvePoint};
+use maolan_widgets::iced::{
+    Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
+    widget::{
+        Space, Stack, canvas,
+        canvas::{Frame, Geometry, Path},
+        column, container, mouse_area, pin, text,
+    },
+};
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
@@ -364,7 +364,7 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
                 frame.fill(
                     &Path::rectangle(
                         Point::new(0.0, y),
-                        iced::Size::new(bounds.width, Self::TRACK_HEIGHT),
+                        maolan_widgets::iced::Size::new(bounds.width, Self::TRACK_HEIGHT),
                     ),
                     row_color,
                 );
@@ -381,7 +381,10 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
                         continue;
                     }
                     frame.fill(
-                        &Path::rectangle(Point::new(x, y), iced::Size::new(w, Self::TRACK_HEIGHT)),
+                        &Path::rectangle(
+                            Point::new(x, y),
+                            maolan_widgets::iced::Size::new(w, Self::TRACK_HEIGHT),
+                        ),
                         Self::clip_color(clip.kind, clip.muted),
                     );
                 }
@@ -402,11 +405,17 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
                 .max(Self::TRACK_HEIGHT)
                 .min((bounds.height - view_y).max(0.0));
             frame.fill(
-                &Path::rectangle(Point::new(view_x, view_y), iced::Size::new(view_w, view_h)),
+                &Path::rectangle(
+                    Point::new(view_x, view_y),
+                    maolan_widgets::iced::Size::new(view_w, view_h),
+                ),
                 Color::from_rgba(0.55, 0.70, 0.95, 0.16),
             );
             frame.stroke(
-                &Path::rectangle(Point::new(view_x, view_y), iced::Size::new(view_w, view_h)),
+                &Path::rectangle(
+                    Point::new(view_x, view_y),
+                    maolan_widgets::iced::Size::new(view_w, view_h),
+                ),
                 canvas::Stroke::default()
                     .with_color(Color::from_rgba(0.78, 0.88, 1.0, 0.92))
                     .with_width(1.0),
@@ -646,7 +655,7 @@ impl canvas::Program<Message> for TrackLaneBackgroundCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(0.0, y + 1.0),
-                            iced::Size::new(bounds.width, h),
+                            maolan_widgets::iced::Size::new(bounds.width, h),
                         ),
                         Color::from_rgba(0.15, 0.20, 0.28, 0.12),
                     );
@@ -667,7 +676,7 @@ impl canvas::Program<Message> for TrackLaneBackgroundCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(0.0, y + 1.0),
-                            iced::Size::new(bounds.width, h),
+                            maolan_widgets::iced::Size::new(bounds.width, h),
                         ),
                         Color::from_rgba(0.12, 0.26, 0.14, 0.12),
                     );

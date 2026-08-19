@@ -8,7 +8,7 @@ pub mod setup;
 pub mod solo;
 
 use crate::consts::APP_BACKGROUND_COLOR;
-use iced::{
+use maolan_widgets::iced::{
     Background, Border, Color, Theme,
     widget::{button::Style, container},
 };
