@@ -1,10 +1,10 @@
 use crate::keyboard_shortcuts::{ShortcutAction, ShortcutBinding};
-use iced::{
+use maolan_engine::{kind::Kind, message::Action};
+use maolan_widgets::curve_editor::{CurveEditorMessage, CurvePoint as CurveEditorPoint};
+use maolan_widgets::iced::{
     Point, Rectangle, Size, mouse,
     widget::{Id, text_editor},
 };
-use maolan_engine::{kind::Kind, message::Action};
-use maolan_widgets::curve_editor::{CurveEditorMessage, CurvePoint as CurveEditorPoint};
 pub use maolan_widgets::midi::{
     MpeExpressionPoint, PianoControllerLane, PianoNrpnKind, PianoRpnKind,
 };
@@ -1276,8 +1276,10 @@ pub enum Message {
         clip_name: String,
         notes: Vec<crate::state::PianoNote>,
     },
-    PianoKeyPressed(u8),
+    PianoKeyPressed(u8, u8),
     PianoKeyReleased(u8),
+    DrumKeyPressed(u8, u8),
+    DrumKeyReleased(u8),
     PianoNoteClick {
         note_index: usize,
         position: Point,
@@ -1378,10 +1380,10 @@ pub enum Message {
         target_pitch: u8,
     },
     DrumSelectRectStart {
-        position: iced::Point,
+        position: maolan_widgets::iced::Point,
     },
     DrumSelectRectDrag {
-        position: iced::Point,
+        position: maolan_widgets::iced::Point,
     },
     DrumSelectRectEnd,
     PianoControllerLaneSelected(PianoControllerLane),
@@ -1416,6 +1418,7 @@ pub enum Message {
     PianoScaleSelectedNotes,
     PianoScaleRootSelected(PianoScaleRoot),
     PianoScaleMinorToggled(bool),
+    PianoShowNoteNames(bool),
     PianoChordSelectedNotes,
     PianoChordKindSelected(PianoChordKind),
     PianoLegatoSelectedNotes,
@@ -1469,7 +1472,7 @@ pub enum Message {
     PluginGraphControllerMenuOpen {
         track_name: String,
         instance_id: usize,
-        position: iced::Point,
+        position: maolan_widgets::iced::Point,
     },
     PluginGraphControllerMenuClose,
     PluginGraphControllerMenuHover(Option<usize>),
@@ -1622,7 +1625,7 @@ pub enum Message {
     OpenUrl(String),
     TrackColorChanged {
         track_name: String,
-        color: Option<iced::Color>,
+        color: Option<maolan_widgets::iced::Color>,
     },
     TrackColorClear(String),
 
@@ -1667,7 +1670,7 @@ pub enum Message {
     SessionSceneRemove(usize),
     SessionSceneSetColor {
         scene_index: usize,
-        color: iced::Color,
+        color: maolan_widgets::iced::Color,
     },
     SessionSceneClearColor(usize),
     SessionSceneSetTempo {

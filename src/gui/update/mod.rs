@@ -36,8 +36,6 @@ use crate::{
         TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID, WORKSPACE_TEMPO_SCROLL_ID,
     },
 };
-use iced::widget::{Id, operation};
-use iced::{Length, Point, Task, mouse};
 use maolan_engine::message::PluginGraphPlugin;
 use maolan_engine::{
     history,
@@ -48,6 +46,8 @@ use maolan_engine::{
         SessionSlotState as EngineSessionSlotState,
     },
 };
+use maolan_widgets::iced::widget::{Id, operation};
+use maolan_widgets::iced::{Length, Point, Task, mouse};
 use rfd::AsyncFileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -953,7 +953,7 @@ impl Maolan {
             .entry(target_track_name.clone())
             .or_default();
         for (idx, plugin) in plugins.iter().enumerate() {
-            let fallback = iced::Point::new(200.0 + idx as f32 * 180.0, 220.0);
+            let fallback = maolan_widgets::iced::Point::new(200.0 + idx as f32 * 180.0, 220.0);
             track_positions
                 .entry(plugin.instance_id)
                 .or_insert(fallback);
@@ -3681,7 +3681,7 @@ impl Maolan {
                     drop(tx);
                 });
 
-                iced::futures::stream::unfold(rx, |mut rx| async move {
+                maolan_widgets::iced::futures::stream::unfold(rx, |mut rx| async move {
                     rx.recv().await.map(|msg| (msg, rx))
                 })
             },

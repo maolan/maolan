@@ -3,25 +3,25 @@ use maolan_engine::message::{Action, ConnectableConnection, PluginGraphConnectio
 use std::collections::HashSet;
 
 pub fn is_bezier_hit(
-    start: iced::Point,
-    end: iced::Point,
-    cursor: iced::Point,
+    start: maolan_widgets::iced::Point,
+    end: maolan_widgets::iced::Point,
+    cursor: maolan_widgets::iced::Point,
     samples: usize,
     threshold: f32,
 ) -> bool {
     let dist_x = (end.x - start.x).abs() / 2.0;
-    let p1 = iced::Point::new(start.x + dist_x, start.y);
-    let p2 = iced::Point::new(end.x - dist_x, end.y);
+    let p1 = maolan_widgets::iced::Point::new(start.x + dist_x, start.y);
+    let p2 = maolan_widgets::iced::Point::new(end.x - dist_x, end.y);
 
     is_cubic_bezier_hit(start, p1, p2, end, cursor, samples, threshold)
 }
 
 pub fn is_cubic_bezier_hit(
-    start: iced::Point,
-    control1: iced::Point,
-    control2: iced::Point,
-    end: iced::Point,
-    cursor: iced::Point,
+    start: maolan_widgets::iced::Point,
+    control1: maolan_widgets::iced::Point,
+    control2: maolan_widgets::iced::Point,
+    end: maolan_widgets::iced::Point,
+    cursor: maolan_widgets::iced::Point,
     samples: usize,
     threshold: f32,
 ) -> bool {
@@ -40,7 +40,7 @@ pub fn is_cubic_bezier_hit(
             + 3.0 * mt.powi(2) * t * control1.y
             + 3.0 * mt * t.powi(2) * control2.y
             + t.powi(3) * end.y;
-        let current = iced::Point::new(x, y);
+        let current = maolan_widgets::iced::Point::new(x, y);
         min_dist = min_dist.min(distance_to_segment(cursor, previous, current));
         previous = current;
     }
@@ -48,7 +48,11 @@ pub fn is_cubic_bezier_hit(
     min_dist < threshold
 }
 
-fn distance_to_segment(point: iced::Point, start: iced::Point, end: iced::Point) -> f32 {
+fn distance_to_segment(
+    point: maolan_widgets::iced::Point,
+    start: maolan_widgets::iced::Point,
+    end: maolan_widgets::iced::Point,
+) -> f32 {
     let dx = end.x - start.x;
     let dy = end.y - start.y;
     let len_sq = dx * dx + dy * dy;
@@ -57,7 +61,10 @@ fn distance_to_segment(point: iced::Point, start: iced::Point, end: iced::Point)
     }
 
     let t = (((point.x - start.x) * dx + (point.y - start.y) * dy) / len_sq).clamp(0.0, 1.0);
-    point.distance(iced::Point::new(start.x + t * dx, start.y + t * dy))
+    point.distance(maolan_widgets::iced::Point::new(
+        start.x + t * dx,
+        start.y + t * dy,
+    ))
 }
 
 pub fn select_connection_indices(selected: &mut HashSet<usize>, idx: usize, ctrl: bool) {
@@ -173,29 +180,29 @@ mod tests {
 
     #[test]
     fn is_bezier_hit_detects_nearby_points() {
-        let start = iced::Point::new(0.0, 0.0);
-        let end = iced::Point::new(100.0, 0.0);
-        let cursor = iced::Point::new(50.0, 0.0);
+        let start = maolan_widgets::iced::Point::new(0.0, 0.0);
+        let end = maolan_widgets::iced::Point::new(100.0, 0.0);
+        let cursor = maolan_widgets::iced::Point::new(50.0, 0.0);
 
         assert!(is_bezier_hit(start, end, cursor, 10, 10.0));
     }
 
     #[test]
     fn is_bezier_hit_rejects_far_points() {
-        let start = iced::Point::new(0.0, 0.0);
-        let end = iced::Point::new(100.0, 0.0);
-        let cursor = iced::Point::new(50.0, 100.0);
+        let start = maolan_widgets::iced::Point::new(0.0, 0.0);
+        let end = maolan_widgets::iced::Point::new(100.0, 0.0);
+        let cursor = maolan_widgets::iced::Point::new(50.0, 100.0);
 
         assert!(!is_bezier_hit(start, end, cursor, 10, 5.0));
     }
 
     #[test]
     fn is_cubic_bezier_hit_uses_actual_control_points() {
-        let start = iced::Point::new(0.0, 0.0);
-        let control1 = iced::Point::new(0.0, 100.0);
-        let control2 = iced::Point::new(100.0, 100.0);
-        let end = iced::Point::new(100.0, 0.0);
-        let cursor = iced::Point::new(50.0, 75.0);
+        let start = maolan_widgets::iced::Point::new(0.0, 0.0);
+        let control1 = maolan_widgets::iced::Point::new(0.0, 100.0);
+        let control2 = maolan_widgets::iced::Point::new(100.0, 100.0);
+        let end = maolan_widgets::iced::Point::new(100.0, 0.0);
+        let cursor = maolan_widgets::iced::Point::new(50.0, 75.0);
 
         assert!(is_cubic_bezier_hit(
             start, control1, control2, end, cursor, 12, 6.0
@@ -205,9 +212,9 @@ mod tests {
 
     #[test]
     fn is_cubic_bezier_hit_checks_between_samples() {
-        let start = iced::Point::new(0.0, 0.0);
-        let end = iced::Point::new(100.0, 0.0);
-        let cursor = iced::Point::new(25.0, 0.0);
+        let start = maolan_widgets::iced::Point::new(0.0, 0.0);
+        let end = maolan_widgets::iced::Point::new(100.0, 0.0);
+        let cursor = maolan_widgets::iced::Point::new(25.0, 0.0);
 
         assert!(is_cubic_bezier_hit(start, start, end, end, cursor, 2, 2.0));
     }

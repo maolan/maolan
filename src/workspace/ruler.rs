@@ -3,14 +3,14 @@ use crate::consts::workspace::{
     BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
 };
 use crate::message::{Message, SnapMode};
-use iced::{
+use maolan_engine::message::Action as EngineAction;
+use maolan_widgets::iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
     mouse,
     widget::canvas,
     widget::canvas::{Action as CanvasAction, Frame, Geometry, Path, Stroke, Text},
 };
-use maolan_engine::message::Action as EngineAction;
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -546,7 +546,10 @@ impl canvas::Program<Message> for RulerCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(start_x.max(0.0), 0.0),
-                            iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                            maolan_widgets::iced::Size::new(
+                                (end_x - start_x).max(1.0),
+                                bounds.height,
+                            ),
                         ),
                         Color::from_rgba(0.18, 0.42, 0.20, 0.35),
                     );
@@ -611,7 +614,10 @@ impl canvas::Program<Message> for RulerCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(start_x, 0.0),
-                            iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                            maolan_widgets::iced::Size::new(
+                                (end_x - start_x).max(1.0),
+                                bounds.height,
+                            ),
                         ),
                         Color::from_rgba(0.45, 0.82, 0.46, 0.22),
                     );
@@ -698,8 +704,8 @@ impl canvas::Program<Message> for RulerCanvas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::widget::canvas::Program;
-    use iced::{Point, Rectangle, Size, event, mouse};
+    use maolan_widgets::iced::widget::canvas::Program;
+    use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
 
     fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();

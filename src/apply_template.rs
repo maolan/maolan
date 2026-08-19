@@ -1,6 +1,6 @@
 use crate::message::{ApplyTemplate, Message};
 use crate::state::State;
-use iced::{
+use maolan_widgets::iced::{
     Alignment, Border, Color, Element, Length,
     widget::{button, column, container, pick_list, row, text},
 };

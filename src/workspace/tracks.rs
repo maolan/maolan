@@ -10,16 +10,16 @@ use crate::{
     state::{State, StateData, TrackLaneLayout},
     style,
 };
-use iced::{
+use maolan_engine::message::{Action, TrackMidiLearnTarget};
+use maolan_widgets::iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
     widget::{
         Column, Row, Space, Stack, button, column, container, lazy, mouse_area, pick_list, pin,
         row, scrollable, text, text_input,
     },
 };
-use iced_drop::droppable;
-use iced_fonts::lucide::{audio_waveform, disc, settings};
-use maolan_engine::message::{Action, TrackMidiLearnTarget};
+use maolan_widgets::iced_drop::droppable;
+use maolan_widgets::iced_fonts::lucide::{audio_waveform, disc, settings};
 use maolan_widgets::{
     horizontal_meter::{horizontal_meter, total_height as meter_total_height},
     horizontal_slider::horizontal_slider,
@@ -192,7 +192,7 @@ struct TrackViewData {
     midi_learn_arm: bool,
     midi_learn_input_monitor: bool,
     midi_learn_disk_monitor: bool,
-    color: Option<iced::Color>,
+    color: Option<maolan_widgets::iced::Color>,
     is_folder: bool,
     folder_open: bool,
     folder_depth: usize,
@@ -1329,7 +1329,7 @@ impl Tracks {
             Some(
                 container(Column::with_children(children).spacing(TRACK_SUBTRACK_GAP))
                     .width(Length::Fill)
-                    .padding(iced::Padding {
+                    .padding(maolan_widgets::iced::Padding {
                         left: 12.0,
                         ..Default::default()
                     })

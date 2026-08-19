@@ -4,13 +4,13 @@ use crate::{
     state::{PianoControllerPoint, PianoNote, PianoSysExPoint, State},
     widget::{curve::CurvePoint, piano::PianoRollInteraction},
 };
-use iced::{
-    Color, Event, Point, Rectangle, Renderer, Size, Theme, mouse,
-    widget::canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
-};
 use maolan_widgets::controller::{
     controller_lane_line_count, lane_controller_events, nrpn_param, nrpn_row_for_param, rpn_param,
     rpn_row_for_param,
+};
+use maolan_widgets::iced::{
+    Color, Event, Point, Rectangle, Renderer, Size, Theme, mouse,
+    widget::canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
 };
 use maolan_widgets::midi::MIDI_CHANNELS;
 use std::time::{Duration, Instant};
@@ -1066,7 +1066,7 @@ impl Program<Message> for ControllerRollInteraction {
                 let drag_right = current.x >= start.x;
                 let x_offset = if drag_right { -24.0 } else { 8.0 };
 
-                use iced::widget::canvas::Text;
+                use maolan_widgets::iced::widget::canvas::Text;
                 frame.fill_text(Text {
                     content: start_value.to_string(),
                     position: Point::new(start.x + x_offset, (start.y - 6.0).max(0.0)),
@@ -1149,7 +1149,7 @@ impl Program<Message> for ControllerRollInteraction {
                 let rect = Path::rectangle(Point::new(x, stem_y), Size::new(3.0, stem_h));
                 frame.fill(&rect, Color::from_rgba(1.0, 0.85, 0.2, 0.95));
 
-                use iced::widget::canvas::Text;
+                use maolan_widgets::iced::widget::canvas::Text;
                 frame.fill_text(Text {
                     content: preview_value.to_string(),
                     position: Point::new(x + 6.0, (stem_y - 6.0).max(0.0)),
@@ -1178,7 +1178,7 @@ impl Program<Message> for ControllerRollInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::{Point, Rectangle, Size, event, mouse};
+    use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -1312,7 +1312,7 @@ mod tests {
 }
 
 pub mod controllers_lane {
-    use iced::{Point, Rectangle};
+    use maolan_widgets::iced::{Point, Rectangle};
 
     use super::{nrpn_param, rpn_param};
     use crate::consts::message_lists::{PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL};

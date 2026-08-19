@@ -4,15 +4,15 @@ use crate::{
     icon::metronome::metronome,
     message::{Message, SnapMode},
 };
-use iced::{
+use maolan_engine::message::GlobalMidiLearnTarget;
+use maolan_widgets::iced::{
     Alignment, Background, Border, Color, Length, Theme,
     widget::{Space, button, container, mouse_area, pick_list, row, text, text_input, tooltip},
 };
-use iced_fonts::lucide::{
+use maolan_widgets::iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, hand, pause, play, radio, repeat, rewind,
     sliders_vertical, square, volume_x,
 };
-use maolan_engine::message::GlobalMidiLearnTarget;
 #[derive(Debug, Default)]
 pub struct Toolbar;
 
@@ -75,7 +75,7 @@ impl Toolbar {
         }
     }
 
-    pub fn view(&self, view_state: ToolbarViewState) -> iced::Element<'_, Message> {
+    pub fn view(&self, view_state: ToolbarViewState) -> maolan_widgets::iced::Element<'_, Message> {
         let play_active =
             (view_state.playing && !view_state.paused) || view_state.live_session_playing;
         let pause_active = view_state.playing && view_state.paused;
@@ -85,9 +85,9 @@ impl Toolbar {
         let loop_active = view_state.has_loop_range && view_state.loop_enabled;
         let punch_active = view_state.has_punch_range && view_state.punch_enabled;
         fn with_tooltip<'a>(
-            element: iced::Element<'a, Message>,
+            element: maolan_widgets::iced::Element<'a, Message>,
             label: &'static str,
-        ) -> iced::Element<'a, Message> {
+        ) -> maolan_widgets::iced::Element<'a, Message> {
             tooltip(
                 element,
                 container(text(label).size(12))
@@ -110,10 +110,10 @@ impl Toolbar {
             .into()
         }
         fn with_hint<'a>(
-            element: iced::Element<'a, Message>,
+            element: maolan_widgets::iced::Element<'a, Message>,
             hint: &'static str,
             right_press: Option<Message>,
-        ) -> iced::Element<'a, Message> {
+        ) -> maolan_widgets::iced::Element<'a, Message> {
             let mut area = mouse_area(element)
                 .on_enter(Message::ShortcutsHint(Some(hint.to_string())))
                 .on_exit(Message::ShortcutsHint(None));
@@ -297,21 +297,22 @@ impl Toolbar {
                     )
                 },
                 {
-                    let step_button: iced::Element<'_, Message> = if view_state.midi_editor_active {
-                        with_tooltip(
-                            button(text("Step").size(11))
-                                .style(Self::button_style(
-                                    view_state.step_recording_active,
-                                    false,
-                                    Color::TRANSPARENT,
-                                ))
-                                .on_press(Message::ToggleStepRecording)
-                                .into(),
-                            "Toggle step recording",
-                        )
-                    } else {
-                        Space::new().into()
-                    };
+                    let step_button: maolan_widgets::iced::Element<'_, Message> =
+                        if view_state.midi_editor_active {
+                            with_tooltip(
+                                button(text("Step").size(11))
+                                    .style(Self::button_style(
+                                        view_state.step_recording_active,
+                                        false,
+                                        Color::TRANSPARENT,
+                                    ))
+                                    .on_press(Message::ToggleStepRecording)
+                                    .into(),
+                                "Toggle step recording",
+                            )
+                        } else {
+                            Space::new().into()
+                        };
                     step_button
                 },
                 text_input("BPM", &view_state.tempo_input)

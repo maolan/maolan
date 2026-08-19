@@ -1,10 +1,10 @@
 use crate::message::{Message, Show};
-use iced::Length;
-use iced_aw::{
+use maolan_engine::message::GlobalMidiLearnTarget;
+use maolan_widgets::iced::Length;
+use maolan_widgets::iced_aw::{
     menu::{DrawPath, Item, Menu as IcedMenu},
     menu_bar, menu_items,
 };
-use maolan_engine::message::GlobalMidiLearnTarget;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -52,7 +52,7 @@ impl Menu {
         format!("{base}  ({path})")
     }
 
-    pub fn view(&self, state: MenuViewState) -> iced::Element<'_, Message> {
+    pub fn view(&self, state: MenuViewState) -> maolan_widgets::iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
         let mut new_menu_items: Vec<Item<'_, Message, _, _>> =

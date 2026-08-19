@@ -3,11 +3,11 @@ use crate::{
     platform_caps::{HAS_SEPARATE_AUDIO_INPUT_DEVICE, REQUIRE_SAMPLE_RATES_FOR_HW_READY},
     state::State,
 };
-use iced::{
+use maolan_engine::message::Action;
+use maolan_widgets::iced::{
     Alignment, Border, Color, Length,
     widget::{button, checkbox, column, container, mouse_area, pick_list, row, text},
 };
-use maolan_engine::message::Action;
 
 pub struct HW {
     state: State,
@@ -91,7 +91,7 @@ impl HW {
         selected: Option<T>,
         on_select: fn(T) -> Message,
         placeholder: &'static str,
-    ) -> iced::Element<'static, Message>
+    ) -> maolan_widgets::iced::Element<'static, Message>
     where
         T: Clone + PartialEq + std::fmt::Display + 'static,
     {
@@ -119,12 +119,12 @@ impl HW {
 
     #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
     fn append_device_rows(
-        content: iced::widget::Column<'static, Message>,
+        content: maolan_widgets::iced::widget::Column<'static, Message>,
         available_hw: Vec<crate::state::AudioDeviceOption>,
         selected_hw: Option<crate::state::AudioDeviceOption>,
         available_input_hw: Vec<crate::state::AudioDeviceOption>,
         selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> iced::widget::Column<'static, Message> {
+    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
         Self::device_rows(
             available_hw,
             selected_hw,
@@ -137,12 +137,12 @@ impl HW {
 
     #[cfg(target_os = "linux")]
     fn append_device_rows(
-        content: iced::widget::Column<'static, Message>,
+        content: maolan_widgets::iced::widget::Column<'static, Message>,
         available_hw: Vec<crate::state::AudioDeviceOption>,
         selected_hw: Option<crate::state::AudioDeviceOption>,
         available_input_hw: Vec<crate::state::AudioDeviceOption>,
         selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> iced::widget::Column<'static, Message> {
+    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
         Self::device_rows(
             available_hw,
             selected_hw,
@@ -155,12 +155,12 @@ impl HW {
 
     #[cfg(target_os = "windows")]
     fn append_device_rows(
-        content: iced::widget::Column<'static, Message>,
+        content: maolan_widgets::iced::widget::Column<'static, Message>,
         available_hw: Vec<String>,
         selected_hw: Option<String>,
         available_input_hw: Vec<String>,
         selected_input_hw: Option<String>,
-    ) -> iced::widget::Column<'static, Message> {
+    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
         Self::device_rows(
             available_hw,
             selected_hw,
@@ -178,10 +178,10 @@ impl HW {
         target_os = "windows"
     )))]
     fn append_device_rows(
-        content: iced::widget::Column<'static, Message>,
+        content: maolan_widgets::iced::widget::Column<'static, Message>,
         available_hw: Vec<String>,
         selected_hw: Option<String>,
-    ) -> iced::widget::Column<'static, Message> {
+    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
         Self::device_rows(available_hw, selected_hw)
             .into_iter()
             .fold(content, |content, row| content.push(row))
@@ -193,7 +193,7 @@ impl HW {
         selected_hw: Option<crate::state::AudioDeviceOption>,
         available_input_hw: Vec<crate::state::AudioDeviceOption>,
         selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> Vec<iced::Element<'static, Message>> {
+    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
         vec![
             Self::device_pick_row(
                 "Input device:",
@@ -218,7 +218,7 @@ impl HW {
         selected_hw: Option<crate::state::AudioDeviceOption>,
         available_input_hw: Vec<crate::state::AudioDeviceOption>,
         selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> Vec<iced::Element<'static, Message>> {
+    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
         vec![
             Self::device_pick_row(
                 "Input device:",
@@ -243,7 +243,7 @@ impl HW {
         selected_hw: Option<String>,
         available_input_hw: Vec<String>,
         selected_input_hw: Option<String>,
-    ) -> Vec<iced::Element<'static, Message>> {
+    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
         vec![
             Self::device_pick_row(
                 "Input device:",
@@ -271,7 +271,7 @@ impl HW {
     fn device_rows(
         available_hw: Vec<String>,
         selected_hw: Option<String>,
-    ) -> Vec<iced::Element<'static, Message>> {
+    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
         vec![Self::device_pick_row(
             "Output device:",
             available_hw,
@@ -341,7 +341,7 @@ impl HW {
         }
     }
 
-    pub fn audio_view(&self) -> iced::Element<'_, Message> {
+    pub fn audio_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let frame_options = vec![
             16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
         ];
@@ -766,7 +766,7 @@ impl HW {
             .into()
     }
 
-    pub fn jack_ports_view(&self, input: bool) -> iced::Element<'_, Message> {
+    pub fn jack_ports_view(&self, input: bool) -> maolan_widgets::iced::Element<'_, Message> {
         let (hw_in_channels, hw_out_channels) = {
             let state = self.state.blocking_read();
             (
@@ -842,9 +842,9 @@ impl HW {
                 ports = ports.push(
                     mouse_area(container(text(label)).padding([10, 14]).style(|_theme| {
                         container::Style {
-                            background: Some(iced::Background::Color(Color::from_rgba(
-                                0.18, 0.22, 0.30, 0.96,
-                            ))),
+                            background: Some(maolan_widgets::iced::Background::Color(
+                                Color::from_rgba(0.18, 0.22, 0.30, 0.96),
+                            )),
                             border: Border {
                                 color: Color::from_rgba(0.78, 0.87, 0.99, 0.16),
                                 width: 1.0,

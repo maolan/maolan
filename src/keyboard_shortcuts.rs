@@ -1,5 +1,5 @@
 use crate::message::{Message, Show};
-use iced::keyboard::{self, Modifiers};
+use maolan_widgets::iced::keyboard::{self, Modifiers};
 use std::collections::HashMap;
 use std::fmt;
 

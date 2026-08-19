@@ -5519,14 +5519,10 @@ dependencies = [
  "ebur128",
  "hf-hub 0.5.0",
  "i24 2.3.5",
- "iced",
- "iced_aw",
- "iced_drop",
- "iced_fonts",
  "maolan-engine",
  "maolan-generate",
  "maolan-plugin-host",
- "maolan-widgets 0.0.34",
+ "maolan-widgets 0.0.35",
  "midly",
  "mixosc",
  "nix 0.31.3",
@@ -5684,11 +5680,13 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.0.34"
+version = "0.0.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c6b1dfa10debce93ed13e92e3ddc848cfda7dfca16d529bbe3fdb93e81bf557"
+checksum = "8201881f51e26aff699cf591f5fd243e1ecb3555bd3673263bfcf6684b91ed28"
 dependencies = [
  "iced",
+ "iced_aw",
+ "iced_drop",
  "iced_fonts",
  "serde",
  "symphonia 0.5.5",
@@ -6815,15 +6813,6 @@ name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "ordered-float"
-version = "5.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7d950ca161dc355eaf28f82b11345ed76c6e1f6eb1f4f4479e0323b9e2fbd0e"
 dependencies = [
  "num-traits",
 ]
@@ -9606,7 +9595,7 @@ dependencies = [
  "nix 0.29.0",
  "num-derive",
  "num-traits",
- "ordered-float 4.6.0",
+ "ordered-float",
  "pest",
  "pest_derive",
  "phf",
@@ -11054,7 +11043,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f2ab60e120fd6eaa68d9567f3226e876684639d22a4219b313ff69ec0ccd5ac"
 dependencies = [
  "log",
- "ordered-float 4.6.0",
+ "ordered-float",
  "strsim",
  "thiserror 1.0.69",
  "wezterm-dynamic-derive",
@@ -11294,7 +11283,7 @@ dependencies = [
  "ndk-sys",
  "objc",
  "once_cell",
- "ordered-float 5.3.0",
+ "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
@@ -11344,7 +11333,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "once_cell",
- "ordered-float 5.3.0",
+ "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",

@@ -10,7 +10,8 @@ use crate::{
     toolbar::ToolbarViewState,
     workspace::WorkspaceViewArgs,
 };
-use iced::{
+use maolan_widgets::clip::AudioClip as AudioClipWidget;
+use maolan_widgets::iced::{
     Alignment, Border, Color, Length, Theme,
     advanced::text::{Highlighter, highlighter},
     widget::{
@@ -18,7 +19,6 @@ use iced::{
         scrollable, text, text_editor, text_input,
     },
 };
-use maolan_widgets::clip::AudioClip as AudioClipWidget;
 use std::ops::Range;
 
 struct LogHighlighter {
@@ -66,7 +66,7 @@ impl Highlighter for LogHighlighter {
 fn log_highlight_format(
     highlight: &LogHighlight,
     _theme: &Theme,
-) -> highlighter::Format<iced::Font> {
+) -> highlighter::Format<maolan_widgets::iced::Font> {
     highlighter::Format {
         color: Some(highlight.color),
         font: None,
@@ -74,7 +74,7 @@ fn log_highlight_format(
 }
 
 impl Maolan {
-    fn log_window(&self) -> iced::Element<'_, Message> {
+    fn log_window(&self) -> maolan_widgets::iced::Element<'_, Message> {
         container(
             column![
                 row![
@@ -95,10 +95,10 @@ impl Maolan {
         .padding(16)
         .width(Length::Fixed(560.0))
         .height(Length::Fixed(320.0))
-        .style(|theme: &iced::Theme| {
+        .style(|theme: &maolan_widgets::iced::Theme| {
             let palette = theme.extended_palette();
-            iced::widget::container::Style {
-                background: Some(iced::Background::Color(Color::from_rgba(
+            maolan_widgets::iced::widget::container::Style {
+                background: Some(maolan_widgets::iced::Background::Color(Color::from_rgba(
                     palette.background.strong.color.r,
                     palette.background.strong.color.g,
                     palette.background.strong.color.b,
@@ -122,8 +122,8 @@ impl Maolan {
 
     fn wrap_with_log_window<'a>(
         &'a self,
-        content: iced::Element<'a, Message>,
-    ) -> iced::Element<'a, Message> {
+        content: maolan_widgets::iced::Element<'a, Message>,
+    ) -> maolan_widgets::iced::Element<'a, Message> {
         if !self.show_log_window {
             return content;
         }
@@ -131,8 +131,8 @@ impl Maolan {
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(24)
-            .align_x(iced::alignment::Horizontal::Right)
-            .align_y(iced::alignment::Vertical::Bottom);
+            .align_x(maolan_widgets::iced::alignment::Horizontal::Right)
+            .align_y(maolan_widgets::iced::alignment::Vertical::Bottom);
         Stack::with_children(vec![content, overlay.into()]).into()
     }
 
@@ -215,7 +215,7 @@ impl Maolan {
         (bar_number, beat)
     }
 
-    pub fn view(&self) -> iced::Element<'_, Message> {
+    pub fn view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         if state.hw_loaded {
             if state.clip_rename_dialog.is_some() {
@@ -394,7 +394,7 @@ impl Maolan {
                                 let state = self.state.blocking_read();
                                 state.session_view_connections.clone()
                             };
-                            let session_view: iced::Element<'_, Message> =
+                            let session_view: maolan_widgets::iced::Element<'_, Message> =
                                 if let Some(ref track_name) = session_view_connections {
                                     let selected_modulator =
                                         self.selected_modulator_id.and_then(|id| {
@@ -433,9 +433,9 @@ impl Maolan {
                                     .height(Length::Fixed(32.0))
                                     .padding([0, 8])
                                     .style(|_theme| container::Style {
-                                        background: Some(iced::Background::Color(Color::from_rgb(
-                                            0.12, 0.12, 0.14,
-                                        ))),
+                                        background: Some(maolan_widgets::iced::Background::Color(
+                                            Color::from_rgb(0.12, 0.12, 0.14),
+                                        )),
                                         ..Default::default()
                                     });
                                     column![header, connections_view]
@@ -498,12 +498,14 @@ impl Maolan {
                                     .width(Length::Fill)
                                     .height(Length::Fixed(3.0))
                                     .style(move |_theme| container::Style {
-                                        background: Some(iced::Background::Color(Color {
-                                            r: 0.7,
-                                            g: 0.7,
-                                            b: 0.7,
-                                            a: if mixer_resize_hovered { 0.95 } else { 0.6 },
-                                        })),
+                                        background: Some(maolan_widgets::iced::Background::Color(
+                                            Color {
+                                                r: 0.7,
+                                                g: 0.7,
+                                                b: 0.7,
+                                                a: if mixer_resize_hovered { 0.95 } else { 0.6 },
+                                            },
+                                        )),
                                         ..Default::default()
                                     }),
                             )
@@ -689,15 +691,18 @@ impl Maolan {
                         }));
                     }
                     if matches!(view_kind, View::TrackPlugins) {
-                        let track_selector: iced::Element<'_, Message> = if let Some(ref header) =
-                            clip_header
-                        {
-                            text(header.clone()).into()
-                        } else {
-                            pick_list(track_names, plugin_graph_track, Message::OpenTrackPlugins)
+                        let track_selector: maolan_widgets::iced::Element<'_, Message> =
+                            if let Some(ref header) = clip_header {
+                                text(header.clone()).into()
+                            } else {
+                                pick_list(
+                                    track_names,
+                                    plugin_graph_track,
+                                    Message::OpenTrackPlugins,
+                                )
                                 .placeholder("Select track...")
                                 .into()
-                        };
+                            };
                         content = content.push(
                             container(
                                 row![
@@ -727,10 +732,11 @@ impl Maolan {
                     }
                     let has_timing_selection = !self.selected_tempo_points.is_empty()
                         || !self.selected_time_signature_points.is_empty();
-                    let mut view: iced::Element<'_, Message> = if matches!(
+                    let mut view: maolan_widgets::iced::Element<'_, Message> = if matches!(
                         view_kind,
                         View::Workspace | View::Piano | View::PitchCorrection
-                    ) && has_timing_selection
+                    )
+                        && has_timing_selection
                     {
                         let lane_label = match self.timing_selection_lane {
                             Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
@@ -953,14 +959,14 @@ impl Maolan {
                                         text(format!("{:.0}%", self.import_file_progress * 100.0))
                                     ]
                                     .spacing(8)
-                                    .align_y(iced::Alignment::Center),
+                                    .align_y(maolan_widgets::iced::Alignment::Center),
                                     row![
                                         text("Total:"),
                                         progress_bar(0.0..=1.0, overall_progress),
                                         text(format!("{:.0}%", overall_progress * 100.0))
                                     ]
                                     .spacing(8)
-                                    .align_y(iced::Alignment::Center),
+                                    .align_y(maolan_widgets::iced::Alignment::Center),
                                 ]
                                 .spacing(8),
                             )
@@ -999,7 +1005,7 @@ impl Maolan {
                                         ))
                                     ]
                                     .spacing(8)
-                                    .align_y(iced::Alignment::Center),
+                                    .align_y(maolan_widgets::iced::Alignment::Center),
                                 ]
                                 .spacing(8),
                             )

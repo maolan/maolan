@@ -8,10 +8,10 @@ use crate::{
         RECORDING_PREVIEW_UPDATE_INTERVAL,
     },
 };
-use iced::futures::{Stream, StreamExt, stream};
-use iced::keyboard::Event as KeyEvent;
-use iced::{Subscription, event, keyboard, mouse, window};
 use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
+use maolan_widgets::iced::futures::{Stream, StreamExt, stream};
+use maolan_widgets::iced::keyboard::Event as KeyEvent;
+use maolan_widgets::iced::{Subscription, event, keyboard, mouse, window};
 use std::collections::HashMap;
 use std::time::Duration;
 #[cfg(unix)]
@@ -207,7 +207,8 @@ impl Maolan {
         let playback_sub = if (self.playing && !self.paused && self.should_drive_playback_ui())
             || self.live_session_playing
         {
-            iced::time::every(PLAYHEAD_UPDATE_INTERVAL).map(|_| Message::PlaybackTick)
+            maolan_widgets::iced::time::every(PLAYHEAD_UPDATE_INTERVAL)
+                .map(|_| Message::PlaybackTick)
         } else {
             Subscription::none()
         };
@@ -228,7 +229,8 @@ impl Maolan {
             false
         };
         let meter_poll_sub = if should_poll_meters {
-            iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick)
+            maolan_widgets::iced::time::every(Duration::from_millis(40))
+                .map(|_| Message::MeterPollTick)
         } else {
             Subscription::none()
         };
@@ -237,7 +239,7 @@ impl Maolan {
             && self.record_armed
             && self.recording_preview_start_sample.is_some()
         {
-            iced::time::every(RECORDING_PREVIEW_UPDATE_INTERVAL)
+            maolan_widgets::iced::time::every(RECORDING_PREVIEW_UPDATE_INTERVAL)
                 .map(|_| Message::RecordingPreviewTick)
         } else {
             Subscription::none()
@@ -247,15 +249,16 @@ impl Maolan {
             && self.record_armed
             && self.recording_preview_start_sample.is_some()
         {
-            iced::time::every(RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL)
+            maolan_widgets::iced::time::every(RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL)
                 .map(|_| Message::RecordingPreviewPeaksTick)
         } else {
             Subscription::none()
         };
-        let autosave_sub =
-            iced::time::every(Duration::from_secs(15)).map(|_| Message::AutosaveSnapshotTick);
+        let autosave_sub = maolan_widgets::iced::time::every(Duration::from_secs(15))
+            .map(|_| Message::AutosaveSnapshotTick);
         let peak_rebuild_sub = if !self.pending_peak_rebuilds.is_empty() {
-            iced::time::every(Duration::from_millis(16)).map(|_| Message::DrainAudioPeakUpdates)
+            maolan_widgets::iced::time::every(Duration::from_millis(16))
+                .map(|_| Message::DrainAudioPeakUpdates)
         } else {
             Subscription::none()
         };
@@ -321,7 +324,7 @@ impl Maolan {
 mod tests {
     use super::Maolan;
     use crate::message::{Message, Show};
-    use iced::keyboard::{self, Event as KeyEvent, Key, Modifiers, key::Named};
+    use maolan_widgets::iced::keyboard::{self, Event as KeyEvent, Key, Modifiers, key::Named};
 
     #[test]
     fn polls_meters_while_playing() {

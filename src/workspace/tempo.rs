@@ -4,14 +4,14 @@ use crate::consts::workspace::{
     TEMPO_HEIGHT, TEMPO_HIT_HEIGHT, TIME_SIG_HIT_X_SPLIT,
 };
 use crate::message::{Message, SnapMode};
-use iced::{
+use maolan_engine::message::Action as EngineAction;
+use maolan_widgets::iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
     mouse,
     widget::canvas,
     widget::canvas::{Action as CanvasAction, Frame, Geometry, Path, Stroke, Text},
 };
-use maolan_engine::message::Action as EngineAction;
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -1133,14 +1133,14 @@ impl canvas::Program<Message> for TempoCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(x - handle_size / 2.0, 0.0),
-                            iced::Size::new(handle_size, handle_size),
+                            maolan_widgets::iced::Size::new(handle_size, handle_size),
                         ),
                         marker_color,
                     );
                     frame.stroke(
                         &Path::rectangle(
                             Point::new(x - handle_size / 2.0, 0.0),
-                            iced::Size::new(handle_size, handle_size),
+                            maolan_widgets::iced::Size::new(handle_size, handle_size),
                         ),
                         Stroke::default().with_width(1.0).with_color(marker_border),
                     );
@@ -1156,14 +1156,14 @@ impl canvas::Program<Message> for TempoCanvas {
                         frame.fill(
                             &Path::rectangle(
                                 Point::new(text_x, text_y),
-                                iced::Size::new(approx_width, 10.0),
+                                maolan_widgets::iced::Size::new(approx_width, 10.0),
                             ),
                             label_bg,
                         );
                         frame.stroke(
                             &Path::rectangle(
                                 Point::new(text_x, text_y),
-                                iced::Size::new(approx_width, 10.0),
+                                maolan_widgets::iced::Size::new(approx_width, 10.0),
                             ),
                             Stroke::default().with_width(1.0).with_color(label_border),
                         );
@@ -1254,7 +1254,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(start_x.max(0.0), punch_y),
-                            iced::Size::new((end_x - start_x).max(1.0), punch_h),
+                            maolan_widgets::iced::Size::new((end_x - start_x).max(1.0), punch_h),
                         ),
                         Color::from_rgba(0.55, 0.18, 0.18, 0.30),
                     );
@@ -1291,7 +1291,10 @@ impl canvas::Program<Message> for TempoCanvas {
                         frame.fill(
                             &Path::rectangle(
                                 Point::new(start_x, punch_y),
-                                iced::Size::new((end_x - start_x).max(1.0), punch_h),
+                                maolan_widgets::iced::Size::new(
+                                    (end_x - start_x).max(1.0),
+                                    punch_h,
+                                ),
                             ),
                             Color::from_rgba(0.92, 0.36, 0.36, 0.22),
                         );
@@ -1330,7 +1333,10 @@ impl canvas::Program<Message> for TempoCanvas {
                         frame.fill(
                             &Path::rectangle(
                                 Point::new(start_x, punch_y),
-                                iced::Size::new((end_x - start_x).max(1.0), punch_h),
+                                maolan_widgets::iced::Size::new(
+                                    (end_x - start_x).max(1.0),
+                                    punch_h,
+                                ),
                             ),
                             Color::from_rgba(0.92, 0.36, 0.36, 0.22),
                         );
@@ -1375,7 +1381,10 @@ impl canvas::Program<Message> for TempoCanvas {
                         frame.fill(
                             &Path::rectangle(
                                 Point::new(start_x.max(0.0), punch_y),
-                                iced::Size::new((end_x - start_x).max(1.0), punch_h),
+                                maolan_widgets::iced::Size::new(
+                                    (end_x - start_x).max(1.0),
+                                    punch_h,
+                                ),
                             ),
                             Color::from_rgba(0.92, 0.36, 0.36, 0.22),
                         );
@@ -1459,7 +1468,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(menu.x, menu.y),
-                            iced::Size::new(CONTEXT_MENU_WIDTH, menu_height),
+                            maolan_widgets::iced::Size::new(CONTEXT_MENU_WIDTH, menu_height),
                         ),
                         Color::from_rgba(0.16, 0.16, 0.16, 0.98),
                     );
@@ -1579,7 +1588,7 @@ impl canvas::Program<Message> for TempoCanvas {
                         frame.fill(
                             &Path::rectangle(
                                 Point::new(tip_x, tip_y),
-                                iced::Size::new(148.0, 12.0),
+                                maolan_widgets::iced::Size::new(148.0, 12.0),
                             ),
                             Color::from_rgba(0.08, 0.08, 0.08, 0.9),
                         );
@@ -1617,8 +1626,8 @@ impl canvas::Program<Message> for TempoCanvas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::widget::canvas::Program;
-    use iced::{Point, Rectangle, Size, event, mouse};
+    use maolan_widgets::iced::widget::canvas::Program;
+    use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
 
     fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();

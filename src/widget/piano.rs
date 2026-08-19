@@ -3,7 +3,7 @@ use crate::{
     message::Message,
     state::State,
 };
-use iced::{
+use maolan_widgets::iced::{
     Color, Event, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
 };
@@ -504,8 +504,8 @@ impl Program<Message> for PianoRollInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::widget::canvas::Program;
-    use iced::{Point, Rectangle, Size, event, mouse};
+    use maolan_widgets::iced::widget::canvas::Program;
+    use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::RwLock;
 

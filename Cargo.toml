@@ -30,14 +30,10 @@ dirs = "6"
 ebur128 = "0.1"
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "rustls-tls"] }
 i24 = "2.3.3"
-iced = { version = "0.14.0", features = ["advanced", "image", "lazy", "tokio"] }
-iced_aw = "0.14.1"
-iced_drop = { version = "0.2.16", features = ["helpers"] }
-iced_fonts = { version = "0.3.0", features = ["lucide"] }
 maolan-generate = "0.0.15"
 maolan-engine = "0.2.61"
 maolan-plugin-host = { version = "0.0.7", path = "plugin-host" }
-maolan-widgets = "0.0.34"
+maolan-widgets = "0.0.35"
 mixosc = "0.0.12"
 midly = "0.5.3"
 pitch-detection = "0.3.0"

@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn handle_window_resized_updates_size() {
         let mut app = Maolan::default();
-        let new_size = iced::Size::new(1024.0, 768.0);
+        let new_size = maolan_widgets::iced::Size::new(1024.0, 768.0);
         let _result = app.handle_core_message(&Message::WindowResized(new_size));
         assert_eq!(app.size, new_size);
     }

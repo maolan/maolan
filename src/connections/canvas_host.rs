@@ -1,5 +1,5 @@
 use crate::{message::Message, state::Modulator, state::State};
-use iced::{
+use maolan_widgets::iced::{
     Element, Length,
     widget::{canvas, container},
 };

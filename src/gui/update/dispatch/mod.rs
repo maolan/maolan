@@ -1371,7 +1371,7 @@ impl Maolan {
                 state.piano_nrpn_kind = kind;
                 state.piano_sysex_panel_open = false;
             }
-            Message::PianoKeyPressed(note) => {
+            Message::PianoKeyPressed(note, velocity) => {
                 let track_name = self
                     .state
                     .blocking_read()
@@ -1382,12 +1382,44 @@ impl Maolan {
                     return self.send(Action::PianoKey {
                         track_name,
                         note,
-                        velocity: 100,
+                        velocity,
                         on: true,
                     });
                 }
             }
             Message::PianoKeyReleased(note) => {
+                let track_name = self
+                    .state
+                    .blocking_read()
+                    .piano
+                    .as_ref()
+                    .map(|p| p.track_idx.clone());
+                if let Some(track_name) = track_name {
+                    return self.send(Action::PianoKey {
+                        track_name,
+                        note,
+                        velocity: 0,
+                        on: false,
+                    });
+                }
+            }
+            Message::DrumKeyPressed(note, velocity) => {
+                let track_name = self
+                    .state
+                    .blocking_read()
+                    .piano
+                    .as_ref()
+                    .map(|p| p.track_idx.clone());
+                if let Some(track_name) = track_name {
+                    return self.send(Action::PianoKey {
+                        track_name,
+                        note,
+                        velocity,
+                        on: true,
+                    });
+                }
+            }
+            Message::DrumKeyReleased(note) => {
                 let track_name = self
                     .state
                     .blocking_read()
@@ -3205,6 +3237,9 @@ impl Maolan {
             }
             Message::PianoScaleMinorToggled(minor) => {
                 self.state.blocking_write().piano_scale_minor = minor;
+            }
+            Message::PianoShowNoteNames(show) => {
+                self.state.blocking_write().piano_show_note_names = show;
             }
             Message::PianoChordKindSelected(kind) => {
                 self.state.blocking_write().piano_chord_kind = kind;
@@ -6530,7 +6565,7 @@ impl Maolan {
                     marker_index: None,
                     name: String::new(),
                 });
-                return iced::widget::operation::focus(
+                return maolan_widgets::iced::widget::operation::focus(
                     crate::track_marker::MarkerView::name_input_id(),
                 );
             }
@@ -8092,7 +8127,7 @@ impl Maolan {
                 if mouse_left_down && !matches!(resizing, Some(Resizing::Clip { .. })) {
                     if let Some(active) = self.clip.as_mut() {
                         active.end = position;
-                        let mut tasks = vec![iced_drop::zones_on_point(
+                        let mut tasks = vec![maolan_widgets::iced_drop::zones_on_point(
                             Message::HandleClipPreviewZones,
                             position,
                             None,
@@ -8457,7 +8492,7 @@ impl Maolan {
                         self.clip_preview_target_valid = false;
                         return Task::none();
                     }
-                    return iced_drop::zones_on_point(
+                    return maolan_widgets::iced_drop::zones_on_point(
                         Message::HandleClipZones,
                         clip.end,
                         None,
@@ -8833,7 +8868,7 @@ impl Maolan {
                 });
             }
             Message::PaneClipDropped { point } if self.dragging_pane_clip.is_some() => {
-                return iced_drop::zones_on_point(
+                return maolan_widgets::iced_drop::zones_on_point(
                     Message::HandlePaneClipDropZones,
                     point,
                     None,
@@ -9027,7 +9062,12 @@ impl Maolan {
             }
             Message::TrackDropped(point, _rect) => {
                 if self.track.is_some() {
-                    return iced_drop::zones_on_point(Message::HandleTrackZones, point, None, None);
+                    return maolan_widgets::iced_drop::zones_on_point(
+                        Message::HandleTrackZones,
+                        point,
+                        None,
+                        None,
+                    );
                 }
                 self.track = None;
             }
@@ -9547,7 +9587,7 @@ impl Maolan {
                             drop(tx);
                         });
 
-                        iced::futures::stream::unfold(rx, |mut rx| async move {
+                        maolan_widgets::iced::futures::stream::unfold(rx, |mut rx| async move {
                             rx.recv().await.map(|msg| (msg, rx))
                         })
                     },
@@ -9922,7 +9962,7 @@ impl Maolan {
                 self.generate_audio_abort_handle = Some(task_handle.abort_handle());
 
                 return Task::run(
-                    iced::futures::stream::unfold(rx, |mut rx| async move {
+                    maolan_widgets::iced::futures::stream::unfold(rx, |mut rx| async move {
                         rx.recv().await.map(|msg| (msg, rx))
                     }),
                     |msg| msg,
@@ -10346,7 +10386,7 @@ impl Maolan {
                 self.generate_midi_abort_handle = Some(task_handle.abort_handle());
 
                 return Task::run(
-                    iced::futures::stream::unfold(rx, |mut rx| async move {
+                    maolan_widgets::iced::futures::stream::unfold(rx, |mut rx| async move {
                         rx.recv().await.map(|msg| (msg, rx))
                     }),
                     |msg| msg,
@@ -10660,7 +10700,7 @@ impl Maolan {
                             drop(tx);
                         });
 
-                        iced::futures::stream::unfold(rx, |mut rx| async move {
+                        maolan_widgets::iced::futures::stream::unfold(rx, |mut rx| async move {
                             rx.recv().await.map(|msg| (msg, rx))
                         })
                     },
@@ -11555,7 +11595,7 @@ impl Maolan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::Point;
+    use maolan_widgets::iced::Point;
     use serde_json::json;
 
     #[test]
@@ -11819,7 +11859,7 @@ mod tests {
     #[test]
     fn piano_fit_clip_zoom_x_fits_clip_to_midi_viewport() {
         let app = Maolan {
-            size: iced::Size::new(1200.0, 800.0),
+            size: maolan_widgets::iced::Size::new(1200.0, 800.0),
             zoom_visible_bars: 127.0,
             ..Maolan::default()
         };

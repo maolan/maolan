@@ -36,15 +36,6 @@ use crate::{
     template_save, toolbar, track_marker, track_rename, track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
-use iced::{
-    Color, Length, Size, Task,
-    advanced::text::Span,
-    widget::{
-        Column, button, checkbox, column, container, pick_list, progress_bar, rich_text, row,
-        scrollable, span, text, text_editor, text_input,
-    },
-};
-use iced_aw::helpers::color_picker_with_change;
 use maolan_engine::audio_codec::{
     AudioDither, AudioEncodeFormat, WavBitDepth, decode_audio_to_f32_interleaved_sync,
 };
@@ -53,6 +44,15 @@ use maolan_engine::message::{
     Action, ConnectableConnection, ConnectableRef, Message as EngineMessage, OfflineAutomationLane,
     OfflineAutomationPoint, OfflineAutomationTarget,
 };
+use maolan_widgets::iced::{
+    Color, Length, Size, Task,
+    advanced::text::Span,
+    widget::{
+        Column, button, checkbox, column, container, pick_list, progress_bar, rich_text, row,
+        scrollable, span, text, text_editor, text_input,
+    },
+};
+use maolan_widgets::iced_aw::helpers::color_picker_with_change;
 use maolan_widgets::numeric_input::{number_input, number_input_f32};
 use midly::{
     Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
@@ -117,13 +117,16 @@ fn format_log_entry_for_editor(entry: &LogEntry) -> (String, Vec<(Range<usize>, 
     (line, highlights)
 }
 
-fn last_message_status_text(message: &str) -> iced::Element<'static, Message> {
+fn last_message_status_text(message: &str) -> maolan_widgets::iced::Element<'static, Message> {
     rich_text(ansi_status_spans("Last message: ", message))
         .width(Length::Fill)
         .into()
 }
 
-fn ansi_status_spans(prefix: &'static str, message: &str) -> Vec<Span<'static, (), iced::Font>> {
+fn ansi_status_spans(
+    prefix: &'static str,
+    message: &str,
+) -> Vec<Span<'static, (), maolan_widgets::iced::Font>> {
     let (text, highlights) = strip_ansi_and_collect_highlights(message);
     let mut spans = Vec::with_capacity(highlights.len().saturating_mul(2).saturating_add(1));
     spans.push(span(prefix.to_string()));
@@ -1175,7 +1178,7 @@ impl Default for Maolan {
 }
 
 impl Maolan {
-    pub fn new() -> (Self, iced::Task<Message>) {
+    pub fn new() -> (Self, maolan_widgets::iced::Task<Message>) {
         let mut app = Self::default();
         let (hw_mixer, hw_task) = mixosc::app::new();
         app.hw_mixer = hw_mixer;
@@ -5589,7 +5592,7 @@ impl Maolan {
     }
 
     #[cfg(unix)]
-    fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
+    fn track_plugin_list_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = Self::plugin_graph_title(&state);
 
@@ -5604,7 +5607,7 @@ impl Maolan {
                 }
             }
             let is_selected = self.selected_lv2_plugins.contains(&plugin.uri);
-            let row_content: iced::Element<'_, Message> = row![
+            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(format!(
                     "{} (a:{}/{}, m:{}/{})",
@@ -5659,7 +5662,7 @@ impl Maolan {
                 }
             }
 
-            let row_content: iced::Element<'_, Message> = row![
+            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
                 text(capability_icons),
@@ -5692,7 +5695,7 @@ impl Maolan {
                 }
             }
             let is_selected = self.selected_vst3_plugins.contains(&plugin.id);
-            let row_content: iced::Element<'_, Message> = row![
+            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
             ]
@@ -5713,59 +5716,62 @@ impl Maolan {
         }
         let vst3_list = column(vst3_items);
 
-        let lv2_column: iced::Element<'_, Message> = if state.lv2_plugins_unavailable {
-            column![
-                text("LV2").size(14),
-                text("LV2 plugin scan is unavailable.").size(12),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        } else {
-            column![
-                text("LV2").size(14),
-                scrollable(lv2_list).height(Length::Fill),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        };
+        let lv2_column: maolan_widgets::iced::Element<'_, Message> =
+            if state.lv2_plugins_unavailable {
+                column![
+                    text("LV2").size(14),
+                    text("LV2 plugin scan is unavailable.").size(12),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            } else {
+                column![
+                    text("LV2").size(14),
+                    scrollable(lv2_list).height(Length::Fill),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            };
 
-        let clap_column: iced::Element<'_, Message> = if state.clap_plugins_unavailable {
-            column![
-                text("CLAP").size(14),
-                text("CLAP plugin scan is unavailable.").size(12),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        } else {
-            column![
-                text("CLAP").size(14),
-                scrollable(clap_list).height(Length::Fill),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        };
+        let clap_column: maolan_widgets::iced::Element<'_, Message> =
+            if state.clap_plugins_unavailable {
+                column![
+                    text("CLAP").size(14),
+                    text("CLAP plugin scan is unavailable.").size(12),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            } else {
+                column![
+                    text("CLAP").size(14),
+                    scrollable(clap_list).height(Length::Fill),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            };
 
-        let vst3_column: iced::Element<'_, Message> = if state.vst3_plugins_unavailable {
-            column![
-                text("VST3").size(14),
-                text("VST3 plugin scan is unavailable.").size(12),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        } else {
-            column![
-                text("VST3").size(14),
-                scrollable(vst3_list).height(Length::Fill),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        };
+        let vst3_column: maolan_widgets::iced::Element<'_, Message> =
+            if state.vst3_plugins_unavailable {
+                column![
+                    text("VST3").size(14),
+                    text("VST3 plugin scan is unavailable.").size(12),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            } else {
+                column![
+                    text("VST3").size(14),
+                    scrollable(vst3_list).height(Length::Fill),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            };
 
         let selected_count = self.selected_lv2_plugins.len()
             + self.selected_clap_plugins.len()
@@ -5807,7 +5813,7 @@ impl Maolan {
     }
 
     #[cfg(windows)]
-    fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
+    fn track_plugin_list_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = Self::plugin_graph_title(&state);
         let filter = self.plugin_list_filter.trim().to_lowercase();
@@ -5821,7 +5827,7 @@ impl Maolan {
                 }
             }
             let is_selected = self.selected_vst3_plugins.contains(&plugin.id);
-            let row_content: iced::Element<'_, Message> = row![
+            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
             ]
@@ -5867,7 +5873,7 @@ impl Maolan {
                 }
             }
 
-            let row_content: iced::Element<'_, Message> = row![
+            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
                 text(capability_icons),
@@ -5889,41 +5895,43 @@ impl Maolan {
         }
         let clap_list = column(clap_items);
 
-        let clap_column: iced::Element<'_, Message> = if state.clap_plugins_unavailable {
-            column![
-                text("CLAP").size(14),
-                text("CLAP plugin scan is unavailable.").size(12),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        } else {
-            column![
-                text("CLAP").size(14),
-                scrollable(clap_list).height(Length::Fill),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        };
+        let clap_column: maolan_widgets::iced::Element<'_, Message> =
+            if state.clap_plugins_unavailable {
+                column![
+                    text("CLAP").size(14),
+                    text("CLAP plugin scan is unavailable.").size(12),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            } else {
+                column![
+                    text("CLAP").size(14),
+                    scrollable(clap_list).height(Length::Fill),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            };
 
-        let vst3_column: iced::Element<'_, Message> = if state.vst3_plugins_unavailable {
-            column![
-                text("VST3").size(14),
-                text("VST3 plugin scan is unavailable.").size(12),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        } else {
-            column![
-                text("VST3").size(14),
-                scrollable(vst3_list).height(Length::Fill),
-            ]
-            .spacing(10)
-            .width(Length::FillPortion(1))
-            .into()
-        };
+        let vst3_column: maolan_widgets::iced::Element<'_, Message> =
+            if state.vst3_plugins_unavailable {
+                column![
+                    text("VST3").size(14),
+                    text("VST3 plugin scan is unavailable.").size(12),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            } else {
+                column![
+                    text("VST3").size(14),
+                    scrollable(vst3_list).height(Length::Fill),
+                ]
+                .spacing(10)
+                .width(Length::FillPortion(1))
+                .into()
+            };
 
         let selected_count = self.selected_clap_plugins.len() + self.selected_vst3_plugins.len();
         let load = if selected_count == 0 {
@@ -6057,7 +6065,7 @@ impl Maolan {
         }
     }
 
-    fn export_settings_view(&self) -> iced::Element<'_, Message> {
+    fn export_settings_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let last_message = self.state.blocking_read().message.clone();
         let selected_formats = self.selected_export_formats();
         let bit_depth_options = Self::export_bit_depth_options(&selected_formats);
@@ -6102,7 +6110,7 @@ impl Maolan {
                                 .on_toggle(Message::ExportFormatOggToggled),
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center),
+                        .align_y(maolan_widgets::iced::Alignment::Center),
                         row![
                             text("Sample rate (Hz):"),
                             pick_list(
@@ -6114,7 +6122,7 @@ impl Maolan {
                             .width(Length::Fixed(220.0)),
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center),
+                        .align_y(maolan_widgets::iced::Alignment::Center),
                         row![
                             text("Bit depth:"),
                             pick_list(
@@ -6132,7 +6140,7 @@ impl Maolan {
                             .placeholder("Choose dither"),
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center),
+                        .align_y(maolan_widgets::iced::Alignment::Center),
                         row![
                             text("Render mode:"),
                             pick_list(
@@ -6144,17 +6152,17 @@ impl Maolan {
                             .width(Length::Fixed(220.0)),
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center),
+                        .align_y(maolan_widgets::iced::Alignment::Center),
                         if matches!(self.export_render_mode, ExportRenderMode::Mixdown) {
                             container(
                                 column![
                                     text("Export hw:out ports:"),
                                     if available_hw_out_ports.is_empty() {
-                                        iced::Element::from(text(
+                                        maolan_widgets::iced::Element::from(text(
                                             "No hardware output ports are available.",
                                         ))
                                     } else {
-                                        iced::Element::from(row(
+                                        maolan_widgets::iced::Element::from(row(
                                             available_hw_out_ports
                                                 .chunks(hw_out_rows_per_column.max(1))
                                                 .map(|ports| {
@@ -6181,14 +6189,14 @@ impl Maolan {
                                                                 .into()
                                                             })
                                                             .collect::<Vec<
-                                                                iced::Element<'_, Message>,
+                                                                maolan_widgets::iced::Element<'_, Message>,
                                                             >>(),
                                                     )
                                                     .spacing(6)
                                                     .width(Length::FillPortion(1))
                                                     .into()
                                                 })
-                                                .collect::<Vec<iced::Element<'_, Message>>>(),
+                                                .collect::<Vec<maolan_widgets::iced::Element<'_, Message>>>(),
                                         )
                                         .spacing(24)
                                         .width(Length::Fill))
@@ -6214,7 +6222,7 @@ impl Maolan {
                                 .width(Length::Fixed(110.0)),
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center),
+                        .align_y(maolan_widgets::iced::Alignment::Center),
                         checkbox(self.export_normalize)
                             .label("Normalize")
                             .on_toggle(Message::ExportNormalizeToggled),
@@ -6232,7 +6240,7 @@ impl Maolan {
                                         .width(Length::Fixed(180.0)),
                                     ]
                                     .spacing(10)
-                                    .align_y(iced::Alignment::Center),
+                                    .align_y(maolan_widgets::iced::Alignment::Center),
                                     if matches!(
                                         self.export_normalize_mode,
                                         ExportNormalizeMode::Peak
@@ -6244,7 +6252,7 @@ impl Maolan {
                                                 .width(Length::Fixed(120.0)),
                                         ]
                                         .spacing(10)
-                                        .align_y(iced::Alignment::Center)
+                                        .align_y(maolan_widgets::iced::Alignment::Center)
                                     } else {
                                         row![
                                             text("Target (LUFS):"),
@@ -6257,7 +6265,7 @@ impl Maolan {
                                                 .width(Length::Fixed(120.0)),
                                         ]
                                         .spacing(10)
-                                        .align_y(iced::Alignment::Center)
+                                        .align_y(maolan_widgets::iced::Alignment::Center)
                                     },
                                     if matches!(
                                         self.export_normalize_mode,
@@ -6284,7 +6292,7 @@ impl Maolan {
                         .spacing(10),
                         text("Use standard sample rates for broad compatibility."),
                     ]
-                    .align_x(iced::Alignment::Start)
+                    .align_x(maolan_widgets::iced::Alignment::Start)
                     .spacing(12),
                 )
                 .width(Length::Fill),
@@ -6296,8 +6304,8 @@ impl Maolan {
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center);
+        .align_x(maolan_widgets::iced::Alignment::Center)
+        .align_y(maolan_widgets::iced::Alignment::Center);
 
         column![
             body,
@@ -6430,7 +6438,7 @@ impl Maolan {
         }
     }
 
-    fn preferences_view(&self) -> iced::Element<'_, Message> {
+    fn preferences_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let output_options = self.preferences_output_device_options();
         let selected_output = Self::preferences_selected_device_option(
             &output_options,
@@ -6441,7 +6449,9 @@ impl Maolan {
             &input_options,
             self.prefs_default_input_device_id.as_deref(),
         );
-        let mut preferences_column = Column::new().align_x(iced::Alignment::Start).spacing(12);
+        let mut preferences_column = Column::new()
+            .align_x(maolan_widgets::iced::Alignment::Start)
+            .spacing(12);
         preferences_column = preferences_column.push(text("Preferences").size(16));
         preferences_column = preferences_column.push(
             row![
@@ -6450,7 +6460,7 @@ impl Maolan {
                     .on_toggle(Message::PreferencesOscEnabledToggled),
             ]
             .spacing(10)
-            .align_y(iced::Alignment::Center),
+            .align_y(maolan_widgets::iced::Alignment::Center),
         );
         preferences_column = preferences_column.push(
             row![
@@ -6464,7 +6474,7 @@ impl Maolan {
                 .width(Length::Fixed(220.0)),
             ]
             .spacing(10)
-            .align_y(iced::Alignment::Center),
+            .align_y(maolan_widgets::iced::Alignment::Center),
         );
         preferences_column = preferences_column.push(
             row![
@@ -6478,7 +6488,7 @@ impl Maolan {
                 .width(Length::Fixed(220.0)),
             ]
             .spacing(10)
-            .align_y(iced::Alignment::Center),
+            .align_y(maolan_widgets::iced::Alignment::Center),
         );
         preferences_column = preferences_column.push(
             row![
@@ -6492,7 +6502,7 @@ impl Maolan {
                 .width(Length::Fixed(220.0)),
             ]
             .spacing(10)
-            .align_y(iced::Alignment::Center),
+            .align_y(maolan_widgets::iced::Alignment::Center),
         );
         #[cfg(unix)]
         {
@@ -6508,7 +6518,7 @@ impl Maolan {
                     .width(Length::Fixed(220.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
             );
         }
         preferences_column = preferences_column.push(
@@ -6523,7 +6533,7 @@ impl Maolan {
                 .width(Length::Fixed(320.0)),
             ]
             .spacing(10)
-            .align_y(iced::Alignment::Center),
+            .align_y(maolan_widgets::iced::Alignment::Center),
         );
         if platform_caps::HAS_SEPARATE_AUDIO_INPUT_DEVICE {
             preferences_column = preferences_column.push(
@@ -6538,11 +6548,14 @@ impl Maolan {
                     .width(Length::Fixed(320.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
             );
         } else {
-            preferences_column = preferences_column
-                .push(row![text("")].spacing(10).align_y(iced::Alignment::Center));
+            preferences_column = preferences_column.push(
+                row![text("")]
+                    .spacing(10)
+                    .align_y(maolan_widgets::iced::Alignment::Center),
+            );
         }
         preferences_column = preferences_column.push(
             row![
@@ -6558,12 +6571,12 @@ impl Maolan {
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(iced::Alignment::Center)
-            .align_y(iced::Alignment::Center)
+            .align_x(maolan_widgets::iced::Alignment::Center)
+            .align_y(maolan_widgets::iced::Alignment::Center)
             .into()
     }
 
-    fn generate_audio_view(&self) -> iced::Element<'_, Message> {
+    fn generate_audio_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let session_ready = self.session_dir.is_some();
         let progress_label = if self.generate_audio_in_progress {
             if let Some(operation) = self.generate_audio_operation.as_deref() {
@@ -6612,7 +6625,7 @@ impl Maolan {
                         .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     if self.generate_audio_model.uses_acestep_lm_selector() {
                         row![
                             text("LM:"),
@@ -6625,7 +6638,7 @@ impl Maolan {
                             .width(Length::Fill),
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center)
+                        .align_y(maolan_widgets::iced::Alignment::Center)
                     } else {
                         row![]
                     },
@@ -6647,7 +6660,7 @@ impl Maolan {
                         .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Key:"),
                         pick_list(
@@ -6666,7 +6679,7 @@ impl Maolan {
                         .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("CFG scale"),
                         number_input_f32(
@@ -6683,7 +6696,7 @@ impl Maolan {
                         ),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Seconds total:"),
                         number_input(
@@ -6693,7 +6706,7 @@ impl Maolan {
                         ),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     text(progress_label),
                     if self.generate_audio_in_progress {
                         container(progress_bar(
@@ -6706,7 +6719,7 @@ impl Maolan {
                     },
                     row![generate_button, cancel_button].spacing(10),
                 ]
-                .align_x(iced::Alignment::Start)
+                .align_x(maolan_widgets::iced::Alignment::Start)
                 .spacing(12),
             )
             .width(Length::Fill)
@@ -6719,7 +6732,7 @@ impl Maolan {
         .into()
     }
 
-    fn generate_midi_view(&self) -> iced::Element<'_, Message> {
+    fn generate_midi_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let session_ready = self.session_dir.is_some();
         let progress_label = if self.generate_midi_in_progress {
             if let Some(operation) = self.generate_midi_operation.as_deref() {
@@ -6752,56 +6765,57 @@ impl Maolan {
                 .style(button::secondary)
         };
 
-        let model_specific_inputs: iced::Element<'_, Message> = match self.generate_midi_model {
-            GenerateMidiModelOption::TextToMidi => column![
-                row![
-                    text("Length (s):"),
-                    text_input("10", &self.generate_midi_length_seconds_input)
-                        .on_input(Message::GenerateMidiLengthSecondsInput)
-                        .width(Length::Fill),
+        let model_specific_inputs: maolan_widgets::iced::Element<'_, Message> =
+            match self.generate_midi_model {
+                GenerateMidiModelOption::TextToMidi => column![
+                    row![
+                        text("Length (s):"),
+                        text_input("10", &self.generate_midi_length_seconds_input)
+                            .on_input(Message::GenerateMidiLengthSecondsInput)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(maolan_widgets::iced::Alignment::Center),
+                    row![
+                        text("Seed:"),
+                        text_input("0", &self.generate_midi_seed_input)
+                            .on_input(Message::GenerateMidiSeedInput)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                 ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text("Seed:"),
-                    text_input("0", &self.generate_midi_seed_input)
-                        .on_input(Message::GenerateMidiSeedInput)
-                        .width(Length::Fill),
+                .spacing(12)
+                .into(),
+                GenerateMidiModelOption::MidiLlm => column![
+                    row![
+                        text("Max tokens:"),
+                        text_input("1024", &self.generate_midi_max_tokens_input)
+                            .on_input(Message::GenerateMidiMaxTokensInput)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(maolan_widgets::iced::Alignment::Center),
+                    row![
+                        text("Top-p:"),
+                        text_input("0.98", &self.generate_midi_top_p_input)
+                            .on_input(Message::GenerateMidiTopPInput)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(maolan_widgets::iced::Alignment::Center),
+                    row![
+                        text("Seed:"),
+                        text_input("0", &self.generate_midi_seed_input)
+                            .on_input(Message::GenerateMidiSeedInput)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                 ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-            ]
-            .spacing(12)
-            .into(),
-            GenerateMidiModelOption::MidiLlm => column![
-                row![
-                    text("Max tokens:"),
-                    text_input("1024", &self.generate_midi_max_tokens_input)
-                        .on_input(Message::GenerateMidiMaxTokensInput)
-                        .width(Length::Fill),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text("Top-p:"),
-                    text_input("0.98", &self.generate_midi_top_p_input)
-                        .on_input(Message::GenerateMidiTopPInput)
-                        .width(Length::Fill),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text("Seed:"),
-                    text_input("0", &self.generate_midi_seed_input)
-                        .on_input(Message::GenerateMidiSeedInput)
-                        .width(Length::Fill),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-            ]
-            .spacing(12)
-            .into(),
-        };
+                .spacing(12)
+                .into(),
+            };
 
         container(
             scrollable(
@@ -6818,7 +6832,7 @@ impl Maolan {
                         .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     text_editor(&self.generate_midi_prompt_editor)
                         .on_action(Message::GenerateMidiPromptAction)
                         .height(Length::Fixed(120.0))
@@ -6834,7 +6848,7 @@ impl Maolan {
                         .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Key:"),
                         pick_list(
@@ -6853,7 +6867,7 @@ impl Maolan {
                         .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("BPM:"),
                         text_input("120", &self.generate_midi_bpm_input)
@@ -6861,7 +6875,7 @@ impl Maolan {
                             .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Time signature:"),
                         text_input("4", &self.generate_midi_time_signature_num_input)
@@ -6873,7 +6887,7 @@ impl Maolan {
                             .width(Length::Fill),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    .align_y(maolan_widgets::iced::Alignment::Center),
                     model_specific_inputs,
                     text(progress_label),
                     if self.generate_midi_in_progress {
@@ -6887,7 +6901,7 @@ impl Maolan {
                     },
                     row![generate_button, cancel_button].spacing(10),
                 ]
-                .align_x(iced::Alignment::Start)
+                .align_x(maolan_widgets::iced::Alignment::Start)
                 .spacing(12),
             )
             .width(Length::Fill)
@@ -6900,7 +6914,7 @@ impl Maolan {
         .into()
     }
 
-    fn session_metadata_view(&self) -> iced::Element<'_, Message> {
+    fn session_metadata_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         container(
             column![
@@ -6912,7 +6926,7 @@ impl Maolan {
                         .width(Length::Fixed(260.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
                 row![
                     text("Album:"),
                     text_input("Album", &state.session_album)
@@ -6920,7 +6934,7 @@ impl Maolan {
                         .width(Length::Fixed(260.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
                 row![
                     text("Year:"),
                     text_input("Year", &state.session_year)
@@ -6932,7 +6946,7 @@ impl Maolan {
                         .width(Length::Fixed(120.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
                 row![
                     text("Genre:"),
                     text_input("Genre", &state.session_genre)
@@ -6940,7 +6954,7 @@ impl Maolan {
                         .width(Length::Fixed(260.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
                 row![
                     text("Song scale:"),
                     pick_list(
@@ -6954,7 +6968,7 @@ impl Maolan {
                         .on_toggle(Message::PianoScaleMinorToggled),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
                 row![
                     button("Save").on_press(Message::SessionMetadataSave),
                     button("Cancel")
@@ -6963,19 +6977,19 @@ impl Maolan {
                 ]
                 .spacing(10),
             ]
-            .align_x(iced::Alignment::Start)
+            .align_x(maolan_widgets::iced::Alignment::Start)
             .spacing(12),
         )
         .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
+        .align_x(maolan_widgets::iced::Alignment::Center)
+        .align_y(maolan_widgets::iced::Alignment::Center)
         .into()
     }
 
-    fn branch_manager_view(&self) -> iced::Element<'_, Message> {
+    fn branch_manager_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let mut branches: Vec<String> = Vec::new();
         if let Some(session_dir) = self.session_dir.as_ref() {
             if let Ok(entries) = std::fs::read_dir(session_dir) {
@@ -6995,13 +7009,13 @@ impl Maolan {
         }
 
         let current = self.session_branch.clone();
-        let mut branch_rows: Vec<iced::Element<'_, Message>> = Vec::new();
+        let mut branch_rows: Vec<maolan_widgets::iced::Element<'_, Message>> = Vec::new();
         for branch in branches {
             if branch == current {
                 branch_rows.push(
                     row![text(format!("{} (current)", branch)).width(Length::Fill),]
                         .spacing(4)
-                        .align_y(iced::Alignment::Center)
+                        .align_y(maolan_widgets::iced::Alignment::Center)
                         .into(),
                 );
             } else {
@@ -7022,7 +7036,7 @@ impl Maolan {
                             .style(button::danger),
                     ]
                     .spacing(4)
-                    .align_y(iced::Alignment::Center)
+                    .align_y(maolan_widgets::iced::Alignment::Center)
                     .into(),
                 );
             }
@@ -7040,12 +7054,12 @@ impl Maolan {
                 button("Create").on_press(Message::BranchCreate(self.pending_branch_input.clone()))
             ]
             .spacing(10)
-            .align_y(iced::Alignment::Center),
+            .align_y(maolan_widgets::iced::Alignment::Center),
             button("Close")
                 .on_press(Message::Cancel)
                 .style(button::secondary),
         ]
-        .align_x(iced::Alignment::Start)
+        .align_x(maolan_widgets::iced::Alignment::Start)
         .spacing(12);
 
         container(content)
@@ -7053,13 +7067,13 @@ impl Maolan {
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(iced::Alignment::Center)
-            .align_y(iced::Alignment::Center)
+            .align_x(maolan_widgets::iced::Alignment::Center)
+            .align_y(maolan_widgets::iced::Alignment::Center)
             .into()
     }
 
-    fn branch_track_list_view(&self, branch: &str) -> iced::Element<'_, Message> {
-        let mut track_rows: Vec<iced::Element<'_, Message>> = Vec::new();
+    fn branch_track_list_view(&self, branch: &str) -> maolan_widgets::iced::Element<'_, Message> {
+        let mut track_rows: Vec<maolan_widgets::iced::Element<'_, Message>> = Vec::new();
 
         if let Some(session_dir) = self.session_dir.as_ref() {
             let branch_file = session_dir.join(format!("{}.json", branch));
@@ -7085,7 +7099,7 @@ impl Maolan {
                                         .style(button::secondary),
                                 ]
                                 .spacing(10)
-                                .align_y(iced::Alignment::Center)
+                                .align_y(maolan_widgets::iced::Alignment::Center)
                                 .into(),
                             );
                         }
@@ -7101,7 +7115,7 @@ impl Maolan {
                 .on_press(Message::Show(Show::BranchManager))
                 .style(button::secondary),
         ]
-        .align_x(iced::Alignment::Start)
+        .align_x(maolan_widgets::iced::Alignment::Start)
         .spacing(12);
 
         container(content)
@@ -7109,12 +7123,12 @@ impl Maolan {
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(iced::Alignment::Center)
-            .align_y(iced::Alignment::Center)
+            .align_x(maolan_widgets::iced::Alignment::Center)
+            .align_y(maolan_widgets::iced::Alignment::Center)
             .into()
     }
 
-    fn autosave_recovery_view(&self) -> iced::Element<'_, Message> {
+    fn autosave_recovery_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let session_label = self
             .pending_recovery_session_dir
             .as_ref()
@@ -7133,19 +7147,19 @@ impl Maolan {
                 ]
                 .spacing(10),
             ]
-            .align_x(iced::Alignment::Start)
+            .align_x(maolan_widgets::iced::Alignment::Start)
             .spacing(12),
         )
         .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
+        .align_x(maolan_widgets::iced::Alignment::Center)
+        .align_y(maolan_widgets::iced::Alignment::Center)
         .into()
     }
 
-    fn about_view(&self) -> iced::Element<'_, Message> {
+    fn about_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         container(
             column![
                 text("Maolan DAW").size(20),
@@ -7158,19 +7172,19 @@ impl Maolan {
                     .on_press(Message::Cancel)
                     .style(button::secondary),
             ]
-            .align_x(iced::Alignment::Start)
+            .align_x(maolan_widgets::iced::Alignment::Start)
             .spacing(12),
         )
         .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
+        .align_x(maolan_widgets::iced::Alignment::Center)
+        .align_y(maolan_widgets::iced::Alignment::Center)
         .into()
     }
 
-    fn track_color_view(&self, track_name: String) -> iced::Element<'_, Message> {
+    fn track_color_view(&self, track_name: String) -> maolan_widgets::iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let track = state.tracks.iter().find(|t| t.name == track_name);
         let current_color = track
@@ -7193,19 +7207,19 @@ impl Maolan {
                     },
                 ),
             ]
-            .align_x(iced::Alignment::Start)
+            .align_x(maolan_widgets::iced::Alignment::Start)
             .spacing(12),
         )
         .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
+        .align_x(maolan_widgets::iced::Alignment::Center)
+        .align_y(maolan_widgets::iced::Alignment::Center)
         .into()
     }
 
-    fn mpe_config_view(&self, track_name: String) -> iced::Element<'_, Message> {
+    fn mpe_config_view(&self, track_name: String) -> maolan_widgets::iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
             drop(state);
@@ -7269,7 +7283,7 @@ impl Maolan {
                     .width(Length::Fixed(80.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
                 row![
                     text("Upper").width(Length::Fixed(80.0)),
                     text("member channels"),
@@ -7296,22 +7310,22 @@ impl Maolan {
                     .width(Length::Fixed(80.0)),
                 ]
                 .spacing(10)
-                .align_y(iced::Alignment::Center),
+                .align_y(maolan_widgets::iced::Alignment::Center),
                 text("Set member channels to 0 to disable a zone.").size(12),
             ]
-            .align_x(iced::Alignment::Start)
+            .align_x(maolan_widgets::iced::Alignment::Start)
             .spacing(16),
         )
         .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
+        .align_x(maolan_widgets::iced::Alignment::Center)
+        .align_y(maolan_widgets::iced::Alignment::Center)
         .into()
     }
 
-    fn unsaved_changes_view(&self) -> iced::Element<'_, Message> {
+    fn unsaved_changes_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let session_label = self
             .session_dir
             .as_ref()
@@ -7331,15 +7345,15 @@ impl Maolan {
                 ]
                 .spacing(10),
             ]
-            .align_x(iced::Alignment::Start)
+            .align_x(maolan_widgets::iced::Alignment::Start)
             .spacing(12),
         )
         .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
+        .align_x(maolan_widgets::iced::Alignment::Center)
+        .align_y(maolan_widgets::iced::Alignment::Center)
         .into()
     }
 
@@ -7672,7 +7686,7 @@ mod tests {
                 0,
             ));
             if let Some(track) = state.tracks.iter_mut().find(|t| t.name == "Drums") {
-                track.position = iced::Point::new(123.0, 456.0);
+                track.position = maolan_widgets::iced::Point::new(123.0, 456.0);
             }
         }
         app.save(session_root.to_string_lossy().to_string())
@@ -8084,7 +8098,10 @@ mod tests {
                 .plugin_graph_plugin_positions
                 .entry(track_name.clone())
                 .or_default()
-                .insert(plugin.instance_id, iced::Point::new(242.0, 410.0));
+                .insert(
+                    plugin.instance_id,
+                    maolan_widgets::iced::Point::new(242.0, 410.0),
+                );
         }
         app.save(session_root.to_string_lossy().to_string())
             .expect("save session");

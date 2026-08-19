@@ -4,7 +4,8 @@ use crate::{
     state::{Modulator, State, Track},
     style,
 };
-use iced::{
+use maolan_engine::message::{Action, TrackMidiLearnTarget};
+use maolan_widgets::iced::{
     Alignment, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme, mouse,
     widget::{
         Row, Space, Stack, button, canvas,
@@ -12,7 +13,6 @@ use iced::{
         column, container, lazy, mouse_area, row, scrollable, text, text_input,
     },
 };
-use maolan_engine::message::{Action, TrackMidiLearnTarget};
 use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider};
 use std::collections::{HashMap, HashSet};
 
@@ -84,7 +84,10 @@ impl canvas::Program<Message> for MixerFaderTicks {
                 .clamp(0.0, (bounds.height - 1.0).max(0.0));
             let label_y = (tick_y - 4.0).clamp(0.0, (bounds.height - 10.0).max(0.0));
             frame.fill(
-                &Path::rectangle(Point::new(tick_x, tick_y), iced::Size::new(4.0, 1.0)),
+                &Path::rectangle(
+                    Point::new(tick_x, tick_y),
+                    maolan_widgets::iced::Size::new(4.0, 1.0),
+                ),
                 Color::from_rgba(0.62, 0.67, 0.77, 0.78),
             );
             frame.fill_text(Text {
@@ -842,7 +845,7 @@ impl Mixer {
     fn strip_shell<'a>(
         name: String,
         selected: bool,
-        color: Option<iced::Color>,
+        color: Option<maolan_widgets::iced::Color>,
         left_width: f32,
         total_width: f32,
         pan_section: Option<Element<'static, Message>>,

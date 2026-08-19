@@ -1,7 +1,7 @@
 use crate::keyboard_shortcuts::{ShortcutAction, ShortcutBindings, binding_for};
 use crate::message::Message;
 use crate::state::View;
-use iced::{
+use maolan_widgets::iced::{
     Background, Border, Color, Element, Length,
     widget::{column, container, mouse_area, scrollable, text},
 };
