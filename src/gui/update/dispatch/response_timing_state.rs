@@ -4,18 +4,21 @@ impl Maolan {
     pub(super) fn handle_response_timing_state_action(&mut self, action: &Action) -> bool {
         match action {
             Action::Play => {
+                self.stop_meter_stop_decay();
                 self.playing = true;
                 self.paused = false;
                 self.last_playback_tick = Some(Instant::now());
                 true
             }
             Action::Pause => {
+                self.stop_meter_stop_decay();
                 self.playing = true;
                 self.paused = true;
                 self.last_playback_tick = None;
                 true
             }
             Action::Stop => {
+                self.start_meter_stop_decay();
                 self.playing = false;
                 self.paused = false;
                 self.last_playback_tick = None;

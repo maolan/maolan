@@ -33,14 +33,14 @@ impl Maolan {
     }
 
     fn should_poll_meters(
-        mixer_visible: bool,
+        meter_surface_visible: bool,
         playing: bool,
         paused: bool,
         live_session_playing: bool,
         hw_out_meter_db: &[f32],
         track_meter_dbs: impl IntoIterator<Item = impl AsRef<[f32]>>,
     ) -> bool {
-        if !mixer_visible {
+        if !meter_surface_visible {
             return false;
         }
         if playing || paused || live_session_playing {
@@ -212,10 +212,13 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        let should_poll_meters = if self.mixer_visible {
+        let should_poll_meters = {
             let state = self.state.blocking_read();
+            let meter_surface_visible = self.mixer_visible
+                || self.tracks_visible
+                || matches!(state.view, crate::state::View::Session);
             Self::should_poll_meters(
-                self.mixer_visible,
+                meter_surface_visible,
                 self.playing,
                 self.paused,
                 self.live_session_playing,
@@ -225,8 +228,6 @@ impl Maolan {
                     .iter()
                     .map(|track| track.meter_out_db.as_slice()),
             )
-        } else {
-            false
         };
         let meter_poll_sub = if should_poll_meters {
             maolan_widgets::iced::time::every(Duration::from_millis(40))
@@ -399,7 +400,19 @@ mod tests {
     }
 
     #[test]
-    fn does_not_poll_meters_when_mixer_is_hidden() {
+    fn polls_meters_when_non_mixer_meter_surface_is_visible() {
+        assert!(Maolan::should_poll_meters(
+            true,
+            false,
+            false,
+            false,
+            &[-90.0],
+            [&[-12.0][..]],
+        ));
+    }
+
+    #[test]
+    fn does_not_poll_meters_when_no_meter_surface_is_visible() {
         assert!(!Maolan::should_poll_meters(
             false,
             true,

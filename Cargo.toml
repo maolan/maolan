@@ -31,7 +31,7 @@ ebur128 = "0.1"
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "rustls-tls"] }
 i24 = "2.3.3"
 maolan-generate = "0.0.15"
-maolan-engine = "0.2.61"
+maolan-engine = "0.2.62"
 maolan-plugin-host = { version = "0.0.7", path = "plugin-host" }
 maolan-widgets = "0.0.35"
 mixosc = "0.0.14"

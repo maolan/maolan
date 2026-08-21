@@ -626,6 +626,12 @@ impl CollectToSessionOperation {
     }
 }
 
+struct MeterStopDecay {
+    started_at: Instant,
+    hw_out_db: Vec<f32>,
+    track_meters: Vec<(String, Vec<f32>)>,
+}
+
 pub struct Maolan {
     clip: Option<DraggedClip>,
     clip_preview_target_track: Option<String>,
@@ -694,6 +700,7 @@ pub struct Maolan {
     playing: bool,
     paused: bool,
     live_session_playing: bool,
+    meter_stop_decay: Option<MeterStopDecay>,
     recorded_live_session_clip_passes: HashSet<(String, usize, String, usize, usize)>,
     live_session_record_start_sample: Option<usize>,
     metronome_enabled: bool,
@@ -1024,6 +1031,7 @@ impl Default for Maolan {
             playing: false,
             paused: false,
             live_session_playing: false,
+            meter_stop_decay: None,
             recorded_live_session_clip_passes: HashSet::new(),
             live_session_record_start_sample: None,
             metronome_enabled: false,
