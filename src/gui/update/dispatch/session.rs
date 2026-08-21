@@ -265,6 +265,15 @@ impl Maolan {
                 Task::batch(tasks)
             }
             Message::MeterPollTick => {
+                if !self.playing
+                    && !self.paused
+                    && !self.live_session_playing
+                    && let Some(action) = self.meter_stop_decay_action()
+                {
+                    return self
+                        .handle_response_freeze_meter_action(&action)
+                        .unwrap_or_else(Task::none);
+                }
                 if let Some(snapshot) = CLIENT.meter_snapshot() {
                     let action = Action::MeterSnapshot {
                         hw_out_db: std::sync::Arc::new(snapshot.hw_out_db),

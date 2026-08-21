@@ -2605,6 +2605,53 @@ impl Maolan {
         }
     }
 
+    fn start_meter_stop_decay(&mut self) {
+        if self.meter_stop_decay.is_some() {
+            return;
+        }
+        let state = self.state.blocking_read();
+        let hw_out_db = state.hw_out_meter_db.clone();
+        let track_meters = state
+            .tracks
+            .iter()
+            .map(|track| (track.name.clone(), track.meter_out_db.clone()))
+            .collect();
+        drop(state);
+        self.meter_stop_decay = Some(super::MeterStopDecay {
+            started_at: Instant::now(),
+            hw_out_db,
+            track_meters,
+        });
+    }
+
+    fn stop_meter_stop_decay(&mut self) {
+        self.meter_stop_decay = None;
+    }
+
+    fn meter_stop_decay_action(&mut self) -> Option<Action> {
+        let decay = self.meter_stop_decay.as_ref()?;
+        let elapsed = decay.started_at.elapsed();
+        let fraction = (elapsed.as_secs_f32() / Duration::from_secs(1).as_secs_f32()).min(1.0);
+        let target = |db: f32| db + ((-90.0 - db) * fraction);
+        let action = Action::MeterSnapshot {
+            hw_out_db: std::sync::Arc::new(decay.hw_out_db.iter().copied().map(target).collect()),
+            hw_out_lufs: None,
+            track_meters: std::sync::Arc::new(
+                decay
+                    .track_meters
+                    .iter()
+                    .map(|(name, meters)| {
+                        (name.clone(), meters.iter().copied().map(target).collect())
+                    })
+                    .collect(),
+            ),
+        };
+        if fraction >= 1.0 {
+            self.meter_stop_decay = None;
+        }
+        Some(action)
+    }
+
     fn midi_lane_at_position(&self, position: Point) -> Option<(String, usize)> {
         let state = self.state.blocking_read();
         let mut y_offset = 0.0f32;

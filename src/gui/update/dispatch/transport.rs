@@ -7,6 +7,9 @@ impl Maolan {
         self.toolbar.update(&Message::TransportStop);
         self.playing = false;
         self.paused = false;
+        if !session_mode {
+            self.start_meter_stop_decay();
+        }
         self.pending_transport_position = None;
         self.last_playback_tick = None;
         self.track_automation_runtime.clear();
@@ -42,6 +45,7 @@ impl Maolan {
                 };
                 self.toolbar.update(&message);
                 let was_playing = self.playing;
+                self.stop_meter_stop_decay();
                 self.playing = true;
                 self.paused = false;
                 self.pending_transport_position = None;
@@ -73,6 +77,7 @@ impl Maolan {
                     return self.stop_live_session_play();
                 }
                 self.toolbar.update(&message);
+                self.stop_meter_stop_decay();
                 self.playing = true;
                 self.paused = true;
                 self.pending_transport_position = None;

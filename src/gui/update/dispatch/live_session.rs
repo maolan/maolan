@@ -996,6 +996,7 @@ impl Maolan {
         if self.live_session_playing {
             return Task::none();
         }
+        self.stop_meter_stop_decay();
         self.live_session_playing = true;
         if self.record_armed {
             self.live_session_record_start_sample = Some(0);
