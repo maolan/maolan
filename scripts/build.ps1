@@ -7,11 +7,12 @@ $ErrorActionPreference = "Stop"
 $target   = "x86_64-pc-windows-msvc"
 $nsisPath = "C:\nsis-3.10\makensis.exe"
 $staging   = "C:\maolan-staging\daw"
+$sourceDir = Split-Path $PSScriptRoot -Parent
 
 # ---------------------------------------------------------------------------
 # Version from Cargo.toml
 # ---------------------------------------------------------------------------
-$cargoToml = Join-Path (Split-Path $PSScriptRoot -Parent) "Cargo.toml"
+$cargoToml = Join-Path $sourceDir "Cargo.toml"
 $pkgVersion = "0.0.0"
 if (Test-Path $cargoToml) {
     $versionLine = Select-String -Path $cargoToml -Pattern '^version\s*=\s*"(.+)"' | Select-Object -First 1
@@ -181,7 +182,7 @@ if (-not (Test-Path $vcRedist)) {
 # Build
 # ---------------------------------------------------------------------------
 Write-Host "Cleaning old build artifacts..."
-Push-Location $PSScriptRoot
+Push-Location $sourceDir
 cargo clean
 
 Write-Host "Building maolan (release)..."
@@ -193,9 +194,10 @@ Pop-Location
 # ---------------------------------------------------------------------------
 Write-Host "Staging files to $staging..."
 New-Item -ItemType Directory -Force $staging | Out-Null
-Copy-Item "target\$target\release\maolan.exe"     $staging -Force
-Copy-Item "target\$target\release\maolan-cli.exe" $staging -Force
-Copy-Item "target\$target\release\maolan-plugin-host.exe" $staging -Force
+$binDir = Join-Path $sourceDir "target\$target\release"
+Copy-Item (Join-Path $binDir "maolan.exe")     $staging -Force
+Copy-Item (Join-Path $binDir "maolan-cli.exe") $staging -Force
+Copy-Item (Join-Path $binDir "maolan-plugin-host.exe") $staging -Force
 Copy-Item $vcRedist $staging -Force
 
 # ---------------------------------------------------------------------------
@@ -206,7 +208,7 @@ Write-Host "Building installer..."
 $nsiTemp = "$env:TEMP\maolan-installer"
 New-Item -ItemType Directory -Force $nsiTemp | Out-Null
 Copy-Item "$PSScriptRoot\installer.nsi" "$nsiTemp\installer.nsi" -Force
-Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) "LICENSE") "$nsiTemp\LICENSE" -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $sourceDir "LICENSE") "$nsiTemp\LICENSE" -Force -ErrorAction SilentlyContinue
 $versionMatch = [regex]::Match($pkgVersion, '^(\d+)\.(\d+)\.(\d+)')
 if ($versionMatch.Success) {
     $productVersion = "$($versionMatch.Groups[1].Value).$($versionMatch.Groups[2].Value).$($versionMatch.Groups[3].Value).0"
@@ -215,11 +217,11 @@ if ($versionMatch.Success) {
     $productVersion = "0.0.0.0"
 }
 $iconPath = "$nsiTemp\maolan-icon.ico"
-Copy-Item (Join-Path (Split-Path $PSScriptRoot -Parent) "assets\images\maolan-icon.ico") $iconPath -Force
+Copy-Item (Join-Path $sourceDir "assets\images\maolan-icon.ico") $iconPath -Force
 Push-Location $nsiTemp
 & $nsisPath "/INPUTCHARSET" "UTF8" "/DMAOLAN_VERSION=$pkgVersion" "/DMAOLAN_PRODUCT_VERSION=$productVersion" "/DMAOLAN_ICON=$iconPath" "$nsiTemp\installer.nsi"
 Pop-Location
-$distDir = Join-Path (Split-Path $PSScriptRoot -Parent) "dist"
+$distDir = Join-Path $sourceDir "dist"
 New-Item -ItemType Directory -Force $distDir | Out-Null
 $outFile = "maolan-$pkgVersion.windows.amd64.exe"
 Copy-Item "$nsiTemp\maolan-setup.exe" "$distDir\$outFile" -Force -ErrorAction SilentlyContinue

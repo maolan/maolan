@@ -9757,6 +9757,8 @@ impl Maolan {
                 }
 
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                #[cfg(unix)]
+                let _playback_rate = self.playback_rate_hz;
                 let task_handle = tokio::spawn(async move {
                     let _ = tx.send(Message::GenerateAudioProgress {
                         progress: 0.05,
@@ -10235,6 +10237,7 @@ impl Maolan {
                 }
 
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                #[cfg(unix)]
                 let playback_rate = self.playback_rate_hz;
                 let task_handle = tokio::spawn(async move {
                     let _ = tx.send(Message::GenerateMidiProgress {

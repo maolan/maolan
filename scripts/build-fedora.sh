@@ -74,11 +74,24 @@ RPM_ARCH="$(uname -m)"
 PKG_NAME="maolan"
 RPM_NAME="${PKG_NAME}-${PKG_VERSION}-1.fc${VERSION_ID}.${RPM_ARCH}.rpm"
 
+classic_jack_devel_installed() {
+    rpm -q jack-audio-connection-kit-devel &>/dev/null
+}
+
+pipewire_jack_devel_installed() {
+    rpm -q pipewire-jack-audio-connection-kit-devel &>/dev/null
+}
+
 pipewire_installed() {
     rpm -q pipewire &>/dev/null
 }
 
-if pipewire_installed; then
+# These devel packages conflict, so keep the provider already installed.
+if classic_jack_devel_installed; then
+    JACK_DEVEL_PACKAGE="jack-audio-connection-kit-devel"
+    JACK_RUNTIME_REQUIRE="jack-audio-connection-kit"
+    JACK_PROVIDER_LABEL="JACK"
+elif pipewire_jack_devel_installed || pipewire_installed; then
     JACK_DEVEL_PACKAGE="pipewire-jack-audio-connection-kit-devel"
     JACK_RUNTIME_REQUIRE="pipewire-jack-audio-connection-kit"
     JACK_PROVIDER_LABEL="PipeWire JACK"
