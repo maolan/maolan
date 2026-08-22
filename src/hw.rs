@@ -179,8 +179,8 @@ impl HW {
     )))]
     fn append_device_rows(
         content: maolan_widgets::iced::widget::Column<'static, Message>,
-        available_hw: Vec<String>,
-        selected_hw: Option<String>,
+        available_hw: Vec<crate::state::AudioDeviceOption>,
+        selected_hw: Option<crate::state::AudioDeviceOption>,
     ) -> maolan_widgets::iced::widget::Column<'static, Message> {
         Self::device_rows(available_hw, selected_hw)
             .into_iter()
@@ -269,8 +269,8 @@ impl HW {
         target_os = "windows"
     )))]
     fn device_rows(
-        available_hw: Vec<String>,
-        selected_hw: Option<String>,
+        available_hw: Vec<crate::state::AudioDeviceOption>,
+        selected_hw: Option<crate::state::AudioDeviceOption>,
     ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
         vec![Self::device_pick_row(
             "Output device:",
@@ -306,6 +306,12 @@ impl HW {
         32
     }
 
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "windows"
+    ))]
     fn selected_input_device_id<T: DeviceId>(
         selected_is_jack: bool,
         selected_input_hw: &Option<T>,
@@ -354,7 +360,8 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let fallback_bits = vec![32, 24, 16, 8];
         let (
@@ -410,10 +417,19 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let selected_bits = self.state.blocking_read().oss_bits;
-        #[cfg(unix)]
+        // JACK is the only backend on macOS, so no native devices are listed.
+        #[cfg(target_os = "macos")]
+        let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
+            .into_iter()
+            .filter(|_hw| match selected_backend {
+                crate::state::AudioBackendOption::Jack => false,
+            })
+            .collect();
+        #[cfg(all(unix, not(target_os = "macos")))]
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
             .into_iter()
             .filter(|hw| match selected_backend {
@@ -427,7 +443,7 @@ impl HW {
                 crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
             })
             .collect();
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "macos")))]
         let available_input_hw: Vec<crate::state::AudioDeviceOption> = available_input_hw
             .into_iter()
             .filter(|hw| match selected_backend {
@@ -493,12 +509,7 @@ impl HW {
             .as_ref()
             .map(|hw| crate::state::discover_windows_output_sample_rates(hw))
             .unwrap_or_else(|| fallback_sample_rates.clone());
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "windows"
-        )))]
+        #[cfg(not(any(unix, windows)))]
         let sample_rate_options = fallback_sample_rates.clone();
         let chosen_sample_rate_hz = if sample_rate_options.contains(&sample_rate_hz) {
             sample_rate_hz
@@ -538,19 +549,15 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let chosen_bits = if bit_options.contains(&selected_bits) {
             selected_bits
         } else {
             bit_options.first().copied().unwrap_or(32)
         };
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "windows"
-        )))]
+        #[cfg(not(any(unix, windows)))]
         let chosen_bits = 32usize;
         let period_options = {
             #[cfg(target_os = "freebsd")]

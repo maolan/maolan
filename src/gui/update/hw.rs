@@ -59,7 +59,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub(super) fn select_refreshed_device(
         available_devices: &mut Vec<AudioDeviceOption>,
         current: &AudioDeviceOption,
@@ -91,7 +91,7 @@ impl Maolan {
         selected
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) fn selected_output_device_for_platform(
         state: &mut crate::state::StateData,
         hw: &AudioDeviceOption,
@@ -110,7 +110,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub(super) fn select_first_backend_output_device(
         state: &mut crate::state::StateData,
         discover: fn() -> Vec<AudioDeviceOption>,
@@ -126,7 +126,7 @@ impl Maolan {
         selected
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub(super) fn select_first_backend_input_device(
         state: &mut crate::state::StateData,
         discover: fn() -> Vec<AudioDeviceOption>,

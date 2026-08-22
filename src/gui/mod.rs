@@ -6362,33 +6362,41 @@ impl Maolan {
     }
 
     fn preferences_input_device_options(&self) -> Vec<PreferencesDeviceOption> {
-        let mut options = vec![Self::preferences_auto_device_option()];
-        let state = self.state.blocking_read();
-        #[cfg(unix)]
+        // macOS has no separate audio input device, so only "auto" is offered.
+        #[cfg(target_os = "macos")]
         {
-            options.extend(
-                state
-                    .available_input_hw
-                    .iter()
-                    .map(|hw| PreferencesDeviceOption {
-                        id: hw.id.clone(),
-                        label: hw.label.clone(),
-                    }),
-            );
+            vec![Self::preferences_auto_device_option()]
         }
-        #[cfg(target_os = "windows")]
+        #[cfg(not(target_os = "macos"))]
         {
-            options.extend(
-                state
-                    .available_input_hw
-                    .iter()
-                    .map(|hw| PreferencesDeviceOption {
-                        id: hw.clone(),
-                        label: hw.clone(),
-                    }),
-            );
+            let mut options = vec![Self::preferences_auto_device_option()];
+            let state = self.state.blocking_read();
+            #[cfg(unix)]
+            {
+                options.extend(
+                    state
+                        .available_input_hw
+                        .iter()
+                        .map(|hw| PreferencesDeviceOption {
+                            id: hw.id.clone(),
+                            label: hw.label.clone(),
+                        }),
+                );
+            }
+            #[cfg(target_os = "windows")]
+            {
+                options.extend(
+                    state
+                        .available_input_hw
+                        .iter()
+                        .map(|hw| PreferencesDeviceOption {
+                            id: hw.clone(),
+                            label: hw.clone(),
+                        }),
+                );
+            }
+            options
         }
-        options
     }
 
     fn apply_preferred_devices_to_state(state: &mut StateData, prefs: &AppPreferences) {
@@ -6416,6 +6424,7 @@ impl Maolan {
                 state.selected_hw = Some(device_id.to_string());
             }
         }
+        #[cfg(not(target_os = "macos"))]
         if let Some(device_id) = prefs.default_input_device_id.as_deref() {
             #[cfg(unix)]
             if let Some(selected) = state

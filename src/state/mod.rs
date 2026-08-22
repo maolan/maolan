@@ -903,7 +903,7 @@ pub type OutputAudioDevice = AudioDeviceOption;
 #[cfg(not(unix))]
 pub type OutputAudioDevice = String;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub type InputAudioDevice = AudioDeviceOption;
 #[cfg(target_os = "windows")]
 pub type InputAudioDevice = String;
@@ -2028,7 +2028,8 @@ fn initial_selected_input_hw(hw: &[InputAudioDevice]) -> Option<InputAudioDevice
     target_os = "linux",
     target_os = "windows",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "macos"
 )))]
 fn initial_selected_input_hw(_selected_hw: &Option<OutputAudioDevice>) -> Option<InputAudioDevice> {
     None
