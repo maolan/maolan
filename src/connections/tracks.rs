@@ -4826,6 +4826,9 @@ mod tests {
         }
     }
 
+    // JACK is the only backend on macOS, so the default backend there is JACK
+    // and this double-click opens the JACK connections view instead.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn update_double_clicking_hw_in_opens_hw_input_ports_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
@@ -4862,6 +4865,9 @@ mod tests {
         assert_eq!(second_status, event::Status::Ignored);
     }
 
+    // JACK is the only backend on macOS, so the default backend there is JACK
+    // and this double-click opens the JACK connections view instead.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn update_double_clicking_hw_out_opens_hw_output_ports_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
@@ -4895,6 +4901,74 @@ mod tests {
             second_message,
             Some(Message::OpenHwPorts { input: false })
         ));
+        assert_eq!(second_status, event::Status::Ignored);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn update_double_clicking_hw_in_opens_jack_connections_on_macos() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().hw_in = Some(crate::state::HW { channels: 1 });
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor = mouse::Cursor::Available(Point::new(20.0, 20.0));
+
+        let first = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("first action");
+        let (first_message, first_status) = action_message(first);
+        assert!(first_message.is_none());
+        assert_eq!(first_status, event::Status::Captured);
+
+        let second = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("second action");
+        let (second_message, second_status) = action_message(second);
+        assert!(matches!(second_message, Some(Message::OpenJackConnections)));
+        assert_eq!(second_status, event::Status::Ignored);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn update_double_clicking_hw_out_opens_jack_connections_on_macos() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().hw_out = Some(crate::state::HW { channels: 1 });
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor = mouse::Cursor::Available(Point::new(780.0, 20.0));
+
+        let first = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("first action");
+        let (first_message, first_status) = action_message(first);
+        assert!(first_message.is_none());
+        assert_eq!(first_status, event::Status::Captured);
+
+        let second = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("second action");
+        let (second_message, second_status) = action_message(second);
+        assert!(matches!(second_message, Some(Message::OpenJackConnections)));
         assert_eq!(second_status, event::Status::Ignored);
     }
 
