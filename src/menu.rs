@@ -1,15 +1,13 @@
 use crate::message::{Message, Show};
+use crate::state::View;
 use maolan_engine::message::GlobalMidiLearnTarget;
 use maolan_widgets::iced::Length;
-use maolan_widgets::iced_aw::{
-    menu::{DrawPath, Item, Menu as IcedMenu},
-    menu_bar, menu_items,
-};
+use maolan_widgets::iced_aw::menu::{DrawPath, Item, Menu as IcedMenu};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub use maolan_widgets::menu::{
-    menu_checkbox_item, menu_dropdown, menu_item, menu_item_maybe, submenu,
+    menu_bar, menu_checkbox_item, menu_dropdown, menu_item, menu_item_maybe, menu_items, submenu,
 };
 
 #[derive(Default)]
@@ -31,6 +29,7 @@ pub struct MenuViewState {
     pub shortcuts_pane_visible: bool,
     pub modulators_pane_visible: bool,
     pub clips_pane_visible: bool,
+    pub active_view: View,
 }
 
 impl Menu {
@@ -83,27 +82,31 @@ impl Menu {
             .offset(15.0)
             .spacing(5.0);
 
+        if state.active_view == View::AudioEditor {
+            return maolan_editor::app::menu(false).map(Message::AudioEditor);
+        }
+
+        let file_menu = menu_tpl(menu_items!(
+            (submenu("New", Message::None), new_submenu),
+            (menu_item("Open", Message::Show(Show::Open))),
+            (submenu("Recent", Message::None), recent_submenu),
+            (menu_item("Save", Message::Show(Show::Save))),
+            (menu_item("Save as", Message::Show(Show::SaveAs))),
+            (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
+            (menu_item("Consolidate", Message::CollectToSession)),
+            (menu_item("Session metadata", Message::Show(Show::SessionMetadata))),
+            (menu_item("Branches", Message::Show(Show::BranchManager))),
+            (menu_item(
+                "Delete unused files",
+                Message::DeleteUnusedSessionMediaFiles
+            )),
+            (menu_item("Import", Message::OpenFileImporter)),
+            (menu_item("Export", Message::OpenExporter)),
+            (menu_item("Quit", Message::WindowCloseRequested)),
+        ));
+
         let mb = menu_bar!(
-            (menu_dropdown("File", Message::None), {
-                menu_tpl(menu_items!(
-                    (submenu("New", Message::None), new_submenu),
-                    (menu_item("Open", Message::Show(Show::Open))),
-                    (submenu("Recent", Message::None), recent_submenu),
-                    (menu_item("Save", Message::Show(Show::Save))),
-                    (menu_item("Save as", Message::Show(Show::SaveAs))),
-                    (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
-                    (menu_item("Consolidate", Message::CollectToSession)),
-                    (menu_item("Session metadata", Message::Show(Show::SessionMetadata))),
-                    (menu_item("Branches", Message::Show(Show::BranchManager))),
-                    (menu_item(
-                        "Delete unused files",
-                        Message::DeleteUnusedSessionMediaFiles
-                    )),
-                    (menu_item("Import", Message::OpenFileImporter)),
-                    (menu_item("Export", Message::OpenExporter)),
-                    (menu_item("Quit", Message::WindowCloseRequested)),
-                ))
-            }),
+            (menu_dropdown("File", Message::None), { file_menu }),
             (menu_dropdown("Edit", Message::None), {
                 menu_tpl(menu_items!(
                     (menu_item("Undo", Message::Undo)),

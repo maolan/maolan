@@ -573,6 +573,12 @@ pub(crate) enum PluginInstanceRef {
     },
 }
 
+#[derive(Clone, Debug)]
+struct AudioEditorClipContext {
+    track_name: String,
+    clip_idx: usize,
+}
+
 struct CollectToSessionOperation {
     session_root: PathBuf,
     data_dir: PathBuf,
@@ -736,6 +742,8 @@ pub struct Maolan {
     clips_pane_visible: bool,
     pub modulators: Vec<crate::state::Modulator>,
     pub selected_modulator_id: Option<usize>,
+    audio_editor: maolan_editor::app::EditApp,
+    audio_editor_clip: Option<AudioEditorClipContext>,
     hw_mixer: mixosc::app::MixOscApp,
     mixer_level_edit_track: Option<String>,
     mixer_level_edit_input: String,
@@ -1067,6 +1075,8 @@ impl Default for Maolan {
             clips_pane_visible: false,
             modulators: vec![],
             selected_modulator_id: None,
+            audio_editor: maolan_editor::app::EditApp::default(),
+            audio_editor_clip: None,
             hw_mixer: mixosc::app::MixOscApp::default(),
             mixer_level_edit_track: None,
             mixer_level_edit_input: String::new(),
@@ -1188,9 +1198,17 @@ impl Default for Maolan {
 impl Maolan {
     pub fn new() -> (Self, maolan_widgets::iced::Task<Message>) {
         let mut app = Self::default();
+        let (audio_editor, audio_editor_task) = maolan_editor::app::new();
         let (hw_mixer, hw_task) = mixosc::app::new();
+        app.audio_editor = audio_editor;
         app.hw_mixer = hw_mixer;
-        (app, hw_task.map(Message::HwMixer))
+        (
+            app,
+            maolan_widgets::iced::Task::batch(vec![
+                audio_editor_task.map(Message::AudioEditor),
+                hw_task.map(Message::HwMixer),
+            ]),
+        )
     }
 
     fn is_dirty(&self) -> bool {
@@ -6529,20 +6547,6 @@ impl Maolan {
                 .align_y(maolan_widgets::iced::Alignment::Center),
             );
         }
-        preferences_column = preferences_column.push(
-            row![
-                text("Default output device:"),
-                pick_list(
-                    output_options,
-                    selected_output,
-                    Message::PreferencesOutputDeviceSelected
-                )
-                .placeholder("Choose output device")
-                .width(Length::Fixed(320.0)),
-            ]
-            .spacing(10)
-            .align_y(maolan_widgets::iced::Alignment::Center),
-        );
         if platform_caps::HAS_SEPARATE_AUDIO_INPUT_DEVICE {
             preferences_column = preferences_column.push(
                 row![
@@ -6565,6 +6569,20 @@ impl Maolan {
                     .align_y(maolan_widgets::iced::Alignment::Center),
             );
         }
+        preferences_column = preferences_column.push(
+            row![
+                text("Default output device:"),
+                pick_list(
+                    output_options,
+                    selected_output,
+                    Message::PreferencesOutputDeviceSelected
+                )
+                .placeholder("Choose output device")
+                .width(Length::Fixed(320.0)),
+            ]
+            .spacing(10)
+            .align_y(maolan_widgets::iced::Alignment::Center),
+        );
         preferences_column = preferences_column.push(
             row![
                 button("Save").on_press(Message::PreferencesSave),

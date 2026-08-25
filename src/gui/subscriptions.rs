@@ -27,7 +27,9 @@ impl Maolan {
                     || self.editor_visible
                     || self.mixer_visible
             }
-            crate::state::View::Piano | crate::state::View::PitchCorrection => true,
+            crate::state::View::Piano
+            | crate::state::View::PitchCorrection
+            | crate::state::View::AudioEditor => true,
             _ => false,
         }
     }
@@ -271,6 +273,14 @@ impl Maolan {
                 Subscription::none()
             }
         };
+        let audio_editor_sub = {
+            let state = self.state.blocking_read();
+            if matches!(state.view, crate::state::View::AudioEditor) {
+                maolan_editor::app::subscription(&self.audio_editor).map(Message::AudioEditor)
+            } else {
+                Subscription::none()
+            }
+        };
         Subscription::batch(vec![
             engine_sub,
             keyboard_sub,
@@ -282,6 +292,7 @@ impl Maolan {
             peak_rebuild_sub,
             recording_preview_sub,
             recording_preview_peaks_sub,
+            audio_editor_sub,
             hw_mixer_sub,
         ])
     }

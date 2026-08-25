@@ -5499,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "maolan"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "alsa",
  "chrono",
@@ -5509,19 +5509,19 @@ dependencies = [
  "ebur128",
  "hf-hub 0.5.0",
  "i24",
+ "maolan-editor",
  "maolan-engine",
  "maolan-generate",
  "maolan-plugin-host",
- "maolan-widgets",
+ "maolan-widgets 0.0.36",
  "midly",
  "mixosc",
  "nix 0.31.3",
- "nvtree",
  "pitch-detection",
  "ratatui",
  "regex",
  "rfd",
- "rubato",
+ "rubato 3.0.0",
  "serde",
  "serde_json",
  "timestretch 0.8.1",
@@ -5537,10 +5537,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "maolan-engine"
-version = "0.2.62"
+name = "maolan-editor"
+version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d7d8b3f5f54e0d070e34736359731602d616e6019a95dfbf2c84c3433233d4f"
+checksum = "75751f5f40925c0a041b6f8a55d868e0a37e5ae79c4deb73c1109b735d9f38a4"
+dependencies = [
+ "alsa",
+ "maolan-engine",
+ "maolan-widgets 0.0.36",
+ "rfd",
+ "rubato 0.16.2",
+ "serde_json",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "maolan-engine"
+version = "0.2.64"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46e49eb53ba08399324e80699ccb1321bc01103fba2dd084d45b03ca11234e75"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5553,6 +5569,7 @@ dependencies = [
  "midly",
  "nix 0.31.3",
  "num_cpus",
+ "nvtree",
  "oxideav-basic",
  "oxideav-core",
  "oxideav-flac",
@@ -5661,6 +5678,20 @@ name = "maolan-widgets"
 version = "0.0.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8201881f51e26aff699cf591f5fd243e1ecb3555bd3673263bfcf6684b91ed28"
+dependencies = [
+ "iced",
+ "iced_aw",
+ "iced_drop",
+ "iced_fonts",
+ "serde",
+ "symphonia 0.5.5",
+]
+
+[[package]]
+name = "maolan-widgets"
+version = "0.0.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f6736326aefec6c26942724d7c4f2b5827492ad6ab46c4d65e2b1d94dca67f4"
 dependencies = [
  "iced",
  "iced_aw",
@@ -5834,7 +5865,7 @@ version = "0.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aeedb8f68326ded98233c8048331cd2fc9d385e5e4d656d31fe0ef07f481e279"
 dependencies = [
- "maolan-widgets",
+ "maolan-widgets 0.0.35",
  "tokio",
 ]
 
@@ -8192,6 +8223,18 @@ name = "rtrb"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fae8ee26b0371a29a77d2b2d6b3ae13aa81def6f9bf1b1b92a32d279a5e709b7"
+
+[[package]]
+name = "rubato"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5258099699851cfd0082aeb645feb9c084d9a5e1f1b8d5372086b989fc5e56a1"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "realfft",
+]
 
 [[package]]
 name = "rubato"

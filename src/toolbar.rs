@@ -3,6 +3,7 @@ use crate::{
     consts::workspace::MIDI_CLIP_BORDER,
     icon::metronome::metronome,
     message::{Message, SnapMode},
+    state::View,
 };
 use maolan_engine::message::GlobalMidiLearnTarget;
 use maolan_widgets::iced::{
@@ -38,6 +39,7 @@ pub struct ToolbarViewState {
     pub playhead_time_label: String,
     pub playhead_bar: u64,
     pub playhead_beat: u64,
+    pub active_view: Option<View>,
 }
 
 impl Toolbar {
@@ -76,6 +78,15 @@ impl Toolbar {
     }
 
     pub fn view(&self, view_state: ToolbarViewState) -> maolan_widgets::iced::Element<'_, Message> {
+        if matches!(view_state.active_view, Some(View::AudioEditor)) {
+            let playing = view_state.playing && !view_state.paused;
+            return maolan_editor::app::toolbar_with_playhead(
+                view_state.playhead_time_label,
+                playing,
+            )
+            .map(Message::AudioEditor);
+        }
+
         let play_active =
             (view_state.playing && !view_state.paused) || view_state.live_session_playing;
         let pause_active = view_state.playing && view_state.paused;

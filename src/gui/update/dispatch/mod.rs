@@ -36,6 +36,76 @@ struct MoveClipSnapArgs<'a> {
 }
 
 impl Maolan {
+    fn start_audio_editor_engine_preview(&self) -> Task<Message> {
+        let Some(preview) = maolan_editor::app::host_preview(&self.audio_editor) else {
+            return Task::none();
+        };
+        Task::perform(
+            async move {
+                CLIENT
+                    .send(EngineMessage::StartAudioPreview {
+                        samples: preview.samples,
+                        channels: preview.channels,
+                        start_sample: preview.start_sample,
+                    })
+                    .await
+            },
+            |_| Message::None,
+        )
+    }
+
+    fn stop_audio_editor_engine_preview(&self) -> Task<Message> {
+        Task::perform(
+            async move { CLIENT.send(EngineMessage::StopAudioPreview).await },
+            |_| Message::None,
+        )
+    }
+
+    fn apply_audio_editor_fade(&mut self, is_fade_out: bool) -> Task<Message> {
+        let Some(ctx) = self.audio_editor_clip.clone() else {
+            self.info("No audio editor clip is active.");
+            return Task::none();
+        };
+
+        let updated = {
+            let mut state = self.state.blocking_write();
+            state
+                .tracks
+                .iter_mut()
+                .find(|track| track.name == ctx.track_name)
+                .and_then(|track| track.audio.clips.get_mut(ctx.clip_idx))
+                .map(|clip| {
+                    let fade_samples = (clip.length / 20).clamp(240, 48_000).min(clip.length / 2);
+                    clip.fade_enabled = true;
+                    if is_fade_out {
+                        clip.fade_out_samples = fade_samples;
+                    } else {
+                        clip.fade_in_samples = fade_samples;
+                    }
+                    (
+                        clip.fade_enabled,
+                        clip.fade_in_samples,
+                        clip.fade_out_samples,
+                    )
+                })
+        };
+
+        let Some((fade_enabled, fade_in_samples, fade_out_samples)) = updated else {
+            self.info("Audio editor clip no longer exists.");
+            return Task::none();
+        };
+
+        self.has_unsaved_changes = true;
+        self.send(Action::SetClipFade {
+            track_name: ctx.track_name,
+            clip_index: ctx.clip_idx,
+            kind: Kind::Audio,
+            fade_enabled,
+            fade_in_samples,
+            fade_out_samples,
+        })
+    }
+
     fn preserve_plugin_graph_states_from_cache(
         track_name: &str,
         state: &crate::state::StateData,
@@ -809,6 +879,11 @@ impl Maolan {
         }
         if let Some(task) = self.handle_plugin_message(message.clone()) {
             return task;
+        }
+        if let Message::AudioEditor(editor_message) = &message
+            && maolan_editor::app::message_edits_document(editor_message)
+        {
+            self.has_unsaved_changes = true;
         }
         if matches!(
             message,
@@ -7534,6 +7609,7 @@ impl Maolan {
                         return Task::none();
                     }
                     crate::state::View::PitchCorrection
+                    | crate::state::View::AudioEditor
                     | crate::state::View::X32
                     | crate::state::View::Session => {
                         return Task::none();
@@ -11036,6 +11112,93 @@ impl Maolan {
             Message::HwMixer(msg) => {
                 return mixosc::app::update(&mut self.hw_mixer, msg).map(Message::HwMixer);
             }
+            Message::AudioEditor(maolan_editor::app::Message::Close) => {
+                let task = maolan_editor::app::update(
+                    &mut self.audio_editor,
+                    maolan_editor::app::Message::Close,
+                )
+                .map(Message::AudioEditor);
+                self.audio_editor_clip = None;
+                self.state.blocking_write().view = View::Workspace;
+                return self.stop_audio_editor_engine_preview().chain(task);
+            }
+            Message::AudioEditor(
+                maolan_editor::app::Message::Save | maolan_editor::app::Message::SaveAs,
+            ) => {
+                self.info("Audio editor changes are non-destructive in Maolan; save the session to keep them.");
+                return Task::none();
+            }
+            Message::AudioEditor(maolan_editor::app::Message::Play) => {
+                if (self.playing && !self.paused) || self.live_session_playing {
+                    return Task::none();
+                }
+                let editor_task = maolan_editor::app::update(
+                    &mut self.audio_editor,
+                    maolan_editor::app::Message::Play,
+                )
+                .map(Message::AudioEditor);
+                let preview_task = self.start_audio_editor_engine_preview();
+                if self.playing {
+                    return preview_task.chain(editor_task);
+                }
+                return self
+                    .handle_transport_message(Message::TransportPause)
+                    .chain(preview_task)
+                    .chain(editor_task);
+            }
+            Message::AudioEditor(maolan_editor::app::Message::TogglePlayback) => {
+                if (self.playing && !self.paused) || self.live_session_playing {
+                    return Task::none();
+                }
+                let was_editor_playing = maolan_editor::app::host_preview(&self.audio_editor)
+                    .is_some_and(|_| maolan_editor::app::is_playing(&self.audio_editor));
+                let editor_task = maolan_editor::app::update(
+                    &mut self.audio_editor,
+                    maolan_editor::app::Message::TogglePlayback,
+                )
+                .map(Message::AudioEditor);
+                let preview_task = if was_editor_playing {
+                    self.stop_audio_editor_engine_preview()
+                } else {
+                    self.start_audio_editor_engine_preview()
+                };
+                if was_editor_playing {
+                    return preview_task.chain(editor_task);
+                }
+                if self.playing {
+                    return preview_task.chain(editor_task);
+                }
+                return self
+                    .handle_transport_message(Message::TransportPause)
+                    .chain(preview_task)
+                    .chain(editor_task);
+            }
+            Message::AudioEditor(maolan_editor::app::Message::Stop) => {
+                let editor_task = maolan_editor::app::update(
+                    &mut self.audio_editor,
+                    maolan_editor::app::Message::Stop,
+                )
+                .map(Message::AudioEditor);
+                return self.stop_audio_editor_engine_preview().chain(editor_task);
+            }
+            Message::AudioEditor(maolan_editor::app::Message::FadeIn) => {
+                return self.apply_audio_editor_fade(false);
+            }
+            Message::AudioEditor(maolan_editor::app::Message::FadeOut) => {
+                return self.apply_audio_editor_fade(true);
+            }
+            Message::AudioEditor(maolan_editor::app::Message::IncreaseVolume) => {
+                self.info("Audio editor requested non-destructive volume increase.");
+                return Task::none();
+            }
+            Message::AudioEditor(maolan_editor::app::Message::DecreaseVolume) => {
+                self.info("Audio editor requested non-destructive volume decrease.");
+                return Task::none();
+            }
+            Message::AudioEditor(msg) => {
+                return maolan_editor::app::update(&mut self.audio_editor, msg)
+                    .map(Message::AudioEditor);
+            }
             Message::ToggleLogVisibility => {
                 self.show_log_window = !self.show_log_window;
             }
@@ -11531,6 +11694,53 @@ impl Maolan {
                 } else {
                     View::HwOutputPorts
                 };
+            }
+            Message::OpenAudioEditor {
+                ref track_idx,
+                clip_idx,
+            } => {
+                let session_dir = self.session_dir.clone();
+                let clip_request = {
+                    let mut state = self.state.blocking_write();
+                    state.view = View::AudioEditor;
+                    state
+                        .tracks
+                        .iter()
+                        .find(|track| track.name.as_str() == track_idx.as_str())
+                        .and_then(|track| track.audio.clips.get(clip_idx))
+                        .map(|clip| {
+                            let path = std::path::PathBuf::from(&clip.name);
+                            let path = if path.is_absolute() {
+                                Some(path)
+                            } else {
+                                session_dir
+                                    .as_ref()
+                                    .map(|session_root| session_root.join(path))
+                            };
+                            (path, clip.offset, clip.length, clip.start)
+                        })
+                };
+
+                if let Some((Some(path), offset, length, timeline_start)) = clip_request {
+                    self.audio_editor_clip = Some(crate::gui::AudioEditorClipContext {
+                        track_name: track_idx.clone(),
+                        clip_idx,
+                    });
+                    maolan_editor::app::set_embedded_transport(&mut self.audio_editor, false, 0);
+                    return maolan_editor::app::update(
+                        &mut self.audio_editor,
+                        maolan_editor::app::Message::OpenClip {
+                            path,
+                            offset,
+                            length,
+                            timeline_start: Some(timeline_start),
+                        },
+                    )
+                    .map(Message::AudioEditor);
+                }
+
+                let mut state = self.state.blocking_write();
+                state.message = format!("Could not open audio clip {clip_idx} on {track_idx}.");
             }
             Message::OpenClipPlugins {
                 track_idx: _track_idx,

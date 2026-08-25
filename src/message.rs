@@ -1233,6 +1233,7 @@ pub enum Message {
         target: TrackAutomationTarget,
     },
     ToggleCutIndicator,
+    AudioEditor(maolan_editor::app::Message),
     HwMixer(mixosc::app::Message),
     LogViewAction(text_editor::Action),
     OpenTrackPlugins(String),
@@ -1253,6 +1254,10 @@ pub enum Message {
     },
     OpenHwPorts {
         input: bool,
+    },
+    OpenAudioEditor {
+        track_idx: String,
+        clip_idx: usize,
     },
     OpenClipPlugins {
         track_idx: String,
