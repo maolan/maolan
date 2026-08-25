@@ -110,17 +110,6 @@ pub mod connections_plugins {
     pub const TRACK_IO_MARGIN_X: f32 = 24.0;
 }
 
-#[cfg(target_os = "freebsd")]
-pub mod state_platform_freebsd {
-    pub const AFMT_S16_LE: u64 = 0x00000010;
-    pub const AFMT_S16_BE: u64 = 0x00000020;
-    pub const AFMT_S8: u64 = 0x00000040;
-    pub const AFMT_S32_LE: u64 = 0x00001000;
-    pub const AFMT_S32_BE: u64 = 0x00002000;
-    pub const AFMT_S24_LE: u64 = 0x00010000;
-    pub const AFMT_S24_BE: u64 = 0x00020000;
-}
-
 pub mod widget_piano {
     pub use maolan_widgets::midi::{
         CTRL_SCROLL_ID, H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, KEYS_SCROLL_ID, MAIN_SPLIT_SPACING,
@@ -203,35 +192,6 @@ pub mod gui_update_dispatch_transport {
 #[cfg(target_os = "linux")]
 pub mod state_platform_linux {
     pub const SAMPLE_RATE_CANDIDATES: [u32; 12] = [
-        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
-        384_000,
-    ];
-}
-
-#[cfg(target_os = "freebsd")]
-pub mod state_platform_freebsd_lists {
-    pub const DIRECT_KEYS: [&str; 9] = [
-        "formats",
-        "iformats",
-        "oformats",
-        "pformats",
-        "rformats",
-        "playformats",
-        "recformats",
-        "pfmts",
-        "rfmts",
-    ];
-    pub const RATE_KEYS: [&str; 8] = [
-        "rates",
-        "rate",
-        "irates",
-        "orates",
-        "playrates",
-        "recrates",
-        "playback_rates",
-        "capture_rates",
-    ];
-    pub const SAMPLE_RATE_CANDIDATES: [i32; 12] = [
         8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
         384_000,
     ];

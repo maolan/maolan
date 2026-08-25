@@ -1050,7 +1050,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                     clip_idx: index,
                                     kind: Kind::Audio,
                                 },
-                                on_open: Message::OpenClipPlugins {
+                                on_open: Message::OpenAudioEditor {
                                     track_idx: track_name_cloned.clone(),
                                     clip_idx: index,
                                 },

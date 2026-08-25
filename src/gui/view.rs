@@ -388,6 +388,15 @@ impl Maolan {
                                 selected_modulator,
                             )
                         }
+                        View::AudioEditor => {
+                            let play_disabled =
+                                (self.playing && !self.paused) || self.live_session_playing;
+                            maolan_editor::app::embedded_view_with_play_disabled(
+                                &self.audio_editor,
+                                play_disabled,
+                            )
+                            .map(Message::AudioEditor)
+                        }
                         View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
                         View::Session => {
                             let session_view_connections = {
@@ -659,10 +668,11 @@ impl Maolan {
                             shortcuts_pane_visible: self.shortcuts_pane_visible,
                             modulators_pane_visible: self.modulators_pane_visible,
                             clips_pane_visible: self.clips_pane_visible,
+                            active_view: state.view.clone(),
                         }
                     };
                     let mut content = column![self.menu.view(menu_state),];
-                    if self.toolbar_visible {
+                    if self.toolbar_visible && !matches!(view_kind, View::AudioEditor) {
                         content = content.push(self.toolbar.view(ToolbarViewState {
                             playing: self.playing,
                             paused: self.paused,
@@ -688,6 +698,7 @@ impl Maolan {
                             playhead_time_label,
                             playhead_bar,
                             playhead_beat,
+                            active_view: Some(view_kind.clone()),
                         }));
                     }
                     if matches!(view_kind, View::TrackPlugins) {

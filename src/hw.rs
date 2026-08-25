@@ -4,15 +4,17 @@ use crate::{
     state::State,
 };
 use maolan_engine::message::Action;
+use maolan_widgets::audio_setup::{AudioSetupAction, AudioSetupState, audio_setup};
 use maolan_widgets::iced::{
     Alignment, Border, Color, Length,
-    widget::{button, checkbox, column, container, mouse_area, pick_list, row, text},
+    widget::{button, column, container, mouse_area, row, text},
 };
 
 pub struct HW {
     state: State,
 }
 
+#[derive(Debug, Clone)]
 struct OpenAudioSelection {
     input_device: Option<String>,
     chosen_bits: usize,
@@ -85,24 +87,6 @@ impl HW {
         Self { state }
     }
 
-    fn device_pick_row<T>(
-        label: &'static str,
-        options: Vec<T>,
-        selected: Option<T>,
-        on_select: fn(T) -> Message,
-        placeholder: &'static str,
-    ) -> maolan_widgets::iced::Element<'static, Message>
-    where
-        T: Clone + PartialEq + std::fmt::Display + 'static,
-    {
-        row![
-            text(label),
-            pick_list(options, selected, on_select).placeholder(placeholder)
-        ]
-        .spacing(10)
-        .into()
-    }
-
     fn plugins_loaded(&self) -> bool {
         let state = self.state.blocking_read();
         let core_plugins_loaded = (state.vst3_plugins_loaded || state.vst3_plugins_unavailable)
@@ -115,170 +99,6 @@ impl HW {
         {
             core_plugins_loaded
         }
-    }
-
-    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-    fn append_device_rows(
-        content: maolan_widgets::iced::widget::Column<'static, Message>,
-        available_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_hw: Option<crate::state::AudioDeviceOption>,
-        available_input_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
-        Self::device_rows(
-            available_hw,
-            selected_hw,
-            available_input_hw,
-            selected_input_hw,
-        )
-        .into_iter()
-        .fold(content, |content, row| content.push(row))
-    }
-
-    #[cfg(target_os = "linux")]
-    fn append_device_rows(
-        content: maolan_widgets::iced::widget::Column<'static, Message>,
-        available_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_hw: Option<crate::state::AudioDeviceOption>,
-        available_input_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
-        Self::device_rows(
-            available_hw,
-            selected_hw,
-            available_input_hw,
-            selected_input_hw,
-        )
-        .into_iter()
-        .fold(content, |content, row| content.push(row))
-    }
-
-    #[cfg(target_os = "windows")]
-    fn append_device_rows(
-        content: maolan_widgets::iced::widget::Column<'static, Message>,
-        available_hw: Vec<String>,
-        selected_hw: Option<String>,
-        available_input_hw: Vec<String>,
-        selected_input_hw: Option<String>,
-    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
-        Self::device_rows(
-            available_hw,
-            selected_hw,
-            available_input_hw,
-            selected_input_hw,
-        )
-        .into_iter()
-        .fold(content, |content, row| content.push(row))
-    }
-
-    #[cfg(not(any(
-        target_os = "freebsd",
-        target_os = "linux",
-        target_os = "openbsd",
-        target_os = "windows"
-    )))]
-    fn append_device_rows(
-        content: maolan_widgets::iced::widget::Column<'static, Message>,
-        available_hw: Vec<String>,
-        selected_hw: Option<String>,
-    ) -> maolan_widgets::iced::widget::Column<'static, Message> {
-        Self::device_rows(available_hw, selected_hw)
-            .into_iter()
-            .fold(content, |content, row| content.push(row))
-    }
-
-    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-    fn device_rows(
-        available_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_hw: Option<crate::state::AudioDeviceOption>,
-        available_input_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
-        vec![
-            Self::device_pick_row(
-                "Input device:",
-                available_input_hw,
-                selected_input_hw,
-                Message::HWInputSelected,
-                "Choose input device",
-            ),
-            Self::device_pick_row(
-                "Output device:",
-                available_hw,
-                selected_hw,
-                Message::HWSelected,
-                "Choose output device",
-            ),
-        ]
-    }
-
-    #[cfg(target_os = "linux")]
-    fn device_rows(
-        available_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_hw: Option<crate::state::AudioDeviceOption>,
-        available_input_hw: Vec<crate::state::AudioDeviceOption>,
-        selected_input_hw: Option<crate::state::AudioDeviceOption>,
-    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
-        vec![
-            Self::device_pick_row(
-                "Input device:",
-                available_input_hw,
-                selected_input_hw,
-                Message::HWInputSelected,
-                "Choose input device",
-            ),
-            Self::device_pick_row(
-                "Output device:",
-                available_hw,
-                selected_hw,
-                Message::HWSelected,
-                "Choose output device",
-            ),
-        ]
-    }
-
-    #[cfg(target_os = "windows")]
-    fn device_rows(
-        available_hw: Vec<String>,
-        selected_hw: Option<String>,
-        available_input_hw: Vec<String>,
-        selected_input_hw: Option<String>,
-    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
-        vec![
-            Self::device_pick_row(
-                "Input device:",
-                available_input_hw,
-                selected_input_hw,
-                Message::HWInputSelected,
-                "Choose input device",
-            ),
-            Self::device_pick_row(
-                "Output device:",
-                available_hw,
-                selected_hw,
-                Message::HWSelected,
-                "Choose output device",
-            ),
-        ]
-    }
-
-    #[cfg(not(any(
-        target_os = "freebsd",
-        target_os = "linux",
-        target_os = "openbsd",
-        target_os = "windows"
-    )))]
-    fn device_rows(
-        available_hw: Vec<String>,
-        selected_hw: Option<String>,
-    ) -> Vec<maolan_widgets::iced::Element<'static, Message>> {
-        vec![Self::device_pick_row(
-            "Output device:",
-            available_hw,
-            selected_hw,
-            Message::HWSelected,
-            "Choose output device",
-        )]
     }
 
     fn selected_device_id<T: DeviceId>(selected_is_jack: bool, selected_hw: &Option<T>) -> String {
@@ -578,7 +398,6 @@ impl HW {
                 .unwrap_or(period_frames);
         }
         let plugins_loaded = self.plugins_loaded();
-        let mut submit = button("Open Audio");
         #[cfg(any(
             target_os = "linux",
             target_os = "freebsd",
@@ -597,165 +416,146 @@ impl HW {
             || (selected_hw.is_some()
                 && (!HAS_SEPARATE_AUDIO_INPUT_DEVICE || selected_input_present)
                 && (!REQUIRE_SAMPLE_RATES_FOR_HW_READY || !sample_rate_options.is_empty()));
-        if plugins_loaded && hw_ready {
-            #[cfg(any(
-                target_os = "freebsd",
-                target_os = "linux",
-                target_os = "openbsd",
-                target_os = "windows"
-            ))]
-            let input_device = Self::selected_input_device_id(selected_is_jack, &selected_input_hw);
-            #[cfg(not(any(
-                target_os = "freebsd",
-                target_os = "linux",
-                target_os = "openbsd",
-                target_os = "windows"
-            )))]
-            let input_device = None;
-            let selection = OpenAudioSelection {
-                input_device,
-                chosen_bits,
-                chosen_sample_rate_hz,
-                exclusive,
-                period_frames,
-                nperiods,
-                sync_mode,
-            };
-            submit = submit.on_press(Message::Request(Self::open_audio_action(
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        ))]
+        let input_device = Self::selected_input_device_id(selected_is_jack, &selected_input_hw);
+        #[cfg(not(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        )))]
+        let input_device = None;
+        let start_selection = OpenAudioSelection {
+            input_device,
+            chosen_bits,
+            chosen_sample_rate_hz,
+            exclusive,
+            period_frames,
+            nperiods,
+            sync_mode,
+        };
+
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        ))]
+        let input_devices = available_input_hw.clone();
+        #[cfg(not(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        )))]
+        let input_devices = Vec::new();
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        ))]
+        let selected_input_device = selected_input_hw.clone();
+        #[cfg(not(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        )))]
+        let selected_input_device = None;
+
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "windows"
+        ))]
+        let show_bit_depth = !selected_is_jack;
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "windows"
+        )))]
+        let show_bit_depth = false;
+
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        ))]
+        let show_input_device = !selected_is_jack;
+        #[cfg(not(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        )))]
+        let show_input_device = false;
+
+        let setup_state = AudioSetupState {
+            backends: available_backends,
+            selected_backend,
+            show_input_device,
+            input_devices,
+            selected_input_device,
+            show_output_device: !selected_is_jack,
+            output_devices: available_hw,
+            selected_output_device: selected_hw.clone(),
+            show_sample_rate: !selected_is_jack,
+            sample_rates: sample_rate_options,
+            selected_sample_rate: selected_sample_rate_hz,
+            show_bit_depth,
+            bit_depths: bit_options,
+            selected_bit_depth: if show_bit_depth {
+                Some(chosen_bits)
+            } else {
+                None
+            },
+            show_period_frames: !selected_is_jack,
+            period_frames: period_options,
+            selected_period_frames: Some(period_frames),
+            show_n_periods: !selected_is_jack,
+            n_periods: nperiod_options,
+            selected_n_periods: Some(nperiods),
+            show_exclusive: !selected_is_jack,
+            exclusive,
+            show_sync_mode: !selected_is_jack,
+            sync_mode,
+            plugins_loaded,
+            can_start: plugins_loaded && hw_ready,
+            status_message: String::new(),
+        };
+
+        let selected_hw_for_start = selected_hw.clone();
+        let content = audio_setup(setup_state, move |action| match action {
+            AudioSetupAction::BackendSelected(b) => Message::HWBackendSelected(b),
+            #[cfg(any(unix, target_os = "windows"))]
+            AudioSetupAction::InputDeviceSelected(d) => Message::HWInputSelected(d),
+            #[cfg(not(any(unix, target_os = "windows")))]
+            AudioSetupAction::InputDeviceSelected(_) => Message::None,
+            AudioSetupAction::OutputDeviceSelected(d) => Message::HWSelected(d),
+            AudioSetupAction::SampleRateSelected(r) => Message::HWSampleRateChanged(r),
+            #[cfg(any(unix, target_os = "windows"))]
+            AudioSetupAction::BitDepthSelected(b) => Message::HWBitsChanged(b),
+            #[cfg(not(any(unix, target_os = "windows")))]
+            AudioSetupAction::BitDepthSelected(_) => Message::None,
+            AudioSetupAction::PeriodFramesSelected(p) => Message::HWPeriodFramesChanged(p),
+            AudioSetupAction::NPeriodsSelected(n) => Message::HWNPeriodsChanged(n),
+            AudioSetupAction::ExclusiveToggled(e) => Message::HWExclusiveToggled(e),
+            AudioSetupAction::SyncModeToggled(s) => Message::HWSyncModeToggled(s),
+            AudioSetupAction::Start => Message::Request(Self::open_audio_action(
                 selected_is_jack,
-                &selected_hw,
-                selection,
-            )));
-        }
-        let mut content = column![
-            row![
-                text("Backend:"),
-                pick_list(
-                    available_backends,
-                    Some(selected_backend),
-                    Message::HWBackendSelected
-                )
-                .placeholder("Choose backend")
-            ]
-            .spacing(10)
-        ]
-        .spacing(10);
-        if !selected_is_jack {
-            #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
-            {
-                content = Self::append_device_rows(
-                    content,
-                    available_hw,
-                    selected_hw,
-                    available_input_hw,
-                    selected_input_hw,
-                );
-            }
-            #[cfg(target_os = "linux")]
-            {
-                content = Self::append_device_rows(
-                    content,
-                    available_hw,
-                    selected_hw,
-                    available_input_hw,
-                    selected_input_hw,
-                );
-            }
-            #[cfg(target_os = "windows")]
-            {
-                content = Self::append_device_rows(
-                    content,
-                    available_hw,
-                    selected_hw,
-                    available_input_hw,
-                    selected_input_hw,
-                );
-            }
-            #[cfg(not(any(
-                target_os = "freebsd",
-                target_os = "linux",
-                target_os = "openbsd",
-                target_os = "windows"
-            )))]
-            {
-                content = Self::append_device_rows(content, available_hw, selected_hw);
-            }
-        }
-
-        if !selected_is_jack {
-            content = content.push(
-                row![
-                    text("Sample rate (Hz):"),
-                    pick_list(
-                        sample_rate_options,
-                        selected_sample_rate_hz,
-                        Message::HWSampleRateChanged
-                    )
-                    .placeholder("Choose sample rate")
-                ]
-                .spacing(10),
-            );
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "freebsd",
-                target_os = "openbsd",
-                target_os = "windows"
-            ))]
-            {
-                content = content.push(
-                    row![
-                        text("Bit depth:"),
-                        pick_list(
-                            bit_options.clone(),
-                            Some(chosen_bits),
-                            Message::HWBitsChanged
-                        )
-                        .placeholder("Bit depth")
-                    ]
-                    .spacing(10),
-                );
-            }
-            let latency_ms =
-                (period_frames as f64 * nperiods as f64 * 1000.0) / chosen_sample_rate_hz as f64;
-            content = content.push(
-                row![
-                    text("Period frames:"),
-                    pick_list(
-                        period_options.clone(),
-                        Some(period_frames),
-                        Message::HWPeriodFramesChanged
-                    )
-                    .placeholder("Period"),
-                    text(format!("{latency_ms:.1} ms"))
-                ]
-                .spacing(10),
-            );
-            content = content
-                .push(
-                    row![
-                        text("N periods:"),
-                        pick_list(
-                            nperiod_options.clone(),
-                            Some(nperiods),
-                            Message::HWNPeriodsChanged
-                        )
-                        .placeholder("N periods")
-                    ]
-                    .spacing(10),
-                )
-                .push(
-                    checkbox(exclusive)
-                        .label("Exclusive mode")
-                        .on_toggle(Message::HWExclusiveToggled),
-                )
-                .push(
-                    checkbox(sync_mode)
-                        .label("Sync mode")
-                        .on_toggle(Message::HWSyncModeToggled),
-                );
-        }
-
-        content = content.push(submit);
+                &selected_hw_for_start,
+                start_selection.clone(),
+            )),
+        });
 
         container(content)
             .style(|_theme| crate::style::app_background())
@@ -915,7 +715,7 @@ mod tests {
     #[test]
     #[cfg(target_os = "freebsd")]
     fn inspect_oss_period_options() {
-        let devices = crate::state::discover_freebsd_audio_devices();
+        let devices = crate::state::discover_output_audio_devices();
         for dev in devices {
             println!("device: {}", dev.id);
             println!("  label: {}", dev.label);

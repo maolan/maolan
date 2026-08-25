@@ -2,8 +2,6 @@ mod clip;
 mod connection;
 #[cfg(target_os = "windows")]
 mod platform;
-#[cfg(target_os = "freebsd")]
-mod platform_freebsd;
 #[cfg(target_os = "linux")]
 mod platform_linux;
 #[cfg(target_os = "openbsd")]
@@ -109,8 +107,6 @@ pub(crate) use platform::{
     discover_windows_audio_devices, discover_windows_input_devices,
     discover_windows_output_bit_depths, discover_windows_output_sample_rates,
 };
-#[cfg(target_os = "freebsd")]
-pub(crate) use platform_freebsd::discover_freebsd_audio_devices;
 #[cfg(target_os = "linux")]
 pub(crate) use platform_linux::{discover_alsa_input_devices, discover_alsa_output_devices};
 #[cfg(target_os = "openbsd")]
@@ -865,6 +861,23 @@ impl AudioDeviceOption {
     }
 }
 
+#[cfg(target_os = "freebsd")]
+impl From<maolan_engine::audio_devices::AudioDeviceDescriptor> for AudioDeviceOption {
+    fn from(device: maolan_engine::audio_devices::AudioDeviceDescriptor) -> Self {
+        let mut out = Self::with_oss_caps(
+            device.id,
+            device.label,
+            device.supported_bits,
+            device.supported_sample_rates,
+            device.max_channels,
+            device.max_buffer_bytes,
+        );
+        out.supports_input = device.supports_input;
+        out.supports_output = device.supports_output;
+        out
+    }
+}
+
 #[cfg(unix)]
 impl std::fmt::Display for AudioDeviceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1064,6 +1077,7 @@ pub enum ConnectionViewSelection {
 pub enum View {
     Workspace,
     Connections,
+    AudioEditor,
     X32,
     Session,
     JackConnections,
@@ -1927,8 +1941,9 @@ fn initial_hw_config() -> InitialHwConfig {
 pub(crate) fn discover_output_audio_devices() -> Vec<AudioDeviceOption> {
     #[cfg(target_os = "freebsd")]
     {
-        discover_freebsd_audio_devices()
+        maolan_engine::audio_devices::discover_freebsd_audio_devices()
             .into_iter()
+            .map(AudioDeviceOption::from)
             .filter(|d| d.supports_output)
             .collect()
     }
@@ -1945,8 +1960,9 @@ pub(crate) fn discover_output_audio_devices() -> Vec<AudioDeviceOption> {
 pub(crate) fn discover_input_audio_devices() -> Vec<AudioDeviceOption> {
     #[cfg(target_os = "freebsd")]
     {
-        discover_freebsd_audio_devices()
+        maolan_engine::audio_devices::discover_freebsd_audio_devices()
             .into_iter()
+            .map(AudioDeviceOption::from)
             .filter(|d| d.supports_input)
             .collect()
     }
