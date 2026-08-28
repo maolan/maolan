@@ -261,6 +261,10 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
         .get("is_folder")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let mixosc_addr = track
+        .get("mixosc_addr")
+        .and_then(Value::as_str)
+        .map(String::from);
     actions.push(Action::AddTrack {
         name: name.clone(),
         audio_ins: primary_audio_ins.min(audio_ins),
@@ -268,6 +272,7 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
         audio_outs: primary_audio_outs.min(audio_outs),
         midi_outs,
         folder,
+        mixosc_addr,
     });
     for _ in primary_audio_ins.min(audio_ins)..audio_ins {
         actions.push(Action::TrackAddAudioInput(name.clone()));
@@ -1018,7 +1023,7 @@ mod tests {
 
         assert!(actions.iter().any(|action| matches!(
             action,
-            Action::AddTrack { name, audio_ins, audio_outs, midi_ins, midi_outs, folder }
+            Action::AddTrack { name, audio_ins, audio_outs, midi_ins, midi_outs, folder, mixosc_addr: None }
             if name == "Track 1" && *audio_ins == 2 && *audio_outs == 2 && *midi_ins == 1 && *midi_outs == 1 && !folder
         )));
         assert!(actions.iter().any(

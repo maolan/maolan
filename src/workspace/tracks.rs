@@ -40,7 +40,11 @@ struct VisibleAutomationLane {
     points_len: usize,
 }
 
-fn automation_target_current_value(target: TrackAutomationTarget, level: f32, balance: f32) -> f32 {
+fn automation_target_current_value(
+    target: &TrackAutomationTarget,
+    level: f32,
+    balance: f32,
+) -> f32 {
     match target {
         TrackAutomationTarget::Volume => level,
         TrackAutomationTarget::Balance => balance,
@@ -52,7 +56,7 @@ fn automation_target_current_value(target: TrackAutomationTarget, level: f32, ba
 }
 
 fn automation_target_set_message(
-    target: TrackAutomationTarget,
+    target: &TrackAutomationTarget,
     track_name: String,
     value: f32,
 ) -> Option<Message> {
@@ -66,8 +70,8 @@ fn automation_target_set_message(
         TrackAutomationTarget::MidiCc { channel, cc } => {
             Some(Message::Request(Action::TrackMidiCc {
                 track_name,
-                channel,
-                cc,
+                channel: *channel,
+                cc: *cc,
                 value: value.round().clamp(0.0, 127.0) as u8,
             }))
         }
@@ -77,8 +81,8 @@ fn automation_target_set_message(
             ..
         } => Some(Message::Request(Action::TrackSetClapParameter {
             track_name,
-            instance_id,
-            param_id,
+            instance_id: *instance_id,
+            param_id: *param_id,
             value: value as f64,
         })),
         TrackAutomationTarget::Vst3Parameter {
@@ -86,8 +90,8 @@ fn automation_target_set_message(
             param_id,
         } => Some(Message::Request(Action::TrackSetVst3Parameter {
             track_name,
-            instance_id,
-            param_id,
+            instance_id: *instance_id,
+            param_id: *param_id,
             value,
         })),
         #[cfg(unix)]
@@ -95,12 +99,13 @@ fn automation_target_set_message(
             instance_id, index, ..
         } => Some(Message::Request(Action::TrackSetLv2ControlValue {
             track_name,
-            instance_id,
-            index,
+            instance_id: *instance_id,
+            index: *index,
             value,
         })),
         #[cfg(not(unix))]
         TrackAutomationTarget::Lv2Parameter { .. } => None,
+        TrackAutomationTarget::MixOsc { .. } => None,
     }
 }
 
@@ -111,12 +116,13 @@ fn automation_lane_header_control(
     lane: &VisibleAutomationLane,
     selected_modulator: Option<&crate::state::Modulator>,
 ) -> Element<'static, Message> {
-    let target = lane.target;
+    let target = lane.target.clone();
+    let target_for_slider = target.clone();
     let (min, max) = target.default_range();
-    let value = automation_target_current_value(target, level, balance);
+    let value = automation_target_current_value(&target, level, balance);
     let track_name_for_slider = track_name.clone();
     let slider = horizontal_slider(min..=max, value, move |v| {
-        automation_target_set_message(target, track_name_for_slider.clone(), v)
+        automation_target_set_message(&target_for_slider, track_name_for_slider.clone(), v)
             .unwrap_or(Message::DeselectClips)
     })
     .width(Length::Fill)
@@ -255,6 +261,77 @@ fn context_submenu_item(
     .into()
 }
 
+type MixOscAutomationGroup = (String, Vec<(String, TrackAutomationTarget)>);
+
+fn mixosc_automation_targets(addr: &str) -> Vec<MixOscAutomationGroup> {
+    use mixosc::parameters::path;
+    let mut groups: Vec<MixOscAutomationGroup> = Vec::new();
+
+    for ch in 1..=32u8 {
+        groups.push((
+            format!("Ch {ch:02}"),
+            vec![
+                (
+                    "Fader".to_string(),
+                    TrackAutomationTarget::MixOsc {
+                        addr: addr.to_string(),
+                        path: path::ch_mix_fader(ch),
+                    },
+                ),
+                (
+                    "Pan".to_string(),
+                    TrackAutomationTarget::MixOsc {
+                        addr: addr.to_string(),
+                        path: path::ch_mix_pan_2(ch),
+                    },
+                ),
+                (
+                    "Mute".to_string(),
+                    TrackAutomationTarget::MixOsc {
+                        addr: addr.to_string(),
+                        path: path::ch_mix_on(ch),
+                    },
+                ),
+            ],
+        ));
+    }
+
+    for bus in 1..=16u8 {
+        groups.push((
+            format!("Bus {bus:02}"),
+            vec![(
+                "Fader".to_string(),
+                TrackAutomationTarget::MixOsc {
+                    addr: addr.to_string(),
+                    path: path::bus_mix_fader(bus),
+                },
+            )],
+        ));
+    }
+
+    groups.push((
+        "Main".to_string(),
+        vec![
+            (
+                "ST Fader".to_string(),
+                TrackAutomationTarget::MixOsc {
+                    addr: addr.to_string(),
+                    path: path::main_st_mix_fader(),
+                },
+            ),
+            (
+                "M Fader".to_string(),
+                TrackAutomationTarget::MixOsc {
+                    addr: addr.to_string(),
+                    path: path::main_m_mix_fader(),
+                },
+            ),
+        ],
+    ));
+
+    groups
+}
+
 pub(super) fn track_context_menu_overlay(
     state: &StateData,
     max_y: f32,
@@ -368,7 +445,10 @@ pub(super) fn track_context_menu_overlay(
         for target in [
             TrackAutomationTarget::Volume,
             TrackAutomationTarget::Balance,
-        ] {
+        ]
+        .iter()
+        .cloned()
+        {
             if !target.is_modulatable() {
                 continue;
             }
@@ -400,21 +480,22 @@ pub(super) fn track_context_menu_overlay(
             ) {
                 continue;
             }
+            let target = lane.target.clone();
             let is_assigned = modulator
                 .targets
                 .iter()
-                .any(|t| t.matches_target(&track_name, &lane.target));
+                .any(|t| t.matches_target(&track_name, &target));
             modulator_items.push(menu::menu_item(
                 format!(
                     "Modulator {} {} {}",
                     modulator.name,
                     if is_assigned { "✓" } else { " " },
-                    lane.target
+                    target
                 ),
                 Message::ModulatorTargetShow {
                     modulator_id: modulator.id,
                     track_name: track_name.clone(),
-                    target: lane.target,
+                    target,
                 },
             ));
         }
@@ -551,77 +632,98 @@ pub(super) fn track_context_menu_overlay(
             )
         };
 
-    let mut automation_items: Vec<Element<'static, Message>> = vec![
-        automation_menu_item("Volume".to_string(), TrackAutomationTarget::Volume),
-        automation_menu_item("Balance".to_string(), TrackAutomationTarget::Balance),
-    ];
-
+    let mut automation_items: Vec<Element<'static, Message>> = Vec::new();
     let mut plugin_submenu_items: Vec<Element<'static, Message>> = Vec::new();
-    if let Some((plugins, _)) = state.plugin_graphs_by_track.get(&track_name) {
-        for plugin in plugins {
-            if plugin.format.eq_ignore_ascii_case("LV2") && !cfg!(unix) {
-                continue;
-            }
-            let plugin_submenu_key = crate::state::TrackContextSubmenu::Plugin {
-                instance_id: plugin.instance_id,
-                format: plugin.format.clone(),
-            };
-            let is_active = menu_state.submenu == Some(plugin_submenu_key.clone());
-            automation_items.push(context_submenu_item(
-                plugin.name.clone(),
-                plugin_submenu_key.clone(),
-                is_active,
-            ));
+    let mut midi_submenu_items: Vec<Element<'static, Message>> = Vec::new();
+    let mut mixosc_group_items: Vec<Element<'static, Message>> = Vec::new();
+
+    if let Some(addr) = track.mixosc_addr.as_ref() {
+        for (group, params) in mixosc_automation_targets(addr) {
+            let group_key = crate::state::TrackContextSubmenu::MixOscGroup(group.clone());
+            let is_active = menu_state.submenu == Some(group_key.clone());
+            automation_items.push(context_submenu_item(group, group_key, is_active));
             if is_active {
-                if let Some(cached) = state
-                    .plugin_parameters_by_track
-                    .get(&track_name)
-                    .and_then(|cache| cache.get(&plugin.instance_id))
-                {
-                    for param in cached {
-                        let target = if plugin.format.eq_ignore_ascii_case("CLAP") {
-                            TrackAutomationTarget::ClapParameter {
-                                instance_id: plugin.instance_id,
-                                param_id: param.param_id,
-                                min: param.min,
-                                max: param.max,
-                            }
-                        } else {
-                            TrackAutomationTarget::Vst3Parameter {
-                                instance_id: plugin.instance_id,
-                                param_id: param.param_id,
-                            }
-                        };
-                        plugin_submenu_items.push(automation_menu_item(param.name.clone(), target));
-                    }
-                } else {
-                    plugin_submenu_items
-                        .push(menu::menu_item("Loading parameters...", Message::None));
+                for (label, target) in params {
+                    mixosc_group_items.push(automation_menu_item(label, target));
                 }
             }
         }
-    }
-
-    let has_midi = track.midi.ins > 0 || track.midi.outs > 0;
-    let mut midi_submenu_items: Vec<Element<'static, Message>> = Vec::new();
-    if has_midi {
-        automation_items.push(context_submenu_item(
-            "MIDI".to_string(),
-            crate::state::TrackContextSubmenu::Midi,
-            menu_state.submenu == Some(crate::state::TrackContextSubmenu::Midi),
+    } else {
+        automation_items.push(automation_menu_item(
+            "Volume".to_string(),
+            TrackAutomationTarget::Volume,
         ));
-        if menu_state.submenu == Some(crate::state::TrackContextSubmenu::Midi) {
-            for cc in 0u8..=127 {
-                let name = crate::midi::standard_cc_name(cc);
-                let label = if name.is_empty() {
-                    format!("CC{}", cc)
-                } else {
-                    format!("CC{} - {}", cc, name)
+        automation_items.push(automation_menu_item(
+            "Balance".to_string(),
+            TrackAutomationTarget::Balance,
+        ));
+
+        if let Some((plugins, _)) = state.plugin_graphs_by_track.get(&track_name) {
+            for plugin in plugins {
+                if plugin.format.eq_ignore_ascii_case("LV2") && !cfg!(unix) {
+                    continue;
+                }
+                let plugin_submenu_key = crate::state::TrackContextSubmenu::Plugin {
+                    instance_id: plugin.instance_id,
+                    format: plugin.format.clone(),
                 };
-                midi_submenu_items.push(automation_menu_item(
-                    label,
-                    TrackAutomationTarget::MidiCc { channel: 0, cc },
+                let is_active = menu_state.submenu == Some(plugin_submenu_key.clone());
+                automation_items.push(context_submenu_item(
+                    plugin.name.clone(),
+                    plugin_submenu_key.clone(),
+                    is_active,
                 ));
+                if is_active {
+                    if let Some(cached) = state
+                        .plugin_parameters_by_track
+                        .get(&track_name)
+                        .and_then(|cache| cache.get(&plugin.instance_id))
+                    {
+                        for param in cached {
+                            let target = if plugin.format.eq_ignore_ascii_case("CLAP") {
+                                TrackAutomationTarget::ClapParameter {
+                                    instance_id: plugin.instance_id,
+                                    param_id: param.param_id,
+                                    min: param.min,
+                                    max: param.max,
+                                }
+                            } else {
+                                TrackAutomationTarget::Vst3Parameter {
+                                    instance_id: plugin.instance_id,
+                                    param_id: param.param_id,
+                                }
+                            };
+                            plugin_submenu_items
+                                .push(automation_menu_item(param.name.clone(), target));
+                        }
+                    } else {
+                        plugin_submenu_items
+                            .push(menu::menu_item("Loading parameters...", Message::None));
+                    }
+                }
+            }
+        }
+
+        let has_midi = track.midi.ins > 0 || track.midi.outs > 0;
+        if has_midi {
+            automation_items.push(context_submenu_item(
+                "MIDI".to_string(),
+                crate::state::TrackContextSubmenu::Midi,
+                menu_state.submenu == Some(crate::state::TrackContextSubmenu::Midi),
+            ));
+            if menu_state.submenu == Some(crate::state::TrackContextSubmenu::Midi) {
+                for cc in 0u8..=127 {
+                    let name = crate::midi::standard_cc_name(cc);
+                    let label = if name.is_empty() {
+                        format!("CC{}", cc)
+                    } else {
+                        format!("CC{} - {}", cc, name)
+                    };
+                    midi_submenu_items.push(automation_menu_item(
+                        label,
+                        TrackAutomationTarget::MidiCc { channel: 0, cc },
+                    ));
+                }
             }
         }
     }
@@ -631,7 +733,16 @@ pub(super) fn track_context_menu_overlay(
     let main_panel = context_menu_panel(items, 220.0);
     let mut panels = vec![main_panel];
     if menu_state.submenu.is_some() {
-        panels.push(context_menu_panel(automation_items, 220.0));
+        if track.mixosc_addr.is_some() {
+            let automation_max_height = (max_y - 20.0).clamp(200.0, 500.0);
+            panels.push(context_menu_scrollable_panel(
+                automation_items,
+                220.0,
+                automation_max_height,
+            ));
+        } else {
+            panels.push(context_menu_panel(automation_items, 220.0));
+        }
     }
     if menu_state
         .submenu
@@ -652,6 +763,19 @@ pub(super) fn track_context_menu_overlay(
             midi_max_height,
         ));
     }
+    if menu_state
+        .submenu
+        .as_ref()
+        .is_some_and(|s| matches!(s, crate::state::TrackContextSubmenu::MixOscGroup(_)))
+    {
+        let mixosc_group_max_height = (max_y - 20.0).clamp(200.0, 500.0);
+        panels.push(context_menu_scrollable_panel(
+            mixosc_group_items,
+            220.0,
+            mixosc_group_max_height,
+        ));
+    }
+
     let mut y = (top + menu_state.anchor.y).max(0.0);
     if y + menu_height > max_y {
         y = (max_y - menu_height).max(0.0);
@@ -738,7 +862,7 @@ impl Tracks {
         track.visible_automation_lanes.len().hash(&mut hasher);
         for lane in &track.visible_automation_lanes {
             std::mem::discriminant(&lane.target).hash(&mut hasher);
-            match lane.target {
+            match &lane.target {
                 TrackAutomationTarget::Volume | TrackAutomationTarget::Balance => {}
                 TrackAutomationTarget::MidiCc { channel, cc } => {
                     channel.hash(&mut hasher);
@@ -772,6 +896,10 @@ impl Tracks {
                     param_id.hash(&mut hasher);
                     min.to_bits().hash(&mut hasher);
                     max.to_bits().hash(&mut hasher);
+                }
+                TrackAutomationTarget::MixOsc { addr, path } => {
+                    addr.hash(&mut hasher);
+                    path.hash(&mut hasher);
                 }
             }
             lane.points_len.hash(&mut hasher);
@@ -1691,7 +1819,7 @@ impl Tracks {
                                 .iter()
                                 .filter(|lane| lane.visible)
                                 .map(|lane| VisibleAutomationLane {
-                                    target: lane.target,
+                                    target: lane.target.clone(),
                                     points_len: lane.points.len(),
                                 })
                                 .collect(),

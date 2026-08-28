@@ -222,6 +222,8 @@ pub struct Track {
     pub phase_inverted: bool,
     pub soloed: bool,
     pub is_master: bool,
+    #[serde(default)]
+    pub mixosc_addr: Option<String>,
     pub input_monitor: Vec<bool>,
     pub disk_monitor: Vec<bool>,
     #[serde(default)]
@@ -309,6 +311,7 @@ impl Track {
             phase_inverted: false,
             soloed: false,
             is_master: false,
+            mixosc_addr: None,
             input_monitor: vec![false; audio_ins],
             disk_monitor: vec![true; audio_ins],
             midi_input_monitor: vec![false; midi_ins],

@@ -8,6 +8,7 @@ use maolan_widgets::iced::{
 pub use maolan_widgets::midi::{
     MpeExpressionPoint, PianoControllerLane, PianoNrpnKind, PianoRpnKind,
 };
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[cfg(unix)]
@@ -261,7 +262,7 @@ pub enum ModulatorChange {
     Targets(Vec<crate::state::ModulatorTarget>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TrackAutomationTarget {
     Volume,
     Balance,
@@ -284,6 +285,10 @@ pub enum TrackAutomationTarget {
         param_id: u32,
         min: f64,
         max: f64,
+    },
+    MixOsc {
+        addr: String,
+        path: String,
     },
 }
 
@@ -353,23 +358,25 @@ impl fmt::Display for TrackAutomationTarget {
                 param_id,
                 ..
             } => write!(f, "CLAP {}:{}", instance_id, param_id),
+            Self::MixOsc { addr, path } => write!(f, "MixOSC {addr} {path}"),
         }
     }
 }
 
 impl TrackAutomationTarget {
-    pub fn is_modulatable(self) -> bool {
-        true
+    pub fn is_modulatable(&self) -> bool {
+        !matches!(self, Self::MixOsc { .. })
     }
 
-    pub fn default_range(self) -> (f32, f32) {
+    pub fn default_range(&self) -> (f32, f32) {
         match self {
             Self::Volume => (-90.0, 20.0),
             Self::Balance => (-1.0, 1.0),
             Self::MidiCc { .. } => (0.0, 127.0),
             Self::Vst3Parameter { .. } => (0.0, 1.0),
-            Self::ClapParameter { min, max, .. } => (min as f32, max as f32),
-            Self::Lv2Parameter { min, max, .. } => (min, max),
+            Self::ClapParameter { min, max, .. } => (*min as f32, *max as f32),
+            Self::Lv2Parameter { min, max, .. } => (*min, *max),
+            Self::MixOsc { .. } => (0.0, 1.0),
         }
     }
 
@@ -419,6 +426,9 @@ impl TrackAutomationTarget {
                     ..
                 },
             ) => a == c && b == d,
+            (Self::MixOsc { addr: a, path: b }, Self::MixOsc { addr: c, path: d }) => {
+                a == c && b == d
+            }
             _ => false,
         }
     }
@@ -710,6 +720,13 @@ impl fmt::Display for ExportDither {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddTrackType {
+    Track,
+    Folder,
+    MixOsc,
+}
+
 #[derive(Debug, Clone)]
 pub enum AddTrack {
     Name(String),
@@ -720,6 +737,9 @@ pub enum AddTrack {
     MIDIOuts(usize),
     TemplateSelected(String),
     IsFolder(bool),
+    TrackType(AddTrackType),
+    MixerSelected(SocketAddr),
+    MixersDiscovered(Vec<mixosc::DiscoveredMixer>),
     Submit,
 }
 

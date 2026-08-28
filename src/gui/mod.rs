@@ -398,12 +398,13 @@ fn build_offline_automation_lanes(
 ) -> Vec<OfflineAutomationLane> {
     let mut automation_lanes = Vec::new();
     for lane in lanes.iter().filter(|lane| !lane.points.is_empty()) {
-        let target = match lane.target {
+        let target = match &lane.target {
             TrackAutomationTarget::Volume => OfflineAutomationTarget::Volume,
             TrackAutomationTarget::Balance => OfflineAutomationTarget::Balance,
-            TrackAutomationTarget::MidiCc { channel, cc } => {
-                OfflineAutomationTarget::MidiCc { channel, cc }
-            }
+            TrackAutomationTarget::MidiCc { channel, cc } => OfflineAutomationTarget::MidiCc {
+                channel: *channel,
+                cc: *cc,
+            },
             #[cfg(unix)]
             TrackAutomationTarget::Lv2Parameter {
                 instance_id,
@@ -411,10 +412,10 @@ fn build_offline_automation_lanes(
                 min,
                 max,
             } => OfflineAutomationTarget::Lv2Parameter {
-                instance_id,
-                index,
-                min,
-                max,
+                instance_id: *instance_id,
+                index: *index,
+                min: *min,
+                max: *max,
             },
             #[cfg(not(unix))]
             TrackAutomationTarget::Lv2Parameter { .. } => continue,
@@ -422,8 +423,8 @@ fn build_offline_automation_lanes(
                 instance_id,
                 param_id,
             } => OfflineAutomationTarget::Vst3Parameter {
-                instance_id,
-                param_id,
+                instance_id: *instance_id,
+                param_id: *param_id,
             },
             TrackAutomationTarget::ClapParameter {
                 instance_id,
@@ -431,10 +432,14 @@ fn build_offline_automation_lanes(
                 min,
                 max,
             } => OfflineAutomationTarget::ClapParameter {
-                instance_id,
-                param_id,
-                min,
-                max,
+                instance_id: *instance_id,
+                param_id: *param_id,
+                min: *min,
+                max: *max,
+            },
+            TrackAutomationTarget::MixOsc { addr, path } => OfflineAutomationTarget::MixOsc {
+                addr: addr.clone(),
+                path: path.clone(),
             },
         };
         let points = lane
@@ -7754,6 +7759,7 @@ mod tests {
                 midi_ins: 0,
                 midi_outs: 0,
                 folder: false,
+                mixosc_addr: None,
             },
         )));
         {
@@ -8056,6 +8062,7 @@ mod tests {
                 midi_ins: 0,
                 midi_outs: 0,
                 folder: false,
+                mixosc_addr: None,
             },
         )));
         {

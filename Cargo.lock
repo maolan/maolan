@@ -5529,9 +5529,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-editor"
-version = "0.0.1"
+version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75751f5f40925c0a041b6f8a55d868e0a37e5ae79c4deb73c1109b735d9f38a4"
+checksum = "fe9212c9f0b728540be402edc6aebac482b6175ca2fcccc87306360b967f92a4"
 dependencies = [
  "alsa",
  "maolan-engine",
@@ -5545,9 +5545,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.64"
+version = "0.2.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46e49eb53ba08399324e80699ccb1321bc01103fba2dd084d45b03ca11234e75"
+checksum = "890c104abe367d3d166c2ff9e9bc5fdaaea768ccfa5d2f9d8e95bf082bdbfd5e"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5558,6 +5558,7 @@ dependencies = [
  "maolan-plugin-protocol",
  "midir",
  "midly",
+ "mixosc",
  "nix 0.31.3",
  "num_cpus",
  "nvtree",

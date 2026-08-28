@@ -56,7 +56,7 @@ impl ModulatorTargetDialogView {
                     .on_press(Message::ModulatorTargetRemove {
                         modulator_id: dialog.modulator_id,
                         track_name: dialog.track_name.clone(),
-                        target: dialog.target,
+                        target: dialog.target.clone(),
                     })
                     .style(button::secondary),
             );

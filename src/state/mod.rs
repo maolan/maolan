@@ -732,6 +732,7 @@ impl TryFrom<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
                 channel,
                 cc,
             }),
+            TrackAutomationTarget::MixOsc { .. } => Err(()),
         }
     }
 }
@@ -939,6 +940,7 @@ pub enum TrackContextSubmenu {
     Automation,
     Plugin { instance_id: usize, format: String },
     Midi,
+    MixOscGroup(String),
 }
 
 #[derive(Debug, Clone)]
