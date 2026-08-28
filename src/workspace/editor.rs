@@ -483,7 +483,7 @@ struct TrackElementViewArgs<'a> {
     midi_clip_previews: Option<&'a MidiClipPreviewMap>,
 }
 
-fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Color {
+fn automation_point_color(target: &crate::message::TrackAutomationTarget) -> Color {
     match target {
         crate::message::TrackAutomationTarget::Volume => Color::from_rgba(0.98, 0.78, 0.22, 0.95),
         crate::message::TrackAutomationTarget::Balance => Color::from_rgba(0.88, 0.62, 0.24, 0.95),
@@ -498,6 +498,9 @@ fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Colo
         }
         crate::message::TrackAutomationTarget::ClapParameter { .. } => {
             Color::from_rgba(0.4, 0.72, 0.98, 0.95)
+        }
+        crate::message::TrackAutomationTarget::MixOsc { .. } => {
+            Color::from_rgba(0.95, 0.35, 0.75, 0.95)
         }
     }
 }
@@ -911,7 +914,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     if !track.collapsed() {
         for (lane_index, lane) in visible_automation_lanes.iter().enumerate() {
             let lane_top = track.automation_lane_top(lane_index);
-            let point_color = automation_point_color(lane.target);
+            let point_color = automation_point_color(&lane.target);
             let curve_points: Vec<CurvePoint> = lane
                 .points
                 .iter()
@@ -922,7 +925,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .collect();
             clips.push(
                 pin(canvas(CurveEditor {
-                    context: (track_name_cloned.clone(), lane.target),
+                    context: (track_name_cloned.clone(), lane.target.clone()),
                     points: curve_points,
                     pixels_per_sample,
                     color: point_color,
@@ -2389,10 +2392,10 @@ mod tests {
     fn automation_point_color_returns_correct_colors() {
         use crate::message::TrackAutomationTarget;
 
-        let volume_color = automation_point_color(TrackAutomationTarget::Volume);
-        let balance_color = automation_point_color(TrackAutomationTarget::Balance);
+        let volume_color = automation_point_color(&TrackAutomationTarget::Volume);
+        let balance_color = automation_point_color(&TrackAutomationTarget::Balance);
         let midi_cc_color =
-            automation_point_color(TrackAutomationTarget::MidiCc { channel: 0, cc: 7 });
+            automation_point_color(&TrackAutomationTarget::MidiCc { channel: 0, cc: 7 });
 
         assert!(volume_color.a > 0.0);
         assert!(balance_color.a > 0.0);
@@ -2405,17 +2408,17 @@ mod tests {
     fn automation_point_color_plugin_targets_have_colors() {
         use crate::message::TrackAutomationTarget;
 
-        let lv2_color = automation_point_color(TrackAutomationTarget::Lv2Parameter {
+        let lv2_color = automation_point_color(&TrackAutomationTarget::Lv2Parameter {
             instance_id: 1,
             index: 0,
             min: 0.0,
             max: 1.0,
         });
-        let vst3_color = automation_point_color(TrackAutomationTarget::Vst3Parameter {
+        let vst3_color = automation_point_color(&TrackAutomationTarget::Vst3Parameter {
             instance_id: 1,
             param_id: 0,
         });
-        let clap_color = automation_point_color(TrackAutomationTarget::ClapParameter {
+        let clap_color = automation_point_color(&TrackAutomationTarget::ClapParameter {
             instance_id: 1,
             param_id: 0,
             min: 0.0,

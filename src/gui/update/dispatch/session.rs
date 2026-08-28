@@ -59,6 +59,7 @@ impl Maolan {
                     audio_outs,
                     midi_outs,
                     folder: false,
+                    mixosc_addr: None,
                 });
 
                 self.state

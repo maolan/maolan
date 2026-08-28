@@ -1093,6 +1093,24 @@ impl Maolan {
                         "No session directory set. Save the session first.".to_string();
                 }
             }
+            Message::AddTrack(crate::message::AddTrack::TrackType(track_type)) => {
+                self.add_track.update(&message);
+                return if track_type == crate::message::AddTrackType::MixOsc {
+                    Task::perform(
+                        async { mixosc::DiscoveryProbe::new().discover().unwrap_or_default() },
+                        |mixers| {
+                            Message::AddTrack(crate::message::AddTrack::MixersDiscovered(mixers))
+                        },
+                    )
+                } else {
+                    Task::none()
+                };
+            }
+            Message::AddTrack(crate::message::AddTrack::MixerSelected(_))
+            | Message::AddTrack(crate::message::AddTrack::MixersDiscovered(_)) => {
+                self.add_track.update(&message);
+                return Task::none();
+            }
             Message::AddTrack(crate::message::AddTrack::Submit)
             | Message::AddTrackFromTemplate { .. }
             | Message::ApplyTemplate(crate::message::ApplyTemplate::Submit)
@@ -3594,6 +3612,7 @@ impl Maolan {
                             midi_ins,
                             midi_outs,
                             folder,
+                            mixosc_addr,
                         } => {
                             let mut state = self.state.blocking_write();
                             let mut track = Track::new(
@@ -3605,6 +3624,7 @@ impl Maolan {
                                 *midi_outs,
                             );
                             track.is_folder = *folder;
+                            track.mixosc_addr = mixosc_addr.clone();
                             if let Some((lanes, mode)) = state.pending_track_automation.remove(name)
                             {
                                 track.automation_lanes = lanes;
@@ -5965,7 +5985,7 @@ impl Maolan {
                     .iter()
                     .filter(|lane| !lane.points.is_empty())
                 {
-                    let target = match lane.target {
+                    let target = match &lane.target {
                         crate::message::TrackAutomationTarget::Volume => {
                             OfflineAutomationTarget::Volume
                         }
@@ -5973,7 +5993,10 @@ impl Maolan {
                             OfflineAutomationTarget::Balance
                         }
                         crate::message::TrackAutomationTarget::MidiCc { channel, cc } => {
-                            OfflineAutomationTarget::MidiCc { channel, cc }
+                            OfflineAutomationTarget::MidiCc {
+                                channel: *channel,
+                                cc: *cc,
+                            }
                         }
                         #[cfg(unix)]
                         crate::message::TrackAutomationTarget::Lv2Parameter {
@@ -5982,10 +6005,10 @@ impl Maolan {
                             min,
                             max,
                         } => OfflineAutomationTarget::Lv2Parameter {
-                            instance_id,
-                            index,
-                            min,
-                            max,
+                            instance_id: *instance_id,
+                            index: *index,
+                            min: *min,
+                            max: *max,
                         },
                         #[cfg(not(unix))]
                         crate::message::TrackAutomationTarget::Lv2Parameter { .. } => continue,
@@ -5993,8 +6016,8 @@ impl Maolan {
                             instance_id,
                             param_id,
                         } => OfflineAutomationTarget::Vst3Parameter {
-                            instance_id,
-                            param_id,
+                            instance_id: *instance_id,
+                            param_id: *param_id,
                         },
                         crate::message::TrackAutomationTarget::ClapParameter {
                             instance_id,
@@ -6002,11 +6025,17 @@ impl Maolan {
                             min,
                             max,
                         } => OfflineAutomationTarget::ClapParameter {
-                            instance_id,
-                            param_id,
-                            min,
-                            max,
+                            instance_id: *instance_id,
+                            param_id: *param_id,
+                            min: *min,
+                            max: *max,
                         },
+                        crate::message::TrackAutomationTarget::MixOsc { addr, path } => {
+                            OfflineAutomationTarget::MixOsc {
+                                addr: addr.clone(),
+                                path: path.clone(),
+                            }
+                        }
                     };
                     let points = lane
                         .points
@@ -6102,7 +6131,7 @@ impl Maolan {
                     .iter()
                     .filter(|lane| !lane.points.is_empty())
                 {
-                    let target = match lane.target {
+                    let target = match &lane.target {
                         crate::message::TrackAutomationTarget::Volume => {
                             OfflineAutomationTarget::Volume
                         }
@@ -6110,7 +6139,10 @@ impl Maolan {
                             OfflineAutomationTarget::Balance
                         }
                         crate::message::TrackAutomationTarget::MidiCc { channel, cc } => {
-                            OfflineAutomationTarget::MidiCc { channel, cc }
+                            OfflineAutomationTarget::MidiCc {
+                                channel: *channel,
+                                cc: *cc,
+                            }
                         }
                         #[cfg(unix)]
                         crate::message::TrackAutomationTarget::Lv2Parameter {
@@ -6119,10 +6151,10 @@ impl Maolan {
                             min,
                             max,
                         } => OfflineAutomationTarget::Lv2Parameter {
-                            instance_id,
-                            index,
-                            min,
-                            max,
+                            instance_id: *instance_id,
+                            index: *index,
+                            min: *min,
+                            max: *max,
                         },
                         #[cfg(not(unix))]
                         crate::message::TrackAutomationTarget::Lv2Parameter { .. } => continue,
@@ -6130,8 +6162,8 @@ impl Maolan {
                             instance_id,
                             param_id,
                         } => OfflineAutomationTarget::Vst3Parameter {
-                            instance_id,
-                            param_id,
+                            instance_id: *instance_id,
+                            param_id: *param_id,
                         },
                         crate::message::TrackAutomationTarget::ClapParameter {
                             instance_id,
@@ -6139,11 +6171,17 @@ impl Maolan {
                             min,
                             max,
                         } => OfflineAutomationTarget::ClapParameter {
-                            instance_id,
-                            param_id,
-                            min,
-                            max,
+                            instance_id: *instance_id,
+                            param_id: *param_id,
+                            min: *min,
+                            max: *max,
                         },
+                        crate::message::TrackAutomationTarget::MixOsc { addr, path } => {
+                            OfflineAutomationTarget::MixOsc {
+                                addr: addr.clone(),
+                                path: path.clone(),
+                            }
+                        }
                     };
                     let points = lane
                         .points
@@ -6400,7 +6438,7 @@ impl Maolan {
                     track
                         .automation_lanes
                         .push(crate::state::TrackAutomationLane {
-                            target,
+                            target: target.clone(),
                             visible: true,
                             points: vec![],
                         });
@@ -9503,6 +9541,7 @@ impl Maolan {
                                                     audio_outs: channels,
                                                     midi_outs: 0,
                                                     folder: false,
+                                                    mixosc_addr: None,
                                                 }))
                                                 .await
                                             {
@@ -9580,6 +9619,7 @@ impl Maolan {
                                                     audio_outs: 0,
                                                     midi_outs: 1,
                                                     folder: false,
+                                                    mixosc_addr: None,
                                                 }))
                                                 .await
                                             {
@@ -9977,6 +10017,7 @@ impl Maolan {
                                 audio_outs: channels,
                                 midi_outs: 0,
                                 folder: false,
+                                mixosc_addr: None,
                             }))
                             .await
                         {
@@ -10409,6 +10450,7 @@ impl Maolan {
                                 audio_outs: 0,
                                 midi_outs: 1,
                                 folder: false,
+                                mixosc_addr: None,
                             }))
                             .await
                         {
@@ -11285,7 +11327,7 @@ impl Maolan {
             Message::ModulatorTargetShow {
                 modulator_id,
                 ref track_name,
-                target,
+                ref target,
             } => {
                 let (default_min, default_max) = target.default_range();
                 let existing = self
@@ -11295,7 +11337,7 @@ impl Maolan {
                     .and_then(|m| {
                         m.targets
                             .iter()
-                            .find(|t| t.matches_target(track_name, &target))
+                            .find(|t| t.matches_target(track_name, target))
                     });
                 let existing_bool = existing.is_some();
                 let (min_input, max_input) = existing
@@ -11306,7 +11348,7 @@ impl Maolan {
                     Some(crate::state::ModulatorTargetDialog {
                         modulator_id,
                         track_name: track_name.clone(),
-                        target,
+                        target: target.clone(),
                         min_input,
                         max_input,
                         existing: existing_bool,

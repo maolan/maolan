@@ -1,10 +1,11 @@
-use crate::message::{AddTrack, Message};
+use crate::message::{AddTrack, AddTrackType, Message};
 use maolan_engine::message::Action;
 use maolan_widgets::iced::{
     Alignment, Border, Color, Element, Length,
     widget::{Id, button, column, container, pick_list, row, text, text_input},
 };
 use maolan_widgets::numeric_input::number_input;
+use std::net::SocketAddr;
 
 #[derive(Debug)]
 pub struct AddTrackView {
@@ -14,10 +15,12 @@ pub struct AddTrackView {
     audio_outs: usize,
     midi_ins: usize,
     midi_outs: usize,
-    is_folder: bool,
+    track_type: AddTrackType,
     available_templates: Vec<String>,
     available_folder_templates: Vec<String>,
     selected_template: Option<String>,
+    discovered_mixers: Vec<mixosc::DiscoveredMixer>,
+    selected_mixer: Option<SocketAddr>,
 }
 
 impl AddTrackView {
@@ -33,9 +36,12 @@ impl AddTrackView {
         if self.name.trim().is_empty() {
             return false;
         }
-        // Folders do not need any I/O, but regular tracks must have at least
-        // one audio or MIDI input/output to be usable.
-        self.is_folder || self.total_io() > 0
+        match self.track_type {
+            // Folders and MixOSC tracks do not need audio/MIDI I/O.
+            AddTrackType::Folder => true,
+            AddTrackType::MixOsc => self.selected_mixer.is_some(),
+            AddTrackType::Track => self.total_io() > 0,
+        }
     }
 
     fn create_message(&self) -> Option<Message> {
@@ -54,7 +60,11 @@ impl AddTrackView {
             .clone()
             .unwrap_or_else(|| "empty".to_string());
 
-        let count = self.count.max(1);
+        let count = if self.track_type == AddTrackType::MixOsc {
+            1
+        } else {
+            self.count.max(1)
+        };
 
         (0..count)
             .flat_map(|index| {
@@ -64,38 +74,58 @@ impl AddTrackView {
                     format!("{base_name} {}", index + 1)
                 };
                 let mut messages = Vec::with_capacity(2);
-                if self.is_folder && template_name == "empty" {
-                    messages.push(Message::Request(Action::AddTrack {
-                        name,
-                        audio_ins: self.audio_ins,
-                        midi_ins: self.midi_ins,
-                        audio_outs: self.audio_outs,
-                        midi_outs: self.midi_outs,
-                        folder: true,
-                    }));
-                } else if self.is_folder {
-                    messages.push(Message::AddFolderFromTemplate {
-                        name,
-                        template: template_name.clone(),
-                    });
-                } else if template_name == "empty" {
-                    messages.push(Message::Request(Action::AddTrack {
-                        name,
-                        audio_ins: self.audio_ins,
-                        midi_ins: self.midi_ins,
-                        audio_outs: self.audio_outs,
-                        midi_outs: self.midi_outs,
-                        folder: false,
-                    }));
-                } else {
-                    messages.push(Message::AddTrackFromTemplate {
-                        name,
-                        template: template_name.clone(),
-                        audio_ins: self.audio_ins,
-                        midi_ins: self.midi_ins,
-                        audio_outs: self.audio_outs,
-                        midi_outs: self.midi_outs,
-                    });
+                match self.track_type {
+                    AddTrackType::Folder if template_name == "empty" => {
+                        messages.push(Message::Request(Action::AddTrack {
+                            name,
+                            audio_ins: self.audio_ins,
+                            midi_ins: self.midi_ins,
+                            audio_outs: self.audio_outs,
+                            midi_outs: self.midi_outs,
+                            folder: true,
+                            mixosc_addr: None,
+                        }));
+                    }
+                    AddTrackType::Folder => {
+                        messages.push(Message::AddFolderFromTemplate {
+                            name,
+                            template: template_name.clone(),
+                        });
+                    }
+                    AddTrackType::MixOsc => {
+                        if let Some(addr) = self.selected_mixer {
+                            messages.push(Message::Request(Action::AddTrack {
+                                name,
+                                audio_ins: 0,
+                                midi_ins: 0,
+                                audio_outs: 0,
+                                midi_outs: 0,
+                                folder: false,
+                                mixosc_addr: Some(addr.to_string()),
+                            }));
+                        }
+                    }
+                    AddTrackType::Track if template_name == "empty" => {
+                        messages.push(Message::Request(Action::AddTrack {
+                            name,
+                            audio_ins: self.audio_ins,
+                            midi_ins: self.midi_ins,
+                            audio_outs: self.audio_outs,
+                            midi_outs: self.midi_outs,
+                            folder: false,
+                            mixosc_addr: None,
+                        }));
+                    }
+                    AddTrackType::Track => {
+                        messages.push(Message::AddTrackFromTemplate {
+                            name,
+                            template: template_name.clone(),
+                            audio_ins: self.audio_ins,
+                            midi_ins: self.midi_ins,
+                            audio_outs: self.audio_outs,
+                            midi_outs: self.midi_outs,
+                        });
+                    }
                 }
                 messages
             })
@@ -174,7 +204,11 @@ impl AddTrackView {
                     }
                 }
                 AddTrack::IsFolder(is_folder) => {
-                    self.is_folder = *is_folder;
+                    self.track_type = if *is_folder {
+                        AddTrackType::Folder
+                    } else {
+                        AddTrackType::Track
+                    };
                     let current_template = self.selected_template.as_deref().unwrap_or("empty");
                     let current_is_folder_template =
                         crate::gui::is_track_template_folder(current_template);
@@ -184,6 +218,25 @@ impl AddTrackView {
                         }
                     } else if current_is_folder_template {
                         self.selected_template = Some("empty".to_string());
+                    }
+                }
+                AddTrack::TrackType(track_type) => {
+                    self.track_type = *track_type;
+                    self.selected_mixer = None;
+                    self.discovered_mixers.clear();
+                    if *track_type == AddTrackType::Track {
+                        self.selected_template = Some("empty".to_string());
+                    }
+                }
+                AddTrack::MixerSelected(addr) => {
+                    self.selected_mixer = Some(*addr);
+                }
+                AddTrack::MixersDiscovered(mixers) => {
+                    self.discovered_mixers = mixers.clone();
+                    if self.selected_mixer.is_none()
+                        && let Some(first) = self.discovered_mixers.first()
+                    {
+                        self.selected_mixer = Some(first.addr);
                     }
                 }
                 AddTrack::Submit => {}
@@ -199,59 +252,183 @@ impl AddTrackView {
             button("Create")
         };
 
-        let (template_options, selected_display) = if self.is_folder {
-            let mut options = vec!["empty".to_string()];
-            options.extend(self.available_folder_templates.clone());
-            let selected = self
-                .selected_template
-                .as_deref()
-                .filter(|t| *t == "empty" || crate::gui::is_track_template_folder(t))
-                .unwrap_or("empty");
-            (options, selected)
-        } else {
-            let mut options = vec!["empty".to_string()];
-            options.extend(self.available_templates.clone());
-            let selected = self
-                .selected_template
-                .as_deref()
-                .filter(|t| *t == "empty" || !crate::gui::is_track_template_folder(t))
-                .unwrap_or("empty");
-            (options, selected)
+        let type_label = match self.track_type {
+            AddTrackType::Track => "Track",
+            AddTrackType::Folder => "Folder",
+            AddTrackType::MixOsc => "MixOSC",
         };
-
-        let is_empty_template = selected_display == "empty";
-        let type_label = if self.is_folder { "Folder" } else { "Track" };
 
         let mut col = column![
             row![
                 text("Type:"),
                 pick_list(
-                    vec!["Track".to_string(), "Folder".to_string()],
+                    vec![
+                        "Track".to_string(),
+                        "Folder".to_string(),
+                        "MixOSC".to_string(),
+                    ],
                     Some(type_label.to_string()),
-                    |selected| { Message::AddTrack(AddTrack::IsFolder(selected == "Folder")) }
-                )
-                .width(Length::Fixed(200.0)),
-            ]
-            .spacing(10),
-            row![
-                text("Template:"),
-                pick_list(
-                    template_options,
-                    Some(selected_display.to_string()),
-                    |template| { Message::AddTrack(AddTrack::TemplateSelected(template)) }
+                    |selected| {
+                        let track_type = match selected.as_str() {
+                            "Folder" => AddTrackType::Folder,
+                            "MixOSC" => AddTrackType::MixOsc,
+                            _ => AddTrackType::Track,
+                        };
+                        Message::AddTrack(AddTrack::TrackType(track_type))
+                    }
                 )
                 .width(Length::Fixed(200.0)),
             ]
             .spacing(10),
         ];
 
+        if self.track_type == AddTrackType::MixOsc {
+            let mixer_options: Vec<String> = self
+                .discovered_mixers
+                .iter()
+                .map(|m| format!("{} @ {}", m.model, m.addr))
+                .collect();
+            let selected = self.selected_mixer.map(|addr| {
+                self.discovered_mixers
+                    .iter()
+                    .find(|m| m.addr == addr)
+                    .map(|m| format!("{} @ {}", m.model, m.addr))
+                    .unwrap_or_else(|| addr.to_string())
+            });
+            let mixer_select = if mixer_options.is_empty() {
+                row![
+                    text("Mixer:"),
+                    text("No mixers discovered").color(Color::from_rgb(0.95, 0.35, 0.35))
+                ]
+                .spacing(10)
+            } else {
+                row![
+                    text("Mixer:"),
+                    pick_list(mixer_options, selected, |selected: String| {
+                        let addr = selected
+                            .rsplit('@')
+                            .next()
+                            .and_then(|s| s.trim().parse::<SocketAddr>().ok());
+                        if let Some(addr) = addr {
+                            Message::AddTrack(AddTrack::MixerSelected(addr))
+                        } else {
+                            Message::None
+                        }
+                    })
+                    .width(Length::Fixed(200.0))
+                ]
+                .spacing(10)
+            };
+            col = col.push(mixer_select);
+            if self.selected_mixer.is_none() && !self.discovered_mixers.is_empty() {
+                col = col.push(
+                    row![
+                        text("Select a discovered mixer to create the MixOSC track.")
+                            .color(Color::from_rgb(0.95, 0.35, 0.35))
+                    ]
+                    .spacing(10),
+                );
+            }
+        } else {
+            let (template_options, selected_display) = if self.track_type == AddTrackType::Folder {
+                let mut options = vec!["empty".to_string()];
+                options.extend(self.available_folder_templates.clone());
+                let selected = self
+                    .selected_template
+                    .as_deref()
+                    .filter(|t| *t == "empty" || crate::gui::is_track_template_folder(t))
+                    .unwrap_or("empty");
+                (options, selected)
+            } else {
+                let mut options = vec!["empty".to_string()];
+                options.extend(self.available_templates.clone());
+                let selected = self
+                    .selected_template
+                    .as_deref()
+                    .filter(|t| *t == "empty" || !crate::gui::is_track_template_folder(t))
+                    .unwrap_or("empty");
+                (options, selected)
+            };
+            let is_empty_template = selected_display == "empty";
+
+            col = col.push(
+                row![
+                    text("Template:"),
+                    pick_list(
+                        template_options,
+                        Some(selected_display.to_string()),
+                        |template| { Message::AddTrack(AddTrack::TemplateSelected(template)) }
+                    )
+                    .width(Length::Fixed(200.0)),
+                ]
+                .spacing(10),
+            );
+
+            if is_empty_template {
+                col = col.push(
+                    row![
+                        text("Audio inputs:"),
+                        number_input(&self.audio_ins, 0..=32, |ins: usize| {
+                            Message::AddTrack(AddTrack::AudioIns(ins))
+                        })
+                    ]
+                    .spacing(10),
+                );
+                col = col.push(
+                    row![
+                        text("Audio outputs:"),
+                        number_input(&self.audio_outs, 0..=32, |outs: usize| {
+                            Message::AddTrack(AddTrack::AudioOuts(outs))
+                        }),
+                    ]
+                    .spacing(10),
+                );
+                col = col.push(
+                    row![
+                        text("Midi inputs:"),
+                        number_input(&self.midi_ins, 0..=32, |ins: usize| {
+                            Message::AddTrack(AddTrack::MIDIIns(ins))
+                        })
+                    ]
+                    .spacing(10),
+                );
+                col = col.push(
+                    row![
+                        text("Midi outputs:"),
+                        number_input(&self.midi_outs, 0..=32, |outs: usize| {
+                            Message::AddTrack(AddTrack::MIDIOuts(outs))
+                        }),
+                    ]
+                    .spacing(10),
+                );
+            } else {
+                col = col.push(
+                    row![text(format!(
+                        "Audio: {} in / {} out, MIDI: {} in / {} out",
+                        self.audio_ins, self.audio_outs, self.midi_ins, self.midi_outs
+                    )),]
+                    .spacing(10),
+                );
+            }
+
+            if self.track_type == AddTrackType::Track && self.total_io() == 0 {
+                col = col.push(
+                    row![
+                        text("A track needs at least one audio or MIDI input/output.")
+                            .color(Color::from_rgb(0.95, 0.35, 0.35))
+                    ]
+                    .spacing(10),
+                );
+            }
+        }
+
         col = col.push(
             row![
                 text("Name:"),
-                if self.is_folder {
-                    text_input("Folder name", &self.name)
-                } else {
-                    text_input("Track name", &self.name)
+                match self.track_type {
+                    AddTrackType::Folder => text_input("Folder name", &self.name),
+                    AddTrackType::MixOsc => text_input("MixOSC track name", &self.name),
+                    AddTrackType::Track => text_input("Track name", &self.name),
                 }
                 .id(Self::name_input_id())
                 .on_input(|name: String| Message::AddTrack(AddTrack::Name(name)))
@@ -261,68 +438,13 @@ impl AddTrackView {
             .spacing(10),
         );
 
-        col = col.push(
-            row![
-                text("Tracks:"),
-                number_input(&self.count, 1..=128, |count: usize| {
-                    Message::AddTrack(AddTrack::Count(count))
-                })
-            ]
-            .spacing(10),
-        );
-
-        if is_empty_template {
+        if self.track_type != AddTrackType::MixOsc {
             col = col.push(
                 row![
-                    text("Audio inputs:"),
-                    number_input(&self.audio_ins, 0..=32, |ins: usize| {
-                        Message::AddTrack(AddTrack::AudioIns(ins))
+                    text("Tracks:"),
+                    number_input(&self.count, 1..=128, |count: usize| {
+                        Message::AddTrack(AddTrack::Count(count))
                     })
-                ]
-                .spacing(10),
-            );
-            col = col.push(
-                row![
-                    text("Audio outputs:"),
-                    number_input(&self.audio_outs, 0..=32, |outs: usize| {
-                        Message::AddTrack(AddTrack::AudioOuts(outs))
-                    }),
-                ]
-                .spacing(10),
-            );
-            col = col.push(
-                row![
-                    text("Midi inputs:"),
-                    number_input(&self.midi_ins, 0..=32, |ins: usize| {
-                        Message::AddTrack(AddTrack::MIDIIns(ins))
-                    })
-                ]
-                .spacing(10),
-            );
-            col = col.push(
-                row![
-                    text("Midi outputs:"),
-                    number_input(&self.midi_outs, 0..=32, |outs: usize| {
-                        Message::AddTrack(AddTrack::MIDIOuts(outs))
-                    }),
-                ]
-                .spacing(10),
-            );
-        } else {
-            col = col.push(
-                row![text(format!(
-                    "Audio: {} in / {} out, MIDI: {} in / {} out",
-                    self.audio_ins, self.audio_outs, self.midi_ins, self.midi_outs
-                )),]
-                .spacing(10),
-            );
-        }
-
-        if !self.is_folder && self.total_io() == 0 {
-            col = col.push(
-                row![
-                    text("A track needs at least one audio or MIDI input/output.")
-                        .color(Color::from_rgb(0.95, 0.35, 0.35))
                 ]
                 .spacing(10),
             );
@@ -338,10 +460,10 @@ impl AddTrackView {
             .spacing(10),
         );
 
-        let title = if self.is_folder {
-            "Add Folder"
-        } else {
-            "Add Track"
+        let title = match self.track_type {
+            AddTrackType::Folder => "Add Folder",
+            AddTrackType::MixOsc => "Add MixOSC Track",
+            AddTrackType::Track => "Add Track",
         };
         container(column![text(title), col.align_x(Alignment::End).spacing(10)].spacing(10))
             .style(|_theme| container::Style {
@@ -367,11 +489,13 @@ impl Default for AddTrackView {
             audio_outs: 1,
             midi_ins: 0,
             midi_outs: 0,
-            is_folder: false,
+            track_type: AddTrackType::Track,
             name: "".to_string(),
             available_templates: vec![],
             available_folder_templates: vec![],
             selected_template: Some("empty".to_string()),
+            discovered_mixers: vec![],
+            selected_mixer: None,
         }
     }
 }
@@ -562,7 +686,7 @@ mod tests {
     fn create_messages_allows_folder_with_no_io() {
         let mut view = AddTrackView::default();
         view.name = "Empty Folder".to_string();
-        view.is_folder = true;
+        view.track_type = AddTrackType::Folder;
         view.audio_ins = 0;
         view.audio_outs = 0;
         view.midi_ins = 0;
@@ -577,12 +701,14 @@ mod tests {
     }
 
     #[test]
-    fn update_is_folder_sets_folder_mode() {
+    fn update_track_type_sets_folder_mode() {
         let mut view = AddTrackView::default();
 
-        view.update(&Message::AddTrack(AddTrack::IsFolder(true)));
+        view.update(&Message::AddTrack(AddTrack::TrackType(
+            AddTrackType::Folder,
+        )));
 
-        assert!(view.is_folder);
+        assert_eq!(view.track_type, AddTrackType::Folder);
         assert_eq!(view.selected_template.as_deref(), Some("empty"));
     }
 
@@ -592,7 +718,7 @@ mod tests {
         let mut view = AddTrackView::default();
         view.name = "Test Folder".to_string();
         view.count = 2;
-        view.is_folder = true;
+        view.track_type = AddTrackType::Folder;
 
         let messages = view.create_messages();
         assert_eq!(messages.len(), 2);
@@ -616,7 +742,7 @@ mod tests {
     fn create_messages_returns_add_folder_from_template_for_folder_template() {
         let mut view = AddTrackView::default();
         view.name = "Drums".to_string();
-        view.is_folder = true;
+        view.track_type = AddTrackType::Folder;
         view.selected_template = Some("DrumKit".to_string());
 
         let messages = view.create_messages();

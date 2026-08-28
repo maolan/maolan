@@ -1480,31 +1480,36 @@ impl Maolan {
         best
     }
 
-    fn automation_key(target: TrackAutomationTarget) -> AutomationWriteKey {
+    fn automation_key(target: &TrackAutomationTarget) -> Option<AutomationWriteKey> {
         match target {
-            TrackAutomationTarget::Volume => AutomationWriteKey::Volume,
-            TrackAutomationTarget::Balance => AutomationWriteKey::Balance,
-            TrackAutomationTarget::MidiCc { channel, cc } => {
-                AutomationWriteKey::MidiCc { channel, cc }
-            }
+            TrackAutomationTarget::Volume => Some(AutomationWriteKey::Volume),
+            TrackAutomationTarget::Balance => Some(AutomationWriteKey::Balance),
+            TrackAutomationTarget::MidiCc { channel, cc } => Some(AutomationWriteKey::MidiCc {
+                channel: *channel,
+                cc: *cc,
+            }),
             TrackAutomationTarget::Lv2Parameter {
                 instance_id, index, ..
-            } => AutomationWriteKey::Lv2 { instance_id, index },
+            } => Some(AutomationWriteKey::Lv2 {
+                instance_id: *instance_id,
+                index: *index,
+            }),
             TrackAutomationTarget::Vst3Parameter {
                 instance_id,
                 param_id,
-            } => AutomationWriteKey::Vst3 {
-                instance_id,
-                param_id,
-            },
+            } => Some(AutomationWriteKey::Vst3 {
+                instance_id: *instance_id,
+                param_id: *param_id,
+            }),
             TrackAutomationTarget::ClapParameter {
                 instance_id,
                 param_id,
                 ..
-            } => AutomationWriteKey::Clap {
-                instance_id,
-                param_id,
-            },
+            } => Some(AutomationWriteKey::Clap {
+                instance_id: *instance_id,
+                param_id: *param_id,
+            }),
+            TrackAutomationTarget::MixOsc { .. } => None,
         }
     }
 
@@ -1582,12 +1587,13 @@ impl Maolan {
         let Some(mode) = mode else {
             return;
         };
-        let key = Self::automation_key(target);
+        let Some(key) = Self::automation_key(&target) else {
+            return;
+        };
         let value = value.clamp(0.0, 1.0);
         match mode {
             TrackAutomationMode::Read | TrackAutomationMode::Write => {}
             TrackAutomationMode::Touch => {
-                let key = Self::automation_key(target);
                 self.touch_automation_overrides
                     .entry(track_name.to_string())
                     .or_default()
@@ -2215,7 +2221,9 @@ impl Maolan {
                 .entry(track.name.clone())
                 .or_default();
             for lane in &track.automation_lanes {
-                let key = Self::automation_key(lane.target);
+                let Some(key) = Self::automation_key(&lane.target) else {
+                    continue;
+                };
                 let override_value = match track.automation_mode {
                     TrackAutomationMode::Touch => self
                         .touch_automation_overrides
@@ -2239,13 +2247,13 @@ impl Maolan {
                 };
                 let value =
                     override_value.or_else(|| Self::automation_lane_value_at(&lane.points, sample));
-                match lane.target {
+                match &lane.target {
                     TrackAutomationTarget::Volume => vol = value,
                     TrackAutomationTarget::Balance => bal = value,
                     TrackAutomationTarget::MidiCc { channel, cc } => {
                         if let Some(v) = value {
                             let cc_value = (v * 127.0).round() as u8;
-                            midi_cc_updates.push((channel, cc, cc_value));
+                            midi_cc_updates.push((*channel, *cc, cc_value));
                         }
                     }
                     #[cfg(unix)]
@@ -2260,10 +2268,10 @@ impl Maolan {
                         }
                         #[cfg(unix)]
                         if let Some(v) = value {
-                            let lo = min.min(max);
-                            let hi = max.max(min);
+                            let lo = min.min(*max);
+                            let hi = max.max(*min);
                             let param_value = (lo + v * (hi - lo)).clamp(lo, hi);
-                            let key = (instance_id, index);
+                            let key = (*instance_id, *index);
                             if runtime
                                 .lv2_params
                                 .get(&key)
@@ -2272,8 +2280,8 @@ impl Maolan {
                                 runtime.lv2_params.insert(key, param_value);
                                 actions.push(Action::TrackSetLv2ControlValue {
                                     track_name: track.name.clone(),
-                                    instance_id,
-                                    index,
+                                    instance_id: *instance_id,
+                                    index: *index,
                                     value: param_value,
                                 });
                             }
@@ -2290,7 +2298,7 @@ impl Maolan {
                         }
                         if let Some(v) = value {
                             let param_value = v.clamp(0.0, 1.0);
-                            let key = (instance_id, param_id);
+                            let key = (*instance_id, *param_id);
                             if runtime
                                 .vst3_params
                                 .get(&key)
@@ -2299,8 +2307,8 @@ impl Maolan {
                                 runtime.vst3_params.insert(key, param_value);
                                 actions.push(Action::TrackSetVst3Parameter {
                                     track_name: track.name.clone(),
-                                    instance_id,
-                                    param_id,
+                                    instance_id: *instance_id,
+                                    param_id: *param_id,
                                     value: param_value,
                                 });
                             }
@@ -2316,10 +2324,10 @@ impl Maolan {
                             continue;
                         }
                         if let Some(v) = value {
-                            let lo = min.min(max);
-                            let hi = max.max(min);
+                            let lo = min.min(*max);
+                            let hi = max.max(*min);
                             let param_value = (lo + v as f64 * (hi - lo)).clamp(lo, hi);
-                            let key = (instance_id, param_id);
+                            let key = (*instance_id, *param_id);
                             if runtime
                                 .clap_params
                                 .get(&key)
@@ -2328,14 +2336,15 @@ impl Maolan {
                                 runtime.clap_params.insert(key, param_value);
                                 actions.push(Action::TrackSetClapParameterAt {
                                     track_name: track.name.clone(),
-                                    instance_id,
-                                    param_id,
+                                    instance_id: *instance_id,
+                                    param_id: *param_id,
                                     value: param_value,
                                     frame: 0,
                                 });
                             }
                         }
                     }
+                    TrackAutomationTarget::MixOsc { .. } => {}
                 }
             }
 
@@ -4315,10 +4324,10 @@ mod tests {
     fn automation_key_equality() {
         use crate::message::TrackAutomationTarget;
 
-        let key1 = Maolan::automation_key(TrackAutomationTarget::Volume);
-        let key2 = Maolan::automation_key(TrackAutomationTarget::Volume);
-        let key3 = Maolan::automation_key(TrackAutomationTarget::Balance);
-        let key4 = Maolan::automation_key(TrackAutomationTarget::MidiCc { channel: 0, cc: 7 });
+        let key1 = Maolan::automation_key(&TrackAutomationTarget::Volume);
+        let key2 = Maolan::automation_key(&TrackAutomationTarget::Volume);
+        let key3 = Maolan::automation_key(&TrackAutomationTarget::Balance);
+        let key4 = Maolan::automation_key(&TrackAutomationTarget::MidiCc { channel: 0, cc: 7 });
 
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);

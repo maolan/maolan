@@ -1158,6 +1158,7 @@ impl Maolan {
             let midi_ins = track_json["midi"]["ins"].as_u64().unwrap_or(0) as usize;
             let midi_outs = track_json["midi"]["outs"].as_u64().unwrap_or(0) as usize;
             let folder = track_json["is_folder"].as_bool().unwrap_or(false);
+            let mixosc_addr = track_json["mixosc_addr"].as_str().map(String::from);
 
             tasks.push(self.send(Action::AddTrack {
                 name: member.new_name.clone(),
@@ -1166,6 +1167,7 @@ impl Maolan {
                 audio_outs,
                 midi_outs,
                 folder,
+                mixosc_addr,
             }));
         }
 
@@ -2841,6 +2843,10 @@ impl Maolan {
                     .get("is_folder")
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false);
+                let mixosc_addr = track
+                    .get("mixosc_addr")
+                    .and_then(|value| value.as_str())
+                    .map(String::from);
                 restore_actions.push(Action::AddTrack {
                     name: name.clone(),
                     audio_ins: primary_audio_ins.min(audio_ins),
@@ -2848,6 +2854,7 @@ impl Maolan {
                     midi_ins,
                     midi_outs,
                     folder,
+                    mixosc_addr,
                 });
                 for _ in primary_audio_ins.min(audio_ins)..audio_ins {
                     restore_actions.push(Action::TrackAddAudioInput(name.clone()));
