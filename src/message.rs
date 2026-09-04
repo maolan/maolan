@@ -21,6 +21,14 @@ pub enum Show {
     AddTrack,
     AddFolder,
     TrackPluginList,
+    GenericPluginView {
+        track_name: String,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        format: String,
+        plugin_id: String,
+        name: String,
+    },
     GenerateAudio,
     GenerateMidi,
     ExportSettings,
@@ -33,9 +41,15 @@ pub enum Show {
     SaveTemplateAs,
     Open,
     About,
-    TrackColor { track_name: String },
-    MpeConfig { track_name: String },
-    ApplyTemplate { track_name: String },
+    TrackColor {
+        track_name: String,
+    },
+    MpeConfig {
+        track_name: String,
+    },
+    ApplyTemplate {
+        track_name: String,
+    },
     BranchManager,
     BranchTrackList(String),
 }
@@ -1527,6 +1541,21 @@ pub enum Message {
         clip_idx: Option<usize>,
         instance_id: usize,
         plugin_id: String,
+    },
+    OpenGenericPluginUi {
+        track_name: String,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        format: String,
+        plugin_id: String,
+    },
+    GenericPluginParameterChanged {
+        track_name: String,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        format: String,
+        param_id: u32,
+        value: f64,
     },
 
     #[cfg(unix)]

@@ -103,6 +103,24 @@ impl Maolan {
                 self.selected_clap_plugins.clear();
                 Task::none()
             }
+            Show::GenericPluginView {
+                track_name,
+                clip_idx,
+                instance_id,
+                format,
+                plugin_id,
+                name,
+            } => {
+                self.modal = Some(Show::GenericPluginView {
+                    track_name: track_name.clone(),
+                    clip_idx: *clip_idx,
+                    instance_id: *instance_id,
+                    format: format.clone(),
+                    plugin_id: plugin_id.clone(),
+                    name: name.clone(),
+                });
+                Task::none()
+            }
             Show::GenerateAudio => {
                 self.generate_audio_prompt_editor = text_editor::Content::new();
                 self.generate_audio_tags_input.clear();
