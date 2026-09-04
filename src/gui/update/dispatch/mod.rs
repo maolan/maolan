@@ -25,6 +25,23 @@ mod ui;
 const CLIP_EDGE_SNAP_THRESHOLD_PX: f32 = 12.0;
 const TRACK_SETUP_MIN_TRACKS_WIDTH: f32 = 338.6557;
 
+fn native_ui_error_matches(format: &str, error: &str) -> bool {
+    if format.eq_ignore_ascii_case("VST3") {
+        error.contains("VST3 GUI")
+            || error.contains("editor view")
+            || error.contains("No GUI view")
+            || error.contains("Platform type")
+    } else if format.eq_ignore_ascii_case("LV2") {
+        error.contains("LV2 GUI")
+            || error.contains("LV2 UI")
+            || error.contains("No suitable LV2")
+            || error.contains("supported LV2")
+            || error.contains("only supported on X11")
+    } else {
+        false
+    }
+}
+
 struct MoveClipSnapArgs<'a> {
     kind: Kind,
     from_track_name: &'a str,
@@ -3399,6 +3416,12 @@ impl Maolan {
                     Action::Log { source, message } => {
                         self.info(format!("[{source}] {message}"));
                     }
+                    Action::TrackShowVst3Gui { .. }
+                    | Action::ClipShowVst3Gui { .. }
+                    | Action::TrackShowLv2Gui { .. }
+                    | Action::ClipShowLv2Gui { .. } => {
+                        self.pending_native_ui_fallback = None;
+                    }
                     _ if !self.session_restore_in_progress && history::should_record(a) => {
                         self.engine_dirty = true;
                     }
@@ -4921,6 +4944,7 @@ impl Maolan {
                                             name: p.name.clone(),
                                             min: p.min_value,
                                             max: p.max_value,
+                                            default_value: p.default_value,
                                         })
                                         .collect(),
                                 );
@@ -4966,6 +4990,31 @@ impl Maolan {
                                 let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
                             }
                         }
+                        Action::ClipClapParameters {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            parameters,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            let cached = state
+                                .plugin_parameters_by_clip
+                                .entry((track_name.clone(), *clip_idx))
+                                .or_default();
+                            cached.insert(
+                                *instance_id,
+                                parameters
+                                    .iter()
+                                    .map(|p| crate::state::PluginParameterInfo {
+                                        param_id: p.id,
+                                        name: p.name.clone(),
+                                        min: p.min_value,
+                                        max: p.max_value,
+                                        default_value: p.default_value,
+                                    })
+                                    .collect(),
+                            );
+                        }
                         Action::TrackVst3Parameters {
                             track_name,
                             instance_id,
@@ -4989,6 +5038,7 @@ impl Maolan {
                                             name: p.title.clone(),
                                             min: 0.0,
                                             max: 1.0,
+                                            default_value: p.default_value,
                                         })
                                         .collect(),
                                 );
@@ -5032,6 +5082,58 @@ impl Maolan {
                                 let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
                             }
                         }
+                        Action::ClipVst3Parameters {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            parameters,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            let cached = state
+                                .plugin_parameters_by_clip
+                                .entry((track_name.clone(), *clip_idx))
+                                .or_default();
+                            cached.insert(
+                                *instance_id,
+                                parameters
+                                    .iter()
+                                    .map(|p| crate::state::PluginParameterInfo {
+                                        param_id: p.id,
+                                        name: p.title.clone(),
+                                        min: 0.0,
+                                        max: 1.0,
+                                        default_value: p.default_value,
+                                    })
+                                    .collect(),
+                            );
+                        }
+                        #[cfg(unix)]
+                        Action::ClipLv2PluginControls {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            controls,
+                            instance_access_handle: _,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            let cached = state
+                                .plugin_parameters_by_clip
+                                .entry((track_name.clone(), *clip_idx))
+                                .or_default();
+                            cached.insert(
+                                *instance_id,
+                                controls
+                                    .iter()
+                                    .map(|p| crate::state::PluginParameterInfo {
+                                        param_id: p.index,
+                                        name: p.name.clone(),
+                                        min: p.min as f64,
+                                        max: p.max as f64,
+                                        default_value: p.value as f64,
+                                    })
+                                    .collect(),
+                            );
+                        }
                         #[cfg(unix)]
                         Action::TrackLv2PluginControls {
                             track_name,
@@ -5057,6 +5159,7 @@ impl Maolan {
                                             name: p.name.clone(),
                                             min: p.min as f64,
                                             max: p.max as f64,
+                                            default_value: p.value as f64,
                                         })
                                         .collect(),
                                 );
@@ -5425,6 +5528,61 @@ impl Maolan {
                         } => {
                             let key = (track_name.clone(), None, *instance_id, *param_id);
                             self.clap_param_values.insert(key, *value);
+                            self.generic_plugin_param_values.insert(
+                                (track_name.clone(), None, *instance_id, *param_id),
+                                *value,
+                            );
+                        }
+                        Action::TrackSetVst3Parameter {
+                            track_name,
+                            instance_id,
+                            param_id,
+                            value,
+                        } => {
+                            self.generic_plugin_param_values.insert(
+                                (track_name.clone(), None, *instance_id, *param_id),
+                                f64::from(*value),
+                            );
+                        }
+                        Action::ClipSetClapParameter {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            param_id,
+                            value,
+                        } => {
+                            let key =
+                                (track_name.clone(), Some(*clip_idx), *instance_id, *param_id);
+                            self.clap_param_values.insert(key, *value);
+                            self.generic_plugin_param_values.insert(
+                                (track_name.clone(), Some(*clip_idx), *instance_id, *param_id),
+                                *value,
+                            );
+                        }
+                        Action::ClipSetVst3Parameter {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            param_id,
+                            value,
+                        } => {
+                            self.generic_plugin_param_values.insert(
+                                (track_name.clone(), Some(*clip_idx), *instance_id, *param_id),
+                                f64::from(*value),
+                            );
+                        }
+                        #[cfg(unix)]
+                        Action::ClipSetLv2ControlValue {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            index,
+                            value,
+                        } => {
+                            self.generic_plugin_param_values.insert(
+                                (track_name.clone(), Some(*clip_idx), *instance_id, *index),
+                                f64::from(*value),
+                            );
                         }
                         _ => {}
                     }
@@ -5435,6 +5593,21 @@ impl Maolan {
                 }
             }
             Message::Response(Err(ref e)) => {
+                if let Some(fallback) = self.pending_native_ui_fallback.take()
+                    && native_ui_error_matches(&fallback.format, e)
+                {
+                    self.info(format!(
+                        "{} native UI unavailable for instance {}; opening generic editor",
+                        fallback.format, fallback.instance_id
+                    ));
+                    return self.open_generic_plugin_ui(
+                        fallback.track_name,
+                        fallback.clip_idx,
+                        fallback.instance_id,
+                        fallback.format,
+                        fallback.plugin_id,
+                    );
+                }
                 if !self.pending_track_freeze_bounce.is_empty() {
                     self.pending_track_freeze_bounce.clear();
                 }

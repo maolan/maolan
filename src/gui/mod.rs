@@ -31,7 +31,7 @@ use crate::{
     state::{
         AudioClip, ClipPeaks, KeyMode, LOG_HISTORY_LIMIT, LogEntry, LogLevel, MIDIClip,
         MidiClipPreviewMap, NoteName, PianoControllerPoint, PianoNote, PianoSysExPoint,
-        PitchCorrectionData, PitchCorrectionPoint, State, StateData,
+        PitchCorrectionData, PitchCorrectionPoint, PluginParameterInfo, State, StateData,
     },
     template_save, toolbar, track_marker, track_rename, track_template_save, workspace,
 };
@@ -44,6 +44,7 @@ use maolan_engine::message::{
     Action, ConnectableConnection, ConnectableRef, Message as EngineMessage, OfflineAutomationLane,
     OfflineAutomationPoint, OfflineAutomationTarget,
 };
+use maolan_widgets::horizontal_slider::horizontal_slider;
 use maolan_widgets::iced::{
     Color, Length, Size, Task,
     advanced::text::Span,
@@ -597,6 +598,15 @@ struct MeterStopDecay {
     track_meters: Vec<(String, Vec<f32>)>,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct PendingNativeUiFallback {
+    track_name: String,
+    clip_idx: Option<usize>,
+    instance_id: usize,
+    format: String,
+    plugin_id: String,
+}
+
 pub struct Maolan {
     clip: Option<DraggedClip>,
     clip_preview_target_track: Option<String>,
@@ -784,6 +794,8 @@ pub struct Maolan {
     export_master_limiter: bool,
     export_master_limiter_ceiling_input: String,
     clap_param_values: HashMap<(String, Option<usize>, usize, u32), f64>,
+    generic_plugin_param_values: HashMap<(String, Option<usize>, usize, u32), f64>,
+    pending_native_ui_fallback: Option<PendingNativeUiFallback>,
     tempo_input: String,
     time_signature_num_input: String,
     time_signature_denom_input: String,
@@ -1119,6 +1131,8 @@ impl Default for Maolan {
             export_master_limiter: true,
             export_master_limiter_ceiling_input: "-1.0".to_string(),
             clap_param_values: HashMap::new(),
+            generic_plugin_param_values: HashMap::new(),
+            pending_native_ui_fallback: None,
             tempo_input: "120".to_string(),
             time_signature_num_input: "4".to_string(),
             time_signature_denom_input: "4".to_string(),
@@ -5549,6 +5563,184 @@ impl Maolan {
     ) -> Option<maolan_engine::clap::ClapPluginState> {
         let resolved = Self::resolve_collected_plugin_state_paths(v, session_root);
         serde_json::from_value(resolved).ok()
+    }
+
+    fn generic_plugin_parameter_value(
+        &self,
+        track_name: &str,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        param: &PluginParameterInfo,
+    ) -> f64 {
+        let value = self
+            .generic_plugin_param_values
+            .get(&(
+                track_name.to_string(),
+                clip_idx,
+                instance_id,
+                param.param_id,
+            ))
+            .copied()
+            .unwrap_or(param.default_value);
+        if param.min.is_finite() && param.max.is_finite() && param.min < param.max {
+            value.clamp(param.min, param.max)
+        } else {
+            value.clamp(0.0, 1.0)
+        }
+    }
+
+    fn generic_plugin_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
+        let Some(Show::GenericPluginView {
+            track_name,
+            clip_idx,
+            instance_id,
+            format,
+            plugin_id,
+            name,
+        }) = self.modal.clone()
+        else {
+            return container(text("No plugin selected"))
+                .padding(20)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        };
+
+        let parameters = {
+            let state = self.state.blocking_read();
+            if let Some(clip_idx) = clip_idx {
+                state
+                    .plugin_parameters_by_clip
+                    .get(&(track_name.clone(), clip_idx))
+                    .and_then(|cache| cache.get(&instance_id))
+                    .cloned()
+            } else {
+                state
+                    .plugin_parameters_by_track
+                    .get(&track_name)
+                    .and_then(|cache| cache.get(&instance_id))
+                    .cloned()
+            }
+        };
+
+        let body: maolan_widgets::iced::Element<'_, Message> = match parameters {
+            None => column![text("Loading parameters...").size(13)]
+                .spacing(8)
+                .into(),
+            Some(parameters) if parameters.is_empty() => column![
+                text("No editable parameters").size(13),
+                text("This plugin did not expose host parameters.").size(12),
+            ]
+            .spacing(8)
+            .into(),
+            Some(parameters) => {
+                let mut rows: Vec<maolan_widgets::iced::Element<'_, Message>> = Vec::new();
+                for param in &parameters {
+                    let value = self.generic_plugin_parameter_value(
+                        &track_name,
+                        clip_idx,
+                        instance_id,
+                        param,
+                    );
+                    let (min, max) = if param.min.is_finite()
+                        && param.max.is_finite()
+                        && param.min < param.max
+                    {
+                        (param.min as f32, param.max as f32)
+                    } else {
+                        (0.0, 1.0)
+                    };
+                    let slider_track = track_name.clone();
+                    let slider_format = format.clone();
+                    let param_id = param.param_id;
+                    let slider = horizontal_slider(min..=max, value as f32, move |value| {
+                        Message::GenericPluginParameterChanged {
+                            track_name: slider_track.clone(),
+                            clip_idx,
+                            instance_id,
+                            format: slider_format.clone(),
+                            param_id,
+                            value: f64::from(value),
+                        }
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fixed(14.0));
+                    rows.push(
+                        row![
+                            text(param.name.clone())
+                                .size(12)
+                                .width(Length::FillPortion(2)),
+                            text(format!("{:.3}", value))
+                                .size(12)
+                                .width(Length::Fixed(72.0)),
+                            slider,
+                        ]
+                        .spacing(10)
+                        .width(Length::Fill)
+                        .into(),
+                    );
+                }
+                scrollable(column(rows).spacing(10))
+                    .height(Length::Fill)
+                    .into()
+            }
+        };
+
+        let mut actions = row![
+            button("Refresh").on_press(Message::OpenGenericPluginUi {
+                track_name: track_name.clone(),
+                clip_idx,
+                instance_id,
+                format: format.clone(),
+                plugin_id: plugin_id.clone(),
+            }),
+            button("Close")
+                .on_press(Message::Cancel)
+                .style(button::secondary),
+        ]
+        .spacing(10);
+
+        if format.eq_ignore_ascii_case("CLAP") {
+            actions = actions.push(button("Native UI").on_press(Message::ShowClapPluginUi {
+                track_name: track_name.clone(),
+                clip_idx,
+                instance_id,
+                plugin_id,
+            }));
+        } else if format.eq_ignore_ascii_case("LV2") {
+            actions = actions.push(button("Native UI").on_press(Message::OpenLv2PluginUi {
+                track_name: track_name.clone(),
+                clip_idx,
+                instance_id,
+            }));
+        }
+
+        container(
+            column![
+                column![
+                    text(name).size(18),
+                    text(if let Some(clip_idx) = clip_idx {
+                        format!(
+                            "{} instance {} on {} clip {}",
+                            format, instance_id, track_name, clip_idx
+                        )
+                    } else {
+                        format!("{} instance {} on {}", format, instance_id, track_name)
+                    })
+                    .size(12),
+                ]
+                .spacing(3)
+                .width(Length::Fill),
+                body,
+                actions,
+            ]
+            .spacing(14),
+        )
+        .style(|_theme| crate::style::app_background())
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     #[cfg(unix)]

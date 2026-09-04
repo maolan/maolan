@@ -272,6 +272,9 @@ impl Maolan {
                 Some(Show::TrackPluginList) => {
                     self.wrap_with_log_window(self.track_plugin_list_view())
                 }
+                Some(Show::GenericPluginView { .. }) => {
+                    self.wrap_with_log_window(self.generic_plugin_view())
+                }
                 _ => {
                     let view_kind = state.view.clone();
                     let shift_pressed = state.shift;

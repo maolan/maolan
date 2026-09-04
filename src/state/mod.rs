@@ -969,9 +969,11 @@ pub struct PluginParameterInfo {
     pub name: String,
     pub min: f64,
     pub max: f64,
+    pub default_value: f64,
 }
 
 pub type PluginParameterCache = HashMap<usize, Vec<PluginParameterInfo>>;
+pub type ClipPluginParameterCache = HashMap<(String, usize), PluginParameterCache>;
 
 #[derive(Debug, Clone)]
 pub struct PluginControllerMenuState {
@@ -1548,6 +1550,7 @@ pub struct StateData {
     pub plugin_graphs_by_track: HashMap<String, PluginGraphSnapshot>,
     pub connectable_connections_by_track: HashMap<String, Vec<ConnectableConnection>>,
     pub plugin_parameters_by_track: HashMap<String, PluginParameterCache>,
+    pub plugin_parameters_by_clip: ClipPluginParameterCache,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_connectable_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugins: std::collections::HashSet<usize>,
@@ -1788,6 +1791,7 @@ impl Default for StateData {
             plugin_graphs_by_track: HashMap::new(),
             connectable_connections_by_track: HashMap::new(),
             plugin_parameters_by_track: HashMap::new(),
+            plugin_parameters_by_clip: HashMap::new(),
             plugin_graph_selected_connections: HashSet::new(),
             plugin_graph_selected_connectable_connections: HashSet::new(),
             plugin_graph_selected_plugins: std::collections::HashSet::new(),

@@ -888,7 +888,7 @@ pub fn run_vst3(args: Vst3RunArgs) {
                 .request_status
                 .store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
 
-            if req == 1 || req == 2 {
+            if req == 1 || req == 2 || req == 3 {
                 let _ = events.signal_daw();
             }
             header.request_type.store(0, Ordering::Release);
@@ -2423,6 +2423,7 @@ pub fn run_lv2(
             if matches!(
                 req,
                 1 | 2
+                    | 3
                     | 5
                     | maolan_plugin_protocol::protocol::REQUEST_LV2_CONTROL_PORTS
                     | maolan_plugin_protocol::protocol::REQUEST_LV2_MIDNAM

@@ -1,6 +1,126 @@
 use super::*;
 
 impl Maolan {
+    fn plugin_display_name(
+        state: &crate::state::StateData,
+        instance_id: usize,
+        format: &str,
+        plugin_id: &str,
+    ) -> String {
+        state
+            .plugin_graph_plugins
+            .iter()
+            .find(|plugin| plugin.instance_id == instance_id)
+            .map(|plugin| plugin.name.clone())
+            .or_else(|| {
+                if format.eq_ignore_ascii_case("CLAP") {
+                    state
+                        .clap_plugins
+                        .iter()
+                        .find(|plugin| plugin.id == plugin_id)
+                        .map(|plugin| plugin.name.clone())
+                } else if format.eq_ignore_ascii_case("VST3") {
+                    state
+                        .vst3_plugins
+                        .iter()
+                        .find(|plugin| plugin.id == plugin_id)
+                        .map(|plugin| plugin.name.clone())
+                } else if format.eq_ignore_ascii_case("LV2") {
+                    state
+                        .lv2_plugins
+                        .iter()
+                        .find(|plugin| plugin.uri == plugin_id)
+                        .map(|plugin| plugin.name.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| plugin_id.to_string())
+    }
+
+    pub(super) fn open_generic_plugin_ui(
+        &mut self,
+        track_name: String,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        format: String,
+        plugin_id: String,
+    ) -> Task<Message> {
+        let (name, cached) = {
+            let state = self.state.blocking_read();
+            let name = Self::plugin_display_name(&state, instance_id, &format, &plugin_id);
+            let cached = if let Some(clip_idx) = clip_idx {
+                state
+                    .plugin_parameters_by_clip
+                    .get(&(track_name.clone(), clip_idx))
+                    .and_then(|cache| cache.get(&instance_id))
+                    .is_some()
+            } else {
+                state
+                    .plugin_parameters_by_track
+                    .get(&track_name)
+                    .and_then(|cache| cache.get(&instance_id))
+                    .is_some()
+            };
+            (name, cached)
+        };
+        self.modal = Some(Show::GenericPluginView {
+            track_name: track_name.clone(),
+            clip_idx,
+            instance_id,
+            format: format.clone(),
+            plugin_id,
+            name,
+        });
+        if cached {
+            return Task::none();
+        }
+        match (format.as_str(), clip_idx) {
+            (format, Some(clip_idx)) if format.eq_ignore_ascii_case("CLAP") => {
+                self.send(Action::ClipGetClapParameters {
+                    track_name,
+                    clip_idx,
+                    instance_id,
+                })
+            }
+            (format, Some(clip_idx)) if format.eq_ignore_ascii_case("VST3") => {
+                self.send(Action::ClipGetVst3Parameters {
+                    track_name,
+                    clip_idx,
+                    instance_id,
+                })
+            }
+            #[cfg(unix)]
+            (format, Some(clip_idx)) if format.eq_ignore_ascii_case("LV2") => {
+                self.send(Action::ClipGetLv2PluginControls {
+                    track_name,
+                    clip_idx,
+                    instance_id,
+                })
+            }
+            (format, None) if format.eq_ignore_ascii_case("CLAP") => {
+                self.send(Action::TrackGetClapParameters {
+                    track_name,
+                    instance_id,
+                })
+            }
+            (format, None) if format.eq_ignore_ascii_case("VST3") => {
+                self.send(Action::TrackGetVst3Parameters {
+                    track_name,
+                    instance_id,
+                })
+            }
+            #[cfg(unix)]
+            (format, None) if format.eq_ignore_ascii_case("LV2") => {
+                self.send(Action::TrackGetLv2PluginControls {
+                    track_name,
+                    instance_id,
+                })
+            }
+            _ => Task::none(),
+        }
+    }
+
     pub(super) fn handle_plugin_message(&mut self, message: Message) -> Option<Task<Message>> {
         match message {
             #[cfg(unix)]
@@ -217,13 +337,34 @@ impl Maolan {
                 ref track_name,
                 clip_idx,
                 instance_id,
-                plugin_id,
+                ref plugin_id,
             } => {
-                let _ = plugin_id;
                 if self.session_restore_in_progress {
                     self.state.blocking_write().message =
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
+                }
+                let has_native_ui = {
+                    let state = self.state.blocking_read();
+                    state
+                        .clap_plugins
+                        .iter()
+                        .find(|plugin| plugin.id == *plugin_id)
+                        .and_then(|plugin| plugin.capabilities.as_ref())
+                        .is_none_or(|caps| caps.has_gui)
+                };
+                if !has_native_ui {
+                    self.info(format!(
+                        "Opening generic CLAP editor for track '{}' instance {}",
+                        track_name, instance_id
+                    ));
+                    return Some(self.open_generic_plugin_ui(
+                        track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                        "CLAP".to_string(),
+                        plugin_id.clone(),
+                    ));
                 }
                 self.info(format!(
                     "Requesting CLAP UI for track '{}' instance {}",
@@ -253,6 +394,29 @@ impl Maolan {
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
+                let plugin_id = {
+                    let state = self.state.blocking_read();
+                    state
+                        .plugin_graph_plugins
+                        .iter()
+                        .find(|plugin| {
+                            plugin.instance_id == instance_id
+                                && plugin.format.eq_ignore_ascii_case("LV2")
+                        })
+                        .map(|plugin| plugin.plugin_id.clone())
+                        .unwrap_or_default()
+                };
+                self.pending_native_ui_fallback = Some(crate::gui::PendingNativeUiFallback {
+                    track_name: track_name.clone(),
+                    clip_idx,
+                    instance_id,
+                    format: "LV2".to_string(),
+                    plugin_id,
+                });
+                self.info(format!(
+                    "Requesting LV2 UI for track '{}' instance {}",
+                    track_name, instance_id
+                ));
                 if let Some(clip_idx) = clip_idx {
                     Some(self.send(Action::ClipShowLv2Gui {
                         track_name: track_name.clone(),
@@ -326,14 +490,20 @@ impl Maolan {
                 ref track_name,
                 clip_idx,
                 instance_id,
-                plugin_id,
+                ref plugin_id,
             } => {
-                let _ = plugin_id;
                 if self.session_restore_in_progress {
                     self.state.blocking_write().message =
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
+                self.pending_native_ui_fallback = Some(crate::gui::PendingNativeUiFallback {
+                    track_name: track_name.clone(),
+                    clip_idx,
+                    instance_id,
+                    format: "VST3".to_string(),
+                    plugin_id: plugin_id.clone(),
+                });
                 self.info(format!(
                     "Requesting VST3 UI for track '{}' instance {}",
                     track_name, instance_id
@@ -349,6 +519,86 @@ impl Maolan {
                         track_name: track_name.clone(),
                         instance_id,
                     }))
+                }
+            }
+            Message::OpenGenericPluginUi {
+                ref track_name,
+                clip_idx,
+                instance_id,
+                ref format,
+                ref plugin_id,
+            } => Some(self.open_generic_plugin_ui(
+                track_name.clone(),
+                clip_idx,
+                instance_id,
+                format.clone(),
+                plugin_id.clone(),
+            )),
+            Message::GenericPluginParameterChanged {
+                ref track_name,
+                clip_idx,
+                instance_id,
+                ref format,
+                param_id,
+                value,
+            } => {
+                self.generic_plugin_param_values
+                    .insert((track_name.clone(), clip_idx, instance_id, param_id), value);
+                match (format.as_str(), clip_idx) {
+                    (format, Some(clip_idx)) if format.eq_ignore_ascii_case("CLAP") => {
+                        Some(self.send(Action::ClipSetClapParameter {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            param_id,
+                            value,
+                        }))
+                    }
+                    (format, Some(clip_idx)) if format.eq_ignore_ascii_case("VST3") => {
+                        Some(self.send(Action::ClipSetVst3Parameter {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            param_id,
+                            value: value as f32,
+                        }))
+                    }
+                    (format, None) if format.eq_ignore_ascii_case("CLAP") => {
+                        Some(self.send(Action::TrackSetClapParameter {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            param_id,
+                            value,
+                        }))
+                    }
+                    (format, None) if format.eq_ignore_ascii_case("VST3") => {
+                        Some(self.send(Action::TrackSetVst3Parameter {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            param_id,
+                            value: value as f32,
+                        }))
+                    }
+                    #[cfg(unix)]
+                    (format, Some(clip_idx)) if format.eq_ignore_ascii_case("LV2") => {
+                        Some(self.send(Action::ClipSetLv2ControlValue {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            index: param_id,
+                            value: value as f32,
+                        }))
+                    }
+                    #[cfg(unix)]
+                    (format, None) if format.eq_ignore_ascii_case("LV2") => {
+                        Some(self.send(Action::TrackSetLv2ControlValue {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            index: param_id,
+                            value: value as f32,
+                        }))
+                    }
+                    _ => None,
                 }
             }
             Message::SendMessageFinished(Err(_e)) => None,
