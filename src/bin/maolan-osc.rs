@@ -321,8 +321,8 @@ Plugins:
   plugin set_param_at <track> clap <instance> <param_id> <value> <frame>
   plugin begin_param_edit <track> clap <instance> <param_id> <frame>
   plugin end_param_edit <track> clap <instance> <param_id> <frame>
-  plugin set_resource_dir <track> <format> <instance> <dir>
-  plugin update_file_reference <track> <format> <instance> <index> <path>
+  plugin set_resource_dir <track> <format> <instance> <dir> [shared 0|1]
+  plugin collect_resources <track> <clap|lv2|vst3> <instance>
   plugin connect_audio <track> <from_node> <from_port> <to_node> <to_port>
   plugin disconnect_audio <track> <from_node> <from_port> <to_node> <to_port>
   plugin connect_midi <track> <from_node> <from_port> <to_node> <to_port>
@@ -331,8 +331,8 @@ Plugins:
   clip_plugin set_param <track> <clap|lv2> <clip_idx> <instance> <param_id> <value>
   clip_plugin snapshot_state <track> <clap|vst3|lv2> <clip_idx> <instance>
   clip_plugin restore_state <track> <clap|lv2|vst3> <clip_idx> <instance> <json>
-  clip_plugin set_resource_dir <track> <format> <clip_idx> <instance> <dir>
-  clip_plugin update_file_reference <track> <format> <clip_idx> <instance> <index> <path>
+  clip_plugin set_resource_dir <track> <format> <clip_idx> <instance> <dir> [shared 0|1]
+  clip_plugin collect_resources <track> <clap|lv2|vst3> <clip_idx> <instance>
 
 VST3 graph:
   vst3 connect_audio <track> <from_node> <from_port> <to_node> <to_port>
@@ -952,28 +952,38 @@ fn build_plugin_packet(command: &[String]) -> Result<Vec<u8>, String> {
         }
         "set_resource_dir" => {
             require_len(command, 6)?;
+            let shared = if command.len() > 6 {
+                parse_bool(&command[6])?
+            } else {
+                1
+            };
             Ok(osc_packet_with_args(
                 "/plugin/set_resource_dir",
-                "ssis",
+                "ssisi",
                 &[
                     OscArg::String(command[2].clone()),
                     OscArg::String(command[3].clone()),
                     OscArg::Int(parse_int(&command[4])?),
                     OscArg::String(command[5].clone()),
+                    OscArg::Int(shared),
                 ],
             ))
         }
-        "update_file_reference" => {
-            require_len(command, 7)?;
+        "collect_resources" => {
+            require_len(command, 6)?;
+            if !command[3].eq_ignore_ascii_case("clap") {
+                return Err(format!(
+                    "collect_resources is only supported for CLAP plugins, got '{}'",
+                    command[3]
+                ));
+            }
             Ok(osc_packet_with_args(
-                "/plugin/update_file_reference",
-                "ssiis",
+                "/plugin/collect_resources",
+                "ssi",
                 &[
                     OscArg::String(command[2].clone()),
                     OscArg::String(command[3].clone()),
                     OscArg::Int(parse_int(&command[4])?),
-                    OscArg::Int(parse_int(&command[5])?),
-                    OscArg::String(command[6].clone()),
                 ],
             ))
         }
@@ -1095,30 +1105,40 @@ fn build_clip_plugin_packet(command: &[String]) -> Result<Vec<u8>, String> {
         }
         "set_resource_dir" => {
             require_len(command, 7)?;
+            let shared = if command.len() > 7 {
+                parse_bool(&command[7])?
+            } else {
+                1
+            };
             Ok(osc_packet_with_args(
                 "/clip_plugin/set_resource_dir",
-                "ssiis",
+                "ssiisi",
                 &[
                     OscArg::String(command[2].clone()),
                     OscArg::String(command[3].clone()),
                     OscArg::Int(parse_int(&command[4])?),
                     OscArg::Int(parse_int(&command[5])?),
                     OscArg::String(command[6].clone()),
+                    OscArg::Int(shared),
                 ],
             ))
         }
-        "update_file_reference" => {
-            require_len(command, 8)?;
+        "collect_resources" => {
+            require_len(command, 6)?;
+            if !command[3].eq_ignore_ascii_case("clap") {
+                return Err(format!(
+                    "collect_resources is only supported for CLAP plugins, got '{}'",
+                    command[3]
+                ));
+            }
             Ok(osc_packet_with_args(
-                "/clip_plugin/update_file_reference",
-                "ssiiis",
+                "/clip_plugin/collect_resources",
+                "ssii",
                 &[
                     OscArg::String(command[2].clone()),
                     OscArg::String(command[3].clone()),
                     OscArg::Int(parse_int(&command[4])?),
                     OscArg::Int(parse_int(&command[5])?),
-                    OscArg::Int(parse_int(&command[6])?),
-                    OscArg::String(command[7].clone()),
                 ],
             ))
         }
@@ -1766,18 +1786,16 @@ mod tests {
 
         let packet = build_packet(&[
             "clip_plugin".to_string(),
-            "update_file_reference".to_string(),
+            "collect_resources".to_string(),
             "drums".to_string(),
             "clap".to_string(),
             "1".to_string(),
             "0".to_string(),
-            "0".to_string(),
-            "/tmp/sample.wav".to_string(),
         ])
         .unwrap();
         assert!(packet_starts_with_address(
             &packet,
-            "/clip_plugin/update_file_reference"
+            "/clip_plugin/collect_resources"
         ));
 
         let packet = build_packet(&["query".to_string(), "diagnostics".to_string()]).unwrap();

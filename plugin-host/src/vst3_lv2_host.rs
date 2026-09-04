@@ -2383,7 +2383,7 @@ pub fn run_lv2(
                     std::sync::atomic::fence(Ordering::SeqCst);
                     let dir = unsafe { read_resource_directory_from_scratch(ptr) };
                     match dir {
-                        Some(dir) => {
+                        Some((dir, _is_shared)) => {
                             processor.set_state_base_dir(std::path::PathBuf::from(dir));
                             Ok(())
                         }

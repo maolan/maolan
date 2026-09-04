@@ -3441,29 +3441,29 @@ impl Maolan {
                     return Task::none();
                 }
                 match a {
-                    Action::TrackClapFileReferences {
+                    Action::TrackClapResourceFiles {
                         track_name,
                         instance_id,
-                        refs,
+                        files,
                     } => {
                         let plugin_ref = crate::gui::PluginInstanceRef::Track {
                             track_name: track_name.clone(),
                             instance_id: *instance_id,
                         };
-                        self.handle_clap_file_references_response(&plugin_ref, refs);
+                        self.handle_clap_resource_files_response(&plugin_ref, files);
                     }
-                    Action::ClipClapFileReferences {
+                    Action::ClipClapResourceFiles {
                         track_name,
                         clip_idx,
                         instance_id,
-                        refs,
+                        files,
                     } => {
                         let plugin_ref = crate::gui::PluginInstanceRef::Clip {
                             track_name: track_name.clone(),
                             clip_idx: *clip_idx,
                             instance_id: *instance_id,
                         };
-                        self.handle_clap_file_references_response(&plugin_ref, refs);
+                        self.handle_clap_resource_files_response(&plugin_ref, files);
                     }
                     Action::TrackClapStateDirty {
                         track_name,
