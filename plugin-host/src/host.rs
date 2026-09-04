@@ -3,7 +3,7 @@ use crate::clap::{
     CLAP_EXT_PARAMS, CLAP_EXT_TIMER_SUPPORT, ClapAudioBuffer, ClapEventHeader, ClapEventMidi,
     ClapEventNote, ClapEventParamGesture, ClapEventParamMod, ClapEventParamValue, ClapPluginParams,
     ClapProcess, EventBuffer, EventCapture, PluginInstance, ThreadType, host_timers_snapshot,
-    set_thread_type,
+    set_thread_type, store_resource_directory,
 };
 #[cfg(unix)]
 use crate::clap::{CLAP_EXT_POSIX_FD_SUPPORT, host_fds_snapshot};
@@ -668,7 +668,6 @@ impl HostRuntime {
         let mut clap_gui_window: Option<ContainerWindow> = None;
         #[cfg(unix)]
         let mut clap_gui_window_x11: Option<crate::gui_x11::x11::ContainerWindow> = None;
-        let mut _resource_directory: Option<String> = None;
 
         loop {
             if header.shutdown_request.load(Ordering::Acquire) != 0 {
@@ -964,28 +963,32 @@ impl HostRuntime {
                         let dir = unsafe { read_resource_directory_from_scratch(ptr) };
                         tracing::info!(?dir, "CLAP host request 5 read resource directory");
                         match dir {
-                            Some(dir) => {
-                                _resource_directory = Some(dir.clone());
+                            Some((dir, is_shared)) => {
+                                store_resource_directory(&dir, is_shared);
+                                if plugin.resource_directory_extension().is_ok() {
+                                    plugin.set_resource_directory(Some(&dir), is_shared);
+                                } else {
+                                    tracing::info!(
+                                        "Plugin does not support clap.resource-directory/1; \
+                                         directory stored for later"
+                                    );
+                                }
                                 Ok(())
                             }
                             None => Err("Invalid resource directory in scratch".to_string()),
                         }
                     }
-                    6 => match plugin.file_references() {
-                        Ok(refs) => unsafe {
-                            write_file_references_to_scratch(ptr, &refs).map_err(|e| {
-                                format!("Failed to write file references to scratch: {e}")
-                            })
-                        },
-                        Err(e) => Err(e),
-                    },
-                    7 => {
-                        if let Some((index, path)) =
-                            unsafe { read_file_reference_update_from_scratch(ptr) }
-                        {
-                            plugin.update_file_reference_path(index, &path)
-                        } else {
-                            Err("Invalid file-reference update in scratch".to_string())
+                    maolan_plugin_protocol::protocol::REQUEST_COLLECT_RESOURCES => {
+                        plugin.collect_resources(false)
+                    }
+                    maolan_plugin_protocol::protocol::REQUEST_RESOURCE_FILES => {
+                        match plugin.resource_files() {
+                            Ok(files) => unsafe {
+                                write_resource_files_to_scratch(ptr, &files).map_err(|e| {
+                                    format!("Failed to write resource files to scratch: {e}")
+                                })
+                            },
+                            Err(e) => Err(e),
                         }
                     }
                     maolan_plugin_protocol::protocol::REQUEST_CLAP_PARAMETERS => {

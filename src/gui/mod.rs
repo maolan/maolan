@@ -72,7 +72,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     io::{self, BufReader},
     ops::Range,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::atomic::AtomicBool,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
@@ -589,52 +589,6 @@ struct CollectToSessionOperation {
     data_dir: PathBuf,
     pending_clap_refs: HashSet<PluginInstanceRef>,
     copied_files: HashMap<PathBuf, String>,
-}
-
-impl CollectToSessionOperation {
-    fn collect_file(&mut self, path_str: &str) -> Option<(PathBuf, String)> {
-        let p = PathBuf::from(path_str);
-        let abs = if p.is_absolute() {
-            p.clone()
-        } else {
-            self.session_root.join(&p)
-        };
-        if !abs.exists() || !abs.is_file() {
-            return None;
-        }
-        if abs.starts_with(&self.data_dir) {
-            return None;
-        }
-        if let Some(existing) = self.copied_files.get(&abs) {
-            return Some((abs, existing.clone()));
-        }
-        let file_name = abs.file_name()?.to_str()?.to_string();
-        let mut dst = self.data_dir.join(&file_name);
-        let mut counter = 1;
-        while dst.exists() {
-            let stem = Path::new(&file_name)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("file");
-            let ext = Path::new(&file_name)
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            let new_name = if ext.is_empty() {
-                format!("{stem}_{counter}")
-            } else {
-                format!("{stem}_{counter}.{ext}")
-            };
-            dst = self.data_dir.join(new_name);
-            counter += 1;
-        }
-        if std::fs::copy(&abs, &dst).is_err() {
-            return None;
-        }
-        let rel = format!("data/{}", dst.file_name()?.to_str()?);
-        self.copied_files.insert(abs.clone(), rel.clone());
-        Some((abs, rel))
-    }
 }
 
 struct MeterStopDecay {
@@ -2656,17 +2610,22 @@ impl Maolan {
         });
 
         for plugin_ref in &lv2_refs {
-            Self::send_resource_dir_action(plugin_ref, "LV2", &data_dir);
+            Self::send_resource_dir_action(plugin_ref, "LV2", &data_dir, true);
         }
         for plugin_ref in &clap_refs {
-            Self::send_resource_dir_action(plugin_ref, "CLAP", &data_dir);
-            Self::send_clap_file_references_action(plugin_ref);
+            Self::send_resource_dir_action(plugin_ref, "CLAP", &data_dir, true);
+            Self::send_clap_collect_resources_action(plugin_ref);
         }
 
         Ok("Collecting plugin files...".to_string())
     }
 
-    fn send_resource_dir_action(plugin_ref: &PluginInstanceRef, format: &str, data_dir: &Path) {
+    fn send_resource_dir_action(
+        plugin_ref: &PluginInstanceRef,
+        format: &str,
+        data_dir: &Path,
+        shared: bool,
+    ) {
         let directory = data_dir.to_string_lossy().to_string();
         let action = match plugin_ref {
             PluginInstanceRef::Track {
@@ -2677,6 +2636,7 @@ impl Maolan {
                 instance_id: *instance_id,
                 format: format.to_string(),
                 directory,
+                shared,
             },
             PluginInstanceRef::Clip {
                 track_name,
@@ -2688,6 +2648,7 @@ impl Maolan {
                 instance_id: *instance_id,
                 format: format.to_string(),
                 directory,
+                shared,
             },
         };
         tokio::spawn(async move {
@@ -2695,25 +2656,23 @@ impl Maolan {
         });
     }
 
-    fn send_clap_file_references_action(plugin_ref: &PluginInstanceRef) {
+    fn send_clap_collect_resources_action(plugin_ref: &PluginInstanceRef) {
         let action = match plugin_ref {
             PluginInstanceRef::Track {
                 track_name,
                 instance_id,
-            } => Action::TrackClapFileReferences {
+            } => Action::TrackClapCollectResources {
                 track_name: track_name.clone(),
                 instance_id: *instance_id,
-                refs: Vec::new(),
             },
             PluginInstanceRef::Clip {
                 track_name,
                 clip_idx,
                 instance_id,
-            } => Action::ClipClapFileReferences {
+            } => Action::ClipClapCollectResources {
                 track_name: track_name.clone(),
                 clip_idx: *clip_idx,
                 instance_id: *instance_id,
-                refs: Vec::new(),
             },
         };
         tokio::spawn(async move {
@@ -2721,12 +2680,12 @@ impl Maolan {
         });
     }
 
-    fn handle_clap_file_references_response(
+    fn handle_clap_resource_files_response(
         &mut self,
         plugin_ref: &PluginInstanceRef,
-        refs: &[(u32, String)],
+        files: &[(u32, String)],
     ) {
-        tracing::info!(?plugin_ref, ?refs, "Received CLAP file references");
+        tracing::info!(?plugin_ref, ?files, "Received CLAP resource files");
         let Some(op) = self.collect_to_session_operation.as_mut() else {
             return;
         };
@@ -2734,59 +2693,29 @@ impl Maolan {
             return;
         }
 
-        for (index, path) in refs {
-            if path.is_empty() {
+        for (_index, rel) in files {
+            if rel.is_empty() {
                 continue;
             }
-            if let Some((src, dst_rel)) = op.collect_file(path) {
-                op.copied_files.insert(src.clone(), dst_rel.clone());
-                // Tell the plugin the absolute path so it can load the file
-                // immediately. The saved session JSON is later rewritten to use
-                // relative data/ paths for portability.
-                let absolute = op.data_dir.join(&dst_rel["data/".len()..]);
-                Self::send_clap_file_reference_update_action(
-                    plugin_ref,
-                    *index,
-                    &absolute.to_string_lossy(),
-                );
+            let rel_path = Path::new(rel);
+            if rel_path.is_absolute()
+                || rel_path
+                    .components()
+                    .any(|c| matches!(c, Component::ParentDir))
+            {
+                tracing::warn!(?plugin_ref, %rel, "Ignoring unsafe CLAP resource path");
+                continue;
             }
+            // The plugin already copied the file into the resource directory
+            // and updated itself; record the mapping so the saved session can
+            // reference the portable data/ path.
+            op.copied_files
+                .insert(op.data_dir.join(rel), format!("data/{rel}"));
         }
 
         if op.pending_clap_refs.is_empty() {
             self.finish_collect_to_session();
         }
-    }
-
-    fn send_clap_file_reference_update_action(
-        plugin_ref: &PluginInstanceRef,
-        index: u32,
-        new_path: &str,
-    ) {
-        let action = match plugin_ref {
-            PluginInstanceRef::Track {
-                track_name,
-                instance_id,
-            } => Action::TrackUpdateClapFileReference {
-                track_name: track_name.clone(),
-                instance_id: *instance_id,
-                index,
-                path: new_path.to_string(),
-            },
-            PluginInstanceRef::Clip {
-                track_name,
-                clip_idx,
-                instance_id,
-            } => Action::ClipUpdateClapFileReference {
-                track_name: track_name.clone(),
-                clip_idx: *clip_idx,
-                instance_id: *instance_id,
-                index,
-                path: new_path.to_string(),
-            },
-        };
-        tokio::spawn(async move {
-            let _ = CLIENT.send(EngineMessage::Request(action)).await;
-        });
     }
 
     fn finish_collect_to_session(&mut self) {
@@ -10429,90 +10358,6 @@ mod tests {
 
         assert_eq!(templates, vec!["Valid".to_string()]);
         let _ = fs::remove_dir_all(&temp_home);
-    }
-
-    #[test]
-    fn collect_to_session_operation_collects_external_file() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let session_root = std::env::temp_dir().join(format!("maolan_collect_test_{unique}"));
-        let data_dir = session_root.join("data");
-        fs::create_dir_all(&data_dir).unwrap();
-        let external_file = session_root.join("external.wav");
-        fs::write(&external_file, b"dummy").unwrap();
-
-        let mut op = CollectToSessionOperation {
-            session_root: session_root.clone(),
-            data_dir,
-            pending_clap_refs: HashSet::new(),
-            copied_files: HashMap::new(),
-        };
-
-        let result = op.collect_file(external_file.to_string_lossy().as_ref());
-        assert!(result.is_some());
-        let (src, rel) = result.unwrap();
-        assert_eq!(src, external_file);
-        assert!(rel.starts_with("data/"));
-        assert!(session_root.join(&rel).exists());
-
-        let _ = fs::remove_dir_all(&session_root);
-    }
-
-    #[test]
-    fn collect_to_session_operation_skips_internal_files() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let session_root = std::env::temp_dir().join(format!("maolan_collect_skip_test_{unique}"));
-        let data_dir = session_root.join("data");
-        fs::create_dir_all(&data_dir).unwrap();
-        let internal = data_dir.join("already.wav");
-        fs::write(&internal, b"dummy").unwrap();
-
-        let mut op = CollectToSessionOperation {
-            session_root: session_root.clone(),
-            data_dir: data_dir.clone(),
-            pending_clap_refs: HashSet::new(),
-            copied_files: HashMap::new(),
-        };
-
-        assert!(op.collect_file("data/already.wav").is_none());
-        assert!(op.copied_files.is_empty());
-        let _ = fs::remove_dir_all(&session_root);
-    }
-
-    #[test]
-    fn collect_to_session_operation_deduplicates_same_file() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let session_root = std::env::temp_dir().join(format!("maolan_collect_dedup_test_{unique}"));
-        let data_dir = session_root.join("data");
-        fs::create_dir_all(&data_dir).unwrap();
-        let external_file = session_root.join("external.wav");
-        fs::write(&external_file, b"dummy").unwrap();
-
-        let mut op = CollectToSessionOperation {
-            session_root: session_root.clone(),
-            data_dir,
-            pending_clap_refs: HashSet::new(),
-            copied_files: HashMap::new(),
-        };
-
-        let (_, rel1) = op
-            .collect_file(external_file.to_string_lossy().as_ref())
-            .unwrap();
-        let (_, rel2) = op
-            .collect_file(external_file.to_string_lossy().as_ref())
-            .unwrap();
-        assert_eq!(rel1, rel2);
-        assert_eq!(op.copied_files.len(), 1);
-
-        let _ = fs::remove_dir_all(&session_root);
     }
 
     #[test]
