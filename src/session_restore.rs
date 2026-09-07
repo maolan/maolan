@@ -415,6 +415,10 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                         .and_then(Value::as_u64)
                         .unwrap_or(0) as usize,
                     muted: clip.get("muted").and_then(Value::as_bool).unwrap_or(false),
+                    reversed: clip
+                        .get("reversed")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     peaks_file: clip
                         .get("peaks_file")
                         .and_then(Value::as_str)
@@ -505,6 +509,10 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                         .and_then(Value::as_u64)
                         .unwrap_or(0) as usize,
                     muted: clip.get("muted").and_then(Value::as_bool).unwrap_or(false),
+                    reversed: clip
+                        .get("reversed")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     peaks_file: None,
                     kind: Kind::MIDI,
                     fade_enabled: clip
@@ -641,6 +649,10 @@ fn parse_audio_clip_data(clip: &Value) -> Result<AudioClipData, String> {
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize,
         muted: clip.get("muted").and_then(Value::as_bool).unwrap_or(false),
+        reversed: clip
+            .get("reversed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         peaks_file: clip
             .get("peaks_file")
             .and_then(Value::as_str)
@@ -720,6 +732,10 @@ fn parse_midi_clip_data(clip: &Value) -> Result<MidiClipData, String> {
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize,
         muted: clip.get("muted").and_then(Value::as_bool).unwrap_or(false),
+        reversed: clip
+            .get("reversed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         grouped_clips: Vec::new(),
     };
     if let Some(children) = clip.get("grouped_clips").and_then(Value::as_array) {

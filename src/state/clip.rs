@@ -18,6 +18,8 @@ pub struct AudioClip {
     pub input_channel: usize,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default)]
+    pub reversed: bool,
     #[serde(skip)]
     pub max_length_samples: usize,
     #[serde(default)]
@@ -83,6 +85,8 @@ pub struct MIDIClip {
     pub input_channel: usize,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default)]
+    pub reversed: bool,
     #[serde(skip)]
     pub max_length_samples: usize,
     #[serde(default)]

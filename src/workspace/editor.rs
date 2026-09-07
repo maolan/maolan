@@ -43,6 +43,7 @@ fn widget_audio_clip_data(
         length: clip.length,
         offset: clip.offset,
         muted: clip.muted,
+        reversed: clip.reversed,
         max_length_samples: clip.max_length_samples,
         source_length_samples: clip.source_length_samples,
         peaks: clip.peaks.clone(),
@@ -66,6 +67,7 @@ fn widget_midi_clip_data(clip: &crate::state::MIDIClip) -> WidgetMIDIClipData {
         offset: clip.offset,
         input_channel: clip.input_channel,
         muted: clip.muted,
+        reversed: clip.reversed,
         max_length_samples: clip.max_length_samples,
         grouped_clips: clip
             .grouped_clips
@@ -1860,6 +1862,14 @@ pub(super) fn clip_context_menu_overlay(
                         muted: !muted,
                     },
                 ),
+                crate::menu::menu_item(
+                    "Reverse",
+                    Message::ClipReverse {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
                 crate::menu::menu_item_maybe(
                     "Pitch Correction",
                     (!transport_active).then_some(Message::ClipOpenPitchCorrection {
@@ -1936,6 +1946,14 @@ pub(super) fn clip_context_menu_overlay(
                         clip_idx,
                         kind: Kind::MIDI,
                         muted: !muted,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Reverse",
+                    Message::ClipReverse {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
                     },
                 ),
                 crate::menu::menu_item_maybe(
