@@ -26,13 +26,13 @@ debug = true
 [dependencies]
 chrono = "0.4"
 crossterm = "0.29.0"
-dirs = "6"
+dirs = "7.0.0"
 ebur128 = "0.1"
-hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "rustls-tls"] }
+hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", "rustls-tls"] }
 i24 = "2.3.3"
-maolan-generate = "0.0.16"
-maolan-editor = "0.0.4"
-maolan-engine = "0.2.67"
+maolan-generate = "0.0.17"
+maolan-editor = "0.0.5"
+maolan-engine = "0.2.68"
 maolan-plugin-host = { version = "0.0.8", path = "plugin-host" }
 maolan-widgets = "0.0.36"
 mixosc = "0.0.14"
@@ -41,27 +41,26 @@ pitch-detection = "0.3.0"
 ratatui = "0.30.0"
 regex = "1.13.1"
 rfd = "0.17.2"
-rubato = "3"
+rubato = "5.0.0"
 wide = "1.4.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.50.0", features = ["full"] }
 toml = "1.1.2"
-timestretch = "0.8.0"
+timestretch = "0.15.0"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
 uuid = { version = "1.15", features = ["v4"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-alsa = "0.11.0"
+alsa = "0.12.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.3", features = ["signal", "process", "user"] }
 x11-dl = "2.21.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-cpal = { version = "0.17.3" }
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62.2", features = ["Win32_Devices_Properties", "Win32_Media_Audio", "Win32_Media_Multimedia", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem"] }
 
 [build-dependencies]
 winresource = "0.1"

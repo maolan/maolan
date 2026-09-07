@@ -26,11 +26,18 @@ impl Maolan {
                         .find(|plugin| plugin.id == plugin_id)
                         .map(|plugin| plugin.name.clone())
                 } else if format.eq_ignore_ascii_case("LV2") {
-                    state
-                        .lv2_plugins
-                        .iter()
-                        .find(|plugin| plugin.uri == plugin_id)
-                        .map(|plugin| plugin.name.clone())
+                    #[cfg(unix)]
+                    {
+                        state
+                            .lv2_plugins
+                            .iter()
+                            .find(|plugin| plugin.uri == plugin_id)
+                            .map(|plugin| plugin.name.clone())
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
                 } else {
                     None
                 }

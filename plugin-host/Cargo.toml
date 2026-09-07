@@ -21,7 +21,7 @@ name = "maolan-plugin-host"
 path = "src/main.rs"
 
 [dependencies]
-dirs = "6"
+dirs = "7.0.0"
 libc = "0.2"
 libloading = "0.9"
 tracing = "0.1"
