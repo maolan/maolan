@@ -3898,6 +3898,7 @@ impl Maolan {
                             offset,
                             input_channel,
                             muted,
+                            reversed,
                             peaks_file,
                             kind,
                             fade_enabled,
@@ -3978,6 +3979,7 @@ impl Maolan {
                                             offset: *offset,
                                             input_channel: *input_channel,
                                             muted: *muted,
+                                            reversed: *reversed,
                                             max_length_samples,
                                             source_length_samples,
                                             peaks_file: peaks_file.clone(),
@@ -4026,6 +4028,7 @@ impl Maolan {
                                             offset: *offset,
                                             input_channel: *input_channel,
                                             muted: *muted,
+                                            reversed: *reversed,
                                             max_length_samples,
                                             take_lane_override: None,
                                             take_lane_pinned: false,
@@ -4198,6 +4201,39 @@ impl Maolan {
                                         if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
                                             clip.muted = *muted;
                                         }
+                                    }
+                                }
+                            }
+                        }
+                        Action::SetClipReversed {
+                            track_name,
+                            clip_index,
+                            kind,
+                            reversed,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            {
+                                match kind {
+                                    Kind::Audio => {
+                                        if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
+                                            clip.reversed = *reversed;
+                                            clip.pitch_correction_preview_name = None;
+                                            clip.pitch_correction_source_name = None;
+                                            clip.pitch_correction_source_offset = None;
+                                            clip.pitch_correction_source_length = None;
+                                            clip.pitch_correction_points.clear();
+                                            clip.pitch_correction_frame_likeness = None;
+                                            clip.pitch_correction_inertia_ms = None;
+                                            clip.pitch_correction_formant_compensation = None;
+                                        }
+                                    }
+                                    Kind::MIDI => {
+                                        if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
+                                            clip.reversed = *reversed;
+                                        }
+                                        refresh_midi_clip_previews = true;
                                     }
                                 }
                             }
@@ -5989,6 +6025,7 @@ impl Maolan {
                                 offset: clip.offset,
                                 input_channel: clip.input_channel,
                                 muted: clip.muted,
+                                reversed: clip.reversed,
                                 peaks_file: clip.peaks_file,
                                 kind: Kind::Audio,
                                 fade_enabled: clip.fade_enabled,
@@ -6028,6 +6065,7 @@ impl Maolan {
                             offset: clip.offset,
                             input_channel: clip.input_channel,
                             muted: clip.muted,
+                            reversed: clip.reversed,
                             peaks_file: None,
                             kind: Kind::MIDI,
                             fade_enabled: true,
@@ -7073,6 +7111,13 @@ impl Maolan {
                     kind,
                     muted,
                 });
+            }
+            Message::ClipReverse {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                return self.reverse_clips_from_context_menu(track_idx.clone(), clip_idx, kind);
             }
             Message::ClipAssignToSessionSlot {
                 ref track_idx,
@@ -9731,6 +9776,7 @@ impl Maolan {
                                                     offset: 0,
                                                     input_channel: 0,
                                                     muted: false,
+                                                    reversed: false,
                                                     peaks_file: None,
                                                     kind: Kind::Audio,
                                                     fade_enabled: true,
@@ -9809,6 +9855,7 @@ impl Maolan {
                                                     offset: 0,
                                                     input_channel: 0,
                                                     muted: false,
+                                                    reversed: false,
                                                     peaks_file: None,
                                                     kind: Kind::MIDI,
                                                     fade_enabled: true,
@@ -10210,6 +10257,7 @@ impl Maolan {
                                 offset: 0,
                                 input_channel: 0,
                                 muted: false,
+                                reversed: false,
                                 peaks_file: None,
                                 kind: Kind::Audio,
                                 fade_enabled: true,
@@ -10643,6 +10691,7 @@ impl Maolan {
                                 offset: 0,
                                 input_channel: 0,
                                 muted: false,
+                                reversed: false,
                                 peaks_file: None,
                                 kind: Kind::MIDI,
                                 fade_enabled: true,

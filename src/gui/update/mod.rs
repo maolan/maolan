@@ -414,6 +414,7 @@ impl Maolan {
             offset: clip.offset,
             input_channel: clip.input_channel,
             muted: clip.muted,
+            reversed: clip.reversed,
             peaks_file: clip.peaks_file.clone(),
             fade_enabled: clip.fade_enabled,
             fade_in_samples: clip.fade_in_samples,
@@ -464,6 +465,7 @@ impl Maolan {
             offset: data.offset,
             input_channel: data.input_channel,
             muted: data.muted,
+            reversed: data.reversed,
             max_length_samples,
             source_length_samples,
             peaks_file: data.peaks_file.clone(),
@@ -516,6 +518,7 @@ impl Maolan {
             offset: clip.offset,
             input_channel: clip.input_channel,
             muted: clip.muted,
+            reversed: clip.reversed,
             grouped_clips: clip
                 .grouped_clips
                 .iter()
@@ -536,6 +539,7 @@ impl Maolan {
             offset: data.offset,
             input_channel: data.input_channel,
             muted: data.muted,
+            reversed: data.reversed,
             max_length_samples,
             take_lane_override: None,
             take_lane_pinned: false,
@@ -566,6 +570,7 @@ impl Maolan {
             offset: clip.offset,
             input_channel: clip.input_channel,
             muted: clip.muted,
+            reversed: clip.reversed,
             peaks_file: clip.peaks_file.clone(),
             kind: Kind::Audio,
             fade_enabled: clip.fade_enabled,
@@ -609,6 +614,7 @@ impl Maolan {
             offset: clip.offset,
             input_channel: clip.input_channel,
             muted: clip.muted,
+            reversed: clip.reversed,
             peaks_file: None,
             kind: Kind::MIDI,
             fade_enabled: true,
@@ -2927,6 +2933,84 @@ impl Maolan {
         ))
     }
 
+    fn reverse_clips_from_context_menu(
+        &mut self,
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    ) -> Task<Message> {
+        let clicked = crate::state::ClipId {
+            track_idx,
+            clip_idx,
+            kind,
+        };
+        let targets = {
+            let state = self.state.blocking_read();
+            let mut targets: Vec<_> = if state.selected_clips.contains(&clicked) {
+                state.selected_clips.iter().cloned().collect()
+            } else {
+                vec![clicked]
+            };
+            targets.sort_by(|a, b| {
+                a.track_idx
+                    .cmp(&b.track_idx)
+                    .then_with(|| (a.kind as u8).cmp(&(b.kind as u8)))
+                    .then_with(|| a.clip_idx.cmp(&b.clip_idx))
+            });
+            targets
+        };
+        if targets.is_empty() {
+            return Task::none();
+        }
+
+        let mut actions = Vec::new();
+        {
+            let state = self.state.blocking_read();
+            for target in targets {
+                let Some(track) = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == target.track_idx)
+                else {
+                    continue;
+                };
+                let reversed = match target.kind {
+                    Kind::Audio => track
+                        .audio
+                        .clips
+                        .get(target.clip_idx)
+                        .map(|clip| !clip.reversed),
+                    Kind::MIDI => track
+                        .midi
+                        .clips
+                        .get(target.clip_idx)
+                        .map(|clip| !clip.reversed),
+                };
+                let Some(reversed) = reversed else {
+                    continue;
+                };
+                actions.push(Action::SetClipReversed {
+                    track_name: target.track_idx,
+                    clip_index: target.clip_idx,
+                    kind: target.kind,
+                    reversed,
+                });
+            }
+        }
+
+        match actions.len() {
+            0 => Task::none(),
+            1 => self.send(actions.remove(0)),
+            _ => {
+                let mut tasks = Vec::with_capacity(actions.len() + 2);
+                tasks.push(self.send(Action::BeginHistoryGroup));
+                tasks.extend(actions.into_iter().map(|action| self.send(action)));
+                tasks.push(self.send(Action::EndHistoryGroup));
+                Task::batch(tasks)
+            }
+        }
+    }
+
     fn group_selected_clips(&mut self) -> Task<Message> {
         let Some((track_name, kind, mut clip_indices)) = self.selected_group_candidate() else {
             self.state.blocking_write().message =
@@ -2987,6 +3071,7 @@ impl Maolan {
                                 .map(|clip| clip.input_channel)
                                 .unwrap_or(0),
                             muted: grouped_clips.iter().all(|clip| clip.muted),
+                            reversed: false,
                             max_length_samples: group_end.saturating_sub(group_start).max(1),
                             source_length_samples: 0,
                             peaks_file: None,
@@ -3063,6 +3148,7 @@ impl Maolan {
                                 .map(|clip| clip.input_channel)
                                 .unwrap_or(0),
                             muted: grouped_clips.iter().all(|clip| clip.muted),
+                            reversed: false,
                             max_length_samples: group_end.saturating_sub(group_start).max(1),
                             take_lane_override: None,
                             take_lane_pinned: false,
@@ -3126,6 +3212,7 @@ impl Maolan {
                                 offset: child.offset,
                                 input_channel: child.input_channel,
                                 muted: child.muted,
+                                reversed: child.reversed,
                                 peaks_file: child.peaks_file,
                                 kind,
                                 fade_enabled: child.fade_enabled,
@@ -3196,6 +3283,7 @@ impl Maolan {
                             offset: child.offset,
                             input_channel: child.input_channel,
                             muted: child.muted,
+                            reversed: false,
                             peaks_file: None,
                             kind,
                             fade_enabled: true,
@@ -3389,6 +3477,7 @@ impl Maolan {
                         offset: clip.offset,
                         input_channel: clip.input_channel,
                         muted: clip.muted,
+                        reversed: clip.reversed,
                         peaks_file: clip.peaks_file.clone(),
                         kind: Kind::Audio,
                         fade_enabled: clip.fade_enabled,
@@ -3415,6 +3504,7 @@ impl Maolan {
                         offset: clip.offset.saturating_add(left_len),
                         input_channel: clip.input_channel,
                         muted: clip.muted,
+                        reversed: clip.reversed,
                         peaks_file: clip.peaks_file,
                         kind: Kind::Audio,
                         fade_enabled: clip.fade_enabled,
@@ -3498,6 +3588,7 @@ impl Maolan {
                         offset: clip.offset,
                         input_channel: clip.input_channel,
                         muted: clip.muted,
+                        reversed: clip.reversed,
                         peaks_file: None,
                         kind: Kind::MIDI,
                         fade_enabled: true,
@@ -3522,6 +3613,7 @@ impl Maolan {
                         offset: clip.offset.saturating_add(left_len),
                         input_channel: clip.input_channel,
                         muted: clip.muted,
+                        reversed: clip.reversed,
                         peaks_file: None,
                         kind: Kind::MIDI,
                         fade_enabled: true,
@@ -3580,6 +3672,7 @@ impl Maolan {
             offset: 0,
             input_channel,
             muted: false,
+            reversed: false,
             peaks_file: None,
             kind: Kind::MIDI,
             fade_enabled: true,
@@ -4694,6 +4787,7 @@ mod tests {
             offset: 0,
             input_channel: 0,
             muted: false,
+            reversed: false,
             max_length_samples: length,
             source_length_samples: length,
             peaks_file: None,

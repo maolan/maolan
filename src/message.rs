@@ -1595,6 +1595,11 @@ pub enum Message {
         kind: Kind,
         muted: bool,
     },
+    ClipReverse {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
     ClipAssignToSessionSlot {
         track_idx: String,
         clip_idx: usize,
