@@ -3121,20 +3121,20 @@ impl Maolan {
         };
 
         let params = SincInterpolationParameters {
-            sinc_len: 256,
-            f_cutoff: 0.95,
+            f_cutoff: Some(0.95),
             interpolation: SincInterpolationType::Linear,
             oversampling_factor: 256,
-            window: WindowFunction::BlackmanHarris2,
+            ..SincInterpolationParameters::new(256, WindowFunction::BlackmanHarris2)
         };
 
         progress_callback(0.1);
 
+        let frames = samples.len() / channels.max(1);
         let mut resampler = Async::<f32>::new_sinc(
             to_rate as f64 / from_rate as f64,
             2.0,
             &params,
-            samples.len() / channels.max(1),
+            frames.clamp(1, 8192),
             channels.max(1),
             FixedAsync::Input,
         )
@@ -3143,7 +3143,6 @@ impl Maolan {
         progress_callback(0.2);
         tokio::task::yield_now().await;
 
-        let frames = samples.len() / channels.max(1);
         let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
 
         #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
@@ -3189,7 +3188,7 @@ impl Maolan {
         let input = SequentialSliceOfVecs::new(&channel_buffers, channels.max(1), frames)
             .map_err(|e| io::Error::other(format!("Resampler input error: {e}")))?;
         let resampled = resampler
-            .process(&input, 0, None)
+            .process_all(&input, frames, None)
             .map_err(|e| io::Error::other(format!("Resampling failed: {e}")))?;
 
         progress_callback(1.0);
@@ -5708,11 +5707,14 @@ impl Maolan {
                 plugin_id,
             }));
         } else if format.eq_ignore_ascii_case("LV2") {
-            actions = actions.push(button("Native UI").on_press(Message::OpenLv2PluginUi {
-                track_name: track_name.clone(),
-                clip_idx,
-                instance_id,
-            }));
+            #[cfg(unix)]
+            {
+                actions = actions.push(button("Native UI").on_press(Message::OpenLv2PluginUi {
+                    track_name: track_name.clone(),
+                    clip_idx,
+                    instance_id,
+                }));
+            }
         }
 
         container(
