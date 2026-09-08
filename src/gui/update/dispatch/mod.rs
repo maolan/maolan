@@ -42,6 +42,37 @@ fn native_ui_error_matches(format: &str, error: &str) -> bool {
     }
 }
 
+fn audio_editor_buffer_from_clip(
+    path: &std::path::Path,
+    offset: usize,
+    length: usize,
+) -> Result<maolan_editor::app::AudioBuffer, String> {
+    let (samples, channels, sample_rate) =
+        maolan_engine::audio_codec::decode_audio_to_f32_interleaved_sync(path)
+            .map_err(|err| format!("Failed to open '{}': {err}", path.display()))?;
+    let channels = channels.max(1);
+    let frames = samples.len() / channels;
+    let start = offset.min(frames);
+    let end = start.saturating_add(length).min(frames);
+    let clipped = if start < end {
+        samples[start * channels..end * channels].to_vec()
+    } else {
+        Vec::new()
+    };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("audio clip")
+        .to_string();
+
+    Ok(maolan_editor::app::AudioBuffer::new(
+        name,
+        std::sync::Arc::new(clipped),
+        channels,
+        sample_rate,
+    ))
+}
+
 struct MoveClipSnapArgs<'a> {
     kind: Kind,
     from_track_name: &'a str,
@@ -76,6 +107,72 @@ impl Maolan {
             async move { CLIENT.send(EngineMessage::StopAudioPreview).await },
             |_| Message::None,
         )
+    }
+
+    fn apply_audio_editor_gain(&mut self, delta_db: f32) -> Task<Message> {
+        let Some(ctx) = self.audio_editor_clip.clone() else {
+            self.info("No audio editor clip is active.");
+            return Task::none();
+        };
+
+        let gain_db = {
+            let mut state = self.state.blocking_write();
+            state
+                .tracks
+                .iter_mut()
+                .find(|track| track.name == ctx.track_name)
+                .and_then(|track| track.audio.clips.get_mut(ctx.clip_idx))
+                .map(|clip| {
+                    clip.gain_db = (clip.gain_db + delta_db).clamp(-48.0, 24.0);
+                    clip.gain_db
+                })
+        };
+
+        let Some(gain_db) = gain_db else {
+            self.info("Audio editor clip no longer exists.");
+            return Task::none();
+        };
+
+        self.has_unsaved_changes = true;
+        self.send(Action::SetClipGainDb {
+            track_name: ctx.track_name,
+            clip_index: ctx.clip_idx,
+            kind: Kind::Audio,
+            gain_db,
+        })
+    }
+
+    fn toggle_audio_editor_reverse(&mut self) -> Task<Message> {
+        let Some(ctx) = self.audio_editor_clip.clone() else {
+            self.info("No audio editor clip is active.");
+            return Task::none();
+        };
+
+        let reversed = {
+            let mut state = self.state.blocking_write();
+            state
+                .tracks
+                .iter_mut()
+                .find(|track| track.name == ctx.track_name)
+                .and_then(|track| track.audio.clips.get_mut(ctx.clip_idx))
+                .map(|clip| {
+                    clip.reversed = !clip.reversed;
+                    clip.reversed
+                })
+        };
+
+        let Some(reversed) = reversed else {
+            self.info("Audio editor clip no longer exists.");
+            return Task::none();
+        };
+
+        self.has_unsaved_changes = true;
+        self.send(Action::SetClipReversed {
+            track_name: ctx.track_name,
+            clip_index: ctx.clip_idx,
+            kind: Kind::Audio,
+            reversed,
+        })
     }
 
     fn apply_audio_editor_fade(&mut self, is_fade_out: bool) -> Task<Message> {
@@ -3899,6 +3996,7 @@ impl Maolan {
                             input_channel,
                             muted,
                             reversed,
+                            gain_db,
                             peaks_file,
                             kind,
                             fade_enabled,
@@ -3980,6 +4078,7 @@ impl Maolan {
                                             input_channel: *input_channel,
                                             muted: *muted,
                                             reversed: *reversed,
+                                            gain_db: *gain_db,
                                             max_length_samples,
                                             source_length_samples,
                                             peaks_file: peaks_file.clone(),
@@ -6026,6 +6125,7 @@ impl Maolan {
                                 input_channel: clip.input_channel,
                                 muted: clip.muted,
                                 reversed: clip.reversed,
+                                gain_db: clip.gain_db,
                                 peaks_file: clip.peaks_file,
                                 kind: Kind::Audio,
                                 fade_enabled: clip.fade_enabled,
@@ -6066,6 +6166,7 @@ impl Maolan {
                             input_channel: clip.input_channel,
                             muted: clip.muted,
                             reversed: clip.reversed,
+                            gain_db: 0.0,
                             peaks_file: None,
                             kind: Kind::MIDI,
                             fade_enabled: true,
@@ -9777,6 +9878,7 @@ impl Maolan {
                                                     input_channel: 0,
                                                     muted: false,
                                                     reversed: false,
+                                                    gain_db: 0.0,
                                                     peaks_file: None,
                                                     kind: Kind::Audio,
                                                     fade_enabled: true,
@@ -9856,6 +9958,7 @@ impl Maolan {
                                                     input_channel: 0,
                                                     muted: false,
                                                     reversed: false,
+                                                    gain_db: 0.0,
                                                     peaks_file: None,
                                                     kind: Kind::MIDI,
                                                     fade_enabled: true,
@@ -10258,6 +10361,7 @@ impl Maolan {
                                 input_channel: 0,
                                 muted: false,
                                 reversed: false,
+                                gain_db: 0.0,
                                 peaks_file: None,
                                 kind: Kind::Audio,
                                 fade_enabled: true,
@@ -10692,6 +10796,7 @@ impl Maolan {
                                 input_channel: 0,
                                 muted: false,
                                 reversed: false,
+                                gain_db: 0.0,
                                 peaks_file: None,
                                 kind: Kind::MIDI,
                                 fade_enabled: true,
@@ -11452,12 +11557,13 @@ impl Maolan {
                 return self.apply_audio_editor_fade(true);
             }
             Message::AudioEditor(maolan_editor::app::Message::IncreaseVolume) => {
-                self.info("Audio editor requested non-destructive volume increase.");
-                return Task::none();
+                return self.apply_audio_editor_gain(1.0);
             }
             Message::AudioEditor(maolan_editor::app::Message::DecreaseVolume) => {
-                self.info("Audio editor requested non-destructive volume decrease.");
-                return Task::none();
+                return self.apply_audio_editor_gain(-1.0);
+            }
+            Message::AudioEditor(maolan_editor::app::Message::Reverse) => {
+                return self.toggle_audio_editor_reverse();
             }
             Message::AudioEditor(msg) => {
                 return maolan_editor::app::update(&mut self.audio_editor, msg)
@@ -11985,22 +12091,27 @@ impl Maolan {
                         })
                 };
 
-                if let Some((Some(path), offset, length, timeline_start)) = clip_request {
-                    self.audio_editor_clip = Some(crate::gui::AudioEditorClipContext {
-                        track_name: track_idx.clone(),
-                        clip_idx,
-                    });
-                    maolan_editor::app::set_embedded_transport(&mut self.audio_editor, false, 0);
-                    return maolan_editor::app::update(
-                        &mut self.audio_editor,
-                        maolan_editor::app::Message::OpenClip {
-                            path,
-                            offset,
-                            length,
-                            timeline_start: Some(timeline_start),
-                        },
-                    )
-                    .map(Message::AudioEditor);
+                if let Some((Some(path), offset, length, _timeline_start)) = clip_request {
+                    match audio_editor_buffer_from_clip(&path, offset, length) {
+                        Ok(audio) => {
+                            self.audio_editor_clip = Some(crate::gui::AudioEditorClipContext {
+                                track_name: track_idx.clone(),
+                                clip_idx,
+                            });
+                            maolan_editor::app::set_embedded_transport(
+                                &mut self.audio_editor,
+                                false,
+                                0,
+                            );
+                            return maolan_editor::app::open_audio(&mut self.audio_editor, audio)
+                                .map(Message::AudioEditor);
+                        }
+                        Err(err) => {
+                            let mut state = self.state.blocking_write();
+                            state.message = err;
+                            return Task::none();
+                        }
+                    }
                 }
 
                 let mut state = self.state.blocking_write();

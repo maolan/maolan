@@ -20,6 +20,8 @@ pub struct AudioClip {
     pub muted: bool,
     #[serde(default)]
     pub reversed: bool,
+    #[serde(default)]
+    pub gain_db: f32,
     #[serde(skip)]
     pub max_length_samples: usize,
     #[serde(default)]
