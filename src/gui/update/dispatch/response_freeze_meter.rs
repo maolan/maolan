@@ -150,6 +150,7 @@ impl Maolan {
                         input_channel: 0,
                         muted: false,
                         reversed: false,
+                        gain_db: 0.0,
                         peaks_file: None,
                         kind: Kind::Audio,
                         fade_enabled: true,

@@ -462,6 +462,7 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                         .get("reversed")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
+                    gain_db: clip.get("gain_db").and_then(Value::as_f64).unwrap_or(0.0) as f32,
                     peaks_file: clip
                         .get("peaks_file")
                         .and_then(Value::as_str)
@@ -556,6 +557,7 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                         .get("reversed")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
+                    gain_db: clip.get("gain_db").and_then(Value::as_f64).unwrap_or(0.0) as f32,
                     peaks_file: None,
                     kind: Kind::MIDI,
                     fade_enabled: clip
@@ -760,6 +762,7 @@ fn parse_audio_clip_data(clip: &Value) -> Result<AudioClipData, String> {
             .get("reversed")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        gain_db: clip.get("gain_db").and_then(Value::as_f64).unwrap_or(0.0) as f32,
         peaks_file: clip
             .get("peaks_file")
             .and_then(Value::as_str)
