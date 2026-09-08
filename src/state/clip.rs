@@ -1,3 +1,4 @@
+use maolan_editor::app::AudioEditAction;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -22,6 +23,8 @@ pub struct AudioClip {
     pub reversed: bool,
     #[serde(default)]
     pub gain_db: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edit_actions: Vec<AudioEditAction>,
     #[serde(skip)]
     pub max_length_samples: usize,
     #[serde(default)]

@@ -109,13 +109,16 @@ impl Maolan {
         )
     }
 
-    fn apply_audio_editor_gain(&mut self, delta_db: f32) -> Task<Message> {
+    fn apply_audio_editor_action(
+        &mut self,
+        action: maolan_editor::app::AudioEditAction,
+    ) -> Task<Message> {
         let Some(ctx) = self.audio_editor_clip.clone() else {
             self.info("No audio editor clip is active.");
             return Task::none();
         };
 
-        let gain_db = {
+        let summary = {
             let mut state = self.state.blocking_write();
             state
                 .tracks
@@ -123,101 +126,48 @@ impl Maolan {
                 .find(|track| track.name == ctx.track_name)
                 .and_then(|track| track.audio.clips.get_mut(ctx.clip_idx))
                 .map(|clip| {
-                    clip.gain_db = (clip.gain_db + delta_db).clamp(-48.0, 24.0);
-                    clip.gain_db
+                    clip.edit_actions.push(action);
+                    let summary = maolan_editor::app::summarize_audio_edit_actions(
+                        clip.length,
+                        &clip.edit_actions,
+                    );
+                    clip.fade_enabled = summary.fade_in_samples > 0 || summary.fade_out_samples > 0;
+                    clip.fade_in_samples = summary.fade_in_samples;
+                    clip.fade_out_samples = summary.fade_out_samples;
+                    clip.gain_db = summary.gain_db;
+                    clip.reversed = summary.reversed;
+                    summary
                 })
         };
 
-        let Some(gain_db) = gain_db else {
+        let Some(summary) = summary else {
             self.info("Audio editor clip no longer exists.");
             return Task::none();
         };
 
         self.has_unsaved_changes = true;
-        self.send(Action::SetClipGainDb {
-            track_name: ctx.track_name,
-            clip_index: ctx.clip_idx,
-            kind: Kind::Audio,
-            gain_db,
-        })
-    }
-
-    fn toggle_audio_editor_reverse(&mut self) -> Task<Message> {
-        let Some(ctx) = self.audio_editor_clip.clone() else {
-            self.info("No audio editor clip is active.");
-            return Task::none();
-        };
-
-        let reversed = {
-            let mut state = self.state.blocking_write();
-            state
-                .tracks
-                .iter_mut()
-                .find(|track| track.name == ctx.track_name)
-                .and_then(|track| track.audio.clips.get_mut(ctx.clip_idx))
-                .map(|clip| {
-                    clip.reversed = !clip.reversed;
-                    clip.reversed
-                })
-        };
-
-        let Some(reversed) = reversed else {
-            self.info("Audio editor clip no longer exists.");
-            return Task::none();
-        };
-
-        self.has_unsaved_changes = true;
-        self.send(Action::SetClipReversed {
-            track_name: ctx.track_name,
-            clip_index: ctx.clip_idx,
-            kind: Kind::Audio,
-            reversed,
-        })
-    }
-
-    fn apply_audio_editor_fade(&mut self, is_fade_out: bool) -> Task<Message> {
-        let Some(ctx) = self.audio_editor_clip.clone() else {
-            self.info("No audio editor clip is active.");
-            return Task::none();
-        };
-
-        let updated = {
-            let mut state = self.state.blocking_write();
-            state
-                .tracks
-                .iter_mut()
-                .find(|track| track.name == ctx.track_name)
-                .and_then(|track| track.audio.clips.get_mut(ctx.clip_idx))
-                .map(|clip| {
-                    let fade_samples = (clip.length / 20).clamp(240, 48_000).min(clip.length / 2);
-                    clip.fade_enabled = true;
-                    if is_fade_out {
-                        clip.fade_out_samples = fade_samples;
-                    } else {
-                        clip.fade_in_samples = fade_samples;
-                    }
-                    (
-                        clip.fade_enabled,
-                        clip.fade_in_samples,
-                        clip.fade_out_samples,
-                    )
-                })
-        };
-
-        let Some((fade_enabled, fade_in_samples, fade_out_samples)) = updated else {
-            self.info("Audio editor clip no longer exists.");
-            return Task::none();
-        };
-
-        self.has_unsaved_changes = true;
-        self.send(Action::SetClipFade {
-            track_name: ctx.track_name,
-            clip_index: ctx.clip_idx,
-            kind: Kind::Audio,
-            fade_enabled,
-            fade_in_samples,
-            fade_out_samples,
-        })
+        self.send(Action::ApplyGroupedActions(vec![
+            Action::SetClipFade {
+                track_name: ctx.track_name.clone(),
+                clip_index: ctx.clip_idx,
+                kind: Kind::Audio,
+                fade_enabled: summary.fade_in_samples > 0 || summary.fade_out_samples > 0,
+                fade_in_samples: summary.fade_in_samples,
+                fade_out_samples: summary.fade_out_samples,
+            },
+            Action::SetClipGainDb {
+                track_name: ctx.track_name.clone(),
+                clip_index: ctx.clip_idx,
+                kind: Kind::Audio,
+                gain_db: summary.gain_db,
+            },
+            Action::SetClipReversed {
+                track_name: ctx.track_name,
+                clip_index: ctx.clip_idx,
+                kind: Kind::Audio,
+                reversed: summary.reversed,
+            },
+        ]))
     }
 
     fn preserve_plugin_graph_states_from_cache(
@@ -4079,6 +4029,7 @@ impl Maolan {
                                             muted: *muted,
                                             reversed: *reversed,
                                             gain_db: *gain_db,
+                                            edit_actions: Vec::new(),
                                             max_length_samples,
                                             source_length_samples,
                                             peaks_file: peaks_file.clone(),
@@ -11550,22 +11501,12 @@ impl Maolan {
                 .map(Message::AudioEditor);
                 return self.stop_audio_editor_engine_preview().chain(editor_task);
             }
-            Message::AudioEditor(maolan_editor::app::Message::FadeIn) => {
-                return self.apply_audio_editor_fade(false);
-            }
-            Message::AudioEditor(maolan_editor::app::Message::FadeOut) => {
-                return self.apply_audio_editor_fade(true);
-            }
-            Message::AudioEditor(maolan_editor::app::Message::IncreaseVolume) => {
-                return self.apply_audio_editor_gain(1.0);
-            }
-            Message::AudioEditor(maolan_editor::app::Message::DecreaseVolume) => {
-                return self.apply_audio_editor_gain(-1.0);
-            }
-            Message::AudioEditor(maolan_editor::app::Message::Reverse) => {
-                return self.toggle_audio_editor_reverse();
-            }
             Message::AudioEditor(msg) => {
+                if let Some(action) =
+                    maolan_editor::app::audio_edit_action_for_message(&self.audio_editor, &msg)
+                {
+                    return self.apply_audio_editor_action(action);
+                }
                 return maolan_editor::app::update(&mut self.audio_editor, msg)
                     .map(Message::AudioEditor);
             }
