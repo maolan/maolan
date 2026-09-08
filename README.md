@@ -1,4 +1,4 @@
-# Maolan
+# Maolan DAW
 
 [![crates.io](https://img.shields.io/crates/v/maolan.svg)](https://crates.io/crates/maolan)
 
