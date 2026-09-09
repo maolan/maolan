@@ -430,7 +430,8 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "windows"
+    target_os = "windows",
+    target_os = "macos"
 )))]
 fn default_clap_search_roots() -> Vec<PathBuf> {
     Vec::new()

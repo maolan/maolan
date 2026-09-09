@@ -174,7 +174,8 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let fallback_bits = vec![32, 24, 16, 8];
         let (
@@ -210,7 +211,7 @@ impl HW {
                 state.selected_input_hw.clone(),
             )
         };
-        #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
         let (available_input_hw, mut selected_input_hw) = {
             let state = self.state.blocking_read();
             (
@@ -230,7 +231,8 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let selected_bits = self.state.blocking_read().oss_bits;
         #[cfg(unix)]
@@ -245,6 +247,8 @@ impl HW {
                 crate::state::AudioBackendOption::Sndio => !hw.id.is_empty(),
                 #[cfg(target_os = "linux")]
                 crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
+                #[cfg(target_os = "macos")]
+                crate::state::AudioBackendOption::CoreAudio => !hw.id.is_empty(),
             })
             .collect();
         #[cfg(unix)]
@@ -259,6 +263,8 @@ impl HW {
                 crate::state::AudioBackendOption::Sndio => !hw.id.is_empty(),
                 #[cfg(target_os = "linux")]
                 crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
+                #[cfg(target_os = "macos")]
+                crate::state::AudioBackendOption::CoreAudio => !hw.id.is_empty(),
             })
             .collect();
         #[cfg(target_os = "windows")]
@@ -285,7 +291,7 @@ impl HW {
             selected_input_hw =
                 selected_input_hw.filter(|s| available_input_hw.iter().any(|hw| hw == s));
         }
-        #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+        #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
         {
             selected_input_hw =
                 selected_input_hw.filter(|s| available_input_hw.iter().any(|hw| hw.id == s.id));
@@ -317,7 +323,8 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let sample_rate_options = fallback_sample_rates.clone();
         let chosen_sample_rate_hz = if sample_rate_options.contains(&sample_rate_hz) {
@@ -358,7 +365,8 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let chosen_bits = if bit_options.contains(&selected_bits) {
             selected_bits
@@ -369,7 +377,8 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let chosen_bits = 32usize;
         let period_options = {
@@ -402,14 +411,16 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let selected_input_present = selected_input_hw.is_some();
         #[cfg(not(any(
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let selected_input_present = true;
         let hw_ready = selected_is_jack
@@ -420,14 +431,16 @@ impl HW {
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let input_device = Self::selected_input_device_id(selected_is_jack, &selected_input_hw);
         #[cfg(not(any(
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let input_device = None;
         let start_selection = OpenAudioSelection {
@@ -444,28 +457,32 @@ impl HW {
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let input_devices = available_input_hw.clone();
         #[cfg(not(any(
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let input_devices = Vec::new();
         #[cfg(any(
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let selected_input_device = selected_input_hw.clone();
         #[cfg(not(any(
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let selected_input_device = None;
 
@@ -473,14 +490,16 @@ impl HW {
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let show_bit_depth = !selected_is_jack;
         #[cfg(not(any(
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let show_bit_depth = false;
 
@@ -488,14 +507,16 @@ impl HW {
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         let show_input_device = !selected_is_jack;
         #[cfg(not(any(
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let show_input_device = false;
 

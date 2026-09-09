@@ -13,7 +13,7 @@ impl Maolan {
         self.state.blocking_write().selected_hw = Some(hw.to_string());
     }
 
-    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
     pub(super) fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
         let mut state = self.state.blocking_write();
         let selected = Self::select_refreshed_device(
@@ -50,7 +50,8 @@ impl Maolan {
             target_os = "freebsd",
             target_os = "linux",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         {
             state.selected_input_hw = None;
@@ -77,7 +78,7 @@ impl Maolan {
         selected
     }
 
-    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
     pub(super) fn selected_output_device_for_platform(
         state: &mut crate::state::StateData,
         hw: &AudioDeviceOption,
@@ -180,6 +181,24 @@ impl Maolan {
         state.selected_input_hw = Self::select_first_backend_input_device(
             state,
             crate::state::discover_alsa_input_devices,
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn apply_backend_device_defaults(
+        state: &mut crate::state::StateData,
+        backend: &crate::state::AudioBackendOption,
+    ) {
+        if !matches!(backend, crate::state::AudioBackendOption::CoreAudio) {
+            return;
+        }
+        state.selected_hw = Self::select_first_backend_output_device(
+            state,
+            crate::state::discover_coreaudio_output_devices,
+        );
+        state.selected_input_hw = Self::select_first_backend_input_device(
+            state,
+            crate::state::discover_coreaudio_input_devices,
         );
     }
 

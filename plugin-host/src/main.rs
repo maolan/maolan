@@ -281,6 +281,7 @@ fn main() {
         };
         match spec {
             "__test__" => {
+                runtime.signal_ready();
                 runtime.write_test_magic();
                 Some(0)
             }

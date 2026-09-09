@@ -10,6 +10,9 @@ pub(super) fn kernel_midi_label(path: &str) -> String {
     if let Some(label) = linux_alsa_label(&basename) {
         return label;
     }
+    if let Some(name) = coremidi_label(path) {
+        return name;
+    }
 
     fn sysctl_value(key: &str) -> Option<String> {
         let output = Command::new("sysctl").arg("-n").arg(key).output().ok()?;
@@ -68,6 +71,15 @@ pub(super) fn kernel_midi_label(path: &str) -> String {
     }
 
     basename
+}
+
+fn coremidi_label(device: &str) -> Option<String> {
+    let rest = device
+        .strip_prefix("coremidi:in:")
+        .or_else(|| device.strip_prefix("coremidi:out:"))?;
+    let (_, name) = rest.split_once(':')?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 fn linux_alsa_label(basename: &str) -> Option<String> {
@@ -181,5 +193,23 @@ mod tests {
     fn linux_alsa_label_returns_none_for_invalid_format() {
         let result = linux_alsa_label("invalid");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn coremidi_label_strips_in_prefix_and_index() {
+        let label = coremidi_label("coremidi:in:3:USB MIDI Interface");
+        assert_eq!(label, Some("USB MIDI Interface".to_string()));
+    }
+
+    #[test]
+    fn coremidi_label_strips_out_prefix_and_index() {
+        let label = coremidi_label("coremidi:out:0:Synth");
+        assert_eq!(label, Some("Synth".to_string()));
+    }
+
+    #[test]
+    fn coremidi_label_returns_none_for_other_devices() {
+        assert!(coremidi_label("/dev/midi0").is_none());
+        assert!(coremidi_label("coremidi:in:0").is_none());
     }
 }

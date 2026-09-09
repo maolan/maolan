@@ -131,7 +131,8 @@ impl Maolan {
                 target_os = "freebsd",
                 target_os = "linux",
                 target_os = "openbsd",
-                target_os = "windows"
+                target_os = "windows",
+                target_os = "macos"
             ))]
             Message::HWInputSelected(hw) => {
                 self.apply_hw_input_selected(hw);

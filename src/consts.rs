@@ -57,12 +57,14 @@ pub mod platform_caps {
         target_os = "linux",
         target_os = "windows",
         target_os = "freebsd",
-        target_os = "openbsd"
+        target_os = "openbsd",
+        target_os = "macos"
     ));
     pub const REQUIRE_SAMPLE_RATES_FOR_HW_READY: bool = cfg!(any(
         target_os = "linux",
         target_os = "freebsd",
-        target_os = "openbsd"
+        target_os = "openbsd",
+        target_os = "macos"
     ));
     pub const REQUIRE_VST3_STATE_FOR_SAVE: bool = false;
     pub const SUPPORTS_PLUGIN_GRAPH: bool = true;
