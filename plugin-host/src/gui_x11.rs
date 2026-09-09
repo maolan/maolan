@@ -2,7 +2,9 @@
 
 #[cfg(unix)]
 pub mod x11 {
-    use std::os::raw::{c_char, c_int, c_uint, c_ulong};
+    #[cfg(all(unix, not(target_os = "macos")))]
+    use std::os::raw::{c_char, c_uint};
+    use std::os::raw::{c_int, c_ulong};
     use std::sync::Once;
 
     pub type Display = std::ffi::c_void;
@@ -27,6 +29,7 @@ pub mod x11 {
         });
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[link(name = "X11")]
     unsafe extern "C" {
         pub fn XOpenDisplay(display_name: *const c_char) -> *mut Display;
@@ -59,6 +62,136 @@ pub mod x11 {
         pub fn XFlush(display: *mut Display) -> c_int;
         pub fn XSetErrorHandler(handler: XErrorHandler) -> XErrorHandler;
     }
+
+    // macOS has no X11/XQuartz, so plugin GUI container windows are unsupported
+    // there until a Cocoa parent-window implementation exists. These stubs keep
+    // the crate linking; XOpenDisplay always fails, so callers take their
+    // existing "failed to open X11 display" error path.
+    #[cfg(target_os = "macos")]
+    mod imp {
+        //! No-op stubs: see the comment on the parent module.
+        use super::{Display, Window, XErrorHandler};
+        use std::os::raw::{c_char, c_int, c_uint, c_ulong};
+
+        /// # Safety
+        /// No-op stub; always returns a null display pointer.
+        pub unsafe fn open_display(_display_name: *const c_char) -> *mut Display {
+            std::ptr::null_mut()
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn close_display(_display: *mut Display) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn default_screen(_display: *mut Display) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn root_window(_display: *mut Display, _screen: c_int) -> Window {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn black_pixel(_display: *mut Display, _screen: c_int) -> c_ulong {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn white_pixel(_display: *mut Display, _screen: c_int) -> c_ulong {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn create_simple_window(
+            _display: *mut Display,
+            _parent: Window,
+            _x: c_int,
+            _y: c_int,
+            _width: c_uint,
+            _height: c_uint,
+            _border_width: c_uint,
+            _border: c_ulong,
+            _background: c_ulong,
+        ) -> Window {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn store_name(
+            _display: *mut Display,
+            _w: Window,
+            _name: *const c_char,
+        ) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn map_window(_display: *mut Display, _w: Window) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn unmap_window(_display: *mut Display, _w: Window) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn destroy_window(_display: *mut Display, _w: Window) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn resize_window(
+            _display: *mut Display,
+            _w: Window,
+            _width: c_uint,
+            _height: c_uint,
+        ) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn flush(_display: *mut Display) -> c_int {
+            0
+        }
+        /// # Safety
+        /// No-op stub; all arguments are ignored.
+        pub unsafe fn set_error_handler(_handler: XErrorHandler) -> XErrorHandler {
+            None
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub use imp::black_pixel as XBlackPixel;
+    #[cfg(target_os = "macos")]
+    pub use imp::close_display as XCloseDisplay;
+    #[cfg(target_os = "macos")]
+    pub use imp::create_simple_window as XCreateSimpleWindow;
+    #[cfg(target_os = "macos")]
+    pub use imp::default_screen as XDefaultScreen;
+    #[cfg(target_os = "macos")]
+    pub use imp::destroy_window as XDestroyWindow;
+    #[cfg(target_os = "macos")]
+    pub use imp::flush as XFlush;
+    #[cfg(target_os = "macos")]
+    pub use imp::map_window as XMapWindow;
+    #[cfg(target_os = "macos")]
+    pub use imp::open_display as XOpenDisplay;
+    #[cfg(target_os = "macos")]
+    pub use imp::resize_window as XResizeWindow;
+    #[cfg(target_os = "macos")]
+    pub use imp::root_window as XRootWindow;
+    #[cfg(target_os = "macos")]
+    pub use imp::set_error_handler as XSetErrorHandler;
+    #[cfg(target_os = "macos")]
+    pub use imp::store_name as XStoreName;
+    #[cfg(target_os = "macos")]
+    pub use imp::unmap_window as XUnmapWindow;
+    #[cfg(target_os = "macos")]
+    pub use imp::white_pixel as XWhitePixel;
 
     pub struct ContainerWindow {
         display: *mut Display,

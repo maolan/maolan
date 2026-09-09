@@ -11308,7 +11308,8 @@ impl Maolan {
                 target_os = "linux",
                 target_os = "windows",
                 target_os = "freebsd",
-                target_os = "openbsd"
+                target_os = "openbsd",
+                target_os = "macos"
             ))]
             Message::PreferencesDevicesLoaded {
                 ref output_devices,

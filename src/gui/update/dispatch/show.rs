@@ -186,7 +186,8 @@ impl Maolan {
                     target_os = "linux",
                     target_os = "windows",
                     target_os = "freebsd",
-                    target_os = "openbsd"
+                    target_os = "openbsd",
+                    target_os = "macos"
                 ))]
                 {
                     let prefs = super::super::super::load_preferences();
@@ -218,6 +219,13 @@ impl Maolan {
                                     crate::state::discover_input_audio_devices(),
                                 )
                             }
+                            #[cfg(target_os = "macos")]
+                            {
+                                (
+                                    crate::state::discover_coreaudio_output_devices(),
+                                    crate::state::discover_coreaudio_input_devices(),
+                                )
+                            }
                         },
                         |(output_devices, input_devices)| Message::PreferencesDevicesLoaded {
                             output_devices,
@@ -229,7 +237,8 @@ impl Maolan {
                     target_os = "linux",
                     target_os = "windows",
                     target_os = "freebsd",
-                    target_os = "openbsd"
+                    target_os = "openbsd",
+                    target_os = "macos"
                 )))]
                 {
                     self.modal = Some(Show::Preferences);

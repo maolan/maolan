@@ -1469,7 +1469,7 @@ static HOST_ATTRIBUTE_LIST_VTBL: IAttributeListVtbl = IAttributeListVtbl {
 };
 
 fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     {
         let module = bundle_path
             .join("Contents")
@@ -1481,6 +1481,21 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
                     .and_then(|s| s.to_str())
                     .unwrap_or("plugin")
             ));
+        if module.exists() {
+            Ok(module)
+        } else {
+            Err(format!("VST3 module not found at {:?}", module))
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let module = bundle_path.join("Contents").join("MacOS").join(
+            bundle_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("plugin"),
+        );
         if module.exists() {
             Ok(module)
         } else {
@@ -1538,7 +1553,8 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "windows"
+        target_os = "windows",
+        target_os = "macos"
     )))]
     {
         Err("Unsupported platform".to_string())

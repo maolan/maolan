@@ -17,7 +17,8 @@ pub use processor::list_plugins;
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "windows"
+    target_os = "windows",
+    target_os = "macos"
 ))]
 use crate::paths;
 use std::path::PathBuf;

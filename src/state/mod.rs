@@ -4,6 +4,8 @@ mod connection;
 mod platform;
 #[cfg(target_os = "linux")]
 mod platform_linux;
+#[cfg(target_os = "macos")]
+mod platform_macos;
 #[cfg(target_os = "openbsd")]
 mod platform_openbsd;
 mod session;
@@ -109,6 +111,10 @@ pub(crate) use platform::{
 };
 #[cfg(target_os = "linux")]
 pub(crate) use platform_linux::{discover_alsa_input_devices, discover_alsa_output_devices};
+#[cfg(target_os = "macos")]
+pub(crate) use platform_macos::{
+    discover_coreaudio_input_devices, discover_coreaudio_output_devices,
+};
 #[cfg(target_os = "openbsd")]
 pub(crate) use platform_openbsd::discover_openbsd_audio_devices;
 pub use session::{
@@ -747,6 +753,8 @@ pub enum AudioBackendOption {
     Sndio,
     #[cfg(target_os = "linux")]
     Alsa,
+    #[cfg(target_os = "macos")]
+    CoreAudio,
     #[cfg(target_os = "windows")]
     Wasapi,
 }
@@ -762,6 +770,8 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Sndio => "sndio",
             #[cfg(target_os = "linux")]
             Self::Alsa => "ALSA",
+            #[cfg(target_os = "macos")]
+            Self::CoreAudio => "CoreAudio",
             #[cfg(target_os = "windows")]
             Self::Wasapi => "WASAPI",
         };
@@ -876,6 +886,20 @@ impl From<maolan_engine::audio_devices::AudioDeviceDescriptor> for AudioDeviceOp
         out.supports_input = device.supports_input;
         out.supports_output = device.supports_output;
         out
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl From<maolan_engine::audio_devices::AudioDeviceDescriptor> for AudioDeviceOption {
+    fn from(device: maolan_engine::audio_devices::AudioDeviceDescriptor) -> Self {
+        Self::with_supported_direction_caps(
+            device.id,
+            device.label,
+            vec![32, 24, 16, 8],
+            device.sample_rates,
+            device.supports_input,
+            device.supports_output,
+        )
     }
 }
 
@@ -1486,14 +1510,16 @@ pub struct StateData {
         target_os = "linux",
         target_os = "windows",
         target_os = "freebsd",
-        target_os = "openbsd"
+        target_os = "openbsd",
+        target_os = "macos"
     ))]
     pub available_input_hw: Vec<InputAudioDevice>,
     #[cfg(any(
         target_os = "freebsd",
         target_os = "linux",
         target_os = "openbsd",
-        target_os = "windows"
+        target_os = "windows",
+        target_os = "macos"
     ))]
     pub selected_input_hw: Option<InputAudioDevice>,
     pub hw_sample_rate_hz: i32,
@@ -1728,14 +1754,16 @@ impl Default for StateData {
                 target_os = "linux",
                 target_os = "windows",
                 target_os = "freebsd",
-                target_os = "openbsd"
+                target_os = "openbsd",
+                target_os = "macos"
             ))]
             available_input_hw: initial_hw.available_input_hw,
             #[cfg(any(
                 target_os = "freebsd",
                 target_os = "linux",
                 target_os = "openbsd",
-                target_os = "windows"
+                target_os = "windows",
+                target_os = "macos"
             ))]
             selected_input_hw: initial_hw.selected_input_hw,
             hw_sample_rate_hz: crate::consts::audio_defaults::SAMPLE_RATE_HZ,
@@ -1890,14 +1918,16 @@ struct InitialHwConfig {
         target_os = "linux",
         target_os = "windows",
         target_os = "freebsd",
-        target_os = "openbsd"
+        target_os = "openbsd",
+        target_os = "macos"
     ))]
     available_input_hw: Vec<InputAudioDevice>,
     #[cfg(any(
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "windows"
+        target_os = "windows",
+        target_os = "macos"
     ))]
     selected_input_hw: Option<InputAudioDevice>,
 }
@@ -1911,14 +1941,16 @@ fn initial_hw_config() -> InitialHwConfig {
         target_os = "linux",
         target_os = "windows",
         target_os = "freebsd",
-        target_os = "openbsd"
+        target_os = "openbsd",
+        target_os = "macos"
     ))]
     let available_input_hw = initial_input_hw_devices();
     #[cfg(any(
         target_os = "linux",
         target_os = "windows",
         target_os = "freebsd",
-        target_os = "openbsd"
+        target_os = "openbsd",
+        target_os = "macos"
     ))]
     let selected_input_hw = initial_selected_input_hw(&available_input_hw);
     InitialHwConfig {
@@ -1930,20 +1962,22 @@ fn initial_hw_config() -> InitialHwConfig {
             target_os = "linux",
             target_os = "windows",
             target_os = "freebsd",
-            target_os = "openbsd"
+            target_os = "openbsd",
+            target_os = "macos"
         ))]
         available_input_hw,
         #[cfg(any(
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         ))]
         selected_input_hw,
     }
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
 pub(crate) fn discover_output_audio_devices() -> Vec<AudioDeviceOption> {
     #[cfg(target_os = "freebsd")]
     {
@@ -1960,9 +1994,13 @@ pub(crate) fn discover_output_audio_devices() -> Vec<AudioDeviceOption> {
             .filter(|d| d.supports_output)
             .collect()
     }
+    #[cfg(target_os = "macos")]
+    {
+        discover_coreaudio_output_devices()
+    }
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
 pub(crate) fn discover_input_audio_devices() -> Vec<AudioDeviceOption> {
     #[cfg(target_os = "freebsd")]
     {
@@ -1979,6 +2017,10 @@ pub(crate) fn discover_input_audio_devices() -> Vec<AudioDeviceOption> {
             .filter(|d| d.supports_input)
             .collect()
     }
+    #[cfg(target_os = "macos")]
+    {
+        discover_coreaudio_input_devices()
+    }
 }
 
 fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
@@ -1986,6 +2028,8 @@ fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
     let devices = discover_output_audio_devices();
     #[cfg(target_os = "openbsd")]
     let devices = discover_output_audio_devices();
+    #[cfg(target_os = "macos")]
+    let devices = discover_coreaudio_output_devices();
     #[cfg(target_os = "linux")]
     let devices = discover_alsa_output_devices();
     #[cfg(target_os = "windows")]
@@ -1994,7 +2038,8 @@ fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "windows"
+        target_os = "windows",
+        target_os = "macos"
     )))]
     let devices = vec![];
     devices
@@ -2004,9 +2049,16 @@ fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "linux",
-    target_os = "windows"
+    target_os = "windows",
+    target_os = "macos"
 ))]
 fn initial_selected_output_hw(hw: &[OutputAudioDevice]) -> Option<OutputAudioDevice> {
+    #[cfg(target_os = "macos")]
+    if let Some(default_id) = maolan_engine::audio_devices::default_output_device_id()
+        && let Some(device) = hw.iter().find(|d| d.id == default_id)
+    {
+        return Some(device.clone());
+    }
     hw.first().cloned()
 }
 
@@ -2014,7 +2066,8 @@ fn initial_selected_output_hw(hw: &[OutputAudioDevice]) -> Option<OutputAudioDev
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "linux",
-    target_os = "windows"
+    target_os = "windows",
+    target_os = "macos"
 )))]
 fn initial_selected_output_hw(_hw: &[OutputAudioDevice]) -> Option<OutputAudioDevice> {
     None
@@ -2024,7 +2077,8 @@ fn initial_selected_output_hw(_hw: &[OutputAudioDevice]) -> Option<OutputAudioDe
     target_os = "linux",
     target_os = "windows",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "macos"
 ))]
 fn initial_input_hw_devices() -> Vec<InputAudioDevice> {
     #[cfg(target_os = "linux")]
@@ -2033,6 +2087,8 @@ fn initial_input_hw_devices() -> Vec<InputAudioDevice> {
     let devices = discover_windows_input_devices();
     #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
     let devices = discover_input_audio_devices();
+    #[cfg(target_os = "macos")]
+    let devices = discover_coreaudio_input_devices();
     devices
 }
 
@@ -2040,9 +2096,16 @@ fn initial_input_hw_devices() -> Vec<InputAudioDevice> {
     target_os = "linux",
     target_os = "windows",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "macos"
 ))]
 fn initial_selected_input_hw(hw: &[InputAudioDevice]) -> Option<InputAudioDevice> {
+    #[cfg(target_os = "macos")]
+    if let Some(default_id) = maolan_engine::audio_devices::default_input_device_id()
+        && let Some(device) = hw.iter().find(|d| d.id == default_id)
+    {
+        return Some(device.clone());
+    }
     hw.first().cloned()
 }
 
@@ -2050,7 +2113,8 @@ fn initial_selected_input_hw(hw: &[InputAudioDevice]) -> Option<InputAudioDevice
     target_os = "linux",
     target_os = "windows",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "macos"
 )))]
 fn initial_selected_input_hw(_selected_hw: &Option<OutputAudioDevice>) -> Option<InputAudioDevice> {
     None
@@ -2068,6 +2132,8 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
         Some(AudioBackendOption::Sndio),
         #[cfg(target_os = "linux")]
         Some(AudioBackendOption::Alsa),
+        #[cfg(target_os = "macos")]
+        Some(AudioBackendOption::CoreAudio),
         #[cfg(target_os = "windows")]
         Some(AudioBackendOption::Wasapi),
     ]
@@ -2084,6 +2150,8 @@ fn audio_backend_preference_rank(backend: &AudioBackendOption) -> usize {
         AudioBackendOption::Sndio => 0,
         #[cfg(target_os = "linux")]
         AudioBackendOption::Alsa => 0,
+        #[cfg(target_os = "macos")]
+        AudioBackendOption::CoreAudio => 0,
         #[cfg(target_os = "windows")]
         AudioBackendOption::Wasapi => 0,
         #[cfg(unix)]

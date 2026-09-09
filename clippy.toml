@@ -1,0 +1,4 @@
+# The macOS X11 stub functions in maolan-plugin-host mirror real X11 C
+# signatures (e.g. XCreateSimpleWindow takes 9 arguments), so raise the
+# argument-count threshold to accommodate FFI-shaped stubs.
+too-many-arguments-threshold = 9
