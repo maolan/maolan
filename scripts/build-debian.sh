@@ -151,6 +151,7 @@ fi
 
 # Limit parallel jobs on low-memory systems to avoid OOM
 
+cargo clean
 cargo build "${CARGO_ARGS[@]}"
 
 # Determine where binaries ended up
