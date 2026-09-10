@@ -1,7 +1,7 @@
 [package]
 name = "maolan"
 default-run = "maolan"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Rust DAW application for recording, editing, routing, automation, export, and plugin hosting"
 authors = ["Maolan Team"]
@@ -31,10 +31,10 @@ ebur128 = "0.1"
 hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", "rustls-tls"] }
 i24 = "2.3.3"
 maolan-generate = "0.0.17"
-maolan-editor = { version = "0.0.8", default-features = false }
-maolan-engine = "0.3.0"
+maolan-editor = { version = "0.0.9", default-features = false }
+maolan-engine = "0.3.1"
 maolan-plugin-host = { version = "0.0.8", path = "plugin-host" }
-maolan-widgets = "0.0.37"
+maolan-widgets = "0.0.38"
 mixosc = "0.0.14"
 midly = "0.5.3"
 pitch-detection = "0.3.0"
