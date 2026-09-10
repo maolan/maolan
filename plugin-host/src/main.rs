@@ -8,7 +8,7 @@ fn print_usage() {
     eprintln!("  maolan-plugin-host --scan --format <format> [--path <path>] [--output <file>]");
     eprintln!("Formats: clap, vst3, lv2, null");
     eprintln!(
-        "The plugin argument may be a plugin ID (e.g. rs.maolan.widener) or a filesystem path."
+        "The plugin argument may be a plugin ID (e.g. rs.maolan.stereo) or a filesystem path."
     );
 }
 
