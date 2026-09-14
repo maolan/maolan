@@ -227,11 +227,10 @@ impl Maolan {
             }
             Action::MeterSnapshot {
                 hw_out_db,
-                hw_out_lufs,
                 track_meters,
+                ..
             } => {
                 let mut state = self.state.blocking_write();
-                state.hw_out_lufs = *hw_out_lufs;
                 let visible_tracks = visible_mixer_track_names(self, &state);
                 if hw_out_db.is_empty() && !state.hw_out_meter_db.is_empty() {
                     let silence = vec![-90.0; state.hw_out_meter_db.len()];

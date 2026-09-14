@@ -197,36 +197,6 @@ impl Mixer {
         BALANCE_LABELS[idx]
     }
 
-    fn format_lufs(value: f32) -> String {
-        if value <= maolan_engine::LoudnessValues::SILENCE + 0.1 {
-            "-inf".to_string()
-        } else {
-            format!("{:.1}", value)
-        }
-    }
-
-    fn lufs_readout(lufs: Option<maolan_engine::LoudnessValues>) -> Element<'static, Message> {
-        let (momentary, short_term, integrated) = lufs.map_or(
-            (
-                maolan_engine::LoudnessValues::SILENCE,
-                maolan_engine::LoudnessValues::SILENCE,
-                maolan_engine::LoudnessValues::SILENCE,
-            ),
-            |l| (l.momentary, l.short_term, l.integrated),
-        );
-        container(
-            row![
-                text(Self::format_lufs(momentary).to_string()).size(10),
-                text(Self::format_lufs(short_term).to_string()).size(10),
-                text(Self::format_lufs(integrated).to_string()).size(10),
-            ]
-            .spacing(6),
-        )
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .into()
-    }
-
     fn value_pill<'a>(
         track_name: String,
         content: &'static str,
@@ -1162,7 +1132,7 @@ impl Mixer {
             },
             None,
             None,
-            Some(Self::lufs_readout(state.hw_out_lufs)),
+            None,
         ))
         .on_press(Message::SelectTrackFromMixer("hw:out".to_string()))
         .into();

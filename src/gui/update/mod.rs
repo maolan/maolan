@@ -2655,7 +2655,6 @@ impl Maolan {
         let target = |db: f32| db + ((-90.0 - db) * fraction);
         let action = Action::MeterSnapshot {
             hw_out_db: std::sync::Arc::new(decay.hw_out_db.iter().copied().map(target).collect()),
-            hw_out_lufs: None,
             track_meters: std::sync::Arc::new(
                 decay
                     .track_meters
