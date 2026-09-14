@@ -226,6 +226,25 @@ pub struct ClapEventHeader {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct ClapEventTransport {
+    pub header: ClapEventHeader,
+    pub flags: u32,
+    pub song_pos_beats: i64,
+    pub song_pos_seconds: i64,
+    pub tempo: f64,
+    pub tempo_inc: f64,
+    pub loop_start_beats: i64,
+    pub loop_end_beats: i64,
+    pub loop_start_seconds: i64,
+    pub loop_end_seconds: i64,
+    pub bar_start: i64,
+    pub bar_number: i32,
+    pub tsig_num: u16,
+    pub tsig_denom: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ClapEventParamValue {
     pub header: ClapEventHeader,
     pub param_id: u32,
