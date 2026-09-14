@@ -32,7 +32,7 @@ hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", 
 i24 = "2.3.3"
 maolan-generate = "0.0.17"
 maolan-editor = { version = "0.0.9", default-features = false }
-maolan-engine = "0.3.1"
+maolan-engine = "0.3.2"
 maolan-plugin-host = { version = "0.0.8", path = "plugin-host" }
 maolan-widgets = "0.0.38"
 mixosc = "0.0.14"
