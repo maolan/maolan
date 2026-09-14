@@ -1,9 +1,9 @@
 use crate::clap::{
     CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EXT_AUDIO_PORTS,
     CLAP_EXT_PARAMS, CLAP_EXT_TIMER_SUPPORT, ClapAudioBuffer, ClapEventHeader, ClapEventMidi,
-    ClapEventNote, ClapEventParamGesture, ClapEventParamMod, ClapEventParamValue, ClapPluginParams,
-    ClapProcess, EventBuffer, EventCapture, PluginInstance, ThreadType, host_timers_snapshot,
-    set_thread_type, store_resource_directory,
+    ClapEventNote, ClapEventParamGesture, ClapEventParamMod, ClapEventParamValue,
+    ClapEventTransport, ClapPluginParams, ClapProcess, EventBuffer, EventCapture, PluginInstance,
+    ThreadType, host_timers_snapshot, set_thread_type, store_resource_directory,
 };
 #[cfg(unix)]
 use crate::clap::{CLAP_EXT_POSIX_FD_SUPPORT, host_fds_snapshot};
@@ -23,6 +23,69 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 static PARAMS_FLUSH_REQUESTED: AtomicBool = AtomicBool::new(false);
 const REQUEST_CLAP_AUDIO_PORTS: u32 = 12;
+
+const CLAP_TRANSPORT_HAS_TEMPO: u32 = 1 << 0;
+const CLAP_TRANSPORT_HAS_BEATS_TIMELINE: u32 = 1 << 1;
+const CLAP_TRANSPORT_HAS_SECONDS_TIMELINE: u32 = 1 << 2;
+const CLAP_TRANSPORT_HAS_TIME_SIGNATURE: u32 = 1 << 3;
+const CLAP_TRANSPORT_IS_PLAYING: u32 = 1 << 4;
+const FIXED_TIME_SCALE: f64 = (1_u64 << 31) as f64;
+
+fn clap_transport(state: &TransportState) -> ClapEventTransport {
+    let sample_rate = if state.sample_rate_hz.is_finite() && state.sample_rate_hz > 0.0 {
+        state.sample_rate_hz
+    } else {
+        48_000.0
+    };
+    let tempo = if state.tempo.is_finite() && state.tempo > 0.0 {
+        state.tempo
+    } else {
+        120.0
+    };
+    let seconds = state.playhead_sample as f64 / sample_rate;
+    let beats = seconds * tempo / 60.0;
+    let numerator = state.numerator.clamp(1, u16::MAX as u32) as u16;
+    let denominator = state.denominator.clamp(1, u16::MAX as u32) as u16;
+    let beats_per_bar = f64::from(numerator) * 4.0 / f64::from(denominator);
+    let bar_number = (beats / beats_per_bar)
+        .floor()
+        .clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+    let bar_start = f64::from(bar_number) * beats_per_bar;
+    let fixed = |value: f64| {
+        (value * FIXED_TIME_SCALE)
+            .round()
+            .clamp(i64::MIN as f64, i64::MAX as f64) as i64
+    };
+    let mut flags = CLAP_TRANSPORT_HAS_TEMPO
+        | CLAP_TRANSPORT_HAS_BEATS_TIMELINE
+        | CLAP_TRANSPORT_HAS_SECONDS_TIMELINE
+        | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+    if state.flags & 1 != 0 {
+        flags |= CLAP_TRANSPORT_IS_PLAYING;
+    }
+    ClapEventTransport {
+        header: ClapEventHeader {
+            size: std::mem::size_of::<ClapEventTransport>() as u32,
+            time: 0,
+            space_id: 0,
+            type_: crate::clap::CLAP_EVENT_TRANSPORT,
+            flags: 0,
+        },
+        flags,
+        song_pos_beats: fixed(beats),
+        song_pos_seconds: fixed(seconds),
+        tempo,
+        tempo_inc: 0.0,
+        loop_start_beats: 0,
+        loop_end_beats: 0,
+        loop_start_seconds: 0,
+        loop_end_seconds: 0,
+        bar_start: fixed(bar_start),
+        bar_number,
+        tsig_num: numerator,
+        tsig_denom: denominator,
+    }
+}
 
 pub fn request_params_flush() {
     PARAMS_FLUSH_REQUESTED.store(true, Ordering::Release);
@@ -1226,8 +1289,9 @@ impl HostRuntime {
                 }
             }
 
-            let transport =
-                unsafe { transport_ref(ptr) as *const TransportState as *const std::ffi::c_void };
+            let transport_state = unsafe { *transport_ref(ptr) };
+            let clap_transport = clap_transport(&transport_state);
+            let transport = &clap_transport as *const ClapEventTransport as *const std::ffi::c_void;
 
             if !started_processing {
                 set_thread_type(ThreadType::AudioThread);
@@ -1586,5 +1650,39 @@ impl HostRuntime {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+
+    #[test]
+    fn shared_transport_is_converted_to_clap_layout_and_flags() {
+        let mut state = TransportState::default();
+        state.playhead_sample = 48_000;
+        state.tempo = 120.0;
+        state.numerator = 3;
+        state.denominator = 4;
+        state.flags = 1;
+        state.sample_rate_hz = 48_000.0;
+        let transport = clap_transport(&state);
+
+        assert_eq!(
+            transport.flags & CLAP_TRANSPORT_IS_PLAYING,
+            CLAP_TRANSPORT_IS_PLAYING
+        );
+        assert_eq!(
+            transport.flags & CLAP_TRANSPORT_HAS_TEMPO,
+            CLAP_TRANSPORT_HAS_TEMPO
+        );
+        assert_eq!(
+            transport.flags & CLAP_TRANSPORT_HAS_TIME_SIGNATURE,
+            CLAP_TRANSPORT_HAS_TIME_SIGNATURE
+        );
+        assert_eq!(transport.tempo, 120.0);
+        assert_eq!(transport.song_pos_seconds, FIXED_TIME_SCALE as i64);
+        assert_eq!(transport.song_pos_beats, (2.0 * FIXED_TIME_SCALE) as i64);
+        assert_eq!((transport.tsig_num, transport.tsig_denom), (3, 4));
     }
 }
