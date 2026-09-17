@@ -112,17 +112,13 @@ impl Maolan {
                 ref template,
             } => self.apply_folder_template(track_name.clone(), template.clone()),
             Message::NewFromTemplate(ref template_name) => {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let template_path = format!(
-                    "{}/.config/maolan/session_templates/{}",
-                    home, template_name
-                );
+                let template_path = crate::config::daw_config_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+                    .join("session_templates")
+                    .join(template_name.as_str());
                 self.state.blocking_write().message =
                     format!("Loading template '{}'...", template_name);
-                Task::perform(
-                    async move { std::path::PathBuf::from(template_path) },
-                    Message::LoadSessionPath,
-                )
+                Task::perform(async move { template_path }, Message::LoadSessionPath)
             }
             Message::NewSession => {
                 if !self.state.blocking_read().hw_loaded {

@@ -87,16 +87,20 @@ impl Config {
     }
 
     fn config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .map_err(|_| "Could not determine home directory")?;
-
-        let mut path = PathBuf::from(home);
-        path.push(".config");
-        path.push("maolan");
-        path.push("config.toml");
-        Ok(path)
+        Ok(daw_config_dir()?.join("config.toml"))
     }
+}
+
+/// Directory holding all per-app DAW data (config, templates, blocklists).
+pub fn daw_config_dir() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "Could not determine home directory".to_string())?;
+
+    Ok(PathBuf::from(home)
+        .join(".config")
+        .join("maolan")
+        .join("daw"))
 }
 
 fn load_existing_config(
@@ -120,7 +124,7 @@ mod tests {
             .expect("time")
             .as_nanos();
         let temp_root = std::env::temp_dir().join(format!("maolan-config-test-{unique}"));
-        let config_dir = temp_root.join(".config").join("maolan");
+        let config_dir = temp_root.join(".config").join("maolan").join("daw");
         fs::create_dir_all(&config_dir).expect("config dir");
         let config_path = config_dir.join("config.toml");
         fs::write(

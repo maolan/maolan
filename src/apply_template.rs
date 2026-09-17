@@ -27,11 +27,11 @@ impl ApplyTemplateView {
         use std::fs::File;
         use std::io::BufReader;
 
-        let home = std::env::var("HOME").ok()?;
-        let template_path = format!(
-            "{}/.config/maolan/track_templates/{}/track.json",
-            home, template_name
-        );
+        let template_path = crate::config::daw_config_dir()
+            .ok()?
+            .join("track_templates")
+            .join(template_name)
+            .join("track.json");
 
         let file = File::open(template_path).ok()?;
         let reader = BufReader::new(file);

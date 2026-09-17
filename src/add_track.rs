@@ -144,11 +144,11 @@ impl AddTrackView {
         use std::fs::File;
         use std::io::BufReader;
 
-        let home = std::env::var("HOME").ok()?;
-        let template_path = format!(
-            "{}/.config/maolan/track_templates/{}/track.json",
-            home, template_name
-        );
+        let template_path = crate::config::daw_config_dir()
+            .ok()?
+            .join("track_templates")
+            .join(template_name)
+            .join("track.json");
 
         let file = File::open(template_path).ok()?;
         let reader = BufReader::new(file);
@@ -568,7 +568,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         let temp_home = std::env::temp_dir().join(format!("maolan_add_track_test_{unique}"));
-        let template_dir = temp_home.join(".config/maolan/track_templates/Band");
+        let template_dir = temp_home.join(".config/maolan/daw/track_templates/Band");
         fs::create_dir_all(&template_dir).expect("create template dir");
         fs::write(
             template_dir.join("track.json"),

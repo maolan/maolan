@@ -31,6 +31,7 @@ fn config_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home)
         .join(".config")
         .join("maolan")
+        .join("daw")
         .join("config.toml"))
 }
 

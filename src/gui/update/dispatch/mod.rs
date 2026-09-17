@@ -7503,8 +7503,11 @@ impl Maolan {
                 self.state.blocking_write().track_template_save_dialog = None;
                 self.modal = None;
 
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let template_path = format!("{}/.config/maolan/track_templates/{}", home, name);
+                let template_path = crate::config::daw_config_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+                    .join("track_templates")
+                    .join(&name);
+                let template_path = template_path.to_string_lossy().into_owned();
 
                 return self
                     .refresh_graph_then_save_track_template(dialog.track_name, template_path);
@@ -7607,8 +7610,11 @@ impl Maolan {
                 self.state.blocking_write().template_save_dialog = None;
                 self.modal = None;
 
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let template_path = format!("{}/.config/maolan/session_templates/{}", home, name);
+                let template_path = crate::config::daw_config_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+                    .join("session_templates")
+                    .join(&name);
+                let template_path = template_path.to_string_lossy().into_owned();
 
                 return self.refresh_graphs_then_save_template(template_path);
             }
@@ -11191,7 +11197,7 @@ impl Maolan {
                             Self::apply_preferred_devices_to_state(&mut state, &prefs);
                         }
                         self.modal = None;
-                        self.info("Preferences saved: ~/.config/maolan/config.toml");
+                        self.info("Preferences saved: ~/.config/maolan/daw/config.toml");
                         return task;
                     }
                     Err(e) => {

@@ -43,9 +43,9 @@ cargo run --release -- --log-level debug
 
 ## Project Notes
 
-- Preferences are stored in `~/.config/maolan/config.toml`.
-- Session templates are stored under `~/.config/maolan/session_templates/`.
-- Track templates are stored under `~/.config/maolan/track_templates/`.
+- Preferences are stored in `~/.config/maolan/daw/config.toml`.
+- Session templates are stored under `~/.config/maolan/daw/session_templates/`.
+- Track templates are stored under `~/.config/maolan/daw/track_templates/`.
 - Autosave snapshots are stored under `<session>/.maolan_autosave/snapshots/`.
 
 ## Status

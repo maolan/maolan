@@ -757,11 +757,11 @@ impl Maolan {
         use std::fs::File;
         use std::io::BufReader;
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let template_path = format!(
-            "{}/.config/maolan/track_templates/{}/track.json",
-            home, template_name
-        );
+        let template_path = crate::config::daw_config_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+            .join("track_templates")
+            .join(&template_name)
+            .join("track.json");
 
         let file = match File::open(&template_path) {
             Ok(f) => f,
@@ -1045,12 +1045,12 @@ impl Maolan {
         restore_actions
     }
 
-    fn track_template_path(template_name: &str) -> String {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        format!(
-            "{}/.config/maolan/track_templates/{}/track.json",
-            home, template_name
-        )
+    fn track_template_path(template_name: &str) -> std::path::PathBuf {
+        crate::config::daw_config_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+            .join("track_templates")
+            .join(template_name)
+            .join("track.json")
     }
 
     fn read_track_template_json(template_name: &str) -> Option<Value> {
@@ -3894,11 +3894,11 @@ impl Maolan {
         use std::fs::File;
         use std::io::BufReader;
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let template_path = format!(
-            "{}/.config/maolan/track_templates/{}/track.json",
-            home, template_name
-        );
+        let template_path = crate::config::daw_config_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+            .join("track_templates")
+            .join(&template_name)
+            .join("track.json");
 
         let file = match File::open(&template_path) {
             Ok(f) => f,
@@ -4220,7 +4220,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         let temp_home = std::env::temp_dir().join(format!("maolan_track_template_save_{unique}"));
-        let template_dir = temp_home.join(".config/maolan/track_templates/Drums");
+        let template_dir = temp_home.join(".config/maolan/daw/track_templates/Drums");
 
         let old_home = std::env::var("HOME").ok();
         unsafe {

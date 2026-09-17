@@ -4471,7 +4471,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         let temp_home = std::env::temp_dir().join(format!("maolan_complete_pending_save_{unique}"));
-        let template_path = temp_home.join(".config/maolan/track_templates/Drums");
+        let template_path = temp_home.join(".config/maolan/daw/track_templates/Drums");
 
         let old_home = std::env::var("HOME").ok();
         unsafe {
@@ -4536,7 +4536,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         let temp_home = std::env::temp_dir().join(format!("maolan_save_folder_template_{unique}"));
-        let template_path = temp_home.join(".config/maolan/track_templates/Drums");
+        let template_path = temp_home.join(".config/maolan/daw/track_templates/Drums");
 
         let old_home = std::env::var("HOME").ok();
         unsafe {
@@ -4623,7 +4623,7 @@ mod tests {
             .as_nanos();
         let temp_home =
             std::env::temp_dir().join(format!("maolan_save_nested_folder_template_{unique}"));
-        let template_path = temp_home.join(".config/maolan/track_templates/Drums");
+        let template_path = temp_home.join(".config/maolan/daw/track_templates/Drums");
 
         let old_home = std::env::var("HOME").ok();
         unsafe {
@@ -4725,7 +4725,7 @@ mod tests {
             .as_nanos();
         let temp_home =
             std::env::temp_dir().join(format!("maolan_complete_pending_save_folder_{unique}"));
-        let template_path = temp_home.join(".config/maolan/track_templates/Drums");
+        let template_path = temp_home.join(".config/maolan/daw/track_templates/Drums");
 
         let old_home = std::env::var("HOME").ok();
         unsafe {
