@@ -845,8 +845,9 @@ fn load_preferences() -> AppPreferences {
 }
 
 fn scan_templates() -> Vec<String> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let templates_dir = format!("{}/.config/maolan/session_templates", home);
+    let templates_dir = crate::config::daw_config_dir()
+        .map(|dir| dir.join("session_templates"))
+        .unwrap_or_default();
 
     let Ok(entries) = std::fs::read_dir(&templates_dir) else {
         return vec![];
@@ -866,8 +867,9 @@ fn scan_templates() -> Vec<String> {
 }
 
 fn scan_track_templates() -> Vec<String> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let templates_dir = format!("{}/.config/maolan/track_templates", home);
+    let templates_dir = crate::config::daw_config_dir()
+        .map(|dir| dir.join("track_templates"))
+        .unwrap_or_default();
 
     let Ok(entries) = std::fs::read_dir(&templates_dir) else {
         return vec![];
@@ -887,11 +889,13 @@ fn scan_track_templates() -> Vec<String> {
 }
 
 pub(crate) fn is_track_template_folder(template_name: &str) -> bool {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let path = format!(
-        "{}/.config/maolan/track_templates/{}/track.json",
-        home, template_name
-    );
+    let path = crate::config::daw_config_dir()
+        .map(|dir| {
+            dir.join("track_templates")
+                .join(template_name)
+                .join("track.json")
+        })
+        .unwrap_or_default();
     let Ok(file) = std::fs::File::open(&path) else {
         return false;
     };
@@ -10395,7 +10399,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         let temp_home = std::env::temp_dir().join(format!("maolan_scan_track_templates_{unique}"));
-        let track_templates = temp_home.join(".config/maolan/track_templates");
+        let track_templates = temp_home.join(".config/maolan/daw/track_templates");
         let valid = track_templates.join("Valid");
         let invalid = track_templates.join("InvalidSession");
         fs::create_dir_all(&valid).unwrap();
@@ -10433,7 +10437,7 @@ mod tests {
             .as_nanos();
         let temp_home =
             std::env::temp_dir().join(format!("maolan_scan_track_and_folder_templates_{unique}"));
-        let track_templates = temp_home.join(".config/maolan/track_templates");
+        let track_templates = temp_home.join(".config/maolan/daw/track_templates");
         let folder = track_templates.join("Drums");
         let track = track_templates.join("Synth");
         fs::create_dir_all(&folder).unwrap();
@@ -10480,7 +10484,7 @@ mod tests {
             .as_nanos();
         let temp_home =
             std::env::temp_dir().join(format!("maolan_is_track_template_folder_{unique}"));
-        let track_templates = temp_home.join(".config/maolan/track_templates");
+        let track_templates = temp_home.join(".config/maolan/daw/track_templates");
         let folder = track_templates.join("Drums");
         let track = track_templates.join("Synth");
         fs::create_dir_all(&folder).unwrap();
@@ -10525,7 +10529,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         let temp_home = std::env::temp_dir().join(format!("maolan_scan_templates_{unique}"));
-        let session_templates = temp_home.join(".config/maolan/session_templates");
+        let session_templates = temp_home.join(".config/maolan/daw/session_templates");
         let valid = session_templates.join("Valid");
         let invalid = session_templates.join("Invalid");
         fs::create_dir_all(&valid).unwrap();

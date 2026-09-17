@@ -1661,7 +1661,7 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
         .clone()
         .or_else(|| config.default_output_device_id.clone())
         .ok_or_else(|| {
-            "No output device configured. Pass --device or set default_output_device_id in ~/.config/maolan/config.toml".to_string()
+            "No output device configured. Pass --device or set default_output_device_id in ~/.config/maolan/daw/config.toml".to_string()
         })?;
     let input_device = options
         .input_device

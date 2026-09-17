@@ -20,6 +20,7 @@ impl Blocklist {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("maolan")
+            .join("daw")
             .join("plugin-blocklist.json")
     }
 
