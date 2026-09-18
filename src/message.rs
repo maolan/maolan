@@ -813,6 +813,7 @@ pub struct ClipPitchCorrectionRequest {
     pub source_offset: usize,
     pub source_length: usize,
     pub frame_likeness: f32,
+    pub detector: maolan_engine::message::PitchCorrectionDetector,
 }
 
 #[derive(Debug, Clone)]
@@ -1350,6 +1351,15 @@ pub enum Message {
     PitchCorrectionFrameLikenessChanged(f32),
     PitchCorrectionInertiaChanged(u16),
     PitchCorrectionFormantCompensationChanged(bool),
+    PitchCorrectionDetectorChanged(maolan_engine::message::PitchCorrectionDetector),
+    PitchCorrectionModeChanged(maolan_engine::message::PitchCorrectionMode),
+    ClipPitchCorrectionResynthFinished {
+        track_idx: String,
+        clip_index: usize,
+        clip_name: String,
+        clip_start: usize,
+        result: Result<(String, usize), String>,
+    },
     PianoNoteResizeStart {
         note_index: usize,
         position: Point,

@@ -158,6 +158,8 @@ impl HW {
             input_channels: 0,
             output_channels: 0,
             bytes_per_frame: 0,
+            ring_buffer_multiplier: 0,
+            auto_open_midi_devices: true,
         }
     }
 

@@ -662,6 +662,8 @@ impl Maolan {
                             pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
                             pitch_correction_formant_compensation: clip
                                 .pitch_correction_formant_compensation,
+                            pitch_correction_detector: clip.pitch_correction_detector,
+                            pitch_correction_mode: clip.pitch_correction_mode,
                             plugin_graph_json: clip.plugin_graph_json.clone(),
                         }));
                 } else if let Some(clip) = track
@@ -696,6 +698,8 @@ impl Maolan {
                             pitch_correction_frame_likeness: None,
                             pitch_correction_inertia_ms: None,
                             pitch_correction_formant_compensation: None,
+                            pitch_correction_detector: Default::default(),
+                            pitch_correction_mode: Default::default(),
                             plugin_graph_json: None,
                         }));
                 }

@@ -55,6 +55,10 @@ pub struct AudioClip {
     #[serde(default)]
     pub pitch_correction_formant_compensation: Option<bool>,
     #[serde(default)]
+    pub pitch_correction_detector: maolan_engine::message::PitchCorrectionDetector,
+    #[serde(default)]
+    pub pitch_correction_mode: maolan_engine::message::PitchCorrectionMode,
+    #[serde(default)]
     pub take_lane_override: Option<usize>,
     #[serde(default = "default_take_lane_flag")]
     pub take_lane_pinned: bool,
