@@ -1965,6 +1965,119 @@ impl Maolan {
                     .pitch_correction_formant_compensation = enabled;
                 return self.sync_pitch_correction_realtime();
             }
+            Message::PitchCorrectionDetectorChanged(detector) => {
+                self.state.blocking_write().pitch_correction_detector = detector;
+                let target = {
+                    let state = self.state.blocking_read();
+                    state
+                        .pitch_correction
+                        .as_ref()
+                        .map(|pc| (pc.track_idx.clone(), pc.clip_index))
+                };
+                let Some((track_idx, clip_idx)) = target else {
+                    return Task::none();
+                };
+                {
+                    let mut state = self.state.blocking_write();
+                    let Some(clip) = state
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == track_idx)
+                        .and_then(|t| t.audio.clips.get_mut(clip_idx))
+                    else {
+                        return Task::none();
+                    };
+                    clip.pitch_correction_detector = detector;
+                    // Force re-analysis with the new detector and drop any
+                    // preview rendered from the old detector's points.
+                    clip.pitch_correction_points.clear();
+                    clip.pitch_correction_preview_name = None;
+                }
+                return self.open_clip_pitch_correction(track_idx, clip_idx);
+            }
+            Message::PitchCorrectionModeChanged(mode) => {
+                self.state.blocking_write().pitch_correction_mode = mode;
+                let target = {
+                    let state = self.state.blocking_read();
+                    state
+                        .pitch_correction
+                        .as_ref()
+                        .map(|pc| (pc.track_idx.clone(), pc.clip_index))
+                };
+                let Some((track_idx, clip_idx)) = target else {
+                    return Task::none();
+                };
+                {
+                    let mut state = self.state.blocking_write();
+                    let Some(clip) = state
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == track_idx)
+                        .and_then(|t| t.audio.clips.get_mut(clip_idx))
+                    else {
+                        return Task::none();
+                    };
+                    clip.pitch_correction_mode = mode;
+                    if mode == maolan_engine::message::PitchCorrectionMode::Shift {
+                        // Back to live shifting: drop the resynthesis preview
+                        // so the engine applies the points in realtime.
+                        clip.pitch_correction_preview_name = None;
+                    }
+                }
+                // Resynth mode re-renders through sync_pitch_correction_realtime.
+                return self.sync_pitch_correction_realtime();
+            }
+            Message::ClipPitchCorrectionResynthFinished {
+                track_idx,
+                clip_index,
+                clip_name,
+                clip_start,
+                result,
+            } => {
+                self.resynth_render_in_progress = false;
+                let clip_state = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == track_idx)
+                        .and_then(|t| t.audio.clips.get(clip_index))
+                        .map(|clip| (clip.name.clone(), clip.start))
+                };
+                let Some((current_name, current_start)) = clip_state else {
+                    return Task::none();
+                };
+                if current_name != clip_name || current_start != clip_start {
+                    return Task::none();
+                }
+                match result {
+                    Ok((preview_name, _)) => {
+                        self.state.blocking_write().message =
+                            format!("Resynthesized preview ready for '{clip_name}'");
+                        if let Some(clip) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == track_idx)
+                            .and_then(|t| t.audio.clips.get_mut(clip_index))
+                        {
+                            clip.pitch_correction_preview_name = Some(preview_name);
+                        }
+                        // Push the preview to the engine directly (sync would
+                        // treat the fresh preview as stale and re-render).
+                        if let Some(action) = self.current_pitch_correction_action() {
+                            return self.send(action);
+                        }
+                        return Task::none();
+                    }
+                    Err(e) => {
+                        self.state.blocking_write().message =
+                            format!("Resynthesis failed for '{clip_name}': {e}");
+                        return Task::none();
+                    }
+                }
+            }
             Message::PianoNoteResizeStart {
                 note_index,
                 position,
@@ -3960,6 +4073,8 @@ impl Maolan {
                             pitch_correction_frame_likeness,
                             pitch_correction_inertia_ms,
                             pitch_correction_formant_compensation,
+                            pitch_correction_detector,
+                            pitch_correction_mode,
                             plugin_graph_json,
                         } => {
                             if self.recording_preview_start_sample.is_some() {
@@ -4057,6 +4172,8 @@ impl Maolan {
                                                 *pitch_correction_inertia_ms,
                                             pitch_correction_formant_compensation:
                                                 *pitch_correction_formant_compensation,
+                                            pitch_correction_detector: *pitch_correction_detector,
+                                            pitch_correction_mode: *pitch_correction_mode,
                                             take_lane_override: None,
                                             take_lane_pinned: false,
                                             take_lane_locked: false,
@@ -6102,6 +6219,8 @@ impl Maolan {
                                 pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
                                 pitch_correction_formant_compensation: clip
                                     .pitch_correction_formant_compensation,
+                                pitch_correction_detector: clip.pitch_correction_detector,
+                                pitch_correction_mode: clip.pitch_correction_mode,
                                 plugin_graph_json: clip.plugin_graph_json,
                             }),
                         );
@@ -6131,6 +6250,8 @@ impl Maolan {
                             pitch_correction_frame_likeness: None,
                             pitch_correction_inertia_ms: None,
                             pitch_correction_formant_compensation: None,
+                            pitch_correction_detector: Default::default(),
+                            pitch_correction_mode: Default::default(),
                             plugin_graph_json: None,
                         }));
                     }
@@ -6165,6 +6286,29 @@ impl Maolan {
                             async move {
                                 let mut prepared_clips = Vec::new();
                                 for (clip_index, clip) in corrected_clips {
+                                    // Resynthesized clips reuse their rendered
+                                    // preview instead of a timestretch render.
+                                    if clip.pitch_correction_mode
+                                        == maolan_engine::message::PitchCorrectionMode::Resynth
+                                        && let Some(preview_name) =
+                                            clip.pitch_correction_preview_name.clone()
+                                    {
+                                        let preview_path =
+                                            if std::path::Path::new(&preview_name).is_absolute() {
+                                                std::path::PathBuf::from(&preview_name)
+                                            } else {
+                                                session_root.join(&preview_name)
+                                            };
+                                        if preview_path.exists() {
+                                            prepared_clips.push(
+                                                crate::message::PreparedFreezeClip {
+                                                    clip_index,
+                                                    preview_name,
+                                                },
+                                            );
+                                            continue;
+                                        }
+                                    }
                                     let source_name = clip
                                         .pitch_correction_source_name
                                         .clone()
@@ -7418,6 +7562,14 @@ impl Maolan {
                         pitch_correction.frame_likeness = request.frame_likeness;
                         state.pitch_correction = Some(pitch_correction);
                         state.pitch_correction_frame_likeness = request.frame_likeness;
+                        state.pitch_correction_detector = request.detector;
+                        let clip_mode = state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == request.track_idx)
+                            .and_then(|t| t.audio.clips.get(request.clip_idx))
+                            .map(|clip| clip.pitch_correction_mode);
+                        state.pitch_correction_mode = clip_mode.unwrap_or_default();
                         state.pitch_correction_selected_points.clear();
                         state.pitch_correction_dragging_points = None;
                         state.pitch_correction_selecting_rect = None;
@@ -7433,6 +7585,12 @@ impl Maolan {
                         state.message =
                             format!("Opened pitch correction for '{}'", request.clip_name);
                         drop(state);
+                        if clip_mode == Some(maolan_engine::message::PitchCorrectionMode::Resynth) {
+                            return self.start_resynth_preview_render(
+                                request.track_idx.clone(),
+                                request.clip_idx,
+                            );
+                        }
                     }
                     Err(e) => {
                         self.state.blocking_write().message =
@@ -9849,6 +10007,8 @@ impl Maolan {
                                                     pitch_correction_frame_likeness: None,
                                                     pitch_correction_inertia_ms: None,
                                                     pitch_correction_formant_compensation: None,
+                                                    pitch_correction_detector: Default::default(),
+                                                    pitch_correction_mode: Default::default(),
                                                     plugin_graph_json: Some(
                                                         Maolan::default_clip_plugin_graph_json(
                                                             channels, channels,
@@ -9929,6 +10089,8 @@ impl Maolan {
                                                     pitch_correction_frame_likeness: None,
                                                     pitch_correction_inertia_ms: None,
                                                     pitch_correction_formant_compensation: None,
+                                                    pitch_correction_detector: Default::default(),
+                                                    pitch_correction_mode: Default::default(),
                                                     plugin_graph_json: None,
                                                 }))
                                                 .await
@@ -10332,6 +10494,8 @@ impl Maolan {
                                 pitch_correction_frame_likeness: None,
                                 pitch_correction_inertia_ms: None,
                                 pitch_correction_formant_compensation: None,
+                                pitch_correction_detector: Default::default(),
+                                pitch_correction_mode: Default::default(),
                                 plugin_graph_json: Some(
                                     super::super::Maolan::default_clip_plugin_graph_json(
                                         channels, channels,
@@ -10767,6 +10931,8 @@ impl Maolan {
                                 pitch_correction_frame_likeness: None,
                                 pitch_correction_inertia_ms: None,
                                 pitch_correction_formant_compensation: None,
+                                pitch_correction_detector: Default::default(),
+                                pitch_correction_mode: Default::default(),
                                 plugin_graph_json: None,
                             }))
                             .await

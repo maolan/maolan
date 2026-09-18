@@ -77,6 +77,8 @@ impl PitchCorrection {
             frame_likeness,
             inertia_ms,
             formant_compensation,
+            detector,
+            mode,
         ) = {
             let state = self.state.blocking_read();
             (
@@ -93,6 +95,8 @@ impl PitchCorrection {
                     .clamp(Self::FRAME_LIKENESS_MIN, Self::FRAME_LIKENESS_MAX),
                 state.pitch_correction_inertia_ms.min(1000),
                 state.pitch_correction_formant_compensation,
+                state.pitch_correction_detector,
+                state.pitch_correction_mode,
             )
         };
         let Some(roll) = roll else {
@@ -188,6 +192,30 @@ impl PitchCorrection {
                 checkbox(formant_compensation)
                     .label("Formant compensation")
                     .on_toggle(Message::PitchCorrectionFormantCompensationChanged),
+                checkbox(matches!(
+                    detector,
+                    maolan_engine::message::PitchCorrectionDetector::Neural
+                ))
+                .label("Neural detection (GPU)")
+                .on_toggle(|enabled| {
+                    Message::PitchCorrectionDetectorChanged(if enabled {
+                        maolan_engine::message::PitchCorrectionDetector::Neural
+                    } else {
+                        maolan_engine::message::PitchCorrectionDetector::Classic
+                    })
+                }),
+                checkbox(matches!(
+                    mode,
+                    maolan_engine::message::PitchCorrectionMode::Resynth
+                ))
+                .label("Resynthesis (GPU)")
+                .on_toggle(|enabled| {
+                    Message::PitchCorrectionModeChanged(if enabled {
+                        maolan_engine::message::PitchCorrectionMode::Resynth
+                    } else {
+                        maolan_engine::message::PitchCorrectionMode::Shift
+                    })
+                }),
                 button("Export MIDI").on_press(Message::ClipExportPitchCorrectionMidi {
                     track_idx: roll.track_idx.clone(),
                     clip_idx: roll.clip_index,

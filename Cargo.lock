@@ -5325,8 +5325,9 @@ dependencies = [
  "maolan-editor",
  "maolan-engine",
  "maolan-generate",
+ "maolan-pitch",
  "maolan-plugin-host",
- "maolan-widgets 0.0.39",
+ "maolan-widgets 0.0.38",
  "midly",
  "mixosc",
  "nix 0.31.3",
@@ -5366,12 +5367,14 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.3.2"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4ec12df92df8ed32b1154664b6250a55734dfe8dd470b06cce7ff045336e2cc"
+checksum = "04d7f008a2f0f60b4c49e32b1dbcf267023ff39670ed6ca26dcf3605f6bddbc8"
 dependencies = [
  "alsa",
  "arc-swap",
+ "audioadapter",
+ "audioadapter-buffers",
  "basedrop",
  "byteorder",
  "jack",
@@ -5387,6 +5390,7 @@ dependencies = [
  "oxideav-mp3",
  "oxideav-ogg",
  "rtrb",
+ "rubato",
  "serde",
  "serde_json",
  "symphonia 0.6.1",
@@ -5455,6 +5459,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "maolan-pitch"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "553ae25a884574eb5245b2bfe46e54f1d7e225f1500017ef7f08eed072d70936"
+dependencies = [
+ "anyhow",
+ "burn",
+ "burn-store",
+ "hf-hub",
+ "rubato",
+ "rustfft",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "maolan-plugin-host"
 version = "0.0.8"
 dependencies = [
@@ -5503,18 +5524,6 @@ name = "maolan-widgets"
 version = "0.0.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9d5c99ffd65fab04c0d62bf608451858b58d7a8ef4373b75e1e0ae741f6f71c"
-dependencies = [
- "iced",
- "iced_aw",
- "iced_drop",
- "iced_fonts",
- "serde",
- "symphonia 0.5.5",
-]
-
-[[package]]
-name = "maolan-widgets"
-version = "0.0.39"
 dependencies = [
  "iced",
  "iced_aw",

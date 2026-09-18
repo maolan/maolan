@@ -769,6 +769,7 @@ pub struct Maolan {
     clip_pitch_correction_progress: f32,
     clip_pitch_correction_clip_name: String,
     clip_pitch_correction_operation: Option<String>,
+    resynth_render_in_progress: bool,
     export_in_progress: bool,
     export_cancel: Arc<AtomicBool>,
     export_pending_bounces: HashSet<String>,
@@ -1110,6 +1111,7 @@ impl Default for Maolan {
             clip_pitch_correction_progress: 0.0,
             clip_pitch_correction_clip_name: String::new(),
             clip_pitch_correction_operation: None,
+            resynth_render_in_progress: false,
             export_in_progress: false,
             export_cancel: Arc::new(AtomicBool::new(false)),
             export_pending_bounces: HashSet::new(),
@@ -2208,11 +2210,13 @@ impl Maolan {
         source_name: &str,
         source_offset: usize,
         source_length: usize,
+        detector: maolan_engine::message::PitchCorrectionDetector,
     ) -> String {
         let mut hasher = DefaultHasher::new();
         source_name.hash(&mut hasher);
         source_offset.hash(&mut hasher);
         source_length.hash(&mut hasher);
+        detector.hash(&mut hasher);
         format!("pitch/{:016x}.json", hasher.finish())
     }
 
@@ -2230,6 +2234,7 @@ impl Maolan {
             &source_rel,
             clip.pitch_correction_source_offset.unwrap_or(clip.offset),
             clip.pitch_correction_source_length.unwrap_or(clip.length),
+            clip.pitch_correction_detector,
         );
         referenced.insert(cache_rel);
     }
@@ -3324,12 +3329,75 @@ impl Maolan {
         Ok((output_rel, output_frames.max(1)))
     }
 
+    /// Lazily initialize (once per process) and share the neural F0 detector.
+    /// The FCPE model is downloaded on first use; failure is cached so the
+    /// download/GPU error is reported without being retried every analysis.
+    fn neural_pitch_detector() -> Result<std::sync::Arc<maolan_pitch::FcpeDetector>, String> {
+        type SharedDetector = std::sync::Arc<maolan_pitch::FcpeDetector>;
+        static DETECTOR: std::sync::OnceLock<
+            std::sync::Mutex<Option<Result<SharedDetector, String>>>,
+        > = std::sync::OnceLock::new();
+        let mutex = DETECTOR.get_or_init(|| std::sync::Mutex::new(None));
+        let mut slot = mutex.lock().map_err(|err| err.to_string())?;
+        if let Some(result) = &*slot {
+            return result.clone();
+        }
+        let result = (|| {
+            let cache_dir = dirs::data_local_dir()
+                .ok_or_else(|| "no local data directory".to_string())?
+                .join("maolan")
+                .join("models");
+            let bpk = maolan_pitch::ensure_fcpe_model(&cache_dir).map_err(|e| format!("{e:#}"))?;
+            let weights = maolan_pitch::load_fcpe_weights(&bpk).map_err(|e| format!("{e:#}"))?;
+            Ok(std::sync::Arc::new(maolan_pitch::FcpeDetector::new(
+                weights,
+            )))
+        })();
+        *slot = Some(result.clone());
+        result
+    }
+
+    /// Convert FCPE frames into the classic detector's point format: one point
+    /// per voiced frame, unvoiced frames become gaps. Frame timestamps are
+    /// already in source-rate samples (maolan-pitch rescales them).
+    fn fcpe_frames_to_pitch_points(
+        frames: Vec<maolan_pitch::F0Frame>,
+    ) -> Vec<PitchCorrectionPoint> {
+        frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| {
+                let frequency = frame.frequency?;
+                let midi_pitch = 69.0 + 12.0 * (frequency / 440.0).log2();
+                if !midi_pitch.is_finite() {
+                    return None;
+                }
+                let clamped = midi_pitch.clamp(0.0, f32::from(PITCH_MAX) + 0.999);
+                let length_samples = frames
+                    .get(index + 1)
+                    .map(|next| next.time_samples.saturating_sub(frame.time_samples))
+                    .unwrap_or(1)
+                    .max(1);
+                Some(PitchCorrectionPoint {
+                    start_sample: frame.time_samples,
+                    length_samples,
+                    detected_midi_pitch: clamped,
+                    target_midi_pitch: clamped,
+                    // FCPE confidence spans roughly 0.05..0.9 on voiced
+                    // frames; the classic clarity is 0..1 as well.
+                    clarity: frame.confidence.clamp(0.0, 1.0),
+                })
+            })
+            .collect()
+    }
+
     async fn analyze_audio_clip_pitch_correction<F>(
         src_path: &Path,
         clip_name: &str,
         offset: usize,
         length: usize,
         frame_likeness: f32,
+        detector: maolan_engine::message::PitchCorrectionDetector,
         mut progress_callback: F,
     ) -> io::Result<PitchCorrectionData>
     where
@@ -3376,40 +3444,69 @@ impl Maolan {
             )));
         }
         let hop_size = (analysis_size / 4).max(64);
-        let padding = analysis_size / 2;
-        let mut detector = McLeodDetector::new(analysis_size, padding);
-        let mut detected = Vec::<PitchCorrectionPoint>::new();
-        let mut cursor = 0usize;
-        let total_windows = ((mono.len().saturating_sub(analysis_size)) / hop_size).max(1) + 1;
-        let mut window_index = 0usize;
-        while cursor + analysis_size <= mono.len() {
-            let window: Vec<f64> = mono[cursor..cursor + analysis_size]
-                .iter()
-                .map(|sample| *sample as f64)
-                .collect();
-            if let Some(pitch) = detector.get_pitch(&window, sample_rate as usize, 5.0f64, 0.7f64)
-                && pitch.frequency.is_finite()
-                && pitch.frequency > 0.0
-            {
-                let midi_pitch = 69.0 + 12.0 * (pitch.frequency as f32 / 440.0).log2();
-                if midi_pitch.is_finite() {
-                    detected.push(PitchCorrectionPoint {
-                        start_sample: cursor,
-                        length_samples: hop_size.min(mono.len().saturating_sub(cursor)).max(1),
-                        detected_midi_pitch: midi_pitch.clamp(0.0, f32::from(PITCH_MAX) + 0.999),
-                        target_midi_pitch: midi_pitch.clamp(0.0, f32::from(PITCH_MAX) + 0.999),
-                        clarity: pitch.clarity as f32,
-                    });
+        let detected: Vec<PitchCorrectionPoint> = match detector {
+            maolan_engine::message::PitchCorrectionDetector::Neural => {
+                progress_callback(0.60, Some("Loading pitch model".to_string()));
+                let neural = Self::neural_pitch_detector().map_err(io::Error::other)?;
+                let frames = neural.detect_f0(&mono, sample_rate, |detect_progress| {
+                    progress_callback(
+                        0.60 + detect_progress.clamp(0.0, 1.0) * 0.40,
+                        Some("Detecting pitch".to_string()),
+                    );
+                });
+                let points = Self::fcpe_frames_to_pitch_points(frames);
+                if points.is_empty() {
+                    return Err(io::Error::other(format!(
+                        "No stable pitch detected in '{}'",
+                        clip_name
+                    )));
                 }
+                points
             }
-            window_index = window_index.saturating_add(1);
-            let analysis_progress = window_index as f32 / total_windows as f32;
-            progress_callback(
-                0.60 + analysis_progress.clamp(0.0, 1.0) * 0.40,
-                Some("Detecting pitch".to_string()),
-            );
-            cursor = cursor.saturating_add(hop_size);
-        }
+            maolan_engine::message::PitchCorrectionDetector::Classic => {
+                let padding = analysis_size / 2;
+                let mut detector = McLeodDetector::new(analysis_size, padding);
+                let mut detected = Vec::<PitchCorrectionPoint>::new();
+                let mut cursor = 0usize;
+                let total_windows =
+                    ((mono.len().saturating_sub(analysis_size)) / hop_size).max(1) + 1;
+                let mut window_index = 0usize;
+                while cursor + analysis_size <= mono.len() {
+                    let window: Vec<f64> = mono[cursor..cursor + analysis_size]
+                        .iter()
+                        .map(|sample| *sample as f64)
+                        .collect();
+                    if let Some(pitch) =
+                        detector.get_pitch(&window, sample_rate as usize, 5.0f64, 0.7f64)
+                        && pitch.frequency.is_finite()
+                        && pitch.frequency > 0.0
+                    {
+                        let midi_pitch = 69.0 + 12.0 * (pitch.frequency as f32 / 440.0).log2();
+                        if midi_pitch.is_finite() {
+                            detected.push(PitchCorrectionPoint {
+                                start_sample: cursor,
+                                length_samples: hop_size
+                                    .min(mono.len().saturating_sub(cursor))
+                                    .max(1),
+                                detected_midi_pitch: midi_pitch
+                                    .clamp(0.0, f32::from(PITCH_MAX) + 0.999),
+                                target_midi_pitch: midi_pitch
+                                    .clamp(0.0, f32::from(PITCH_MAX) + 0.999),
+                                clarity: pitch.clarity as f32,
+                            });
+                        }
+                    }
+                    window_index = window_index.saturating_add(1);
+                    let analysis_progress = window_index as f32 / total_windows as f32;
+                    progress_callback(
+                        0.60 + analysis_progress.clamp(0.0, 1.0) * 0.40,
+                        Some("Detecting pitch".to_string()),
+                    );
+                    cursor = cursor.saturating_add(hop_size);
+                }
+                detected
+            }
+        };
         if detected.is_empty() {
             return Err(io::Error::other(format!(
                 "No stable pitch detected in '{}'",
@@ -3502,6 +3599,152 @@ impl Maolan {
 
         merged.push(current);
         merged
+    }
+
+    /// Lazily initialize (once per process) and share the neural vocoder used
+    /// for resynthesis renders. The model is downloaded on first use.
+    fn neural_vocoder() -> Result<std::sync::Arc<maolan_pitch::PcNsfHifiGan>, String> {
+        type SharedVocoder = std::sync::Arc<maolan_pitch::PcNsfHifiGan>;
+        static VOCODER: std::sync::OnceLock<
+            std::sync::Mutex<Option<Result<SharedVocoder, String>>>,
+        > = std::sync::OnceLock::new();
+        let mutex = VOCODER.get_or_init(|| std::sync::Mutex::new(None));
+        let mut slot = mutex.lock().map_err(|err| err.to_string())?;
+        if let Some(result) = &*slot {
+            return result.clone();
+        }
+        let result = (|| {
+            let cache_dir = dirs::data_local_dir()
+                .ok_or_else(|| "no local data directory".to_string())?
+                .join("maolan")
+                .join("models");
+            let bpk = maolan_pitch::ensure_pc_nsf_hifigan_model(&cache_dir)
+                .map_err(|e| format!("{e:#}"))?;
+            let weights =
+                maolan_pitch::load_pc_nsf_hifigan_weights(&bpk).map_err(|e| format!("{e:#}"))?;
+            Ok(std::sync::Arc::new(maolan_pitch::PcNsfHifiGan::new(
+                weights,
+            )))
+        })();
+        *slot = Some(result.clone());
+        result
+    }
+
+    /// Render pitch correction by neural resynthesis (PC-NSF-HiFiGAN): the
+    /// clip's mel spectrogram carries the timbre, the edited target pitches
+    /// become the sung f0 contour. Unvoiced gaps hold the surrounding target
+    /// pitch (the vocoder has no unvoiced state). Output is always 44.1 kHz
+    /// mono, written as the clip's pitch-correction preview.
+    #[allow(clippy::too_many_arguments)]
+    async fn render_audio_clip_pitch_correction_with_vocoder<F>(
+        src_path: &Path,
+        session_root: &Path,
+        clip_name: &str,
+        offset: usize,
+        length: usize,
+        points: &[PitchCorrectionPoint],
+        mut progress_callback: F,
+    ) -> io::Result<(String, usize, crate::state::ClipPeaks)>
+    where
+        F: FnMut(f32, Option<String>),
+    {
+        const VOCODER_SAMPLE_RATE: u32 = 44_100;
+        let (samples, channels, sample_rate) =
+            Self::decode_audio_to_f32_interleaved_with_progress(src_path, |decode_progress| {
+                progress_callback(decode_progress * 0.45, Some("Decoding".to_string()));
+            })
+            .await?;
+        let channels = channels.max(1);
+        let total_frames = samples.len() / channels;
+        let start_frame = offset.min(total_frames);
+        let segment_frames = length.max(1).min(total_frames.saturating_sub(start_frame));
+        if segment_frames == 0 {
+            return Err(io::Error::other(format!(
+                "Audio clip '{}' has no available source samples for pitch correction",
+                clip_name
+            )));
+        }
+        let mono: Vec<f32> = (0..segment_frames)
+            .map(|frame_idx| {
+                let base = (start_frame + frame_idx) * channels;
+                (0..channels)
+                    .map(|channel| samples[base + channel])
+                    .sum::<f32>()
+                    / channels as f32
+            })
+            .collect();
+        progress_callback(0.50, Some("Preparing source".to_string()));
+        tokio::task::yield_now().await;
+
+        let mono = maolan_pitch::resample::resample_to(&mono, sample_rate, VOCODER_SAMPLE_RATE)
+            .map_err(|e| io::Error::other(format!("Failed to resample for resynthesis: {e:#}")))?;
+        let mel = maolan_pitch::vmel::wav_to_mel(&mono);
+        if mel.is_empty() {
+            return Err(io::Error::other(format!(
+                "Audio clip '{}' is too short for resynthesis",
+                clip_name
+            )));
+        }
+        progress_callback(0.60, Some("Synthesizing".to_string()));
+        tokio::task::yield_now().await;
+
+        let mut sorted: Vec<&PitchCorrectionPoint> = points.iter().collect();
+        sorted.sort_by_key(|point| point.start_sample);
+        let scale = sample_rate as f64 / VOCODER_SAMPLE_RATE as f64;
+        let midi_to_hz =
+            |midi: f32| 440.0 * 2.0_f32.powf((midi.clamp(0.0, f32::from(PITCH_MAX)) - 69.0) / 12.0);
+        let fallback = sorted
+            .first()
+            .map(|point| midi_to_hz(point.target_midi_pitch))
+            .unwrap_or(220.0);
+        let mut f0_hz = Vec::with_capacity(mel.len());
+        let mut current = fallback;
+        let mut point_idx = 0usize;
+        for frame in 0..mel.len() {
+            let t_src = ((frame * 512) as f64 * scale) as usize;
+            while point_idx < sorted.len()
+                && t_src
+                    >= sorted[point_idx]
+                        .start_sample
+                        .saturating_add(sorted[point_idx].length_samples)
+            {
+                point_idx = point_idx.saturating_add(1);
+            }
+            if let Some(point) = sorted.get(point_idx)
+                && t_src >= point.start_sample
+            {
+                current = midi_to_hz(point.target_midi_pitch);
+            }
+            f0_hz.push(current.max(1.0));
+        }
+
+        let vocoder = Self::neural_vocoder().map_err(io::Error::other)?;
+        let rendered = vocoder.synthesize(&mel, &f0_hz);
+        if rendered.is_empty() {
+            return Err(io::Error::other(format!(
+                "Resynthesis produced no audio for '{clip_name}'"
+            )));
+        }
+        progress_callback(0.90, Some("Writing preview".to_string()));
+
+        let stem = Path::new(clip_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let output_rel = Self::unique_import_rel_path(
+            session_root,
+            "audio",
+            &format!("{stem}_resynthesized"),
+            "wav",
+        )?;
+        let output_path = session_root.join(&output_rel);
+        Self::write_wav_f32(&output_path, &rendered, 1, VOCODER_SAMPLE_RATE)?;
+        let output_frames = rendered.len();
+        progress_callback(0.95, Some("Calculating peaks".to_string()));
+        tokio::task::yield_now().await;
+        let peaks = Self::compute_audio_clip_peaks(&output_path)?;
+        progress_callback(1.0, Some("Complete".to_string()));
+        Ok((output_rel, output_frames.max(1), peaks))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4044,10 +4287,37 @@ impl Maolan {
 
         {
             let mut handles = Vec::new();
+            // Resynthesized clips already have their corrected audio rendered
+            // as the preview; export it directly instead of re-rendering with
+            // timestretch. Applied after the render handles complete.
+            let mut direct_previews: Vec<(usize, usize, String, usize)> = Vec::new();
             for (track_idx, track) in tracks.iter().enumerate() {
                 for (clip_idx, clip) in track.clips.iter().enumerate() {
                     if clip.pitch_correction_points.is_empty() {
                         continue;
+                    }
+                    if clip.pitch_correction_mode
+                        == maolan_engine::message::PitchCorrectionMode::Resynth
+                        && let Some(preview_name) = clip.pitch_correction_preview_name.clone()
+                    {
+                        let preview_path = if std::path::PathBuf::from(&preview_name).is_absolute()
+                        {
+                            std::path::PathBuf::from(&preview_name)
+                        } else {
+                            session_root.join(&preview_name)
+                        };
+                        if preview_path.exists()
+                            && let Ok(preview_frames) =
+                                Self::audio_clip_source_length(&preview_path)
+                        {
+                            direct_previews.push((
+                                track_idx,
+                                clip_idx,
+                                preview_name,
+                                preview_frames,
+                            ));
+                            continue;
+                        }
                     }
                     let source_name = clip
                         .pitch_correction_source_name
@@ -4101,6 +4371,14 @@ impl Maolan {
                         .pitch_correction_points
                         .clear();
                 }
+            }
+            for (track_idx, clip_idx, preview_name, preview_frames) in direct_previews {
+                tracks[track_idx].clips[clip_idx].name = preview_name;
+                tracks[track_idx].clips[clip_idx].offset = 0;
+                tracks[track_idx].clips[clip_idx].length = preview_frames.max(1);
+                tracks[track_idx].clips[clip_idx]
+                    .pitch_correction_points
+                    .clear();
             }
         }
 
@@ -8596,8 +8874,10 @@ mod tests {
     fn referenced_session_media_paths_include_indirect_and_frozen_assets() {
         let mut state = crate::state::StateData::default();
         let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 1, 1);
-        let lead_pitch_cache = Maolan::pitch_correction_cache_rel("audio/lead_src.wav", 0, 0);
-        let frozen_pitch_cache = Maolan::pitch_correction_cache_rel("audio/frozen_src.wav", 0, 0);
+        let lead_pitch_cache =
+            Maolan::pitch_correction_cache_rel("audio/lead_src.wav", 0, 0, Default::default());
+        let frozen_pitch_cache =
+            Maolan::pitch_correction_cache_rel("audio/frozen_src.wav", 0, 0, Default::default());
         track.audio.clips.push(crate::state::AudioClip {
             name: "audio/lead.wav".to_string(),
             pitch_correction_source_name: Some("audio/lead_src.wav".to_string()),
@@ -8645,7 +8925,8 @@ mod tests {
     fn referenced_session_media_paths_use_source_offset_and_length_for_pitch_cache_keys() {
         let mut state = crate::state::StateData::default();
         let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 1, 1);
-        let expected_cache = Maolan::pitch_correction_cache_rel("audio/source.wav", 128, 4096);
+        let expected_cache =
+            Maolan::pitch_correction_cache_rel("audio/source.wav", 128, 4096, Default::default());
         track.audio.clips.push(crate::state::AudioClip {
             name: "audio/rendered.wav".to_string(),
             offset: 12,
@@ -8802,15 +9083,19 @@ mod tests {
     }
 
     #[test]
-    fn pitch_correction_cache_rel_is_stable_and_changes_with_segment() {
-        let a = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 1024);
-        let b = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 1024);
-        let c = Maolan::pitch_correction_cache_rel("audio/source.wav", 1, 1024);
-        let d = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 2048);
+    fn pitch_correction_cache_rel_is_stable_and_changes_with_segment_and_detector() {
+        let classic = maolan_engine::message::PitchCorrectionDetector::Classic;
+        let neural = maolan_engine::message::PitchCorrectionDetector::Neural;
+        let a = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 1024, classic);
+        let b = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 1024, classic);
+        let c = Maolan::pitch_correction_cache_rel("audio/source.wav", 1, 1024, classic);
+        let d = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 2048, classic);
+        let e = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 1024, neural);
 
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_ne!(a, d);
+        assert_ne!(a, e);
     }
 
     #[test]

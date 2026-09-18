@@ -508,6 +508,20 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                     pitch_correction_formant_compensation: clip
                         .get("pitch_correction_formant_compensation")
                         .and_then(Value::as_bool),
+                    pitch_correction_detector: match clip
+                        .get("pitch_correction_detector")
+                        .and_then(Value::as_str)
+                    {
+                        Some("neural") => maolan_engine::message::PitchCorrectionDetector::Neural,
+                        _ => Default::default(),
+                    },
+                    pitch_correction_mode: match clip
+                        .get("pitch_correction_mode")
+                        .and_then(Value::as_str)
+                    {
+                        Some("resynth") => maolan_engine::message::PitchCorrectionMode::Resynth,
+                        _ => Default::default(),
+                    },
                     plugin_graph_json: clip
                         .get("plugin_graph_json")
                         .filter(|value| !value.is_null())
@@ -580,6 +594,20 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                     pitch_correction_frame_likeness: None,
                     pitch_correction_inertia_ms: None,
                     pitch_correction_formant_compensation: None,
+                    pitch_correction_detector: match clip
+                        .get("pitch_correction_detector")
+                        .and_then(|v| v.as_str())
+                    {
+                        Some("neural") => maolan_engine::message::PitchCorrectionDetector::Neural,
+                        _ => Default::default(),
+                    },
+                    pitch_correction_mode: match clip
+                        .get("pitch_correction_mode")
+                        .and_then(Value::as_str)
+                    {
+                        Some("resynth") => maolan_engine::message::PitchCorrectionMode::Resynth,
+                        _ => Default::default(),
+                    },
                     plugin_graph_json: None,
                 });
             }
@@ -807,6 +835,17 @@ fn parse_audio_clip_data(clip: &Value) -> Result<AudioClipData, String> {
         pitch_correction_formant_compensation: clip
             .get("pitch_correction_formant_compensation")
             .and_then(Value::as_bool),
+        pitch_correction_detector: match clip
+            .get("pitch_correction_detector")
+            .and_then(Value::as_str)
+        {
+            Some("neural") => maolan_engine::message::PitchCorrectionDetector::Neural,
+            _ => Default::default(),
+        },
+        pitch_correction_mode: match clip.get("pitch_correction_mode").and_then(Value::as_str) {
+            Some("resynth") => maolan_engine::message::PitchCorrectionMode::Resynth,
+            _ => Default::default(),
+        },
         plugin_graph_json: clip
             .get("plugin_graph_json")
             .filter(|value| !value.is_null())
