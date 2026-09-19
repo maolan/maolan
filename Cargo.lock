@@ -5327,7 +5327,7 @@ dependencies = [
  "maolan-generate",
  "maolan-pitch",
  "maolan-plugin-host",
- "maolan-widgets 0.0.38",
+ "maolan-widgets 0.0.39",
  "midly",
  "mixosc",
  "nix 0.31.3",
@@ -5352,11 +5352,11 @@ dependencies = [
 
 [[package]]
 name = "maolan-editor"
-version = "0.0.9"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04c09ea4d9396c6f8d0761eb23cc7292e63b2d058ea355812971085f790d0b67"
+checksum = "7766b26692a81d59e00fa5f5f69c4b74fe51bfac81b6daf7995e9df25fd02b69"
 dependencies = [
- "maolan-widgets 0.0.38",
+ "maolan-widgets 0.0.39",
  "rfd",
  "rubato",
  "serde",
@@ -5521,9 +5521,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.0.38"
+version = "0.0.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9d5c99ffd65fab04c0d62bf608451858b58d7a8ef4373b75e1e0ae741f6f71c"
+checksum = "60039c26299f8c5c73f1e1b6a5b207b51ea3b765438855b2d99afd6ca9b8d7f3"
 dependencies = [
  "iced",
  "iced_aw",
