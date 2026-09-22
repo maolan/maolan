@@ -37,7 +37,8 @@ use crate::{
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
 use maolan_engine::audio_codec::{
-    AudioDither, AudioEncodeFormat, WavBitDepth, decode_audio_to_f32_interleaved_sync,
+    AudioDither, AudioEncodeFormat, StreamingDecoder, WavBitDepth,
+    decode_audio_to_f32_interleaved_sync, probe_audio_file,
 };
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{
@@ -80,6 +81,12 @@ use std::{
 };
 
 use tokio::sync::RwLock;
+
+/// Per-channel peak-bin min/max accumulators produced by
+/// `Maolan::decode_streaming_peak_bins`, plus a parallel buffer tracking
+/// which bins have been touched by a decoded sample.
+type PeakBins = Vec<Vec<[f32; 2]>>;
+type PeakTouchedBins = Vec<Vec<bool>>;
 
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
@@ -1797,7 +1804,81 @@ impl Maolan {
         format!("peaks/{}_{:04}_{}.json", track, clip_idx, clip)
     }
 
+    /// Decode `path` once via the engine's incremental [`StreamingDecoder`],
+    /// accumulating min/max peak bins against `total_frames`. Calls `emit`
+    /// with `(bin_start, bin_end, accum, touched)` whenever newly completed
+    /// bins are available so callers can stream partial peak chunks. Returns
+    /// the final `(accum, touched)` bin buffers.
+    fn decode_streaming_peak_bins(
+        path: &Path,
+        total_frames: usize,
+        mut emit: impl FnMut(usize, usize, &[Vec<[f32; 2]>], &[Vec<bool>]),
+    ) -> std::io::Result<(PeakBins, PeakTouchedBins)> {
+        let mut decoder = StreamingDecoder::new(path)?;
+        let channels = decoder.channels();
+        let target_bins = total_frames.clamp(1024, MAX_PEAK_BINS);
+        let mut accum = vec![vec![[0.0_f32, 0.0_f32]; target_bins]; channels];
+        let mut touched = vec![vec![false; target_bins]; channels];
+        let mut processed_frames = 0usize;
+        let mut last_emitted_bin = 0usize;
+
+        while let Some(chunk) = decoder.next_chunk(CHUNK_FRAMES)? {
+            let frames_read = chunk.len() / channels;
+            if frames_read == 0 {
+                continue;
+            }
+            for (frame_offset, frame) in chunk.chunks(channels).enumerate() {
+                let frame_index = processed_frames + frame_offset;
+                if frame_index >= total_frames {
+                    break;
+                }
+                let bin = ((frame_index * target_bins) / total_frames).min(target_bins - 1);
+                for (channel_idx, sample) in frame.iter().enumerate() {
+                    let s = sample.clamp(-1.0, 1.0);
+                    if !touched[channel_idx][bin] {
+                        accum[channel_idx][bin] = [s, s];
+                        touched[channel_idx][bin] = true;
+                    } else {
+                        accum[channel_idx][bin][0] = accum[channel_idx][bin][0].min(s);
+                        accum[channel_idx][bin][1] = accum[channel_idx][bin][1].max(s);
+                    }
+                }
+            }
+            processed_frames = processed_frames.saturating_add(frames_read);
+            let emit_end = (((processed_frames * target_bins) / total_frames) + 1).min(target_bins);
+            if emit_end > last_emitted_bin {
+                emit(last_emitted_bin, emit_end, &accum, &touched);
+                last_emitted_bin = emit_end;
+            }
+        }
+        Ok((accum, touched))
+    }
+
     fn compute_audio_clip_peaks(path: &Path) -> std::io::Result<ClipPeaks> {
+        // Long files stream through the incremental decoder so the whole
+        // file is never held in memory. `probe_audio_file` reports exact
+        // frame counts for lossless containers; for formats with approximate
+        // durations (e.g. MP3) bin boundaries may shift by a sub-bin amount.
+        let probed_frames = probe_audio_file(path).ok().and_then(|info| info.frames);
+        if let Some(total_frames) = probed_frames.filter(|frames| *frames > MAX_PEAK_BINS as u64) {
+            let (accum, touched) =
+                Self::decode_streaming_peak_bins(path, total_frames as usize, |_, _, _, _| {})?;
+            if touched.iter().all(|ch| ch.iter().all(|t| !t)) {
+                return Ok(Arc::new(Vec::new()));
+            }
+            let peaks = accum
+                .iter()
+                .zip(touched.iter())
+                .map(|(bins, touched)| {
+                    bins.iter()
+                        .zip(touched.iter())
+                        .map(|(pair, t)| if *t { *pair } else { [0.0_f32, 0.0_f32] })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            return Ok(Arc::new(peaks));
+        }
+
         let (samples, channels, _) = decode_audio_to_f32_interleaved_sync(path)?;
         let mut per_channel = vec![Vec::with_capacity(samples.len() / channels + 1); channels];
         for frame in samples.chunks(channels) {
@@ -2011,6 +2092,61 @@ impl Maolan {
         length: usize,
         offset: usize,
     ) -> std::io::Result<()> {
+        // Long files stream through the incremental decoder so the whole
+        // file is never held in memory (see `compute_audio_clip_peaks`).
+        let probed_frames = probe_audio_file(path).ok().and_then(|info| info.frames);
+        if let Some(total_frames) = probed_frames.filter(|frames| *frames > MAX_PEAK_BINS as u64) {
+            let total_frames = total_frames as usize;
+            let target_bins = total_frames.clamp(1024, MAX_PEAK_BINS);
+            let (accum, _touched) = Self::decode_streaming_peak_bins(
+                path,
+                total_frames,
+                |bin_start, bin_end, accum, touched| {
+                    let mut peaks_chunk =
+                        vec![Vec::with_capacity(bin_end - bin_start); accum.len()];
+                    for (channel_idx, chunk_channel) in peaks_chunk.iter_mut().enumerate() {
+                        for bin in bin_start..bin_end {
+                            let pair = if touched[channel_idx][bin] {
+                                accum[channel_idx][bin]
+                            } else {
+                                [0.0_f32, 0.0_f32]
+                            };
+                            chunk_channel.push(pair);
+                        }
+                    }
+                    if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+                        queue.push(AudioPeakChunkUpdate {
+                            track_name: track_name.clone(),
+                            clip_name: clip_name.clone(),
+                            start,
+                            length,
+                            offset,
+                            channels: accum.len(),
+                            target_bins,
+                            bin_start,
+                            peaks: peaks_chunk,
+                            done: false,
+                        });
+                    }
+                },
+            )?;
+            if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+                queue.push(AudioPeakChunkUpdate {
+                    track_name,
+                    clip_name,
+                    start,
+                    length,
+                    offset,
+                    channels: accum.len(),
+                    target_bins,
+                    bin_start: 0,
+                    peaks: Vec::new(),
+                    done: true,
+                });
+            }
+            return Ok(());
+        }
+
         let (samples, channels, _) = decode_audio_to_f32_interleaved_sync(path)?;
         let total_frames = samples.len() / channels.max(1);
         if total_frames == 0 {
