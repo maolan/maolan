@@ -54,7 +54,7 @@ impl Maolan {
         plugin_id: String,
     ) -> Task<Message> {
         let (name, cached) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let name = Self::plugin_display_name(&state, instance_id, &format, &plugin_id);
             let cached = if let Some(clip_idx) = clip_idx {
                 state
@@ -135,38 +135,44 @@ impl Maolan {
             Message::RefreshVst3Plugins => Some(self.send(Action::ListVst3Plugins)),
             Message::RefreshClapPlugins => Some(self.send(Action::ListClapPlugins)),
             Message::FilterPluginList(ref query) => {
-                self.plugin_list_filter = query.clone();
+                self.plugin_scan.plugin_list_filter = query.clone();
                 None
             }
             #[cfg(unix)]
             Message::SelectLv2Plugin(ref plugin_uri) => {
-                if self.selected_lv2_plugins.contains(plugin_uri) {
-                    self.selected_lv2_plugins.remove(plugin_uri);
+                if self.plugin_scan.selected_lv2_plugins.contains(plugin_uri) {
+                    self.plugin_scan.selected_lv2_plugins.remove(plugin_uri);
                 } else {
-                    self.selected_lv2_plugins.insert(plugin_uri.clone());
+                    self.plugin_scan
+                        .selected_lv2_plugins
+                        .insert(plugin_uri.clone());
                 }
                 None
             }
             Message::SelectVst3Plugin(ref plugin_id) => {
-                if self.selected_vst3_plugins.contains(plugin_id) {
-                    self.selected_vst3_plugins.remove(plugin_id);
+                if self.plugin_scan.selected_vst3_plugins.contains(plugin_id) {
+                    self.plugin_scan.selected_vst3_plugins.remove(plugin_id);
                 } else {
-                    self.selected_vst3_plugins.insert(plugin_id.clone());
+                    self.plugin_scan
+                        .selected_vst3_plugins
+                        .insert(plugin_id.clone());
                 }
                 None
             }
             Message::SelectClapPlugin(ref plugin_id) => {
-                if self.selected_clap_plugins.contains(plugin_id) {
-                    self.selected_clap_plugins.remove(plugin_id);
+                if self.plugin_scan.selected_clap_plugins.contains(plugin_id) {
+                    self.plugin_scan.selected_clap_plugins.remove(plugin_id);
                 } else {
-                    self.selected_clap_plugins.insert(plugin_id.clone());
+                    self.plugin_scan
+                        .selected_clap_plugins
+                        .insert(plugin_id.clone());
                 }
                 None
             }
             #[cfg(unix)]
             Message::LoadSelectedPlugins => {
                 let (clip_target, track_name) = {
-                    let state = self.state.blocking_read();
+                    let state = self.state.read().expect("state lock poisoned");
                     (
                         state.plugin_graph_clip.clone(),
                         state
@@ -179,27 +185,30 @@ impl Maolan {
                 if clip_target.is_some() {
                     #[cfg(unix)]
                     let lv2_selected = self
+                        .plugin_scan
                         .selected_lv2_plugins
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>();
                     let clap_selected = self
+                        .plugin_scan
                         .selected_clap_plugins
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>();
                     let vst3_selected = self
+                        .plugin_scan
                         .selected_vst3_plugins
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>();
                     #[cfg(unix)]
-                    self.selected_lv2_plugins.clear();
-                    self.selected_clap_plugins.clear();
-                    self.selected_vst3_plugins.clear();
+                    self.plugin_scan.selected_lv2_plugins.clear();
+                    self.plugin_scan.selected_clap_plugins.clear();
+                    self.plugin_scan.selected_vst3_plugins.clear();
                     self.modal = None;
 
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     let mut next_id = state
                         .plugin_graph_plugins
                         .iter()
@@ -306,36 +315,42 @@ impl Maolan {
                     let mut tasks: Vec<Task<Message>> = Vec::new();
                     #[cfg(unix)]
                     {
-                        tasks.extend(self.selected_lv2_plugins.iter().cloned().map(|plugin_uri| {
-                            self.send(Action::TrackLoadLv2Plugin {
+                        tasks.extend(self.plugin_scan.selected_lv2_plugins.iter().cloned().map(
+                            |plugin_uri| {
+                                self.send(Action::TrackLoadLv2Plugin {
+                                    track_name: track_name.clone(),
+                                    plugin_uri,
+                                    instance_id: None,
+                                })
+                            },
+                        ));
+                        self.plugin_scan.selected_lv2_plugins.clear();
+                    }
+                    tasks.extend(self.plugin_scan.selected_clap_plugins.iter().cloned().map(
+                        |plugin_id| {
+                            self.send(Action::TrackLoadClapPlugin {
                                 track_name: track_name.clone(),
-                                plugin_uri,
+                                plugin_id,
                                 instance_id: None,
                             })
-                        }));
-                        self.selected_lv2_plugins.clear();
-                    }
-                    tasks.extend(self.selected_clap_plugins.iter().cloned().map(|plugin_id| {
-                        self.send(Action::TrackLoadClapPlugin {
-                            track_name: track_name.clone(),
-                            plugin_id,
-                            instance_id: None,
-                        })
-                    }));
-                    tasks.extend(self.selected_vst3_plugins.iter().cloned().map(|plugin_id| {
-                        self.send(Action::TrackLoadVst3Plugin {
-                            track_name: track_name.clone(),
-                            plugin_id,
-                            instance_id: None,
-                        })
-                    }));
-                    self.selected_clap_plugins.clear();
-                    self.selected_vst3_plugins.clear();
+                        },
+                    ));
+                    tasks.extend(self.plugin_scan.selected_vst3_plugins.iter().cloned().map(
+                        |plugin_id| {
+                            self.send(Action::TrackLoadVst3Plugin {
+                                track_name: track_name.clone(),
+                                plugin_id,
+                                instance_id: None,
+                            })
+                        },
+                    ));
+                    self.plugin_scan.selected_clap_plugins.clear();
+                    self.plugin_scan.selected_vst3_plugins.clear();
                     self.modal = None;
                     return Some(Task::batch(tasks));
                 }
 
-                self.state.blocking_write().message =
+                self.state.write().expect("state lock poisoned").message =
                     "Select a track before loading plugins".to_string();
                 None
             }
@@ -346,13 +361,13 @@ impl Maolan {
                 instance_id,
                 ref plugin_id,
             } => {
-                if self.session_restore_in_progress {
-                    self.state.blocking_write().message =
+                if self.session_ops.session_restore_in_progress {
+                    self.state.write().expect("state lock poisoned").message =
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
                 let has_native_ui = {
-                    let state = self.state.blocking_read();
+                    let state = self.state.read().expect("state lock poisoned");
                     state
                         .clap_plugins
                         .iter()
@@ -396,13 +411,13 @@ impl Maolan {
                 clip_idx,
                 instance_id,
             } => {
-                if self.session_restore_in_progress {
-                    self.state.blocking_write().message =
+                if self.session_ops.session_restore_in_progress {
+                    self.state.write().expect("state lock poisoned").message =
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
                 let plugin_id = {
-                    let state = self.state.blocking_read();
+                    let state = self.state.read().expect("state lock poisoned");
                     state
                         .plugin_graph_plugins
                         .iter()
@@ -413,13 +428,14 @@ impl Maolan {
                         .map(|plugin| plugin.plugin_id.clone())
                         .unwrap_or_default()
                 };
-                self.pending_native_ui_fallback = Some(crate::gui::PendingNativeUiFallback {
-                    track_name: track_name.clone(),
-                    clip_idx,
-                    instance_id,
-                    format: "LV2".to_string(),
-                    plugin_id,
-                });
+                self.pending.pending_native_ui_fallback =
+                    Some(crate::gui::PendingNativeUiFallback {
+                        track_name: track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                        format: "LV2".to_string(),
+                        plugin_id,
+                    });
                 self.info(format!(
                     "Requesting LV2 UI for track '{}' instance {}",
                     track_name, instance_id
@@ -444,7 +460,7 @@ impl Maolan {
                 to_port,
                 kind,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.plugin_graph_clip.as_ref()?;
                 if from_node == to_node && from_port == to_port {
                     state.message = "Cannot connect a plugin port to itself".to_string();
@@ -469,7 +485,7 @@ impl Maolan {
                 None
             }
             Message::ClipConnectPlugins(connections) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.plugin_graph_clip.as_ref()?;
                 let mut added = false;
                 for connection in connections {
@@ -499,18 +515,19 @@ impl Maolan {
                 instance_id,
                 ref plugin_id,
             } => {
-                if self.session_restore_in_progress {
-                    self.state.blocking_write().message =
+                if self.session_ops.session_restore_in_progress {
+                    self.state.write().expect("state lock poisoned").message =
                         "Plugin UI will be available after session restore finishes".to_string();
                     return Some(self.open_track_plugins_followup(track_name.clone()));
                 }
-                self.pending_native_ui_fallback = Some(crate::gui::PendingNativeUiFallback {
-                    track_name: track_name.clone(),
-                    clip_idx,
-                    instance_id,
-                    format: "VST3".to_string(),
-                    plugin_id: plugin_id.clone(),
-                });
+                self.pending.pending_native_ui_fallback =
+                    Some(crate::gui::PendingNativeUiFallback {
+                        track_name: track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                        format: "VST3".to_string(),
+                        plugin_id: plugin_id.clone(),
+                    });
                 self.info(format!(
                     "Requesting VST3 UI for track '{}' instance {}",
                     track_name, instance_id
@@ -549,7 +566,8 @@ impl Maolan {
                 param_id,
                 value,
             } => {
-                self.generic_plugin_param_values
+                self.plugin_params
+                    .generic_plugin_param_values
                     .insert((track_name.clone(), clip_idx, instance_id, param_id), value);
                 match (format.as_str(), clip_idx) {
                     (format, Some(clip_idx)) if format.eq_ignore_ascii_case("CLAP") => {
@@ -612,5 +630,155 @@ impl Maolan {
             Message::SendMessageFinished(Ok(())) => None,
             _ => None,
         }
+    }
+}
+
+impl Maolan {
+    pub(super) fn handle_plugin_message_graph(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::PluginGraphControllerMenuOpen {
+                track_name,
+                instance_id,
+                position,
+            } => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.plugin_graph_controller_menu =
+                    Some(crate::state::PluginControllerMenuState {
+                        track_name,
+                        instance_id,
+                        anchor: position,
+                        hovered: None,
+                    });
+                {
+                    let track_name = state
+                        .plugin_graph_controller_menu
+                        .as_ref()
+                        .map(|m| m.track_name.clone())
+                        .unwrap_or_default();
+                    let instance_id = state
+                        .plugin_graph_controller_menu
+                        .as_ref()
+                        .map(|m| m.instance_id)
+                        .unwrap_or(0);
+                    let cached = state
+                        .plugin_parameters_by_track
+                        .get(&track_name)
+                        .and_then(|cache| cache.get(&instance_id))
+                        .is_some();
+                    if !cached {
+                        let plugin = state
+                            .plugin_graph_plugins
+                            .iter()
+                            .find(|p| p.instance_id == instance_id)
+                            .cloned();
+                        if let Some(plugin) = plugin {
+                            drop(state);
+                            if plugin.format.eq_ignore_ascii_case("CLAP") {
+                                return self.send(Action::TrackGetClapParameters {
+                                    track_name,
+                                    instance_id,
+                                });
+                            } else if plugin.format.eq_ignore_ascii_case("VST3") {
+                                return self.send(Action::TrackGetVst3Parameters {
+                                    track_name,
+                                    instance_id,
+                                });
+                            }
+                            #[cfg(unix)]
+                            if plugin.format.eq_ignore_ascii_case("LV2") {
+                                return self.send(Action::TrackGetLv2PluginControls {
+                                    track_name,
+                                    instance_id,
+                                });
+                            }
+                        }
+                    }
+                }
+                return Task::none();
+            }
+            Message::PluginGraphControllerMenuClose => {
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .plugin_graph_controller_menu = None;
+            }
+            Message::PluginGraphControllerMenuHover(hovered) => {
+                if let Some(menu) = self
+                    .state
+                    .write()
+                    .expect("state lock poisoned")
+                    .plugin_graph_controller_menu
+                    .as_mut()
+                {
+                    menu.hovered = hovered;
+                }
+            }
+            Message::PluginGraphShowController {
+                track_name,
+                instance_id,
+                param_id,
+                name,
+                value,
+                min,
+                max,
+            } => {
+                self.session_ops.has_unsaved_changes = true;
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.plugin_graph_controller_menu = None;
+                let controllers = state
+                    .plugin_graph_visible_controllers
+                    .entry(track_name)
+                    .or_default()
+                    .entry(instance_id)
+                    .or_default();
+                if let Some(pos) = controllers.iter().position(|c| c.param_id == param_id) {
+                    controllers.remove(pos);
+                } else {
+                    controllers.push(crate::state::ShownPluginController {
+                        param_id,
+                        name,
+                        value,
+                        min,
+                        max,
+                    });
+                }
+                return Task::none();
+            }
+            Message::PluginGraphHideController {
+                track_name,
+                instance_id,
+                param_id,
+            } => {
+                self.session_ops.has_unsaved_changes = true;
+                let mut state = self.state.write().expect("state lock poisoned");
+                if let Some(controllers) = state
+                    .plugin_graph_visible_controllers
+                    .get_mut(&track_name)
+                    .and_then(|map| map.get_mut(&instance_id))
+                {
+                    controllers.retain(|c| c.param_id != param_id);
+                }
+                return Task::none();
+            }
+            Message::ToggleSelectedPluginBypass => {
+                return self.toggle_selected_plugin_bypass();
+            }
+            Message::OpenClipPlugins {
+                track_idx: _track_idx,
+                clip_idx: _clip_idx,
+            } => {
+                #[cfg(unix)]
+                {
+                    return self.open_clip_plugin_view(_track_idx.clone(), _clip_idx);
+                }
+                #[cfg(not(unix))]
+                {
+                    return Task::none();
+                }
+            }
+            _ => {}
+        }
+        self.update_children(&message);
+        Task::none()
     }
 }

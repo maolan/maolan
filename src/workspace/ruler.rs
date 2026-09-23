@@ -3,7 +3,7 @@ use crate::consts::workspace::{
     BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
 };
 use crate::message::{Message, SnapMode};
-use maolan_engine::message::Action as EngineAction;
+use crate::view_api;
 use maolan_widgets::iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
@@ -14,13 +14,6 @@ use maolan_widgets::iced::{
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
-fn clip_kind_key(kind: maolan_engine::kind::Kind) -> u8 {
-    match kind {
-        maolan_engine::kind::Kind::Audio => 0,
-        maolan_engine::kind::Kind::MIDI => 1,
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct Ruler;
@@ -191,7 +184,9 @@ impl canvas::Program<Message> for RulerCanvas {
                 a.track_idx
                     .cmp(&b.track_idx)
                     .then_with(|| a.clip_idx.cmp(&b.clip_idx))
-                    .then_with(|| clip_kind_key(a.kind).cmp(&clip_kind_key(b.kind)))
+                    .then_with(|| {
+                        view_api::clip_kind_key(a.kind).cmp(&view_api::clip_kind_key(b.kind))
+                    })
             });
             snap_targets.dedup();
             let snapped_sample = self
@@ -304,7 +299,10 @@ impl canvas::Program<Message> for RulerCanvas {
                                 a.track_idx
                                     .cmp(&b.track_idx)
                                     .then_with(|| a.clip_idx.cmp(&b.clip_idx))
-                                    .then_with(|| clip_kind_key(a.kind).cmp(&clip_kind_key(b.kind)))
+                                    .then_with(|| {
+                                        view_api::clip_kind_key(a.kind)
+                                            .cmp(&view_api::clip_kind_key(b.kind))
+                                    })
                             });
                             targets.dedup();
                             targets
@@ -328,9 +326,7 @@ impl canvas::Program<Message> for RulerCanvas {
                 let drag_delta = (state.last_x - state.drag_start_x).abs();
                 if drag_delta < 3.0 {
                     let sample = snap_sample(sample_at_x(state.last_x)).0;
-                    return Some(CanvasAction::publish(Message::Request(
-                        EngineAction::TransportPosition(sample),
-                    )));
+                    return Some(CanvasAction::publish(view_api::transport_position(sample)));
                 }
 
                 let snap_interval = match self.snap_mode {
@@ -752,8 +748,8 @@ mod tests {
             .expect("release action");
         let (message, status) = action_message(release);
         match message {
-            Some(Message::Request(EngineAction::TransportPosition(sample))) => {
-                assert_eq!(sample, 50);
+            Some(ref message) => {
+                assert_eq!(view_api::transport_position_sample(message), Some(50));
             }
             other => panic!("unexpected message: {other:?}"),
         }
@@ -763,9 +759,9 @@ mod tests {
 
     #[test]
     fn clip_kind_key_returns_expected_values() {
-        use maolan_engine::kind::Kind;
-        assert_eq!(clip_kind_key(Kind::Audio), 0);
-        assert_eq!(clip_kind_key(Kind::MIDI), 1);
+        use crate::state::Kind;
+        assert_eq!(view_api::clip_kind_key(Kind::Audio), 0);
+        assert_eq!(view_api::clip_kind_key(Kind::MIDI), 1);
     }
 
     #[test]

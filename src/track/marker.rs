@@ -6,12 +6,24 @@ use maolan_widgets::iced::{
 
 #[derive(Debug)]
 pub struct MarkerView {
-    state: State,
+    pub dialog: Option<crate::state::MarkerDialog>,
 }
 
 impl MarkerView {
-    pub fn new(state: State) -> Self {
-        Self { state }
+    pub fn new(_state: State) -> Self {
+        Self { dialog: None }
+    }
+
+    pub fn open(&mut self, dialog: crate::state::MarkerDialog) {
+        self.dialog = Some(dialog);
+    }
+
+    pub fn close(&mut self) {
+        self.dialog = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.dialog.is_some()
     }
 
     pub fn name_input_id() -> Id {
@@ -20,15 +32,14 @@ impl MarkerView {
 
     pub fn update(&mut self, message: &Message) {
         if let Message::MarkerNameInput(input) = message
-            && let Some(dialog) = &mut self.state.blocking_write().marker_dialog
+            && let Some(dialog) = &mut self.dialog
         {
             dialog.name = input.clone();
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let state = self.state.blocking_read();
-        let Some(dialog) = &state.marker_dialog else {
+        let Some(dialog) = &self.dialog else {
             return container("").into();
         };
 
@@ -81,49 +92,39 @@ impl MarkerView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
 
     #[test]
     fn update_sets_marker_name_when_dialog_is_open() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().marker_dialog = Some(crate::state::MarkerDialog {
+        let state = crate::state::State::default();
+        let mut view = MarkerView::new(state);
+        view.open(crate::state::MarkerDialog {
             sample: 128,
             marker_index: None,
             name: "Verse".to_string(),
         });
-        let mut view = MarkerView::new(state.clone());
 
         view.update(&Message::MarkerNameInput("Chorus".to_string()));
 
         assert_eq!(
-            state
-                .blocking_read()
-                .marker_dialog
-                .as_ref()
-                .map(|dialog| dialog.name.as_str()),
+            view.dialog.as_ref().map(|dialog| dialog.name.as_str()),
             Some("Chorus")
         );
     }
 
     #[test]
     fn update_ignores_non_matching_messages() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().marker_dialog = Some(crate::state::MarkerDialog {
+        let state = crate::state::State::default();
+        let mut view = MarkerView::new(state);
+        view.open(crate::state::MarkerDialog {
             sample: 128,
             marker_index: None,
             name: "Verse".to_string(),
         });
-        let mut view = MarkerView::new(state.clone());
 
         view.update(&Message::Cancel);
 
         assert_eq!(
-            state
-                .blocking_read()
-                .marker_dialog
-                .as_ref()
-                .map(|dialog| dialog.name.as_str()),
+            view.dialog.as_ref().map(|dialog| dialog.name.as_str()),
             Some("Verse")
         );
     }
@@ -143,7 +144,7 @@ mod tests {
 
     #[test]
     fn view_returns_empty_when_no_dialog() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let state = crate::state::State::default();
         let view = MarkerView::new(state);
         let element = view.view();
         let _ = &element;

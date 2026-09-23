@@ -18,6 +18,7 @@ use crate::{
     },
     message::{DraggedClip, Message, Show, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
+    view_api,
     widget::{midi_edit, pitch_correction},
 };
 use cursor_override::CursorOverride;
@@ -55,13 +56,6 @@ pub(crate) fn timeline_x_to_sample_f32(x: f32, pixels_per_sample: f32, inset_px:
         0.0
     } else {
         ((x - inset_px).max(0.0) / pixels_per_sample).max(0.0)
-    }
-}
-
-fn clip_kind_key(kind: maolan_engine::kind::Kind) -> u8 {
-    match kind {
-        maolan_engine::kind::Kind::Audio => 0,
-        maolan_engine::kind::Kind::MIDI => 1,
     }
 }
 
@@ -211,14 +205,14 @@ impl Workspace {
     }
 
     fn collect_clip_snap_edges(&self) -> Vec<ClipSnapEdge> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let mut edges = Vec::new();
         for track in &state.tracks {
             for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
                 let clip_id = crate::state::ClipId {
                     track_idx: track.name.clone(),
                     clip_idx,
-                    kind: maolan_engine::kind::Kind::Audio,
+                    kind: crate::state::Kind::Audio,
                 };
                 edges.push(ClipSnapEdge {
                     clip_id: clip_id.clone(),
@@ -233,7 +227,7 @@ impl Workspace {
                 let clip_id = crate::state::ClipId {
                     track_idx: track.name.clone(),
                     clip_idx,
-                    kind: maolan_engine::kind::Kind::MIDI,
+                    kind: crate::state::Kind::MIDI,
                 };
                 edges.push(ClipSnapEdge {
                     clip_id: clip_id.clone(),
@@ -250,7 +244,10 @@ impl Workspace {
                 .cmp(&b.sample)
                 .then_with(|| a.clip_id.track_idx.cmp(&b.clip_id.track_idx))
                 .then_with(|| a.clip_id.clip_idx.cmp(&b.clip_id.clip_idx))
-                .then_with(|| clip_kind_key(a.clip_id.kind).cmp(&clip_kind_key(b.clip_id.kind)))
+                .then_with(|| {
+                    view_api::clip_kind_key(a.clip_id.kind)
+                        .cmp(&view_api::clip_kind_key(b.clip_id.kind))
+                })
         });
         edges.dedup();
         edges
@@ -331,7 +328,7 @@ impl Workspace {
             markers,
             editor_connections,
         ) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let max_end_samples = state
                 .tracks
                 .iter()
@@ -440,7 +437,7 @@ impl Workspace {
         let workspace_content_height =
             TRACK_SEARCH_HEIGHT + self.tempo.height() + self.ruler.height() + tracks_total_height;
         let track_context_menu_overlay = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             tracks::track_context_menu_overlay(
                 &state,
                 track_viewport_height - 36.0,
@@ -448,7 +445,7 @@ impl Workspace {
             )
         };
         let clip_context_menu_overlay = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             editor::clip_context_menu_overlay(&state, transport_active)
         };
         let playhead_x_timeline = playhead_samples.map(|sample| {
@@ -869,7 +866,8 @@ impl Workspace {
         CursorOverride::new(
             workspace,
             self.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .hovered_clip_resize_handle
                 .is_some()
                 .then_some(mouse::Interaction::Pointer),
@@ -926,7 +924,7 @@ impl Workspace {
             zoom_x,
             markers,
         ) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let markers = state
                 .session_markers
                 .iter()
@@ -1101,7 +1099,7 @@ impl Workspace {
             time_signature_points,
             markers,
         ) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let markers = state
                 .session_markers
                 .iter()
@@ -1238,7 +1236,7 @@ impl Workspace {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use std::sync::RwLock;
 
     #[test]
     fn update_is_a_no_op() {
@@ -1274,8 +1272,8 @@ mod tests {
 
     #[test]
     fn clip_kind_key_returns_expected_values() {
-        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::Audio), 0);
-        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::MIDI), 1);
+        assert_eq!(view_api::clip_kind_key(crate::state::Kind::Audio), 0);
+        assert_eq!(view_api::clip_kind_key(crate::state::Kind::MIDI), 1);
     }
 
     #[test]
@@ -1284,7 +1282,7 @@ mod tests {
             clip_id: crate::state::ClipId {
                 track_idx: "track1".to_string(),
                 clip_idx: 0,
-                kind: maolan_engine::kind::Kind::Audio,
+                kind: crate::state::Kind::Audio,
             },
             sample: 100,
         };

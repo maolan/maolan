@@ -62,6 +62,8 @@ mod track;
 #[cfg(not(miri))]
 mod ui_timing;
 #[cfg(not(miri))]
+mod view_api;
+#[cfg(not(miri))]
 mod widget;
 #[cfg(not(miri))]
 mod workspace;

@@ -1,4 +1,5 @@
 use super::VisibleTrackWindow;
+use crate::state::Kind;
 use crate::{
     consts::{
         state_ids::METRONOME_TRACK_ID,
@@ -9,7 +10,6 @@ use crate::{
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State, StateData, Track},
 };
-use maolan_engine::kind::Kind;
 use maolan_widgets::clip::{
     AudioClip as AudioClipWidget, AudioClipData as WidgetAudioClipData,
     AudioClipInteraction as WidgetAudioClipInteraction, ClipEdgeMessages as WidgetClipEdgeMessages,
@@ -1026,7 +1026,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
             let stretch_ratio = match &state.resizing {
                 Some(crate::state::Resizing::Clip {
-                    kind: maolan_engine::kind::Kind::Audio,
+                    kind: Kind::Audio,
                     track_name: t,
                     index: i,
                     stretch_mode: true,
@@ -2043,7 +2043,7 @@ impl Editor {
         editor_scroll_y: f32,
         track_viewport_height: f32,
     ) -> Element<'static, Message> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let tracks = session_overview_tracks(&state.tracks);
         let total_track_height = tracks
             .iter()
@@ -2073,7 +2073,7 @@ impl Editor {
 
     pub fn render_hash(&self, args: &EditorViewArgs<'_>) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
 
         args.session_root.hash(&mut hasher);
         args.pixels_per_sample.to_bits().hash(&mut hasher);
@@ -2250,7 +2250,7 @@ impl Editor {
             result =
                 result.push(Space::new().height(Length::Fixed(visible_track_window.top_padding)));
         }
-        let state = state_handle.blocking_read();
+        let state = state_handle.read().expect("state lock poisoned");
         let root_nodes = build_editor_track_tree(&state.tracks);
         for root in root_nodes
             .iter()

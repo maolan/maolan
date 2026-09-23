@@ -88,7 +88,7 @@ impl HW {
     }
 
     fn plugins_loaded(&self) -> bool {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let core_plugins_loaded = (state.vst3_plugins_loaded || state.vst3_plugins_unavailable)
             && (state.clap_plugins_loaded || state.clap_plugins_unavailable);
         #[cfg(unix)]
@@ -191,7 +191,7 @@ impl HW {
             nperiods,
             sync_mode,
         ) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             (
                 state.available_backends.clone(),
                 state.selected_backend.clone(),
@@ -207,7 +207,7 @@ impl HW {
         period_frames = period_frames.max(1);
         #[cfg(target_os = "linux")]
         let (available_input_hw, mut selected_input_hw) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             (
                 state.available_input_hw.clone(),
                 state.selected_input_hw.clone(),
@@ -215,7 +215,7 @@ impl HW {
         };
         #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
         let (available_input_hw, mut selected_input_hw) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             (
                 state.available_input_hw.clone(),
                 state.selected_input_hw.clone(),
@@ -223,7 +223,7 @@ impl HW {
         };
         #[cfg(target_os = "windows")]
         let (available_input_hw, mut selected_input_hw) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             (
                 state.available_input_hw.clone(),
                 state.selected_input_hw.clone(),
@@ -236,7 +236,7 @@ impl HW {
             target_os = "windows",
             target_os = "macos"
         ))]
-        let selected_bits = self.state.blocking_read().oss_bits;
+        let selected_bits = self.state.read().expect("state lock poisoned").oss_bits;
         #[cfg(unix)]
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
             .into_iter()
@@ -591,7 +591,7 @@ impl HW {
 
     pub fn jack_ports_view(&self, input: bool) -> maolan_widgets::iced::Element<'_, Message> {
         let (hw_in_channels, hw_out_channels) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             (
                 state.hw_in.as_ref().map(|hw| hw.channels).unwrap_or(0),
                 state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0),
@@ -600,7 +600,7 @@ impl HW {
 
         #[cfg(unix)]
         let jack_selected = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             matches!(
                 state.selected_backend,
                 crate::state::AudioBackendOption::Jack

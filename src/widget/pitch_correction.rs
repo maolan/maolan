@@ -80,7 +80,7 @@ impl PitchCorrection {
             detector,
             mode,
         ) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             (
                 state.piano_zoom_x.max(1.0),
                 state.piano_zoom_y.max(1.0),

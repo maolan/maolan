@@ -18,22 +18,6 @@ use std::time::Duration;
 use tokio::signal::unix::{SignalKind, signal};
 
 impl Maolan {
-    fn should_drive_playback_ui(&self) -> bool {
-        let state = self.state.blocking_read();
-        match state.view {
-            crate::state::View::Workspace => {
-                self.toolbar_visible
-                    || self.tracks_visible
-                    || self.editor_visible
-                    || self.mixer_visible
-            }
-            crate::state::View::Piano
-            | crate::state::View::PitchCorrection
-            | crate::state::View::AudioEditor => true,
-            _ => false,
-        }
-    }
-
     fn should_poll_meters(
         meter_surface_visible: bool,
         playing: bool,
@@ -147,14 +131,14 @@ impl Maolan {
         }
         let engine_sub = Subscription::run(listener);
 
-        let current_view = self.state.blocking_read().view.clone();
+        let current_view = self.state.read().expect("state lock poisoned").view.clone();
         let mut shortcut_overrides: Vec<_> = self
             .shortcut_overrides
             .iter()
             .map(|(action, binding)| (*action, binding.clone()))
             .collect();
         shortcut_overrides.sort_by_key(|(action, _)| *action);
-        let capturing_shortcut = self.shortcut_capture_action.is_some();
+        let capturing_shortcut = self.ui.shortcut_capture_action.is_some();
         let keyboard_sub = keyboard::listen()
             .with((current_view, shortcut_overrides, capturing_shortcut))
             .map(
@@ -206,8 +190,10 @@ impl Maolan {
         // transport stopped, which the paused derivation treats as paused;
         // live_session_playing is the reliable signal that session slot
         // runtimes need polling.
-        let playback_sub = if (self.playing && !self.paused && self.should_drive_playback_ui())
-            || self.live_session_playing
+        let playback_sub = if (self.transport.playing
+            && !self.transport.paused
+            && self.ui.should_drive_playback_ui(&self.state))
+            || self.transport.live_session_playing
         {
             maolan_widgets::iced::time::every(PLAYHEAD_UPDATE_INTERVAL)
                 .map(|_| Message::PlaybackTick)
@@ -215,15 +201,15 @@ impl Maolan {
             Subscription::none()
         };
         let should_poll_meters = {
-            let state = self.state.blocking_read();
-            let meter_surface_visible = self.mixer_visible
-                || self.tracks_visible
+            let state = self.state.read().expect("state lock poisoned");
+            let meter_surface_visible = self.ui.mixer_visible
+                || self.ui.tracks_visible
                 || matches!(state.view, crate::state::View::Session);
             Self::should_poll_meters(
                 meter_surface_visible,
-                self.playing,
-                self.paused,
-                self.live_session_playing,
+                self.transport.playing,
+                self.transport.paused,
+                self.transport.live_session_playing,
                 &state.hw_out_meter_db,
                 state
                     .tracks
@@ -237,20 +223,20 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        let recording_preview_sub = if self.playing
-            && !self.paused
-            && self.record_armed
-            && self.recording_preview_start_sample.is_some()
+        let recording_preview_sub = if self.transport.playing
+            && !self.transport.paused
+            && self.transport.record_armed
+            && self.rec.recording_preview_start_sample.is_some()
         {
             maolan_widgets::iced::time::every(RECORDING_PREVIEW_UPDATE_INTERVAL)
                 .map(|_| Message::RecordingPreviewTick)
         } else {
             Subscription::none()
         };
-        let recording_preview_peaks_sub = if self.playing
-            && !self.paused
-            && self.record_armed
-            && self.recording_preview_start_sample.is_some()
+        let recording_preview_peaks_sub = if self.transport.playing
+            && !self.transport.paused
+            && self.transport.record_armed
+            && self.rec.recording_preview_start_sample.is_some()
         {
             maolan_widgets::iced::time::every(RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL)
                 .map(|_| Message::RecordingPreviewPeaksTick)
@@ -259,14 +245,14 @@ impl Maolan {
         };
         let autosave_sub = maolan_widgets::iced::time::every(Duration::from_secs(15))
             .map(|_| Message::AutosaveSnapshotTick);
-        let peak_rebuild_sub = if !self.pending_peak_rebuilds.is_empty() {
+        let peak_rebuild_sub = if !self.pending.pending_peak_rebuilds.is_empty() {
             maolan_widgets::iced::time::every(Duration::from_millis(16))
                 .map(|_| Message::DrainAudioPeakUpdates)
         } else {
             Subscription::none()
         };
         let hw_mixer_sub = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             if matches!(state.view, crate::state::View::X32) {
                 mixosc::app::subscription(&self.hw_mixer).map(Message::HwMixer)
             } else {
@@ -274,7 +260,7 @@ impl Maolan {
             }
         };
         let audio_editor_sub = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             if matches!(state.view, crate::state::View::AudioEditor) {
                 maolan_editor::app::subscription(&self.audio_editor).map(Message::AudioEditor)
             } else {

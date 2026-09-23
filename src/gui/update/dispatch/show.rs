@@ -3,7 +3,7 @@ use maolan_widgets::iced::widget::text_editor;
 
 impl Maolan {
     pub(super) fn handle_show_message(&mut self, show: &Show) -> Task<Message> {
-        if !self.state.blocking_read().hw_loaded
+        if !self.state.read().expect("state lock poisoned").hw_loaded
             && matches!(
                 show,
                 Show::Save | Show::SaveAs | Show::SaveTemplateAs | Show::Open
@@ -12,7 +12,7 @@ impl Maolan {
             return Task::none();
         }
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.ctrl = false;
             state.shift = false;
         }
@@ -45,10 +45,9 @@ impl Maolan {
                 Message::SaveFolderSelected,
             ),
             Show::SaveTemplateAs => {
-                self.state.blocking_write().template_save_dialog =
-                    Some(crate::state::TemplateSaveDialog {
-                        name: String::new(),
-                    });
+                self.template_save.open(crate::state::TemplateSaveDialog {
+                    name: String::new(),
+                });
                 self.modal = Some(Show::SaveTemplateAs);
                 Task::none()
             }
@@ -98,9 +97,9 @@ impl Maolan {
             Show::TrackPluginList => {
                 self.modal = Some(Show::TrackPluginList);
                 #[cfg(unix)]
-                self.selected_lv2_plugins.clear();
-                self.selected_vst3_plugins.clear();
-                self.selected_clap_plugins.clear();
+                self.plugin_scan.selected_lv2_plugins.clear();
+                self.plugin_scan.selected_vst3_plugins.clear();
+                self.plugin_scan.selected_clap_plugins.clear();
                 Task::none()
             }
             Show::GenericPluginView {
@@ -122,46 +121,47 @@ impl Maolan {
                 Task::none()
             }
             Show::GenerateAudio => {
-                self.generate_audio_prompt_editor = text_editor::Content::new();
-                self.generate_audio_tags_input.clear();
-                self.generate_audio_cfg_scale_input =
+                self.generate.generate_audio_prompt_editor = text_editor::Content::new();
+                self.generate.generate_audio_tags_input.clear();
+                self.generate.generate_audio_cfg_scale_input =
                     maolan_generate::DEFAULT_CFG_SCALE.to_string();
-                self.generate_audio_steps_input = 10;
-                self.generate_audio_seconds_total_input = 180;
-                self.generate_audio_acestep_lm =
+                self.generate.generate_audio_steps_input = 10;
+                self.generate.generate_audio_seconds_total_input = 180;
+                self.generate.generate_audio_acestep_lm =
                     crate::message::GenerateAudioAceStepLmOption::default();
                 {
-                    let state = self.state.blocking_read();
-                    self.generate_audio_key_root = state.musical_key.root;
-                    self.generate_audio_key_mode = state.musical_key.mode;
+                    let state = self.state.read().expect("state lock poisoned");
+                    self.generate.generate_audio_key_root = state.musical_key.root;
+                    self.generate.generate_audio_key_mode = state.musical_key.mode;
                 }
-                self.generate_audio_in_progress = false;
-                self.generate_audio_progress = 0.0;
-                self.generate_audio_operation = None;
+                self.generate.generate_audio_in_progress = false;
+                self.generate.generate_audio_progress = 0.0;
+                self.generate.generate_audio_operation = None;
                 self.modal = Some(Show::GenerateAudio);
                 Task::none()
             }
             Show::GenerateMidi => {
-                self.generate_midi_prompt_editor = text_editor::Content::new();
-                self.generate_midi_model = crate::message::GenerateMidiModelOption::TextToMidi;
-                self.generate_midi_backend = crate::message::BurnBackendOption::Vulkan;
+                self.generate.generate_midi_prompt_editor = text_editor::Content::new();
+                self.generate.generate_midi_model =
+                    crate::message::GenerateMidiModelOption::TextToMidi;
+                self.generate.generate_midi_backend = crate::message::BurnBackendOption::Vulkan;
                 {
-                    let state = self.state.blocking_read();
-                    self.generate_midi_key_root = state.musical_key.root;
-                    self.generate_midi_key_mode = state.musical_key.mode;
-                    self.generate_midi_bpm_input = format!("{:.1}", state.tempo);
-                    self.generate_midi_time_signature_num_input =
+                    let state = self.state.read().expect("state lock poisoned");
+                    self.generate.generate_midi_key_root = state.musical_key.root;
+                    self.generate.generate_midi_key_mode = state.musical_key.mode;
+                    self.generate.generate_midi_bpm_input = format!("{:.1}", state.tempo);
+                    self.generate.generate_midi_time_signature_num_input =
                         state.time_signature_num.to_string();
-                    self.generate_midi_time_signature_denom_input =
+                    self.generate.generate_midi_time_signature_denom_input =
                         state.time_signature_denom.to_string();
                 }
-                self.generate_midi_length_seconds_input = "10".to_string();
-                self.generate_midi_max_tokens_input = "1024".to_string();
-                self.generate_midi_top_p_input = "0.98".to_string();
-                self.generate_midi_seed_input = "0".to_string();
-                self.generate_midi_in_progress = false;
-                self.generate_midi_progress = 0.0;
-                self.generate_midi_operation = None;
+                self.generate.generate_midi_length_seconds_input = "10".to_string();
+                self.generate.generate_midi_max_tokens_input = "1024".to_string();
+                self.generate.generate_midi_top_p_input = "0.98".to_string();
+                self.generate.generate_midi_seed_input = "0".to_string();
+                self.generate.generate_midi_in_progress = false;
+                self.generate.generate_midi_progress = 0.0;
+                self.generate.generate_midi_operation = None;
                 self.modal = Some(Show::GenerateMidi);
                 Task::none()
             }
@@ -192,7 +192,7 @@ impl Maolan {
                 {
                     let prefs = super::super::super::load_preferences();
                     {
-                        let mut state = self.state.blocking_write();
+                        let mut state = self.state.write().expect("state lock poisoned");
                         Self::apply_preferred_devices_to_state(&mut state, &prefs);
                     }
                     self.modal = Some(Show::Preferences);
@@ -273,13 +273,12 @@ impl Maolan {
                 self.modal = Some(Show::ApplyTemplate {
                     track_name: track_name.clone(),
                 });
-                self.state.blocking_write().apply_template_dialog =
-                    Some(crate::state::ApplyTemplateDialog {
-                        track_name: track_name.clone(),
-                        selected_template: None,
-                        available_templates: Vec::new(),
-                        available_folder_templates: Vec::new(),
-                    });
+                self.apply_template.open(crate::state::ApplyTemplateDialog {
+                    track_name: track_name.clone(),
+                    selected_template: None,
+                    available_templates: Vec::new(),
+                    available_folder_templates: Vec::new(),
+                });
                 Task::perform(
                     async { crate::gui::scan_track_and_folder_templates() },
                     |(tracks, folders)| Message::TrackTemplatesLoaded(tracks, folders),

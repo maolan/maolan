@@ -8,9 +8,8 @@ use crate::{
     menu,
     message::{Message, MidiLaneChannelSelection, Show, TrackAutomationTarget},
     state::{State, StateData, TrackLaneLayout},
-    style,
+    style, view_api,
 };
-use maolan_engine::message::{Action, TrackMidiLearnTarget};
 use maolan_widgets::iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
     widget::{
@@ -61,48 +60,42 @@ fn automation_target_set_message(
     value: f32,
 ) -> Option<Message> {
     match target {
-        TrackAutomationTarget::Volume => {
-            Some(Message::Request(Action::TrackLevel(track_name, value)))
-        }
-        TrackAutomationTarget::Balance => {
-            Some(Message::Request(Action::TrackBalance(track_name, value)))
-        }
-        TrackAutomationTarget::MidiCc { channel, cc } => {
-            Some(Message::Request(Action::TrackMidiCc {
-                track_name,
-                channel: *channel,
-                cc: *cc,
-                value: value.round().clamp(0.0, 127.0) as u8,
-            }))
-        }
+        TrackAutomationTarget::Volume => Some(view_api::track_level(track_name, value)),
+        TrackAutomationTarget::Balance => Some(view_api::track_balance(track_name, value)),
+        TrackAutomationTarget::MidiCc { channel, cc } => Some(view_api::track_midi_cc(
+            track_name,
+            *channel,
+            *cc,
+            value.round().clamp(0.0, 127.0) as u8,
+        )),
         TrackAutomationTarget::ClapParameter {
             instance_id,
             param_id,
             ..
-        } => Some(Message::Request(Action::TrackSetClapParameter {
+        } => Some(view_api::track_set_clap_parameter(
             track_name,
-            instance_id: *instance_id,
-            param_id: *param_id,
-            value: value as f64,
-        })),
+            *instance_id,
+            *param_id,
+            value as f64,
+        )),
         TrackAutomationTarget::Vst3Parameter {
             instance_id,
             param_id,
-        } => Some(Message::Request(Action::TrackSetVst3Parameter {
+        } => Some(view_api::track_set_vst3_parameter(
             track_name,
-            instance_id: *instance_id,
-            param_id: *param_id,
+            *instance_id,
+            *param_id,
             value,
-        })),
+        )),
         #[cfg(unix)]
         TrackAutomationTarget::Lv2Parameter {
             instance_id, index, ..
-        } => Some(Message::Request(Action::TrackSetLv2ControlValue {
+        } => Some(view_api::track_set_lv2_control_value(
             track_name,
-            instance_id: *instance_id,
-            index: *index,
+            *instance_id,
+            *index,
             value,
-        })),
+        )),
         #[cfg(not(unix))]
         TrackAutomationTarget::Lv2Parameter { .. } => None,
         TrackAutomationTarget::MixOsc { .. } => None,
@@ -391,52 +384,31 @@ pub(super) fn track_context_menu_overlay(
         ),
         menu::menu_item(
             "MIDI Learn Volume",
-            Message::TrackMidiLearnArm {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Volume,
-            },
+            view_api::track_midi_learn_volume(track_name.clone()),
         ),
         menu::menu_item(
             "MIDI Learn Balance",
-            Message::TrackMidiLearnArm {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Balance,
-            },
+            view_api::track_midi_learn_balance(track_name.clone()),
         ),
         menu::menu_item(
             "MIDI Learn Mute",
-            Message::TrackMidiLearnArm {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Mute,
-            },
+            view_api::track_midi_learn_mute(track_name.clone()),
         ),
         menu::menu_item(
             "MIDI Learn Solo",
-            Message::TrackMidiLearnArm {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Solo,
-            },
+            view_api::track_midi_learn_solo(track_name.clone()),
         ),
         menu::menu_item(
             "MIDI Learn Arm",
-            Message::TrackMidiLearnArm {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Arm,
-            },
+            view_api::track_midi_learn_arm(track_name.clone()),
         ),
         menu::menu_item(
             "MIDI Learn Input Monitor",
-            Message::TrackMidiLearnArm {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::InputMonitor,
-            },
+            view_api::track_midi_learn_input_monitor(track_name.clone()),
         ),
         menu::menu_item(
             "MIDI Learn Disk Monitor",
-            Message::TrackMidiLearnArm {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::DiskMonitor,
-            },
+            view_api::track_midi_learn_disk_monitor(track_name.clone()),
         ),
     ]);
 
@@ -509,7 +481,7 @@ pub(super) fn track_context_menu_overlay(
             } else {
                 "Master"
             },
-            Message::Request(Action::TrackToggleMaster(track_name.clone())),
+            view_api::track_toggle_master(track_name.clone()),
         ));
     }
 
@@ -553,64 +525,43 @@ pub(super) fn track_context_menu_overlay(
     if track.midi_learn_volume.is_some() {
         items.push(menu::menu_item(
             "Clear MIDI Learn Volume",
-            Message::TrackMidiLearnClear {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Volume,
-            },
+            view_api::track_midi_learn_clear_volume(track_name.clone()),
         ));
     }
     if track.midi_learn_balance.is_some() {
         items.push(menu::menu_item(
             "Clear MIDI Learn Balance",
-            Message::TrackMidiLearnClear {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Balance,
-            },
+            view_api::track_midi_learn_clear_balance(track_name.clone()),
         ));
     }
     if track.midi_learn_mute.is_some() {
         items.push(menu::menu_item(
             "Clear MIDI Learn Mute",
-            Message::TrackMidiLearnClear {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Mute,
-            },
+            view_api::track_midi_learn_clear_mute(track_name.clone()),
         ));
     }
     if track.midi_learn_solo.is_some() {
         items.push(menu::menu_item(
             "Clear MIDI Learn Solo",
-            Message::TrackMidiLearnClear {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Solo,
-            },
+            view_api::track_midi_learn_clear_solo(track_name.clone()),
         ));
     }
     if track.midi_learn_arm.is_some() {
         items.push(menu::menu_item(
             "Clear MIDI Learn Arm",
-            Message::TrackMidiLearnClear {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::Arm,
-            },
+            view_api::track_midi_learn_clear_arm(track_name.clone()),
         ));
     }
     if track.midi_learn_input_monitor.is_some() {
         items.push(menu::menu_item(
             "Clear MIDI Learn Input Monitor",
-            Message::TrackMidiLearnClear {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::InputMonitor,
-            },
+            view_api::track_midi_learn_clear_input_monitor(track_name.clone()),
         ));
     }
     if track.midi_learn_disk_monitor.is_some() {
         items.push(menu::menu_item(
             "Clear MIDI Learn Disk Monitor",
-            Message::TrackMidiLearnClear {
-                track_name: track_name.clone(),
-                target: TrackMidiLearnTarget::DiskMonitor,
-            },
+            view_api::track_midi_learn_clear_disk_monitor(track_name.clone()),
         ));
     }
 
@@ -1120,7 +1071,7 @@ impl Tracks {
                 .height(Length::Fixed(22.0))
                 .padding(0)
                 .style(move |theme, _state| style::arm::style(theme, track.armed))
-                .on_press(Message::Request(Action::TrackToggleArm(track_name.clone())))
+                .on_press(view_api::track_toggle_arm(track_name.clone()))
                 .into(),
             );
         }
@@ -1136,9 +1087,7 @@ impl Tracks {
             .height(Length::Fixed(22.0))
             .padding(0)
             .style(move |theme, _state| style::mute::style(theme, track.muted))
-            .on_press(Message::Request(Action::TrackToggleMute(
-                track.name.clone(),
-            )))
+            .on_press(view_api::track_toggle_mute(track.name.clone()))
             .into(),
         );
         controls.push(
@@ -1155,9 +1104,7 @@ impl Tracks {
             .style(move |theme, _state| {
                 style::solo::style(theme, track.effective_soloed, track.solo_upstream)
             })
-            .on_press(Message::Request(Action::TrackToggleSolo(
-                track.name.clone(),
-            )))
+            .on_press(view_api::track_toggle_solo(track.name.clone()))
             .into(),
         );
         if !track.is_master && !track.is_folder {
@@ -1173,9 +1120,7 @@ impl Tracks {
                 .height(Length::Fixed(22.0))
                 .padding(0)
                 .style(move |theme, _state| style::phase_invert::style(theme, track.phase_inverted))
-                .on_press(Message::Request(Action::TrackTogglePhase(
-                    track.name.clone(),
-                )))
+                .on_press(view_api::track_toggle_phase(track.name.clone()))
                 .into(),
             );
         }
@@ -1203,7 +1148,7 @@ impl Tracks {
         let (vol_min, vol_max) = TrackAutomationTarget::Volume.default_range();
         let track_name_for_volume = track.name.clone();
         let volume_slider = horizontal_slider(vol_min..=vol_max, track.level, move |value| {
-            Message::Request(Action::TrackLevel(track_name_for_volume.clone(), value))
+            view_api::track_level(track_name_for_volume.clone(), value)
         })
         .width(Length::Fill)
         .height(Length::Fixed(12.0))
@@ -1295,12 +1240,7 @@ impl Tracks {
                             .height(Length::Fixed(22.0))
                             .padding(0)
                             .style(move |theme, _state| style::input::style(theme, input_monitor))
-                            .on_press(Message::Request(
-                                Action::TrackToggleInputMonitor {
-                                    track_name: track.name.clone(),
-                                    lane,
-                                }
-                            )),
+                            .on_press(view_api::track_toggle_input_monitor(track.name.clone())),
                             button(
                                 container(disc().size(13))
                                     .width(Length::Fill)
@@ -1312,12 +1252,7 @@ impl Tracks {
                             .height(Length::Fixed(22.0))
                             .padding(0)
                             .style(move |theme, _state| style::disk::style(theme, disk_monitor))
-                            .on_press(Message::Request(
-                                Action::TrackToggleDiskMonitor {
-                                    track_name: track.name.clone(),
-                                    lane,
-                                }
-                            )),
+                            .on_press(view_api::track_toggle_disk_monitor(track.name.clone())),
                         ]
                         .spacing(4)
                         .align_y(Alignment::Center),
@@ -1363,12 +1298,9 @@ impl Tracks {
                                 theme,
                                 midi_input_monitor
                             ))
-                            .on_press(Message::Request(
-                                Action::TrackToggleMidiInputMonitor {
-                                    track_name: track.name.clone(),
-                                    lane: lane_index,
-                                }
-                            )),
+                            .on_press(
+                                view_api::track_toggle_midi_input_monitor(track.name.clone())
+                            ),
                             button(
                                 container(disc().size(13))
                                     .width(Length::Fill)
@@ -1383,12 +1315,7 @@ impl Tracks {
                                 theme,
                                 midi_disk_monitor
                             ))
-                            .on_press(Message::Request(
-                                Action::TrackToggleMidiDiskMonitor {
-                                    track_name: track.name.clone(),
-                                    lane: lane_index,
-                                }
-                            )),
+                            .on_press(view_api::track_toggle_midi_disk_monitor(track.name.clone())),
                             Space::new().width(Length::Fill),
                             pick_list(MidiLaneChannelSelection::ALL, Some(selected_channel), {
                                 let track_name = track_name.clone();
@@ -1712,7 +1639,7 @@ impl Tracks {
         filter: &str,
     ) -> Element<'_, Message> {
         let (entries, width) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
             let soloed_track_names: std::collections::HashSet<String> = state
                 .tracks
@@ -1730,7 +1657,7 @@ impl Tracks {
                     }
 
                     for conn in &state.connections {
-                        if conn.kind == maolan_engine::kind::Kind::Audio
+                        if conn.kind == crate::state::Kind::Audio
                             && conn.to_track == target_name
                             && !soloed_track_names.contains(&conn.from_track)
                         {

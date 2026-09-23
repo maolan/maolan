@@ -7,30 +7,33 @@ impl Maolan {
             Message::Undo => Some(self.send(Action::Undo)),
             Message::Redo => Some(self.send(Action::Redo)),
             Message::ToggleTransport => {
-                if !self.state.blocking_read().hw_loaded {
+                if !self.state.read().expect("state lock poisoned").hw_loaded {
                     return Some(Task::none());
                 }
-                if matches!(self.state.blocking_read().view, crate::state::View::Session) {
-                    if self.live_session_playing {
+                if matches!(
+                    self.state.read().expect("state lock poisoned").view,
+                    crate::state::View::Session
+                ) {
+                    if self.transport.live_session_playing {
                         return Some(self.stop_live_session_play());
                     }
                     return Some(self.start_live_session_play());
                 }
-                if self.playing && !self.paused {
-                    let stop_live = if self.live_session_playing {
+                if self.transport.playing && !self.transport.paused {
+                    let stop_live = if self.transport.live_session_playing {
                         self.stop_live_session_play()
                     } else {
                         Task::none()
                     };
                     self.toolbar.update(message);
-                    self.playing = false;
-                    self.paused = false;
-                    self.last_playback_tick = None;
-                    self.track_automation_runtime.clear();
-                    self.touch_automation_overrides.clear();
-                    self.touch_active_keys.clear();
-                    self.latch_automation_overrides.clear();
-                    self.stop_recording_preview();
+                    self.transport.playing = false;
+                    self.transport.paused = false;
+                    self.transport.last_playback_tick = None;
+                    self.automation.track_automation_runtime.clear();
+                    self.automation.touch_automation_overrides.clear();
+                    self.automation.touch_active_keys.clear();
+                    self.automation.latch_automation_overrides.clear();
+                    self.rec.stop_recording_preview();
                     return Some(stop_live.chain(Task::batch(vec![
                         self.send(Action::SetClipPlaybackEnabled(true)),
                         self.send(Action::Stop),
@@ -38,17 +41,17 @@ impl Maolan {
                 }
                 // Toggling editor playback on while the live session is
                 // playing hands over: live playback stops first.
-                let stop_live = if self.live_session_playing {
+                let stop_live = if self.transport.live_session_playing {
                     self.stop_live_session_play()
                 } else {
                     Task::none()
                 };
-                let was_playing = self.playing;
+                let was_playing = self.transport.playing;
                 self.toolbar.update(message);
-                self.playing = true;
-                self.paused = false;
-                self.last_playback_tick = Some(Instant::now());
-                if self.record_armed {
+                self.transport.playing = true;
+                self.transport.paused = false;
+                self.transport.last_playback_tick = Some(Instant::now());
+                if self.transport.record_armed {
                     self.start_recording_preview();
                 }
                 let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(true))];
@@ -58,24 +61,26 @@ impl Maolan {
                 Some(stop_live.chain(Task::batch(tasks)))
             }
             Message::ToggleLoop => {
-                if self.loop_range_samples.is_none() {
+                if self.transport.loop_range_samples.is_none() {
                     return Some(Task::none());
                 }
-                let enabled = !self.loop_enabled;
-                self.loop_enabled = enabled;
+                let enabled = !self.transport.loop_enabled;
+                self.transport.loop_enabled = enabled;
                 Some(self.send(Action::SetLoopEnabled(enabled)))
             }
             Message::TogglePunch => {
-                if self.punch_range_samples.is_none() {
+                if self.transport.punch_range_samples.is_none() {
                     return Some(Task::none());
                 }
-                let enabled = !self.punch_enabled;
-                self.punch_enabled = enabled;
+                let enabled = !self.transport.punch_enabled;
+                self.transport.punch_enabled = enabled;
                 Some(self.send(Action::SetPunchEnabled(enabled)))
             }
             Message::ToggleMetronome => {
-                self.metronome_enabled = !self.metronome_enabled;
-                Some(self.send(Action::SetMetronomeEnabled(self.metronome_enabled)))
+                self.transport.metronome_enabled = !self.transport.metronome_enabled;
+                Some(self.send(Action::SetMetronomeEnabled(
+                    self.transport.metronome_enabled,
+                )))
             }
             Message::WindowResized(size) => {
                 self.size = *size;
@@ -115,9 +120,9 @@ mod tests {
     #[test]
     fn handle_toggle_metronome_toggles_state() {
         let mut app = Maolan::default();
-        let initial = app.metronome_enabled;
+        let initial = app.transport.metronome_enabled;
         let _result = app.handle_core_message(&Message::ToggleMetronome);
-        assert_eq!(app.metronome_enabled, !initial);
+        assert_eq!(app.transport.metronome_enabled, !initial);
     }
 
     #[test]

@@ -14,7 +14,7 @@ impl Maolan {
                 scene_index,
                 additive,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if additive {
                     state.selected_slots.insert((track_name, scene_index));
                 } else {
@@ -24,7 +24,7 @@ impl Maolan {
                 None
             }
             Message::SessionSceneSelect(scene_index) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.selected_scene = Some(scene_index);
                 None
             }
@@ -33,7 +33,7 @@ impl Maolan {
                 scene_index,
             } => {
                 {
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     state.selected_slots.clear();
                     state
                         .selected_slots
@@ -49,7 +49,7 @@ impl Maolan {
                 icon,
             } => {
                 {
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     state.session.ensure_track_slots(&track_name);
                     if let Some(slots) = state.session.slots.get_mut(&track_name)
                         && let Some(slot) = slots.get_mut(scene_index)
@@ -57,21 +57,21 @@ impl Maolan {
                         slot.play_stop_icon = icon;
                     }
                 }
-                let _ = CLIENT.sender.try_send(EngineMessage::Request(
+                self.try_send_engine(EngineMessage::Request(
                     Action::TrackSetSessionSlotPlayEnabled {
                         track_name: track_name.clone(),
                         scene_index,
                         enabled: icon == Some(true),
                     },
                 ));
-                let _ = CLIENT.sender.try_send(EngineMessage::Request(
+                self.try_send_engine(EngineMessage::Request(
                     Action::TrackSetSessionSlotStopEnabled {
                         track_name: track_name.clone(),
                         scene_index,
                         enabled: icon == Some(false),
                     },
                 ));
-                if self.live_session_playing {
+                if self.transport.live_session_playing {
                     if icon == Some(true) {
                         self.launch_session_slot(&track_name, scene_index);
                     } else {
@@ -86,7 +86,7 @@ impl Maolan {
                 ..
             } => {
                 let anchor = {
-                    let state = self.state.blocking_read();
+                    let state = self.state.read().expect("state lock poisoned");
                     state
                         .session_slot_context_hover
                         .as_ref()
@@ -96,7 +96,7 @@ impl Maolan {
                         .map(|(_, point)| *point)
                         .unwrap_or(Point::new(8.0, 24.0))
                 };
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.selected_slots.clear();
                 state
                     .selected_slots
@@ -113,8 +113,10 @@ impl Maolan {
                 scene_index,
                 position,
             } => {
-                self.state.blocking_write().session_slot_context_hover =
-                    Some(((track_name, scene_index), position));
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .session_slot_context_hover = Some(((track_name, scene_index), position));
                 None
             }
             Message::SessionScenePressed(scene_index) => {
@@ -122,17 +124,17 @@ impl Maolan {
                 // session is playing it also becomes the next scene to
                 // launch; while stopped it is the scene Play will start.
                 {
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     if scene_index < state.session.scenes.len() {
                         state.selected_scene = Some(scene_index);
                     } else {
                         return None;
                     }
                 }
-                if self.live_session_playing {
+                if self.transport.live_session_playing {
                     return Some(self.send(Action::Session(SessionAction::QueueScene {
                         scene_index,
-                        launch_quantization: self.snap_mode.launch_quantization(),
+                        launch_quantization: self.timing.snap_mode.launch_quantization(),
                     })));
                 }
                 None
@@ -140,7 +142,7 @@ impl Maolan {
             Message::SessionSceneReleased(_) => None,
             Message::SessionSceneRightClick { scene_index, .. } => {
                 let anchor = {
-                    let state = self.state.blocking_read();
+                    let state = self.state.read().expect("state lock poisoned");
                     state
                         .session_scene_context_hover
                         .as_ref()
@@ -148,7 +150,7 @@ impl Maolan {
                         .map(|(_, point)| *point)
                         .unwrap_or(Point::new(8.0, 24.0))
                 };
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.selected_scene = Some(scene_index);
                 state.session_scene_context_menu =
                     Some(crate::state::SessionSceneContextMenuState {
@@ -161,17 +163,22 @@ impl Maolan {
                 scene_index,
                 position,
             } => {
-                self.state.blocking_write().session_scene_context_hover =
-                    Some((scene_index, position));
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .session_scene_context_hover = Some((scene_index, position));
                 None
             }
             Message::SessionSceneContextMenuHide => {
-                self.state.blocking_write().session_scene_context_menu = None;
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .session_scene_context_menu = None;
                 None
             }
             Message::SessionSceneRenameShow(scene_index) => {
                 let name = {
-                    let state = self.state.blocking_read();
+                    let state = self.state.read().expect("state lock poisoned");
                     state
                         .session
                         .scenes
@@ -179,19 +186,20 @@ impl Maolan {
                         .map(|scene| scene.name.clone())
                         .unwrap_or_default()
                 };
-                self.state.blocking_write().scene_rename_dialog =
-                    Some(crate::state::SceneRenameDialog { scene_index, name });
+                self.scene_rename
+                    .open(crate::state::SceneRenameDialog { scene_index, name });
                 None
             }
             Message::SessionSceneRenameInput(value) => {
-                if let Some(dialog) = self.state.blocking_write().scene_rename_dialog.as_mut() {
+                if let Some(dialog) = self.scene_rename.dialog.as_mut() {
                     dialog.name = value;
                 }
                 None
             }
             Message::SessionSceneRenameConfirm => {
-                let mut state = self.state.blocking_write();
-                if let Some(dialog) = state.scene_rename_dialog.take()
+                let dialog = self.scene_rename.dialog.take();
+                let mut state = self.state.write().expect("state lock poisoned");
+                if let Some(dialog) = dialog
                     && let Some(scene) = state.session.scenes.get_mut(dialog.scene_index)
                 {
                     scene.name = dialog.name;
@@ -199,11 +207,11 @@ impl Maolan {
                 None
             }
             Message::SessionSceneRenameCancel => {
-                self.state.blocking_write().scene_rename_dialog = None;
+                self.scene_rename.close();
                 None
             }
             Message::SessionSceneRemove(scene_index) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if scene_index < state.session.scenes.len() {
                     state.session.scenes.remove(scene_index);
                     for slots in state.session.slots.values_mut() {
@@ -221,7 +229,8 @@ impl Maolan {
             Message::SessionSceneSetColor { scene_index, color } => {
                 if let Some(scene) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .session
                     .scenes
                     .get_mut(scene_index)
@@ -233,7 +242,8 @@ impl Maolan {
             Message::SessionSceneClearColor(scene_index) => {
                 if let Some(scene) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .session
                     .scenes
                     .get_mut(scene_index)
@@ -245,7 +255,8 @@ impl Maolan {
             Message::SessionSceneSetTempo { scene_index, bpm } => {
                 if let Some(scene) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .session
                     .scenes
                     .get_mut(scene_index)
@@ -260,7 +271,8 @@ impl Maolan {
             } => {
                 if let Some(scene) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .session
                     .scenes
                     .get_mut(scene_index)
@@ -270,7 +282,7 @@ impl Maolan {
                 None
             }
             Message::SessionSceneAdd => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.session.add_scene();
                 let track_names: Vec<String> = state
                     .tracks
@@ -299,7 +311,7 @@ impl Maolan {
                 scene_index,
                 ..
             } => {
-                self.dragging_session_slot = Some((track_name, scene_index));
+                self.drag.dragging_session_slot = Some((track_name, scene_index));
                 None
             }
             Message::SessionClipDragStart {
@@ -307,7 +319,7 @@ impl Maolan {
                 clip_id,
                 kind,
             } => {
-                self.dragging_session_clip = Some(crate::state::DraggedSessionClip {
+                self.drag.dragging_session_clip = Some(crate::state::DraggedSessionClip {
                     source_track_name,
                     clip_id,
                     kind,
@@ -315,7 +327,7 @@ impl Maolan {
                 None
             }
             Message::SessionClipDropped { point } => {
-                if self.dragging_session_clip.is_some() {
+                if self.drag.dragging_session_clip.is_some() {
                     return Some(zones_on_point(
                         Message::SessionClipHandleZones,
                         point,
@@ -326,9 +338,9 @@ impl Maolan {
                 None
             }
             Message::SessionClipHandleZones(ref zones) => {
-                if let Some(dragged) = self.dragging_session_clip.clone() {
+                if let Some(dragged) = self.drag.dragging_session_clip.clone() {
                     let slot_map = {
-                        let state = self.state.blocking_read();
+                        let state = self.state.read().expect("state lock poisoned");
                         build_slot_zone_map(&state.tracks, &state.session)
                     };
                     let target = zones
@@ -336,7 +348,7 @@ impl Maolan {
                         .find_map(|(zone_id, _rect)| slot_map.get(zone_id).cloned());
                     if let Some((target_track_name, scene_index)) = target {
                         let (valid, same_track) = {
-                            let state = self.state.blocking_read();
+                            let state = self.state.read().expect("state lock poisoned");
                             let source_track = dragged
                                 .source_track_name
                                 .as_ref()
@@ -365,7 +377,7 @@ impl Maolan {
                         };
                         if valid {
                             let source_clip_name = {
-                                let state = self.state.blocking_read();
+                                let state = self.state.read().expect("state lock poisoned");
                                 match &dragged.source_track_name {
                                     Some(source_track_name) => state
                                         .tracks
@@ -403,7 +415,7 @@ impl Maolan {
                                 dragged.clip_id.clone()
                             } else if dragged.source_track_name.is_some() {
                                 let clip_id = dragged.clip_id.clone();
-                                let state = self.state.blocking_read();
+                                let state = self.state.read().expect("state lock poisoned");
                                 let source_track = dragged
                                     .source_track_name
                                     .as_ref()
@@ -451,7 +463,7 @@ impl Maolan {
                                 // target track keeping its id, which also removes it
                                 // from the pool.
                                 let new_id = dragged.clip_id.clone();
-                                let state = self.state.blocking_read();
+                                let state = self.state.read().expect("state lock poisoned");
                                 let add_clip = match dragged.kind {
                                     maolan_engine::kind::Kind::Audio => state
                                         .unused_audio_clips
@@ -502,12 +514,12 @@ impl Maolan {
                                 };
                                 drop(state);
                                 if let Some(action) = add_clip {
-                                    let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+                                    self.try_send_engine(EngineMessage::Request(action));
                                 }
                                 new_id
                             };
                             {
-                                let mut state = self.state.blocking_write();
+                                let mut state = self.state.write().expect("state lock poisoned");
                                 state.session.ensure_track_slots(&target_track_name);
                                 if let Some(slot) =
                                     state.session.slot_mut(&target_track_name, scene_index)
@@ -533,11 +545,11 @@ impl Maolan {
                         }
                     }
                 }
-                self.dragging_session_clip = None;
+                self.drag.dragging_session_clip = None;
                 None
             }
             Message::SessionSlotDropped { point, .. } => {
-                if self.dragging_session_slot.is_some() {
+                if self.drag.dragging_session_slot.is_some() {
                     return Some(zones_on_point(
                         Message::SessionSlotHandleZones,
                         point,
@@ -548,10 +560,10 @@ impl Maolan {
                 None
             }
             Message::SessionSlotHandleZones(ref zones) => {
-                if let Some((from_track, from_scene)) = self.dragging_session_slot.clone() {
+                if let Some((from_track, from_scene)) = self.drag.dragging_session_slot.clone() {
                     let from_id = Id::from(slot_zone_id(&from_track, from_scene));
                     let slot_map = {
-                        let state = self.state.blocking_read();
+                        let state = self.state.read().expect("state lock poisoned");
                         build_slot_zone_map(&state.tracks, &state.session)
                     };
                     let workspace_zone = Id::from("workspace-drop-zone");
@@ -573,11 +585,11 @@ impl Maolan {
                         }
                     }
                 }
-                self.dragging_session_slot = None;
+                self.drag.dragging_session_slot = None;
                 None
             }
             Message::WorkspaceSessionSlotDropped => {
-                self.dragging_session_slot = None;
+                self.drag.dragging_session_slot = None;
                 None
             }
             Message::SessionSlotClearRef {
@@ -585,7 +597,7 @@ impl Maolan {
                 scene_index,
             } => {
                 {
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     if let Some(slot) = state.session.slot_mut(&track_name, scene_index) {
                         slot.clip = None;
                         slot.clip_name = None;
@@ -612,96 +624,92 @@ impl Maolan {
                 track_name,
                 scene_index,
             } => {
-                let state = self.state.blocking_read();
+                let state = self.state.read().expect("state lock poisoned");
                 let clip_ref = state
                     .session
                     .slot(&track_name, scene_index)
                     .and_then(|slot| slot.clip.as_ref())?;
                 let track = state.tracks.iter().find(|track| track.name == track_name)?;
-                let start = self.transport_samples.max(0.0) as usize;
+                let start = self.transport.transport_samples.max(0.0) as usize;
                 if let Some(clip) = track
                     .audio
                     .clips
                     .iter()
                     .find(|clip| clip.id == clip_ref.clip_id)
                 {
-                    let _ = CLIENT
-                        .sender
-                        .try_send(EngineMessage::Request(Action::AddClip {
-                            clip_id: crate::state::generate_clip_id(),
-                            name: clip.name.clone(),
-                            track_name: track_name.clone(),
-                            start,
-                            length: clip.length,
-                            offset: clip.offset,
-                            input_channel: clip.input_channel,
-                            muted: clip.muted,
-                            reversed: clip.reversed,
-                            gain_db: clip.gain_db,
-                            peaks_file: clip.peaks_file.clone(),
-                            kind: Kind::Audio,
-                            fade_enabled: clip.fade_enabled,
-                            fade_in_samples: clip.fade_in_samples,
-                            fade_out_samples: clip.fade_out_samples,
-                            source_name: clip.pitch_correction_source_name.clone(),
-                            source_offset: clip.pitch_correction_source_offset,
-                            source_length: clip.pitch_correction_source_length,
-                            preview_name: clip.pitch_correction_preview_name.clone(),
-                            pitch_correction_points: clip
-                                .pitch_correction_points
-                                .iter()
-                                .map(|point| maolan_engine::message::PitchCorrectionPointData {
-                                    start_sample: point.start_sample,
-                                    length_samples: point.length_samples,
-                                    detected_midi_pitch: point.detected_midi_pitch,
-                                    target_midi_pitch: point.target_midi_pitch,
-                                    clarity: point.clarity,
-                                })
-                                .collect(),
-                            pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
-                            pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
-                            pitch_correction_formant_compensation: clip
-                                .pitch_correction_formant_compensation,
-                            pitch_correction_detector: clip.pitch_correction_detector,
-                            pitch_correction_mode: clip.pitch_correction_mode,
-                            plugin_graph_json: clip.plugin_graph_json.clone(),
-                        }));
+                    self.try_send_engine(EngineMessage::Request(Action::AddClip {
+                        clip_id: crate::state::generate_clip_id(),
+                        name: clip.name.clone(),
+                        track_name: track_name.clone(),
+                        start,
+                        length: clip.length,
+                        offset: clip.offset,
+                        input_channel: clip.input_channel,
+                        muted: clip.muted,
+                        reversed: clip.reversed,
+                        gain_db: clip.gain_db,
+                        peaks_file: clip.peaks_file.clone(),
+                        kind: Kind::Audio,
+                        fade_enabled: clip.fade_enabled,
+                        fade_in_samples: clip.fade_in_samples,
+                        fade_out_samples: clip.fade_out_samples,
+                        source_name: clip.pitch_correction_source_name.clone(),
+                        source_offset: clip.pitch_correction_source_offset,
+                        source_length: clip.pitch_correction_source_length,
+                        preview_name: clip.pitch_correction_preview_name.clone(),
+                        pitch_correction_points: clip
+                            .pitch_correction_points
+                            .iter()
+                            .map(|point| maolan_engine::message::PitchCorrectionPointData {
+                                start_sample: point.start_sample,
+                                length_samples: point.length_samples,
+                                detected_midi_pitch: point.detected_midi_pitch,
+                                target_midi_pitch: point.target_midi_pitch,
+                                clarity: point.clarity,
+                            })
+                            .collect(),
+                        pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+                        pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+                        pitch_correction_formant_compensation: clip
+                            .pitch_correction_formant_compensation,
+                        pitch_correction_detector: clip.pitch_correction_detector,
+                        pitch_correction_mode: clip.pitch_correction_mode,
+                        plugin_graph_json: clip.plugin_graph_json.clone(),
+                    }));
                 } else if let Some(clip) = track
                     .midi
                     .clips
                     .iter()
                     .find(|clip| clip.id == clip_ref.clip_id)
                 {
-                    let _ = CLIENT
-                        .sender
-                        .try_send(EngineMessage::Request(Action::AddClip {
-                            clip_id: crate::state::generate_clip_id(),
-                            name: clip.name.clone(),
-                            track_name: track_name.clone(),
-                            start,
-                            length: clip.length,
-                            offset: clip.offset,
-                            input_channel: clip.input_channel,
-                            muted: clip.muted,
-                            reversed: clip.reversed,
-                            gain_db: 0.0,
-                            peaks_file: None,
-                            kind: Kind::MIDI,
-                            fade_enabled: true,
-                            fade_in_samples: 240,
-                            fade_out_samples: 240,
-                            source_name: None,
-                            source_offset: None,
-                            source_length: None,
-                            preview_name: None,
-                            pitch_correction_points: vec![],
-                            pitch_correction_frame_likeness: None,
-                            pitch_correction_inertia_ms: None,
-                            pitch_correction_formant_compensation: None,
-                            pitch_correction_detector: Default::default(),
-                            pitch_correction_mode: Default::default(),
-                            plugin_graph_json: None,
-                        }));
+                    self.try_send_engine(EngineMessage::Request(Action::AddClip {
+                        clip_id: crate::state::generate_clip_id(),
+                        name: clip.name.clone(),
+                        track_name: track_name.clone(),
+                        start,
+                        length: clip.length,
+                        offset: clip.offset,
+                        input_channel: clip.input_channel,
+                        muted: clip.muted,
+                        reversed: clip.reversed,
+                        gain_db: 0.0,
+                        peaks_file: None,
+                        kind: Kind::MIDI,
+                        fade_enabled: true,
+                        fade_in_samples: 240,
+                        fade_out_samples: 240,
+                        source_name: None,
+                        source_offset: None,
+                        source_length: None,
+                        preview_name: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
+                        pitch_correction_detector: Default::default(),
+                        pitch_correction_mode: Default::default(),
+                        plugin_graph_json: None,
+                    }));
                 }
                 None
             }
@@ -713,7 +721,7 @@ impl Maolan {
                 None
             }
             Message::SessionViewScrollChanged { x, y } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.session_view_scroll_x = x.clamp(0.0, 1.0);
                 state.session_view_scroll_y = y.clamp(0.0, 1.0);
                 None
@@ -750,7 +758,7 @@ impl Maolan {
     }
 
     fn navigate_session_selection(&mut self, delta_x: i32, delta_y: i32) {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let track_names: Vec<String> = state
             .tracks
             .iter()
@@ -778,7 +786,7 @@ impl Maolan {
             (scene_idx + delta_x).clamp(0, scene_count.saturating_sub(1) as i32) as usize;
 
         if let Some(track_name) = track_names.get(new_track_idx) {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.selected_slots.clear();
             state
                 .selected_slots
@@ -788,7 +796,7 @@ impl Maolan {
 
     fn launch_selected_session_slot(&mut self) {
         let maybe_selection = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             state.selected_slots.iter().next().cloned()
         };
         if let Some((track_name, scene_index)) = maybe_selection {
@@ -797,9 +805,9 @@ impl Maolan {
     }
 
     pub(super) fn toggle_session_slot(&mut self, track_name: &str, scene_index: usize) {
-        let live_session_playing = self.live_session_playing;
+        let live_session_playing = self.transport.live_session_playing;
         let engine_action = {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             let (is_play_enabled, clip_ref) = {
                 let Some(slot) = state.session.slot(track_name, scene_index) else {
                     return;
@@ -810,7 +818,7 @@ impl Maolan {
                 return;
             };
             let launch_quantization = if live_session_playing {
-                self.snap_mode.launch_quantization()
+                self.timing.snap_mode.launch_quantization()
             } else {
                 clip_ref.launch_quantization.into()
             };
@@ -846,13 +854,13 @@ impl Maolan {
             }
         };
         if let Some(action) = engine_action {
-            let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+            self.try_send_engine(EngineMessage::Request(action));
         }
     }
 
     fn launch_session_slot(&mut self, track_name: &str, scene_index: usize) {
         let engine_action = {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             let Some(slot) = state.session.slot(track_name, scene_index) else {
                 return;
             };
@@ -875,20 +883,20 @@ impl Maolan {
                 track_name: track_name.to_string(),
                 scene_index,
                 clip_id: clip_ref.clip_id,
-                launch_quantization: self.snap_mode.launch_quantization(),
+                launch_quantization: self.timing.snap_mode.launch_quantization(),
                 loop_enabled: clip_ref.loop_enabled,
                 loop_start_samples: clip_ref.loop_start_samples,
                 loop_end_samples: clip_ref.loop_end_samples,
             }))
         };
         if let Some(action) = engine_action {
-            let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+            self.try_send_engine(EngineMessage::Request(action));
         }
     }
 
     fn stop_session_slot(&mut self, track_name: &str, scene_index: usize) {
         let engine_action = {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             if state.session.slot(track_name, scene_index).is_none() {
                 return;
             }
@@ -907,11 +915,11 @@ impl Maolan {
             Some(Action::Session(SessionAction::StopClip {
                 track_name: track_name.to_string(),
                 scene_index,
-                launch_quantization: self.snap_mode.launch_quantization(),
+                launch_quantization: self.timing.snap_mode.launch_quantization(),
             }))
         };
         if let Some(action) = engine_action {
-            let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+            self.try_send_engine(EngineMessage::Request(action));
         }
     }
 
@@ -921,14 +929,14 @@ impl Maolan {
         force_loop: bool,
     ) -> Task<Message> {
         let (track_names, scene_tempo, current_tempo) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let track_names: Vec<String> = state.tracks.iter().map(|t| t.name.clone()).collect();
             let scene_tempo = state.session.scenes.get(scene_index).and_then(|s| s.tempo);
             (track_names, scene_tempo, state.tempo)
         };
         if force_loop {
             let launches: Vec<(String, crate::state::SlotClipRef)> = {
-                let state = self.state.blocking_read();
+                let state = self.state.read().expect("state lock poisoned");
                 track_names
                     .iter()
                     .filter_map(|track_name| {
@@ -942,7 +950,7 @@ impl Maolan {
                     .collect()
             };
             let actions: Vec<Action> = {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 launches
                     .into_iter()
                     .map(|(track_name, clip_ref)| {
@@ -999,19 +1007,19 @@ impl Maolan {
     pub(super) fn start_live_session_play(&mut self) -> Task<Message> {
         tracing::info!(
             "start_live_session_play live_session_playing={}",
-            self.live_session_playing
+            self.transport.live_session_playing
         );
-        if self.live_session_playing {
+        if self.transport.live_session_playing {
             return Task::none();
         }
-        self.stop_meter_stop_decay();
-        self.live_session_playing = true;
-        if self.record_armed {
-            self.live_session_record_start_sample = Some(0);
-            self.recorded_live_session_clip_passes.clear();
+        self.transport.stop_meter_stop_decay();
+        self.transport.live_session_playing = true;
+        if self.transport.record_armed {
+            self.transport.live_session_record_start_sample = Some(0);
+            self.transport.recorded_live_session_clip_passes.clear();
         }
         let scene = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             state
                 .selected_scene
                 .filter(|scene| *scene < state.session.scenes.len())
@@ -1022,19 +1030,19 @@ impl Maolan {
     }
 
     pub(super) fn stop_live_session_play(&mut self) -> Task<Message> {
-        self.live_session_playing = false;
-        self.live_session_record_start_sample = None;
-        self.recorded_live_session_clip_passes.clear();
+        self.transport.live_session_playing = false;
+        self.transport.live_session_record_start_sample = None;
+        self.transport.recorded_live_session_clip_passes.clear();
         self.stop_all_session_clips();
         self.stop_workspace_playback(false)
     }
 
     pub(super) fn stop_session_track(&mut self, track_name: &str) {
         let scene_count = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             state.session.scene_count()
         };
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         for scene_index in 0..scene_count {
             let runtime = state
                 .slot_runtimes
@@ -1051,15 +1059,13 @@ impl Maolan {
     }
 
     pub(super) fn stop_all_session_clips(&mut self) {
-        self.live_session_playing = false;
-        self.live_session_record_start_sample = None;
-        self.recorded_live_session_clip_passes.clear();
-        let _ = CLIENT
-            .sender
-            .try_send(EngineMessage::Request(Action::Session(
-                SessionAction::StopAllClips,
-            )));
-        let mut state = self.state.blocking_write();
+        self.transport.live_session_playing = false;
+        self.transport.live_session_record_start_sample = None;
+        self.transport.recorded_live_session_clip_passes.clear();
+        self.try_send_engine(EngineMessage::Request(Action::Session(
+            SessionAction::StopAllClips,
+        )));
+        let mut state = self.state.write().expect("state lock poisoned");
         for runtime in state.slot_runtimes.values_mut() {
             if matches!(
                 runtime.state,
@@ -1073,30 +1079,26 @@ impl Maolan {
 
     fn move_session_slot(&mut self, from: (String, usize), to: (String, usize)) {
         let moved_clip = {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.session.move_slot(&from.0, from.1, &to.0, to.1)
         };
         if let Some(clip_ref) = moved_clip {
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::TrackSetSessionSlot {
-                    track_name: from.0.clone(),
-                    scene_index: from.1,
-                    clip_id: None,
-                }));
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::TrackSetSessionSlot {
-                    track_name: to.0,
-                    scene_index: to.1,
-                    clip_id: Some(clip_ref.clip_id),
-                }));
+            self.try_send_engine(EngineMessage::Request(Action::TrackSetSessionSlot {
+                track_name: from.0.clone(),
+                scene_index: from.1,
+                clip_id: None,
+            }));
+            self.try_send_engine(EngineMessage::Request(Action::TrackSetSessionSlot {
+                track_name: to.0,
+                scene_index: to.1,
+                clip_id: Some(clip_ref.clip_id),
+            }));
         }
     }
 
     fn duplicate_session_slot(&mut self, track_name: &str, scene_index: usize) {
         let (scene_count, destination) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let scene_count = state.session.scene_count();
             let destination = (scene_index + 1..scene_count)
                 .find(|&candidate| {
@@ -1109,12 +1111,12 @@ impl Maolan {
             (scene_count, destination)
         };
         let Some((to_track, to_scene)) = destination else {
-            self.state.blocking_write().message =
+            self.state.write().expect("state lock poisoned").message =
                 "No empty slot to duplicate the clip reference into".to_string();
             return;
         };
         let clip_id = {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             if !state
                 .session
                 .copy_slot(track_name, scene_index, &to_track, to_scene)
@@ -1129,27 +1131,25 @@ impl Maolan {
             }
         };
         if let Some(clip_id) = clip_id {
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::TrackSetSessionSlot {
-                    track_name: to_track,
-                    scene_index: to_scene,
-                    clip_id: Some(clip_id),
-                }));
+            self.try_send_engine(EngineMessage::Request(Action::TrackSetSessionSlot {
+                track_name: to_track,
+                scene_index: to_scene,
+                clip_id: Some(clip_id),
+            }));
         }
         let _ = scene_count;
     }
 
     fn open_session_clip(&mut self, track_name: &str, scene_index: usize) {
         let maybe_clip_id = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             state
                 .session
                 .slot(track_name, scene_index)
                 .and_then(|slot| slot.clip.as_ref())
                 .map(|clip_ref| clip_ref.clip_id.clone())
         };
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         if let Some(clip_id) = maybe_clip_id {
             for track in &state.tracks {
                 if track.name != *track_name {
@@ -1179,7 +1179,7 @@ impl Maolan {
 
     fn import_arrangement_to_session(&mut self) {
         let track_clips: Vec<(String, Vec<String>)> = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             state
                 .tracks
                 .iter()
@@ -1198,7 +1198,7 @@ impl Maolan {
 
         let mut sync_actions = Vec::new();
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             if state.session.scenes.is_empty() {
                 state.session.scenes.push(crate::state::Scene {
                     name: "Scene 1".to_string(),
@@ -1238,19 +1238,19 @@ impl Maolan {
             state.message = "Imported arrangement clips to session".to_string();
         }
         for action in sync_actions {
-            let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+            self.try_send_engine(EngineMessage::Request(action));
         }
     }
 
     fn record_session_to_arrangement(&mut self) {
         if self.session_dir.is_none() {
-            self.state.blocking_write().message =
+            self.state.write().expect("state lock poisoned").message =
                 "Save the session before recording to arrangement".to_string();
             return;
         }
 
         let tracks_to_arm: Vec<String> = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             let armed: std::collections::HashSet<String> = state
                 .tracks
                 .iter()
@@ -1276,18 +1276,16 @@ impl Maolan {
         };
 
         for track_name in tracks_to_arm {
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::TrackToggleArm(track_name)));
+            self.try_send_engine(EngineMessage::Request(Action::TrackToggleArm(track_name)));
         }
 
-        if !self.playing {
-            let _ = CLIENT.sender.try_send(EngineMessage::Request(Action::Play));
-            self.playing = true;
-            self.paused = false;
+        if !self.transport.playing {
+            self.try_send_engine(EngineMessage::Request(Action::Play));
+            self.transport.playing = true;
+            self.transport.paused = false;
         }
 
-        self.live_session_record_start_sample = if self.live_session_playing {
+        self.transport.live_session_record_start_sample = if self.transport.live_session_playing {
             Some(
                 CLIENT
                     .session_runtime_snapshot()
@@ -1297,32 +1295,31 @@ impl Maolan {
         } else {
             Some(0)
         };
-        self.recorded_live_session_clip_passes.clear();
+        self.transport.recorded_live_session_clip_passes.clear();
 
-        if !self.record_armed {
-            self.record_armed = true;
-            if self.playing {
+        if !self.transport.record_armed {
+            self.transport.record_armed = true;
+            if self.transport.playing {
                 self.start_recording_preview();
             }
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::SetRecordEnabled(true)));
+            self.try_send_engine(EngineMessage::Request(Action::SetRecordEnabled(true)));
         }
 
-        self.state.blocking_write().message = "Recording session to arrangement".to_string();
+        self.state.write().expect("state lock poisoned").message =
+            "Recording session to arrangement".to_string();
     }
 
     pub(super) fn capture_completed_live_session_clip_passes(
         &mut self,
         completed_passes: &[maolan_engine::meter::SessionCompletedClipPass],
     ) {
-        let Some(record_start) = self.live_session_record_start_sample else {
+        let Some(record_start) = self.transport.live_session_record_start_sample else {
             return;
         };
 
         let mut candidates = Vec::new();
         {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             for completed in completed_passes {
                 if completed.start_sample < record_start {
                     continue;
@@ -1341,7 +1338,11 @@ impl Maolan {
                     completed.pass_index,
                     completed.start_sample,
                 );
-                if self.recorded_live_session_clip_passes.contains(&key) {
+                if self
+                    .transport
+                    .recorded_live_session_clip_passes
+                    .contains(&key)
+                {
                     continue;
                 }
                 if let Some(clip) = track
@@ -1393,15 +1394,15 @@ impl Maolan {
         }
 
         for (key, action) in candidates {
-            if self.recorded_live_session_clip_passes.insert(key) {
-                let _ = CLIENT.sender.try_send(EngineMessage::Request(action));
+            if self.transport.recorded_live_session_clip_passes.insert(key) {
+                self.try_send_engine(EngineMessage::Request(action));
             }
         }
     }
 
     fn record_into_session_slot(&mut self, track_name: &str, scene_index: usize) {
         let already_armed = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             state
                 .tracks
                 .iter()
@@ -1409,33 +1410,29 @@ impl Maolan {
                 .is_some_and(|t| t.armed)
         };
         if !already_armed {
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::TrackToggleArm(
-                    track_name.to_string(),
-                )));
+            self.try_send_engine(EngineMessage::Request(Action::TrackToggleArm(
+                track_name.to_string(),
+            )));
         }
 
-        self.session_slot_record_target = Some((track_name.to_string(), scene_index));
+        self.drag.session_slot_record_target = Some((track_name.to_string(), scene_index));
 
-        if !self.playing {
-            let _ = CLIENT.sender.try_send(EngineMessage::Request(Action::Play));
-            self.playing = true;
-            self.paused = false;
+        if !self.transport.playing {
+            self.try_send_engine(EngineMessage::Request(Action::Play));
+            self.transport.playing = true;
+            self.transport.paused = false;
         }
 
-        if !self.record_armed {
-            self.record_armed = true;
-            self.live_session_record_start_sample = None;
-            if self.playing {
+        if !self.transport.record_armed {
+            self.transport.record_armed = true;
+            self.transport.live_session_record_start_sample = None;
+            if self.transport.playing {
                 self.start_recording_preview();
             }
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::SetRecordEnabled(true)));
+            self.try_send_engine(EngineMessage::Request(Action::SetRecordEnabled(true)));
         }
 
-        self.state.blocking_write().message = format!(
+        self.state.write().expect("state lock poisoned").message = format!(
             "Recording into session slot {}:{}",
             track_name,
             scene_index + 1
@@ -1443,7 +1440,7 @@ impl Maolan {
     }
 
     pub(super) fn collect_valid_clip_ids(&self) -> std::collections::HashSet<String> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         state
             .tracks
             .iter()
@@ -1464,7 +1461,7 @@ impl Maolan {
     ) -> Vec<Action> {
         let mut sync_actions = Vec::new();
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             for (track_name, slots) in &mut state.session.slots {
                 for (scene_index, slot) in slots.iter_mut().enumerate() {
                     if slot
@@ -1489,7 +1486,7 @@ impl Maolan {
         let valid_ids = self.collect_valid_clip_ids();
         let mut sync_actions = Vec::new();
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             let mut cleared = 0;
             for (track_name, slots) in &mut state.session.slots {
                 for (scene_index, slot) in slots.iter_mut().enumerate() {

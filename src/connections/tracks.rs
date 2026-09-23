@@ -4654,7 +4654,7 @@ mod tests {
     use maolan_widgets::iced::widget::canvas::Program;
     use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use std::sync::RwLock;
 
     fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
@@ -4796,7 +4796,11 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         let track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
         let click = Point::new(track.position.x + 5.0, track.position.y + 5.0);
-        state.blocking_write().tracks.push(track);
+        state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor = mouse::Cursor::Available(click);
@@ -4813,7 +4817,7 @@ mod tests {
         let (message, status) = action_message(action);
         assert!(message.is_none());
         assert_eq!(status, event::Status::Captured);
-        let data = state.blocking_read();
+        let data = state.read().expect("state lock poisoned");
         assert_eq!(
             data.moving_track
                 .as_ref()
@@ -4829,7 +4833,7 @@ mod tests {
     #[test]
     fn update_double_clicking_hw_in_opens_hw_input_ports_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().hw_in = Some(crate::state::HW { channels: 1 });
+        state.write().expect("state lock poisoned").hw_in = Some(crate::state::HW { channels: 1 });
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor = mouse::Cursor::Available(Point::new(20.0, 20.0));
@@ -4865,7 +4869,7 @@ mod tests {
     #[test]
     fn update_double_clicking_hw_out_opens_hw_output_ports_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().hw_out = Some(crate::state::HW { channels: 1 });
+        state.write().expect("state lock poisoned").hw_out = Some(crate::state::HW { channels: 1 });
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor = mouse::Cursor::Available(Point::new(780.0, 20.0));
@@ -4903,7 +4907,7 @@ mod tests {
     fn update_double_clicking_hw_in_with_jack_opens_jack_connections_view() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.hw_in = Some(crate::state::HW { channels: 1 });
             data.selected_backend = crate::state::AudioBackendOption::Jack;
         }
@@ -4959,7 +4963,7 @@ mod tests {
     fn update_clicking_plugin_port_starts_plugin_connecting() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             let folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 0, 2, 0);
             data.tracks.push(folder);
             data.connections_folder = Some("Folder".to_string());
@@ -4969,7 +4973,7 @@ mod tests {
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let port_pos = {
-            let data = state.blocking_read();
+            let data = state.read().expect("state lock poisoned");
             let plugin = &data.plugin_graph_plugins[0];
             let pos = Graph::plugin_node_position(&data, plugin, 0, bounds);
             Graph::plugin_port_position(plugin, pos, 0, true).unwrap()
@@ -4988,7 +4992,7 @@ mod tests {
         let (message, status) = action_message(action);
         assert!(message.is_none());
         assert_eq!(status, event::Status::Captured);
-        let data = state.blocking_read();
+        let data = state.read().expect("state lock poisoned");
         let conn = data.plugin_graph_connecting.as_ref().expect("connecting");
         assert_eq!(conn.from_node, PluginGraphNode::Vst3PluginInstance(7));
         assert_eq!(conn.from_port, 0);
@@ -5000,7 +5004,7 @@ mod tests {
     fn update_clicking_plugin_body_selects_and_moves_plugin() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             let folder = crate::state::Track::new("Folder".to_string(), 0.0, 2, 0, 2, 0);
             data.tracks.push(folder);
             data.connections_folder = Some("Folder".to_string());
@@ -5010,7 +5014,7 @@ mod tests {
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let click = {
-            let data = state.blocking_read();
+            let data = state.read().expect("state lock poisoned");
             let plugin = &data.plugin_graph_plugins[0];
             let pos = Graph::plugin_node_position(&data, plugin, 0, bounds);
             Point::new(pos.x + 10.0, pos.y + 20.0)
@@ -5029,7 +5033,7 @@ mod tests {
         let (message, status) = action_message(action);
         assert!(message.is_none());
         assert_eq!(status, event::Status::Captured);
-        let data = state.blocking_read();
+        let data = state.read().expect("state lock poisoned");
         assert!(data.plugin_graph_selected_plugins.contains(&7));
         assert_eq!(
             data.plugin_graph_moving_plugin
@@ -5044,7 +5048,7 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor_pos = {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             let mut folder = crate::state::Track::new("folder".to_string(), 0.0, 2, 2, 0, 0);
             folder.is_folder = true;
             let mut synth = crate::state::Track::new("Synth".to_string(), 0.0, 2, 2, 0, 0);
@@ -5093,7 +5097,7 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor_pos = {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             let mut folder = crate::state::Track::new("folder".to_string(), 0.0, 2, 2, 0, 0);
             folder.is_folder = true;
             data.tracks.push(folder);
@@ -5137,7 +5141,7 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor_pos = {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.tracks.push(crate::state::Track::new(
                 "Synth".to_string(),
                 0.0,
@@ -5186,7 +5190,7 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
         let cursor_pos = {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             let mut folder = crate::state::Track::new("folder".to_string(), 0.0, 2, 2, 0, 0);
             folder.is_folder = true;
             let mut synth = crate::state::Track::new("Synth".to_string(), 0.0, 2, 2, 0, 0);
@@ -5248,7 +5252,7 @@ mod tests {
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let action = graph
             .plugin_graph_connection_actions(
-                &state.blocking_read(),
+                &state.read().expect("state lock poisoned"),
                 PluginGraphNode::Vst3PluginInstance(7),
                 0,
                 PluginGraphNode::TrackOutput,
@@ -5285,7 +5289,7 @@ mod tests {
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let action = graph
             .connectable_connection_actions(
-                &state.blocking_read(),
+                &state.read().expect("state lock poisoned"),
                 ConnectableRef::Vst3Plugin(7),
                 0,
                 ConnectableRef::TrackOutput,
@@ -5326,7 +5330,7 @@ mod tests {
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let action = graph
             .connectable_connection_actions(
-                &state.blocking_read(),
+                &state.read().expect("state lock poisoned"),
                 ConnectableRef::ChildTrack("Synth".to_string()),
                 0,
                 ConnectableRef::TrackOutput,
@@ -5372,7 +5376,7 @@ mod tests {
         let graph = Graph::new_with_focus(state.clone(), None, None);
         let action = graph
             .plugin_graph_connection_actions(
-                &state.blocking_read(),
+                &state.read().expect("state lock poisoned"),
                 PluginGraphNode::Vst3PluginInstance(8),
                 0,
                 PluginGraphNode::TrackOutput,

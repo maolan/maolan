@@ -1,3 +1,4 @@
+pub(crate) mod field_groups;
 mod platform;
 mod session;
 mod subscriptions;
@@ -80,7 +81,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tokio::sync::RwLock;
+use std::sync::RwLock;
 
 /// Per-channel peak-bin min/max accumulators produced by
 /// `Maolan::decode_streaming_peak_bins`, plus a parallel buffer tracking
@@ -93,7 +94,7 @@ type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 
 #[derive(Debug, Clone, PartialEq, Default)]
-struct LogHighlightSettings {
+pub(crate) struct LogHighlightSettings {
     lines: Vec<Vec<(Range<usize>, LogHighlight)>>,
 }
 
@@ -321,7 +322,7 @@ type PianoParseResult = (
     Vec<PianoSysExPoint>,
     usize,
 );
-type TrackFreezeRestore = (Vec<AudioClip>, Vec<MIDIClip>, Option<String>);
+pub(crate) type TrackFreezeRestore = (Vec<AudioClip>, Vec<MIDIClip>, Option<String>);
 
 pub(crate) const MIN_ZOOM_VISIBLE_BARS: f32 = 0.25;
 pub(crate) const MAX_ZOOM_VISIBLE_BARS: f32 = 256.0;
@@ -342,7 +343,7 @@ pub(crate) fn visible_bars_to_zoom_slider(visible_bars: f32) -> f32 {
 }
 
 #[derive(Debug, Clone)]
-struct PendingTrackFreezeBounce {
+pub(crate) struct PendingTrackFreezeBounce {
     rendered_clip_rel: String,
     rendered_length: usize,
     backup_audio: Vec<AudioClip>,
@@ -350,7 +351,7 @@ struct PendingTrackFreezeBounce {
 }
 
 #[derive(Debug, Clone)]
-struct PendingAutosaveRecovery {
+pub(crate) struct PendingAutosaveRecovery {
     session_dir: PathBuf,
     snapshots: Vec<PathBuf>,
     selected_index: usize,
@@ -508,7 +509,7 @@ struct ExportNormalizeParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct AudioClipKey {
+pub(crate) struct AudioClipKey {
     track_name: String,
     clip_name: String,
     start: usize,
@@ -541,7 +542,7 @@ pub(super) static AUDIO_PEAK_UPDATES: LazyLock<Mutex<Vec<AudioPeakChunkUpdate>>>
     LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum AutomationWriteKey {
+pub(crate) enum AutomationWriteKey {
     Volume,
     Balance,
     MidiCc { channel: u8, cc: u8 },
@@ -551,19 +552,19 @@ enum AutomationWriteKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TimingSelectionLane {
+pub(crate) enum TimingSelectionLane {
     Tempo,
     TimeSignature,
 }
 
 #[derive(Debug, Clone)]
-struct TouchAutomationOverride {
+pub(crate) struct TouchAutomationOverride {
     value: f32,
     updated_at: Instant,
 }
 
 #[derive(Debug, Clone, Default)]
-struct TrackAutomationRuntime {
+pub(crate) struct TrackAutomationRuntime {
     level_db: Option<f32>,
     balance: Option<f32>,
     midi_cc: HashMap<(u8, u8), u8>,
@@ -592,21 +593,23 @@ struct AudioEditorClipContext {
     clip_idx: usize,
 }
 
-struct CollectToSessionOperation {
+#[derive(Debug)]
+pub(crate) struct CollectToSessionOperation {
     session_root: PathBuf,
     data_dir: PathBuf,
     pending_clap_refs: HashSet<PluginInstanceRef>,
     copied_files: HashMap<PathBuf, String>,
 }
 
-struct MeterStopDecay {
+#[derive(Debug)]
+pub(crate) struct MeterStopDecay {
     started_at: Instant,
     hw_out_db: Vec<f32>,
     track_meters: Vec<(String, Vec<f32>)>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct PendingNativeUiFallback {
+pub(crate) struct PendingNativeUiFallback {
     track_name: String,
     clip_idx: Option<usize>,
     instance_id: usize,
@@ -614,12 +617,25 @@ pub(super) struct PendingNativeUiFallback {
     plugin_id: String,
 }
 
+use field_groups::{
+    AutomationRuntimeState, DragState, GenerateState, PendingOpsState, PluginParamState,
+    PluginScanState, RecordingPreviewState, SessionOpsState, TimingState, TransferState,
+    TransportUiState, UiState,
+};
+
 pub struct Maolan {
-    clip: Option<DraggedClip>,
-    clip_preview_target_track: Option<String>,
-    clip_preview_target_valid: bool,
-    clip_preview_snap_adjust_samples: f32,
-    clip_snap_targets: Vec<crate::state::ClipId>,
+    pub transport: TransportUiState,
+    pub drag: DragState,
+    pub pending: PendingOpsState,
+    pub automation: AutomationRuntimeState,
+    pub plugin_scan: PluginScanState,
+    pub transfer: TransferState,
+    pub generate: GenerateState,
+    pub ui: UiState,
+    pub rec: RecordingPreviewState,
+    pub timing: TimingState,
+    pub session_ops: SessionOpsState,
+    pub plugin_params: PluginParamState,
     menu: menu::Menu,
     size: Size,
     state: State,
@@ -637,85 +653,9 @@ pub struct Maolan {
     modulator_target_dialog: crate::modulator_target_dialog::ModulatorTargetDialogView,
     track_template_save: track_template_save::TrackTemplateSaveView,
     template_save: template_save::TemplateSaveView,
-    #[cfg(unix)]
-    selected_lv2_plugins: BTreeSet<String>,
-    selected_vst3_plugins: BTreeSet<String>,
-    selected_clap_plugins: BTreeSet<String>,
-    plugin_list_filter: String,
     session_dir: Option<PathBuf>,
     session_branch: String,
-    collect_to_session_operation: Option<CollectToSessionOperation>,
-    pending_save_path: Option<String>,
-    pending_save_tracks: std::collections::HashSet<String>,
-    pending_save_clap_tracks: std::collections::HashSet<String>,
-    pending_save_clap_clips: std::collections::HashSet<(String, usize, usize)>,
-    pending_save_is_template: bool,
-    pending_save_track_name: Option<String>,
-    pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
-    pending_peak_rebuilds: HashSet<AudioClipKey>,
-    pending_precomputed_peaks: HashMap<AudioClipKey, crate::state::ClipPeaks>,
-    pending_source_lengths: HashMap<AudioClipKey, usize>,
-    undo_peaks_cache: HashMap<AudioClipKey, crate::state::ClipPeaks>,
-    undo_source_lengths_cache: HashMap<AudioClipKey, usize>,
-    pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
-    pending_track_midi_editor_view_mode: HashMap<String, crate::message::MidiEditorViewMode>,
-    pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
-    track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
-    touch_automation_overrides:
-        HashMap<String, HashMap<AutomationWriteKey, TouchAutomationOverride>>,
-    touch_active_keys: HashMap<String, HashSet<AutomationWriteKey>>,
-    latch_automation_overrides: HashMap<String, HashMap<AutomationWriteKey, f32>>,
-    #[cfg(unix)]
-    pending_add_lv2_automation_uris: HashSet<(String, String)>,
-    #[cfg(unix)]
-    pending_add_lv2_automation_instances: HashSet<(String, usize)>,
-    pending_add_vst3_automation_paths: HashSet<(String, String)>,
-    pending_add_vst3_automation_instances: HashSet<(String, usize)>,
-    pending_add_clap_automation_paths: HashSet<(String, String)>,
-    pending_add_clap_automation_instances: HashSet<(String, usize)>,
-    midi_clip_previews: MidiClipPreviewMap,
-    pending_midi_clip_previews: HashSet<(String, usize, String)>,
-    freeze_in_progress: bool,
-    freeze_progress: f32,
-    freeze_track_name: Option<String>,
-    freeze_cancel_requested: bool,
-    playing: bool,
-    paused: bool,
-    live_session_playing: bool,
-    meter_stop_decay: Option<MeterStopDecay>,
-    recorded_live_session_clip_passes: HashSet<(String, usize, String, usize, usize)>,
-    live_session_record_start_sample: Option<usize>,
-    metronome_enabled: bool,
-    transport_samples: f64,
-    last_playback_tick: Option<Instant>,
-    pending_transport_position: Option<(Instant, usize)>,
-    playback_rate_hz: f64,
-    loop_enabled: bool,
-    loop_range_samples: Option<(usize, usize)>,
-    punch_enabled: bool,
-    punch_range_samples: Option<(usize, usize)>,
-    snap_mode: SnapMode,
-    midi_snap_mode: SnapMode,
-    step_recording_active: bool,
-    step_recording_cursor_samples: usize,
-    zoom_visible_bars: f32,
-    editor_scroll_origin_samples: f64,
-    editor_scroll_x: f32,
-    editor_scroll_y: f32,
-    mixer_scroll_x: f32,
-    tracks_resize_hovered: bool,
-    tracks_filter: String,
-    mixer_resize_hovered: bool,
-    tracks_visible: bool,
-    editor_visible: bool,
-    mixer_visible: bool,
-    toolbar_visible: bool,
-    show_log_window: bool,
-    shortcuts_pane_visible: bool,
     shortcut_overrides: ShortcutBindings,
-    shortcut_capture_action: Option<ShortcutAction>,
-    modulators_pane_visible: bool,
-    clips_pane_visible: bool,
     pub modulators: Vec<crate::state::Modulator>,
     pub selected_modulator_id: Option<usize>,
     audio_editor: maolan_editor::app::EditApp,
@@ -723,111 +663,6 @@ pub struct Maolan {
     hw_mixer: mixosc::app::MixOscApp,
     mixer_level_edit_track: Option<String>,
     mixer_level_edit_input: String,
-    record_armed: bool,
-    pending_record_after_save: bool,
-    recording_preview_start_sample: Option<usize>,
-    recording_preview_sample: Option<usize>,
-    recording_preview_peaks: HashMap<String, ClipPeaks>,
-    import_in_progress: bool,
-    import_current_file: usize,
-    import_total_files: usize,
-    import_file_progress: f32,
-    import_current_filename: String,
-    import_current_operation: Option<String>,
-    generate_audio_model: GenerateAudioModelOption,
-    generate_audio_acestep_lm: GenerateAudioAceStepLmOption,
-    generate_audio_prompt_editor: text_editor::Content,
-    log_viewer_content: text_editor::Content,
-    log_viewer_highlights: LogHighlightSettings,
-
-    generate_audio_tags_input: String,
-    generate_audio_backend: BurnBackendOption,
-    generate_audio_key_root: NoteName,
-    generate_audio_key_mode: KeyMode,
-
-    generate_audio_cfg_scale_input: String,
-    generate_audio_steps_input: usize,
-    generate_audio_seconds_total_input: usize,
-    generate_audio_in_progress: bool,
-    generate_audio_progress: f32,
-    generate_audio_operation: Option<String>,
-    generate_audio_abort_handle: Option<tokio::task::AbortHandle>,
-    #[cfg(unix)]
-    generate_audio_process_id: Option<u32>,
-    generate_midi_model: GenerateMidiModelOption,
-    generate_midi_prompt_editor: text_editor::Content,
-    generate_midi_backend: BurnBackendOption,
-    generate_midi_key_root: NoteName,
-    generate_midi_key_mode: KeyMode,
-    generate_midi_bpm_input: String,
-    generate_midi_time_signature_num_input: String,
-    generate_midi_time_signature_denom_input: String,
-    generate_midi_length_seconds_input: String,
-    generate_midi_max_tokens_input: String,
-    generate_midi_top_p_input: String,
-    generate_midi_seed_input: String,
-    generate_midi_in_progress: bool,
-    generate_midi_progress: f32,
-    generate_midi_operation: Option<String>,
-    generate_midi_abort_handle: Option<tokio::task::AbortHandle>,
-    #[cfg(unix)]
-    generate_midi_process_id: Option<u32>,
-    clip_pitch_correction_in_progress: bool,
-    clip_pitch_correction_progress: f32,
-    clip_pitch_correction_clip_name: String,
-    clip_pitch_correction_operation: Option<String>,
-    resynth_render_in_progress: bool,
-    export_in_progress: bool,
-    export_cancel: Arc<AtomicBool>,
-    export_pending_bounces: HashSet<String>,
-    export_bounce_notify: Option<Arc<tokio::sync::Notify>>,
-    export_progress: f32,
-    export_operation: Option<String>,
-    export_sample_rate_hz: u32,
-    export_format_wav: bool,
-    export_format_flac: bool,
-    export_format_mp3: bool,
-    export_format_ogg: bool,
-    export_bit_depth: ExportBitDepth,
-    export_dither: ExportDither,
-    export_render_mode: ExportRenderMode,
-    export_hw_out_ports: BTreeSet<usize>,
-    export_realtime_fallback: bool,
-    export_normalize: bool,
-    export_normalize_mode: ExportNormalizeMode,
-    export_normalize_dbfs_input: String,
-    export_normalize_lufs_input: String,
-    export_normalize_dbtp_input: String,
-    export_normalize_tp_limiter: bool,
-    export_master_limiter: bool,
-    export_master_limiter_ceiling_input: String,
-    clap_param_values: HashMap<(String, Option<usize>, usize, u32), f64>,
-    generic_plugin_param_values: HashMap<(String, Option<usize>, usize, u32), f64>,
-    pending_native_ui_fallback: Option<PendingNativeUiFallback>,
-    tempo_input: String,
-    time_signature_num_input: String,
-    time_signature_denom_input: String,
-    tap_tempo_times: Vec<Instant>,
-    last_sent_tempo_bpm: Option<f64>,
-    last_sent_time_signature: Option<(u16, u16)>,
-    selected_tempo_points: BTreeSet<usize>,
-    selected_time_signature_points: BTreeSet<usize>,
-    timing_selection_lane: Option<TimingSelectionLane>,
-    midi_mappings_panel_open: bool,
-    midi_mappings_report_lines: Vec<String>,
-    has_unsaved_changes: bool,
-    engine_dirty: bool,
-    pending_exit_after_save: bool,
-    session_restore_in_progress: bool,
-    last_autosave_snapshot: Option<Instant>,
-    pending_recovery_session_dir: Option<PathBuf>,
-    pending_autosave_recovery: Option<PendingAutosaveRecovery>,
-    pending_open_session_dir: Option<PathBuf>,
-    pending_branch_input: String,
-    dragging_session_slot: Option<(String, usize)>,
-    dragging_session_clip: Option<crate::state::DraggedSessionClip>,
-    dragging_pane_clip: Option<crate::state::DraggedSessionClip>,
-    session_slot_record_target: Option<(String, usize)>,
     prefs_osc_enabled: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
@@ -953,11 +788,7 @@ impl Default for Maolan {
             prefs.recent_session_paths.clone(),
         ));
         Self {
-            clip: None,
-            clip_preview_target_track: None,
-            clip_preview_target_valid: false,
-            clip_preview_snap_adjust_samples: 0.0,
-            clip_snap_targets: Vec::new(),
+            drag: DragState::default(),
             menu,
             size: Size::new(0.0, 0.0),
             state: state.clone(),
@@ -977,85 +808,27 @@ impl Default for Maolan {
             ),
             track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
             template_save: template_save::TemplateSaveView::new(state.clone()),
-            #[cfg(unix)]
-            #[cfg(unix)]
-            selected_lv2_plugins: BTreeSet::new(),
-            selected_vst3_plugins: BTreeSet::new(),
-            selected_clap_plugins: BTreeSet::new(),
-            plugin_list_filter: String::new(),
+            transport: TransportUiState::default(),
+            pending: PendingOpsState::default(),
+            automation: AutomationRuntimeState::default(),
+            plugin_scan: PluginScanState::default(),
             session_dir: None,
             session_branch: "main".to_string(),
-            collect_to_session_operation: None,
-            pending_save_path: None,
-            pending_save_tracks: std::collections::HashSet::new(),
-            pending_save_clap_tracks: std::collections::HashSet::new(),
-            pending_save_clap_clips: std::collections::HashSet::new(),
-            pending_save_is_template: false,
-            pending_save_track_name: None,
-            pending_peak_file_loads: HashMap::new(),
-            pending_peak_rebuilds: HashSet::new(),
-            pending_precomputed_peaks: HashMap::new(),
-            pending_source_lengths: HashMap::new(),
-            undo_peaks_cache: HashMap::new(),
-            undo_source_lengths_cache: HashMap::new(),
-            pending_track_freeze_restore: HashMap::new(),
-            pending_track_midi_editor_view_mode: HashMap::new(),
-            pending_track_freeze_bounce: HashMap::new(),
-            track_automation_runtime: HashMap::new(),
-            touch_automation_overrides: HashMap::new(),
-            touch_active_keys: HashMap::new(),
-            latch_automation_overrides: HashMap::new(),
-            #[cfg(unix)]
-            pending_add_lv2_automation_uris: HashSet::new(),
-            #[cfg(unix)]
-            pending_add_lv2_automation_instances: HashSet::new(),
-            pending_add_vst3_automation_paths: HashSet::new(),
-            pending_add_vst3_automation_instances: HashSet::new(),
-            pending_add_clap_automation_paths: HashSet::new(),
-            pending_add_clap_automation_instances: HashSet::new(),
-            midi_clip_previews: HashMap::new(),
-            pending_midi_clip_previews: HashSet::new(),
-            freeze_in_progress: false,
-            freeze_progress: 0.0,
-            freeze_track_name: None,
-            freeze_cancel_requested: false,
-            playing: false,
-            paused: false,
-            live_session_playing: false,
-            meter_stop_decay: None,
-            recorded_live_session_clip_passes: HashSet::new(),
-            live_session_record_start_sample: None,
-            metronome_enabled: false,
-            transport_samples: 0.0,
-            last_playback_tick: None,
-            pending_transport_position: None,
-            playback_rate_hz: 48_000.0,
-            loop_enabled: false,
-            loop_range_samples: None,
-            punch_enabled: false,
-            punch_range_samples: None,
-            snap_mode: prefs.default_snap_mode,
-            midi_snap_mode: prefs.default_midi_snap_mode,
-            step_recording_active: false,
-            step_recording_cursor_samples: 0,
-            zoom_visible_bars: 127.0,
-            editor_scroll_origin_samples: 0.0,
-            editor_scroll_x: 0.0,
-            editor_scroll_y: 0.0,
-            mixer_scroll_x: 0.0,
-            tracks_resize_hovered: false,
-            tracks_filter: String::new(),
-            mixer_resize_hovered: false,
-            tracks_visible: true,
-            editor_visible: true,
-            mixer_visible: true,
-            toolbar_visible: true,
-            show_log_window: false,
-            shortcuts_pane_visible: false,
+            transfer: TransferState {
+                export_sample_rate_hz: prefs.default_export_sample_rate_hz,
+                ..Default::default()
+            },
+            generate: GenerateState::default(),
+            ui: UiState::default(),
+            rec: RecordingPreviewState::default(),
+            timing: TimingState {
+                snap_mode: prefs.default_snap_mode,
+                midi_snap_mode: prefs.default_midi_snap_mode,
+                ..Default::default()
+            },
+            session_ops: SessionOpsState::default(),
+            plugin_params: PluginParamState::default(),
             shortcut_overrides: prefs.shortcut_overrides,
-            shortcut_capture_action: None,
-            modulators_pane_visible: false,
-            clips_pane_visible: false,
             modulators: vec![],
             selected_modulator_id: None,
             audio_editor: maolan_editor::app::EditApp::default(),
@@ -1063,113 +836,6 @@ impl Default for Maolan {
             hw_mixer: mixosc::app::MixOscApp::default(),
             mixer_level_edit_track: None,
             mixer_level_edit_input: String::new(),
-            record_armed: false,
-            pending_record_after_save: false,
-            recording_preview_start_sample: None,
-            recording_preview_sample: None,
-            recording_preview_peaks: HashMap::new(),
-            import_in_progress: false,
-            import_current_file: 0,
-            import_total_files: 0,
-            import_file_progress: 0.0,
-            import_current_filename: String::new(),
-            import_current_operation: None,
-            generate_audio_model: GenerateAudioModelOption::HappyNewYear,
-            generate_audio_acestep_lm: GenerateAudioAceStepLmOption::default(),
-            generate_audio_prompt_editor: text_editor::Content::new(),
-            log_viewer_content: text_editor::Content::with_text(
-                "[INFO] Thank you for using Maolan!",
-            ),
-            log_viewer_highlights: LogHighlightSettings::default(),
-
-            generate_audio_tags_input: String::new(),
-            generate_audio_backend: BurnBackendOption::Vulkan,
-            generate_audio_key_root: NoteName::C,
-            generate_audio_key_mode: KeyMode::Major,
-
-            generate_audio_cfg_scale_input: maolan_generate::DEFAULT_CFG_SCALE.to_string(),
-            generate_audio_steps_input: 10,
-            generate_audio_seconds_total_input: 180_usize,
-            generate_audio_in_progress: false,
-            generate_audio_progress: 0.0,
-            generate_audio_operation: None,
-            generate_audio_abort_handle: None,
-            #[cfg(unix)]
-            generate_audio_process_id: None,
-            generate_midi_model: GenerateMidiModelOption::TextToMidi,
-            generate_midi_prompt_editor: text_editor::Content::new(),
-            generate_midi_backend: BurnBackendOption::Vulkan,
-            generate_midi_key_root: NoteName::C,
-            generate_midi_key_mode: KeyMode::Major,
-            generate_midi_bpm_input: "120".to_string(),
-            generate_midi_time_signature_num_input: "4".to_string(),
-            generate_midi_time_signature_denom_input: "4".to_string(),
-            generate_midi_length_seconds_input: "10".to_string(),
-            generate_midi_max_tokens_input: "1024".to_string(),
-            generate_midi_top_p_input: "0.98".to_string(),
-            generate_midi_seed_input: "0".to_string(),
-            generate_midi_in_progress: false,
-            generate_midi_progress: 0.0,
-            generate_midi_operation: None,
-            generate_midi_abort_handle: None,
-            #[cfg(unix)]
-            generate_midi_process_id: None,
-            clip_pitch_correction_in_progress: false,
-            clip_pitch_correction_progress: 0.0,
-            clip_pitch_correction_clip_name: String::new(),
-            clip_pitch_correction_operation: None,
-            resynth_render_in_progress: false,
-            export_in_progress: false,
-            export_cancel: Arc::new(AtomicBool::new(false)),
-            export_pending_bounces: HashSet::new(),
-            export_bounce_notify: None,
-            export_progress: 0.0,
-            export_operation: None,
-            export_sample_rate_hz: prefs.default_export_sample_rate_hz,
-            export_format_wav: true,
-            export_format_flac: false,
-            export_format_mp3: false,
-            export_format_ogg: false,
-            export_bit_depth: ExportBitDepth::Int24,
-            export_dither: ExportDither::Triangular,
-            export_render_mode: ExportRenderMode::Mixdown,
-            export_hw_out_ports: [0_usize, 1].into_iter().collect(),
-            export_realtime_fallback: false,
-            export_normalize: false,
-            export_normalize_mode: ExportNormalizeMode::Peak,
-            export_normalize_dbfs_input: "0.0".to_string(),
-            export_normalize_lufs_input: "-23.0".to_string(),
-            export_normalize_dbtp_input: "-1.0".to_string(),
-            export_normalize_tp_limiter: true,
-            export_master_limiter: true,
-            export_master_limiter_ceiling_input: "-1.0".to_string(),
-            clap_param_values: HashMap::new(),
-            generic_plugin_param_values: HashMap::new(),
-            pending_native_ui_fallback: None,
-            tempo_input: "120".to_string(),
-            time_signature_num_input: "4".to_string(),
-            time_signature_denom_input: "4".to_string(),
-            tap_tempo_times: Vec::new(),
-            last_sent_tempo_bpm: Some(120.0),
-            last_sent_time_signature: Some((4, 4)),
-            selected_tempo_points: BTreeSet::new(),
-            selected_time_signature_points: BTreeSet::new(),
-            timing_selection_lane: None,
-            midi_mappings_panel_open: false,
-            midi_mappings_report_lines: Vec::new(),
-            has_unsaved_changes: false,
-            engine_dirty: false,
-            pending_exit_after_save: false,
-            session_restore_in_progress: false,
-            last_autosave_snapshot: None,
-            pending_recovery_session_dir: None,
-            pending_autosave_recovery: None,
-            pending_open_session_dir: None,
-            pending_branch_input: String::new(),
-            dragging_session_slot: None,
-            dragging_session_clip: None,
-            dragging_pane_clip: None,
-            session_slot_record_target: None,
             prefs_osc_enabled: prefs.osc_enabled,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
@@ -1197,10 +863,6 @@ impl Maolan {
         )
     }
 
-    fn is_dirty(&self) -> bool {
-        self.has_unsaved_changes || self.engine_dirty
-    }
-
     fn push_log_entry(state: &mut StateData, level: LogLevel, message: String) {
         state.message = message.clone();
         state.log_entries.push(LogEntry { level, message });
@@ -1210,24 +872,8 @@ impl Maolan {
         }
     }
 
-    fn refresh_log_viewer_content(&mut self) {
-        let entries = self.state.blocking_read().log_entries.clone();
-        let mut lines = Vec::with_capacity(entries.len());
-        let mut highlights = Vec::with_capacity(entries.len());
-
-        for entry in entries {
-            let (line, line_highlights) = format_log_entry_for_editor(&entry);
-            lines.push(line);
-            highlights.push(line_highlights);
-        }
-
-        let log_text = lines.join("\n");
-        self.log_viewer_content = text_editor::Content::with_text(&log_text);
-        self.log_viewer_highlights = LogHighlightSettings { lines: highlights };
-    }
-
     fn sync_message_log_from_state(&mut self) {
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         let needs_append = state
             .log_entries
             .last()
@@ -1237,32 +883,32 @@ impl Maolan {
             let message = state.message.clone();
             Self::push_log_entry(&mut state, LogLevel::Info, message);
             drop(state);
-            self.refresh_log_viewer_content();
+            self.ui.refresh_log_viewer_content(&self.state);
         }
     }
 
     fn info(&mut self, message: impl Into<String>) {
         let message = message.into();
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         Self::push_log_entry(&mut state, LogLevel::Info, message);
         drop(state);
-        self.refresh_log_viewer_content();
+        self.ui.refresh_log_viewer_content(&self.state);
     }
 
     fn warning(&mut self, message: impl Into<String>) {
         let message = message.into();
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         Self::push_log_entry(&mut state, LogLevel::Warning, message);
         drop(state);
-        self.refresh_log_viewer_content();
+        self.ui.refresh_log_viewer_content(&self.state);
     }
 
     fn error(&mut self, message: impl Into<String>) {
         let message = message.into();
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         Self::push_log_entry(&mut state, LogLevel::Error, message);
         drop(state);
-        self.refresh_log_viewer_content();
+        self.ui.refresh_log_viewer_content(&self.state);
     }
 
     #[cfg(unix)]
@@ -1587,47 +1233,12 @@ impl Maolan {
             .as_ref()
             .and_then(|path| Self::session_display_name_from_path(path))
             .unwrap_or_else(|| "<New>".to_string());
-        let dirty_suffix = if self.is_dirty() { " *" } else { "" };
-        format!("Maolan: {session}{dirty_suffix}")
-    }
-
-    fn samples_per_beat(&self) -> f64 {
-        let (tempo, denom) = {
-            let state = self.state.blocking_read();
-            (
-                state.tempo.max(1.0) as f64,
-                state.time_signature_denom.max(1) as f64,
-            )
+        let dirty_suffix = if self.session_ops.is_dirty() {
+            " *"
+        } else {
+            ""
         };
-        let quarter = self.playback_rate_hz * 60.0 / tempo;
-        quarter * (4.0 / denom)
-    }
-
-    fn samples_per_bar(&self) -> f64 {
-        let beats_per_bar = self.state.blocking_read().time_signature_num.max(1) as f64;
-        self.samples_per_beat() * beats_per_bar
-    }
-
-    fn snap_sample_to_bar(&self, sample: f32) -> usize {
-        self.snap_mode.snap_sample(
-            sample as f64,
-            self.samples_per_beat(),
-            self.samples_per_bar(),
-        ) as usize
-    }
-
-    fn snap_sample_to_bar_drag(&self, sample: f32, delta_samples: f32) -> usize {
-        self.snap_mode.snap_sample_drag(
-            sample as f64,
-            delta_samples as f64,
-            self.samples_per_beat(),
-            self.samples_per_bar(),
-        ) as usize
-    }
-
-    fn snap_interval_samples(&self) -> usize {
-        self.snap_mode
-            .interval_samples(self.samples_per_beat(), self.samples_per_bar()) as usize
+        format!("Maolan: {session}{dirty_suffix}")
     }
 
     fn create_empty_midi_clip_file(
@@ -1660,7 +1271,7 @@ impl Maolan {
     }
 
     fn tracks_width_px(&self) -> f32 {
-        match self.state.blocking_read().tracks_width {
+        match self.state.read().expect("state lock poisoned").tracks_width {
             Length::Fixed(v) => v,
             _ => 200.0,
         }
@@ -1671,7 +1282,8 @@ impl Maolan {
     }
 
     fn pixels_per_sample(&self) -> f32 {
-        let total_samples = self.samples_per_bar() * self.zoom_visible_bars as f64;
+        let total_samples =
+            self.transport.samples_per_bar(&self.state) * self.ui.zoom_visible_bars as f64;
         if total_samples <= 0.0 {
             return 1.0;
         }
@@ -1679,39 +1291,12 @@ impl Maolan {
     }
 
     fn editor_visible_samples(&self) -> f64 {
-        (self.samples_per_bar() * self.zoom_visible_bars as f64).max(1.0)
+        (self.transport.samples_per_bar(&self.state) * self.ui.zoom_visible_bars as f64).max(1.0)
     }
 
     fn editor_timeline_samples(&self) -> f64 {
-        let state = self.state.blocking_read();
-        let max_end_samples = state
-            .tracks
-            .iter()
-            .filter(|track| track.name != METRONOME_TRACK_ID)
-            .flat_map(|track| {
-                let audio = track
-                    .audio
-                    .clips
-                    .iter()
-                    .map(|clip| clip.start.saturating_add(clip.length));
-                let midi = track
-                    .midi
-                    .clips
-                    .iter()
-                    .map(|clip| clip.start.saturating_add(clip.length));
-                audio.chain(midi)
-            })
-            .max()
-            .unwrap_or(0) as f64;
-        let visible_samples = self.editor_visible_samples();
-        let right_padding_samples = visible_samples * 0.5;
-        let min_timeline_samples =
-            (self.samples_per_bar() * crate::consts::workspace::MIN_TIMELINE_BARS as f64).max(1.0);
-        max_end_samples
-            .max(self.transport_samples.max(0.0) + right_padding_samples)
-            .max(max_end_samples + right_padding_samples)
-            .max(visible_samples)
-            .max(min_timeline_samples)
+        self.transport
+            .editor_timeline_samples(&self.state, self.editor_visible_samples())
     }
 
     fn editor_max_scroll_samples(&self) -> f64 {
@@ -1723,37 +1308,31 @@ impl Maolan {
         if max_scroll <= 0.0 {
             0.0
         } else {
-            (self.editor_scroll_origin_samples / max_scroll).clamp(0.0, 1.0) as f32
+            (self.ui.editor_scroll_origin_samples / max_scroll).clamp(0.0, 1.0) as f32
         }
     }
 
     fn beat_pixels(&self) -> f32 {
-        (self.samples_per_beat() as f32 * self.pixels_per_sample()).max(0.01)
+        (self.transport.samples_per_beat(&self.state) as f32 * self.pixels_per_sample()).max(0.01)
     }
 
     fn start_recording_preview(&mut self) {
-        let sample = self.transport_samples.max(0.0) as usize;
-        self.recording_preview_start_sample = Some(sample);
-        self.recording_preview_sample = Some(sample);
-        self.recording_preview_peaks.clear();
-    }
-
-    fn stop_recording_preview(&mut self) {
-        self.recording_preview_start_sample = None;
-        self.recording_preview_sample = None;
-        self.recording_preview_peaks.clear();
+        let sample = self.transport.transport_samples.max(0.0) as usize;
+        self.rec.recording_preview_start_sample = Some(sample);
+        self.rec.recording_preview_sample = Some(sample);
+        self.rec.recording_preview_peaks.clear();
     }
 
     fn recording_preview_bounds(&self) -> Option<(usize, usize)> {
-        let start = self.recording_preview_start_sample?;
-        let current = self.recording_preview_sample?;
+        let start = self.rec.recording_preview_start_sample?;
+        let current = self.rec.recording_preview_sample?;
         let (mut preview_start, mut preview_end) = if current > start {
             (start, current)
         } else {
             return None;
         };
-        if self.punch_enabled
-            && let Some((punch_start, punch_end)) = self.punch_range_samples
+        if self.transport.punch_enabled
+            && let Some((punch_start, punch_end)) = self.transport.punch_range_samples
             && punch_end > punch_start
         {
             preview_start = preview_start.max(punch_start);
@@ -2547,11 +2126,9 @@ impl Maolan {
             session_root,
         )?;
         if !report.deleted_clips.is_empty() {
-            let _ = CLIENT
-                .sender
-                .try_send(EngineMessage::Request(Action::DeleteUnusedClips {
-                    clip_ids: report.deleted_clips.clone(),
-                }));
+            self.try_send_engine(EngineMessage::Request(Action::DeleteUnusedClips {
+                clip_ids: report.deleted_clips.clone(),
+            }));
         }
         Ok(report)
     }
@@ -2563,7 +2140,7 @@ impl Maolan {
     ) -> Result<SessionMediaCleanupReport, String> {
         // Track-only references from the in-memory current branch.
         let mut referenced = {
-            let state = state.blocking_read();
+            let state = state.read().expect("state lock poisoned");
             Self::referenced_session_media_paths_from_tracks(&state.tracks)
         };
 
@@ -2602,7 +2179,7 @@ impl Maolan {
         // session slot are in use and must survive.
         let mut deletable: Vec<String> = Vec::new();
         {
-            let state = state.blocking_read();
+            let state = state.read().expect("state lock poisoned");
             let live_ids = state.session.slot_referenced_clip_ids();
             for clip in &state.unused_audio_clips {
                 if live_ids.contains(&clip.id) {
@@ -2629,7 +2206,7 @@ impl Maolan {
         let mut report = SessionMediaCleanupReport::default();
         if !deletable.is_empty() {
             {
-                let mut state = state.blocking_write();
+                let mut state = state.write().expect("state lock poisoned");
                 state
                     .unused_audio_clips
                     .retain(|clip| !deletable.contains(&clip.id));
@@ -2642,7 +2219,7 @@ impl Maolan {
 
         // Surviving unused clips keep their media referenced.
         {
-            let state = state.blocking_read();
+            let state = state.read().expect("state lock poisoned");
             Self::insert_referenced_unused_clip_paths(
                 &mut referenced,
                 &state.unused_audio_clips,
@@ -2704,7 +2281,7 @@ impl Maolan {
         let mut lv2_refs: Vec<PluginInstanceRef> = Vec::new();
 
         {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             for (track_name, (plugins, _connections)) in &state.plugin_graphs_by_track {
                 for plugin in plugins {
                     let plugin_ref = PluginInstanceRef::Track {
@@ -2761,7 +2338,7 @@ impl Maolan {
             pending_clap_refs.insert(plugin_ref.clone());
         }
 
-        self.collect_to_session_operation = Some(CollectToSessionOperation {
+        self.pending.collect_to_session_operation = Some(CollectToSessionOperation {
             session_root,
             data_dir: data_dir.clone(),
             pending_clap_refs,
@@ -2811,7 +2388,9 @@ impl Maolan {
             },
         };
         tokio::spawn(async move {
-            let _ = CLIENT.send(EngineMessage::Request(action)).await;
+            if let Err(err) = CLIENT.send(EngineMessage::Request(action)).await {
+                eprintln!("failed to send CLAP resource action to engine: {err}");
+            }
         });
     }
 
@@ -2835,7 +2414,9 @@ impl Maolan {
             },
         };
         tokio::spawn(async move {
-            let _ = CLIENT.send(EngineMessage::Request(action)).await;
+            if let Err(err) = CLIENT.send(EngineMessage::Request(action)).await {
+                eprintln!("failed to send CLAP resource action to engine: {err}");
+            }
         });
     }
 
@@ -2845,7 +2426,7 @@ impl Maolan {
         files: &[(u32, String)],
     ) {
         tracing::info!(?plugin_ref, ?files, "Received CLAP resource files");
-        let Some(op) = self.collect_to_session_operation.as_mut() else {
+        let Some(op) = self.pending.collect_to_session_operation.as_mut() else {
             return;
         };
         if !op.pending_clap_refs.remove(plugin_ref) {
@@ -2878,7 +2459,7 @@ impl Maolan {
     }
 
     fn finish_collect_to_session(&mut self) {
-        let Some(op) = self.collect_to_session_operation.take() else {
+        let Some(op) = self.pending.collect_to_session_operation.take() else {
             return;
         };
 
@@ -2896,11 +2477,12 @@ impl Maolan {
         if let Some(path) = self.session_dir.as_ref()
             && let Err(e) = self.save(path.to_string_lossy().to_string())
         {
-            self.state.blocking_write().message = format!("{message}; failed to save session: {e}");
+            self.state.write().expect("state lock poisoned").message =
+                format!("{message}; failed to save session: {e}");
             return;
         }
 
-        self.state.blocking_write().message = message;
+        self.state.write().expect("state lock poisoned").message = message;
     }
 
     fn read_utf8_string_from_bytes(bytes: &[u8], start: usize) -> Option<(usize, String)> {
@@ -2931,7 +2513,7 @@ impl Maolan {
         session_root: &Path,
         copied_files: &HashMap<PathBuf, String>,
     ) {
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         for (plugins, _connections) in state.plugin_graphs_by_track.values_mut() {
             for plugin in plugins.iter_mut() {
                 if let Some(ref mut plugin_state) = plugin.state {
@@ -4159,33 +3741,6 @@ impl Maolan {
         Ok(())
     }
 
-    fn available_export_hw_out_ports(&self) -> Vec<usize> {
-        let channels = self
-            .state
-            .blocking_read()
-            .hw_out
-            .as_ref()
-            .map(|hw| hw.channels)
-            .unwrap_or(0);
-        (0..channels).collect()
-    }
-
-    fn default_export_hw_out_ports(&self) -> BTreeSet<usize> {
-        self.available_export_hw_out_ports()
-            .into_iter()
-            .take(2)
-            .collect()
-    }
-
-    fn normalize_export_hw_out_ports(&mut self) {
-        let available: BTreeSet<usize> = self.available_export_hw_out_ports().into_iter().collect();
-        self.export_hw_out_ports
-            .retain(|port| available.contains(port));
-        if self.export_hw_out_ports.is_empty() {
-            self.export_hw_out_ports = self.default_export_hw_out_ports();
-        }
-    }
-
     fn mix_track_clips_to_channels(
         clips: &[crate::state::AudioClip],
         session_root: &Path,
@@ -4388,7 +3943,7 @@ impl Maolan {
         tokio::task::yield_now().await;
 
         let (mut tracks, connections, total_length, selected_tracks) = {
-            let state = state.read().await;
+            let state = state.read().expect("state lock poisoned");
             let mut max_length = 0_usize;
             let tracks_data: Vec<_> = state
                 .tracks
@@ -4571,7 +4126,7 @@ impl Maolan {
                         .unwrap_or(0)
                         .max(1);
                     let automation_lanes = {
-                        let state_guard = state.read().await;
+                        let state_guard = state.read().expect("state lock poisoned");
                         if let Some(t) = state_guard.tracks.iter().find(|t| t.name == track.name) {
                             build_offline_automation_lanes(&t.automation_lanes)
                         } else {
@@ -5990,6 +5545,7 @@ impl Maolan {
         param: &PluginParameterInfo,
     ) -> f64 {
         let value = self
+            .plugin_params
             .generic_plugin_param_values
             .get(&(
                 track_name.to_string(),
@@ -6024,7 +5580,7 @@ impl Maolan {
         };
 
         let parameters = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             if let Some(clip_idx) = clip_idx {
                 state
                     .plugin_parameters_by_clip
@@ -6163,385 +5719,6 @@ impl Maolan {
         .into()
     }
 
-    #[cfg(unix)]
-    fn track_plugin_list_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
-        let state = self.state.blocking_read();
-        let title = Self::plugin_graph_title(&state);
-
-        let mut lv2_items = Vec::new();
-        let filter = self.plugin_list_filter.trim().to_lowercase();
-        for plugin in &state.lv2_plugins {
-            if !filter.is_empty() {
-                let name = plugin.name.to_lowercase();
-                let uri = plugin.uri.to_lowercase();
-                if !name.contains(&filter) && !uri.contains(&filter) {
-                    continue;
-                }
-            }
-            let is_selected = self.selected_lv2_plugins.contains(&plugin.uri);
-            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
-                text(if is_selected { "[x]" } else { "[ ]" }),
-                text(format!(
-                    "{} (a:{}/{}, m:{}/{})",
-                    plugin.name,
-                    plugin.audio_inputs,
-                    plugin.audio_outputs,
-                    plugin.midi_inputs,
-                    plugin.midi_outputs
-                ))
-                .width(Length::Fill),
-            ]
-            .spacing(8)
-            .width(Length::Fill)
-            .into();
-
-            let row_button = if is_selected {
-                button(row_content).style(button::primary)
-            } else {
-                button(row_content).style(button::text)
-            };
-            lv2_items.push(
-                row_button
-                    .width(Length::Fill)
-                    .on_press(Message::SelectLv2Plugin(plugin.uri.clone()))
-                    .into(),
-            );
-        }
-        let lv2_list = column(lv2_items);
-
-        let mut clap_items = Vec::new();
-        let clap_filter = filter.clone();
-        for plugin in &state.clap_plugins {
-            if !clap_filter.is_empty() {
-                let name = plugin.name.to_lowercase();
-                let id = plugin.id.to_lowercase();
-                if !name.contains(&clap_filter) && !id.contains(&clap_filter) {
-                    continue;
-                }
-            }
-            let is_selected = self.selected_clap_plugins.contains(&plugin.id);
-
-            let mut capability_icons = String::new();
-            if let Some(caps) = &plugin.capabilities {
-                if caps.has_gui {
-                    capability_icons.push_str("\u{1F5BC} ");
-                }
-                if caps.has_params {
-                    capability_icons.push_str("\u{2699} ");
-                }
-                if caps.has_state {
-                    capability_icons.push_str("\u{1F4BE} ");
-                }
-            }
-
-            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
-                text(if is_selected { "[x]" } else { "[ ]" }),
-                text(plugin.name.clone()).width(Length::Fill),
-                text(capability_icons),
-            ]
-            .spacing(8)
-            .width(Length::Fill)
-            .into();
-            let row_button = if is_selected {
-                button(row_content).style(button::primary)
-            } else {
-                button(row_content).style(button::text)
-            };
-            clap_items.push(
-                row_button
-                    .width(Length::Fill)
-                    .on_press(Message::SelectClapPlugin(plugin.id.clone()))
-                    .into(),
-            );
-        }
-        let clap_list = column(clap_items);
-
-        let mut vst3_items = Vec::new();
-        let vst3_filter = filter.clone();
-        for plugin in &state.vst3_plugins {
-            if !vst3_filter.is_empty() {
-                let name = plugin.name.to_lowercase();
-                let id = plugin.id.to_lowercase();
-                if !name.contains(&vst3_filter) && !id.contains(&vst3_filter) {
-                    continue;
-                }
-            }
-            let is_selected = self.selected_vst3_plugins.contains(&plugin.id);
-            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
-                text(if is_selected { "[x]" } else { "[ ]" }),
-                text(plugin.name.clone()).width(Length::Fill),
-            ]
-            .spacing(8)
-            .width(Length::Fill)
-            .into();
-            let row_button = if is_selected {
-                button(row_content).style(button::primary)
-            } else {
-                button(row_content).style(button::text)
-            };
-            vst3_items.push(
-                row_button
-                    .width(Length::Fill)
-                    .on_press(Message::SelectVst3Plugin(plugin.id.clone()))
-                    .into(),
-            );
-        }
-        let vst3_list = column(vst3_items);
-
-        let lv2_column: maolan_widgets::iced::Element<'_, Message> =
-            if state.lv2_plugins_unavailable {
-                column![
-                    text("LV2").size(14),
-                    text("LV2 plugin scan is unavailable.").size(12),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            } else {
-                column![
-                    text("LV2").size(14),
-                    scrollable(lv2_list).height(Length::Fill),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            };
-
-        let clap_column: maolan_widgets::iced::Element<'_, Message> =
-            if state.clap_plugins_unavailable {
-                column![
-                    text("CLAP").size(14),
-                    text("CLAP plugin scan is unavailable.").size(12),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            } else {
-                column![
-                    text("CLAP").size(14),
-                    scrollable(clap_list).height(Length::Fill),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            };
-
-        let vst3_column: maolan_widgets::iced::Element<'_, Message> =
-            if state.vst3_plugins_unavailable {
-                column![
-                    text("VST3").size(14),
-                    text("VST3 plugin scan is unavailable.").size(12),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            } else {
-                column![
-                    text("VST3").size(14),
-                    scrollable(vst3_list).height(Length::Fill),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            };
-
-        let selected_count = self.selected_lv2_plugins.len()
-            + self.selected_clap_plugins.len()
-            + self.selected_vst3_plugins.len();
-        let load = if selected_count == 0 {
-            button("Load")
-        } else {
-            button(text(format!("Load ({})", selected_count)))
-                .on_press(Message::LoadSelectedPlugins)
-        };
-
-        let plugin_columns = row![lv2_column, clap_column, vst3_column]
-            .spacing(10)
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-        container(
-            column![
-                text(title),
-                text_input("Filter plugins...", &self.plugin_list_filter)
-                    .on_input(Message::FilterPluginList)
-                    .width(Length::Fill),
-                plugin_columns,
-                row![
-                    load,
-                    button("Close")
-                        .on_press(Message::Cancel)
-                        .style(button::secondary),
-                ]
-                .spacing(10),
-            ]
-            .spacing(10),
-        )
-        .style(|_theme| crate::style::app_background())
-        .padding(20)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    }
-
-    #[cfg(windows)]
-    fn track_plugin_list_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
-        let state = self.state.blocking_read();
-        let title = Self::plugin_graph_title(&state);
-        let filter = self.plugin_list_filter.trim().to_lowercase();
-        let mut vst3_items = Vec::new();
-        for plugin in &state.vst3_plugins {
-            if !filter.is_empty() {
-                let name = plugin.name.to_lowercase();
-                let id = plugin.id.to_lowercase();
-                if !name.contains(&filter) && !id.contains(&filter) {
-                    continue;
-                }
-            }
-            let is_selected = self.selected_vst3_plugins.contains(&plugin.id);
-            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
-                text(if is_selected { "[x]" } else { "[ ]" }),
-                text(plugin.name.clone()).width(Length::Fill),
-            ]
-            .spacing(8)
-            .width(Length::Fill)
-            .into();
-            let row_button = if is_selected {
-                button(row_content).style(button::primary)
-            } else {
-                button(row_content).style(button::text)
-            };
-            vst3_items.push(
-                row_button
-                    .width(Length::Fill)
-                    .on_press(Message::SelectVst3Plugin(plugin.id.clone()))
-                    .into(),
-            );
-        }
-        let vst3_list = column(vst3_items);
-
-        let mut clap_items = Vec::new();
-        let clap_filter = filter.clone();
-        for plugin in &state.clap_plugins {
-            if !clap_filter.is_empty() {
-                let name = plugin.name.to_lowercase();
-                let id = plugin.id.to_lowercase();
-                if !name.contains(&clap_filter) && !id.contains(&clap_filter) {
-                    continue;
-                }
-            }
-            let is_selected = self.selected_clap_plugins.contains(&plugin.id);
-
-            let mut capability_icons = String::new();
-            if let Some(caps) = &plugin.capabilities {
-                if caps.has_gui {
-                    capability_icons.push_str("\u{1F5BC} ");
-                }
-                if caps.has_params {
-                    capability_icons.push_str("\u{2699} ");
-                }
-                if caps.has_state {
-                    capability_icons.push_str("\u{1F4BE} ");
-                }
-            }
-
-            let row_content: maolan_widgets::iced::Element<'_, Message> = row![
-                text(if is_selected { "[x]" } else { "[ ]" }),
-                text(plugin.name.clone()).width(Length::Fill),
-                text(capability_icons),
-            ]
-            .spacing(8)
-            .width(Length::Fill)
-            .into();
-            let row_button = if is_selected {
-                button(row_content).style(button::primary)
-            } else {
-                button(row_content).style(button::text)
-            };
-            clap_items.push(
-                row_button
-                    .width(Length::Fill)
-                    .on_press(Message::SelectClapPlugin(plugin.id.clone()))
-                    .into(),
-            );
-        }
-        let clap_list = column(clap_items);
-
-        let clap_column: maolan_widgets::iced::Element<'_, Message> =
-            if state.clap_plugins_unavailable {
-                column![
-                    text("CLAP").size(14),
-                    text("CLAP plugin scan is unavailable.").size(12),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            } else {
-                column![
-                    text("CLAP").size(14),
-                    scrollable(clap_list).height(Length::Fill),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            };
-
-        let vst3_column: maolan_widgets::iced::Element<'_, Message> =
-            if state.vst3_plugins_unavailable {
-                column![
-                    text("VST3").size(14),
-                    text("VST3 plugin scan is unavailable.").size(12),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            } else {
-                column![
-                    text("VST3").size(14),
-                    scrollable(vst3_list).height(Length::Fill),
-                ]
-                .spacing(10)
-                .width(Length::FillPortion(1))
-                .into()
-            };
-
-        let selected_count = self.selected_clap_plugins.len() + self.selected_vst3_plugins.len();
-        let load = if selected_count == 0 {
-            button("Load")
-        } else {
-            button(text(format!("Load ({})", selected_count)))
-                .on_press(Message::LoadSelectedPlugins)
-        };
-
-        let plugin_columns = row![clap_column, vst3_column]
-            .spacing(10)
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-        container(
-            column![
-                text(title),
-                text_input("Filter plugins...", &self.plugin_list_filter)
-                    .on_input(Message::FilterPluginList)
-                    .width(Length::Fill),
-                plugin_columns,
-                row![
-                    load,
-                    button("Close")
-                        .on_press(Message::Cancel)
-                        .style(button::secondary),
-                ]
-                .spacing(10),
-            ]
-            .spacing(10),
-        )
-        .style(|_theme| crate::style::app_background())
-        .padding(20)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    }
-
     fn send(&self, action: Action) -> Task<Message> {
         let action = self.action_with_clip_identity_fork(action);
         tracing::info!("GUI sending request: {:?}", std::mem::discriminant(&action));
@@ -6561,7 +5738,7 @@ impl Maolan {
     }
 
     fn track_automation_lanes_action(&self, track_name: &str) -> Option<Action> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let track = state.tracks.iter().find(|t| t.name == track_name)?;
         let lanes = serde_json::to_value(&track.automation_lanes).unwrap_or_default();
         let mode = track.automation_mode.into();
@@ -6576,23 +5753,6 @@ impl Maolan {
         self.track_automation_lanes_action(track_name)
             .map(|action| self.send(action))
             .unwrap_or(Task::none())
-    }
-
-    fn selected_export_formats(&self) -> Vec<ExportFormat> {
-        let mut formats = Vec::new();
-        if self.export_format_wav {
-            formats.push(ExportFormat::Wav);
-        }
-        if self.export_format_flac {
-            formats.push(ExportFormat::Flac);
-        }
-        if self.export_format_mp3 {
-            formats.push(ExportFormat::Mp3);
-        }
-        if self.export_format_ogg {
-            formats.push(ExportFormat::Ogg);
-        }
-        formats
     }
 
     fn export_bit_depth_options(_formats: &[ExportFormat]) -> Vec<ExportBitDepth> {
@@ -6638,10 +5798,15 @@ impl Maolan {
     }
 
     fn export_settings_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
-        let last_message = self.state.blocking_read().message.clone();
-        let selected_formats = self.selected_export_formats();
+        let last_message = self
+            .state
+            .read()
+            .expect("state lock poisoned")
+            .message
+            .clone();
+        let selected_formats = self.transfer.selected_formats();
         let bit_depth_options = Self::export_bit_depth_options(&selected_formats);
-        let available_hw_out_ports = self.available_export_hw_out_ports();
+        let available_hw_out_ports = TransferState::available_hw_out_ports(&self.state);
         let hw_out_column_count = if available_hw_out_ports.len() > 16 {
             4
         } else if available_hw_out_ports.len() > 8 {
@@ -6652,8 +5817,8 @@ impl Maolan {
         let hw_out_rows_per_column = available_hw_out_ports
             .len()
             .div_ceil(hw_out_column_count.max(1));
-        let selected_bit_depth = if bit_depth_options.contains(&self.export_bit_depth) {
-            self.export_bit_depth
+        let selected_bit_depth = if bit_depth_options.contains(&self.transfer.export_bit_depth) {
+            self.transfer.export_bit_depth
         } else {
             bit_depth_options
                 .first()
@@ -6668,16 +5833,16 @@ impl Maolan {
                         text("Export session").size(16),
                         row![
                             text("Formats:"),
-                            checkbox(self.export_format_wav)
+                            checkbox(self.transfer.export_format_wav)
                                 .label("WAV")
                                 .on_toggle(Message::ExportFormatWavToggled),
-                            checkbox(self.export_format_flac)
+                            checkbox(self.transfer.export_format_flac)
                                 .label("FLAC")
                                 .on_toggle(Message::ExportFormatFlacToggled),
-                            checkbox(self.export_format_mp3)
+                            checkbox(self.transfer.export_format_mp3)
                                 .label("MP3")
                                 .on_toggle(Message::ExportFormatMp3Toggled),
-                            checkbox(self.export_format_ogg)
+                            checkbox(self.transfer.export_format_ogg)
                                 .label("OGG")
                                 .on_toggle(Message::ExportFormatOggToggled),
                         ]
@@ -6687,7 +5852,7 @@ impl Maolan {
                             text("Sample rate (Hz):"),
                             pick_list(
                                 STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
-                                Some(self.export_sample_rate_hz),
+                                Some(self.transfer.export_sample_rate_hz),
                                 Message::ExportSampleRateSelected
                             )
                             .placeholder("Choose sample rate")
@@ -6706,7 +5871,7 @@ impl Maolan {
                             text("Dither:"),
                             pick_list(
                                 EXPORT_DITHER_ALL.to_vec(),
-                                Some(self.export_dither),
+                                Some(self.transfer.export_dither),
                                 Message::ExportDitherSelected
                             )
                             .placeholder("Choose dither"),
@@ -6717,7 +5882,7 @@ impl Maolan {
                             text("Render mode:"),
                             pick_list(
                                 EXPORT_RENDER_MODE_ALL.to_vec(),
-                                Some(self.export_render_mode),
+                                Some(self.transfer.export_render_mode),
                                 Message::ExportRenderModeSelected
                             )
                             .placeholder("Choose render mode")
@@ -6725,7 +5890,7 @@ impl Maolan {
                         ]
                         .spacing(10)
                         .align_y(maolan_widgets::iced::Alignment::Center),
-                        if matches!(self.export_render_mode, ExportRenderMode::Mixdown) {
+                        if matches!(self.transfer.export_render_mode, ExportRenderMode::Mixdown) {
                             container(
                                 column![
                                     text("Export hw:out ports:"),
@@ -6743,7 +5908,7 @@ impl Maolan {
                                                             .iter()
                                                             .map(|port| {
                                                                 checkbox(
-                                                                    self.export_hw_out_ports
+                                                                    self.transfer.export_hw_out_ports
                                                                         .contains(port),
                                                                 )
                                                                 .label(format!(
@@ -6781,31 +5946,31 @@ impl Maolan {
                                 "Stem export writes one channel per track output port.",
                             ))
                         },
-                        checkbox(self.export_realtime_fallback)
+                        checkbox(self.transfer.export_realtime_fallback)
                             .label("Real-time fallback render")
                             .on_toggle(Message::ExportRealtimeFallbackToggled),
                         row![
-                            checkbox(self.export_master_limiter)
+                            checkbox(self.transfer.export_master_limiter)
                                 .label("Master limiter")
                                 .on_toggle(Message::ExportMasterLimiterToggled),
                             text("Ceiling (dBTP):"),
-                            text_input("-1.0", &self.export_master_limiter_ceiling_input)
+                            text_input("-1.0", &self.transfer.export_master_limiter_ceiling_input)
                                 .on_input(Message::ExportMasterLimiterCeilingInput)
                                 .width(Length::Fixed(110.0)),
                         ]
                         .spacing(10)
                         .align_y(maolan_widgets::iced::Alignment::Center),
-                        checkbox(self.export_normalize)
+                        checkbox(self.transfer.export_normalize)
                             .label("Normalize")
                             .on_toggle(Message::ExportNormalizeToggled),
-                        if self.export_normalize {
+                        if self.transfer.export_normalize {
                             container(
                                 column![
                                     row![
                                         text("Mode:"),
                                         pick_list(
                                             EXPORT_NORMALIZE_MODE_ALL.to_vec(),
-                                            Some(self.export_normalize_mode),
+                                            Some(self.transfer.export_normalize_mode),
                                             Message::ExportNormalizeModeSelected
                                         )
                                         .placeholder("Choose mode")
@@ -6814,12 +5979,12 @@ impl Maolan {
                                     .spacing(10)
                                     .align_y(maolan_widgets::iced::Alignment::Center),
                                     if matches!(
-                                        self.export_normalize_mode,
+                                        self.transfer.export_normalize_mode,
                                         ExportNormalizeMode::Peak
                                     ) {
                                         row![
                                             text("Target (dBFS):"),
-                                            text_input("0.0", &self.export_normalize_dbfs_input)
+                                            text_input("0.0", &self.transfer.export_normalize_dbfs_input)
                                                 .on_input(Message::ExportNormalizeDbfsInput)
                                                 .width(Length::Fixed(120.0)),
                                         ]
@@ -6828,11 +5993,11 @@ impl Maolan {
                                     } else {
                                         row![
                                             text("Target (LUFS):"),
-                                            text_input("-23.0", &self.export_normalize_lufs_input)
+                                            text_input("-23.0", &self.transfer.export_normalize_lufs_input)
                                                 .on_input(Message::ExportNormalizeLufsInput)
                                                 .width(Length::Fixed(120.0)),
                                             text("TP ceiling (dBTP):"),
-                                            text_input("-1.0", &self.export_normalize_dbtp_input)
+                                            text_input("-1.0", &self.transfer.export_normalize_dbtp_input)
                                                 .on_input(Message::ExportNormalizeDbtpInput)
                                                 .width(Length::Fixed(120.0)),
                                         ]
@@ -6840,10 +6005,10 @@ impl Maolan {
                                         .align_y(maolan_widgets::iced::Alignment::Center)
                                     },
                                     if matches!(
-                                        self.export_normalize_mode,
+                                        self.transfer.export_normalize_mode,
                                         ExportNormalizeMode::Loudness
                                     ) {
-                                        checkbox(self.export_normalize_tp_limiter)
+                                        checkbox(self.transfer.export_normalize_tp_limiter)
                                             .label("Use true-peak limiter")
                                             .on_toggle(Message::ExportNormalizeLimiterToggled)
                                     } else {
@@ -6907,7 +6072,7 @@ impl Maolan {
 
     fn preferences_output_device_options(&self) -> Vec<PreferencesDeviceOption> {
         let mut options = vec![Self::preferences_auto_device_option()];
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         #[cfg(unix)]
         {
             options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
@@ -6927,7 +6092,7 @@ impl Maolan {
 
     fn preferences_input_device_options(&self) -> Vec<PreferencesDeviceOption> {
         let mut options = vec![Self::preferences_auto_device_option()];
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         #[cfg(unix)]
         {
             options.extend(
@@ -7150,29 +6315,29 @@ impl Maolan {
 
     fn generate_audio_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let session_ready = self.session_dir.is_some();
-        let progress_label = if self.generate_audio_in_progress {
-            if let Some(operation) = self.generate_audio_operation.as_deref() {
+        let progress_label = if self.generate.generate_audio_in_progress {
+            if let Some(operation) = self.generate.generate_audio_operation.as_deref() {
                 format!(
                     "{} ({:.0}%)",
                     operation,
-                    (self.generate_audio_progress * 100.0).clamp(0.0, 100.0)
+                    (self.generate.generate_audio_progress * 100.0).clamp(0.0, 100.0)
                 )
             } else {
                 format!(
                     "Generating ({:.0}%)",
-                    (self.generate_audio_progress * 100.0).clamp(0.0, 100.0)
+                    (self.generate.generate_audio_progress * 100.0).clamp(0.0, 100.0)
                 )
             }
         } else {
             "Open or save a session before generating audio.".to_string()
         };
         let prompt_label = "Lyrics";
-        let generate_button = if self.generate_audio_in_progress || !session_ready {
+        let generate_button = if self.generate.generate_audio_in_progress || !session_ready {
             button("Generate")
         } else {
             button("Generate").on_press(Message::GenerateAudioSubmit)
         };
-        let cancel_button = if self.generate_audio_in_progress {
+        let cancel_button = if self.generate.generate_audio_in_progress {
             button("Cancel")
                 .on_press(Message::GenerateAudioCancel)
                 .style(button::danger)
@@ -7190,7 +6355,7 @@ impl Maolan {
                         text("Model:"),
                         pick_list(
                             GenerateAudioModelOption::ALL.to_vec(),
-                            Some(self.generate_audio_model),
+                            Some(self.generate.generate_audio_model),
                             Message::GenerateAudioModelSelected
                         )
                         .placeholder("Choose model")
@@ -7198,12 +6363,16 @@ impl Maolan {
                     ]
                     .spacing(10)
                     .align_y(maolan_widgets::iced::Alignment::Center),
-                    if self.generate_audio_model.uses_acestep_lm_selector() {
+                    if self
+                        .generate
+                        .generate_audio_model
+                        .uses_acestep_lm_selector()
+                    {
                         row![
                             text("LM:"),
                             pick_list(
                                 GenerateAudioAceStepLmOption::ALL.to_vec(),
-                                Some(self.generate_audio_acestep_lm),
+                                Some(self.generate.generate_audio_acestep_lm),
                                 Message::GenerateAudioAceStepLmSelected
                             )
                             .placeholder("Choose LM")
@@ -7214,18 +6383,18 @@ impl Maolan {
                     } else {
                         row![]
                     },
-                    text_editor(&self.generate_audio_prompt_editor)
+                    text_editor(&self.generate.generate_audio_prompt_editor)
                         .on_action(Message::GenerateAudioPromptAction)
                         .height(Length::Fixed(120.0))
                         .placeholder(prompt_label),
-                    text_input("Tags (optional)", &self.generate_audio_tags_input)
+                    text_input("Tags (optional)", &self.generate.generate_audio_tags_input)
                         .on_input(Message::GenerateAudioTagsInput)
                         .width(Length::Fill),
                     row![
                         text("Backend:"),
                         pick_list(
                             BurnBackendOption::ALL.to_vec(),
-                            Some(self.generate_audio_backend),
+                            Some(self.generate.generate_audio_backend),
                             Message::GenerateAudioBackendSelected
                         )
                         .placeholder("Choose backend")
@@ -7237,14 +6406,14 @@ impl Maolan {
                         text("Key:"),
                         pick_list(
                             NoteName::ALL.to_vec(),
-                            Some(self.generate_audio_key_root),
+                            Some(self.generate.generate_audio_key_root),
                             Message::GenerateAudioKeyRootChanged
                         )
                         .placeholder("Root")
                         .width(Length::Fill),
                         pick_list(
                             KeyMode::ALL.to_vec(),
-                            Some(self.generate_audio_key_mode),
+                            Some(self.generate.generate_audio_key_mode),
                             Message::GenerateAudioKeyModeChanged
                         )
                         .placeholder("Mode")
@@ -7255,14 +6424,14 @@ impl Maolan {
                     row![
                         text("CFG scale"),
                         number_input_f32(
-                            &self.generate_audio_cfg_scale_input,
+                            &self.generate.generate_audio_cfg_scale_input,
                             0.0..=20.0,
                             0.1,
                             Message::GenerateAudioCfgScaleInput
                         ),
                         text("Steps:"),
                         number_input(
-                            &self.generate_audio_steps_input,
+                            &self.generate.generate_audio_steps_input,
                             1..=50,
                             Message::GenerateAudioStepsInput
                         ),
@@ -7272,7 +6441,7 @@ impl Maolan {
                     row![
                         text("Seconds total:"),
                         number_input(
-                            &self.generate_audio_seconds_total_input,
+                            &self.generate.generate_audio_seconds_total_input,
                             1..=600,
                             Message::GenerateAudioSecondsTotalInput
                         ),
@@ -7280,10 +6449,10 @@ impl Maolan {
                     .spacing(10)
                     .align_y(maolan_widgets::iced::Alignment::Center),
                     text(progress_label),
-                    if self.generate_audio_in_progress {
+                    if self.generate.generate_audio_in_progress {
                         container(progress_bar(
                             0.0..=1.0,
-                            self.generate_audio_progress.clamp(0.0, 1.0),
+                            self.generate.generate_audio_progress.clamp(0.0, 1.0),
                         ))
                         .width(Length::Fill)
                     } else {
@@ -7306,28 +6475,28 @@ impl Maolan {
 
     fn generate_midi_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let session_ready = self.session_dir.is_some();
-        let progress_label = if self.generate_midi_in_progress {
-            if let Some(operation) = self.generate_midi_operation.as_deref() {
+        let progress_label = if self.generate.generate_midi_in_progress {
+            if let Some(operation) = self.generate.generate_midi_operation.as_deref() {
                 format!(
                     "{} ({:.0}%)",
                     operation,
-                    (self.generate_midi_progress * 100.0).clamp(0.0, 100.0)
+                    (self.generate.generate_midi_progress * 100.0).clamp(0.0, 100.0)
                 )
             } else {
                 format!(
                     "Generating ({:.0}%)",
-                    (self.generate_midi_progress * 100.0).clamp(0.0, 100.0)
+                    (self.generate.generate_midi_progress * 100.0).clamp(0.0, 100.0)
                 )
             }
         } else {
             "Open or save a session before generating MIDI.".to_string()
         };
-        let generate_button = if self.generate_midi_in_progress || !session_ready {
+        let generate_button = if self.generate.generate_midi_in_progress || !session_ready {
             button("Generate")
         } else {
             button("Generate").on_press(Message::GenerateMidiSubmit)
         };
-        let cancel_button = if self.generate_midi_in_progress {
+        let cancel_button = if self.generate.generate_midi_in_progress {
             button("Cancel")
                 .on_press(Message::GenerateMidiCancel)
                 .style(button::danger)
@@ -7338,11 +6507,11 @@ impl Maolan {
         };
 
         let model_specific_inputs: maolan_widgets::iced::Element<'_, Message> =
-            match self.generate_midi_model {
+            match self.generate.generate_midi_model {
                 GenerateMidiModelOption::TextToMidi => column![
                     row![
                         text("Length (s):"),
-                        text_input("10", &self.generate_midi_length_seconds_input)
+                        text_input("10", &self.generate.generate_midi_length_seconds_input)
                             .on_input(Message::GenerateMidiLengthSecondsInput)
                             .width(Length::Fill),
                     ]
@@ -7350,7 +6519,7 @@ impl Maolan {
                     .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Seed:"),
-                        text_input("0", &self.generate_midi_seed_input)
+                        text_input("0", &self.generate.generate_midi_seed_input)
                             .on_input(Message::GenerateMidiSeedInput)
                             .width(Length::Fill),
                     ]
@@ -7362,7 +6531,7 @@ impl Maolan {
                 GenerateMidiModelOption::MidiLlm => column![
                     row![
                         text("Max tokens:"),
-                        text_input("1024", &self.generate_midi_max_tokens_input)
+                        text_input("1024", &self.generate.generate_midi_max_tokens_input)
                             .on_input(Message::GenerateMidiMaxTokensInput)
                             .width(Length::Fill),
                     ]
@@ -7370,7 +6539,7 @@ impl Maolan {
                     .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Top-p:"),
-                        text_input("0.98", &self.generate_midi_top_p_input)
+                        text_input("0.98", &self.generate.generate_midi_top_p_input)
                             .on_input(Message::GenerateMidiTopPInput)
                             .width(Length::Fill),
                     ]
@@ -7378,7 +6547,7 @@ impl Maolan {
                     .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Seed:"),
-                        text_input("0", &self.generate_midi_seed_input)
+                        text_input("0", &self.generate.generate_midi_seed_input)
                             .on_input(Message::GenerateMidiSeedInput)
                             .width(Length::Fill),
                     ]
@@ -7397,7 +6566,7 @@ impl Maolan {
                         text("Model:"),
                         pick_list(
                             GenerateMidiModelOption::ALL.to_vec(),
-                            Some(self.generate_midi_model),
+                            Some(self.generate.generate_midi_model),
                             Message::GenerateMidiModelSelected
                         )
                         .placeholder("Choose model")
@@ -7405,7 +6574,7 @@ impl Maolan {
                     ]
                     .spacing(10)
                     .align_y(maolan_widgets::iced::Alignment::Center),
-                    text_editor(&self.generate_midi_prompt_editor)
+                    text_editor(&self.generate.generate_midi_prompt_editor)
                         .on_action(Message::GenerateMidiPromptAction)
                         .height(Length::Fixed(120.0))
                         .placeholder("Prompt"),
@@ -7413,7 +6582,7 @@ impl Maolan {
                         text("Backend:"),
                         pick_list(
                             BurnBackendOption::ALL.to_vec(),
-                            Some(self.generate_midi_backend),
+                            Some(self.generate.generate_midi_backend),
                             Message::GenerateMidiBackendSelected
                         )
                         .placeholder("Choose backend")
@@ -7425,14 +6594,14 @@ impl Maolan {
                         text("Key:"),
                         pick_list(
                             NoteName::ALL.to_vec(),
-                            Some(self.generate_midi_key_root),
+                            Some(self.generate.generate_midi_key_root),
                             Message::GenerateMidiKeyRootChanged
                         )
                         .placeholder("Root")
                         .width(Length::Fill),
                         pick_list(
                             KeyMode::ALL.to_vec(),
-                            Some(self.generate_midi_key_mode),
+                            Some(self.generate.generate_midi_key_mode),
                             Message::GenerateMidiKeyModeChanged
                         )
                         .placeholder("Mode")
@@ -7442,7 +6611,7 @@ impl Maolan {
                     .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("BPM:"),
-                        text_input("120", &self.generate_midi_bpm_input)
+                        text_input("120", &self.generate.generate_midi_bpm_input)
                             .on_input(Message::GenerateMidiBpmInput)
                             .width(Length::Fill),
                     ]
@@ -7450,11 +6619,11 @@ impl Maolan {
                     .align_y(maolan_widgets::iced::Alignment::Center),
                     row![
                         text("Time signature:"),
-                        text_input("4", &self.generate_midi_time_signature_num_input)
+                        text_input("4", &self.generate.generate_midi_time_signature_num_input)
                             .on_input(Message::GenerateMidiTimeSignatureNumInput)
                             .width(Length::Fill),
                         text("/"),
-                        text_input("4", &self.generate_midi_time_signature_denom_input)
+                        text_input("4", &self.generate.generate_midi_time_signature_denom_input)
                             .on_input(Message::GenerateMidiTimeSignatureDenomInput)
                             .width(Length::Fill),
                     ]
@@ -7462,10 +6631,10 @@ impl Maolan {
                     .align_y(maolan_widgets::iced::Alignment::Center),
                     model_specific_inputs,
                     text(progress_label),
-                    if self.generate_midi_in_progress {
+                    if self.generate.generate_midi_in_progress {
                         container(progress_bar(
                             0.0..=1.0,
-                            self.generate_midi_progress.clamp(0.0, 1.0),
+                            self.generate.generate_midi_progress.clamp(0.0, 1.0),
                         ))
                         .width(Length::Fill)
                     } else {
@@ -7487,7 +6656,7 @@ impl Maolan {
     }
 
     fn session_metadata_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         container(
             column![
                 text("Session Metadata").size(16),
@@ -7620,10 +6789,12 @@ impl Maolan {
             text("Existing branches:"),
             column(branch_rows).spacing(6).width(Length::Fixed(400.0)),
             row![
-                text_input("new branch name", &self.pending_branch_input)
+                text_input("new branch name", &self.session_ops.pending_branch_input)
                     .on_input(Message::BranchInput)
                     .width(Length::Fixed(200.0)),
-                button("Create").on_press(Message::BranchCreate(self.pending_branch_input.clone()))
+                button("Create").on_press(Message::BranchCreate(
+                    self.session_ops.pending_branch_input.clone()
+                ))
             ]
             .spacing(10)
             .align_y(maolan_widgets::iced::Alignment::Center),
@@ -7702,6 +6873,7 @@ impl Maolan {
 
     fn autosave_recovery_view(&self) -> maolan_widgets::iced::Element<'_, Message> {
         let session_label = self
+            .session_ops
             .pending_recovery_session_dir
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
@@ -7757,7 +6929,7 @@ impl Maolan {
     }
 
     fn track_color_view(&self, track_name: String) -> maolan_widgets::iced::Element<'_, Message> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let track = state.tracks.iter().find(|t| t.name == track_name);
         let current_color = track
             .and_then(|t| t.color)
@@ -7792,7 +6964,7 @@ impl Maolan {
     }
 
     fn mpe_config_view(&self, track_name: String) -> maolan_widgets::iced::Element<'_, Message> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
             drop(state);
             return container(text("Track not found"))
@@ -8176,21 +7348,27 @@ mod tests {
         let session_root = std::env::temp_dir().join(format!("maolan_zoom_session_{unique}"));
 
         let app = Maolan {
-            zoom_visible_bars: 6.5,
+            ui: UiState {
+                zoom_visible_bars: 6.5,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
         app.save(session_root.to_string_lossy().to_string())
             .expect("save session");
 
         let mut restored = Maolan {
-            zoom_visible_bars: 42.0,
+            ui: UiState {
+                zoom_visible_bars: 42.0,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
         let _ = restored
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
 
-        assert!((restored.zoom_visible_bars - 6.5).abs() < f32::EPSILON);
+        assert!((restored.ui.zoom_visible_bars - 6.5).abs() < f32::EPSILON);
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
@@ -8205,7 +7383,7 @@ mod tests {
 
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.hw_out_level = -7.5;
             state.hw_out_balance = 0.25;
         }
@@ -8221,7 +7399,7 @@ mod tests {
 
         let mut restored = Maolan::default();
         {
-            let mut state = restored.state.blocking_write();
+            let mut state = restored.state.write().expect("state lock poisoned");
             state.hw_out_level = 0.0;
             state.hw_out_balance = 0.0;
         }
@@ -8230,7 +7408,7 @@ mod tests {
             .expect("load session");
 
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             assert!((state.hw_out_level - -7.5).abs() < f32::EPSILON);
             assert!((state.hw_out_balance - 0.25).abs() < f32::EPSILON);
         }
@@ -8248,7 +7426,7 @@ mod tests {
 
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.tracks.push(crate::state::Track::new(
                 "Drums".to_string(),
                 0.0,
@@ -8282,7 +7460,7 @@ mod tests {
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             let pending = state
                 .pending_track_positions
                 .get("Drums")
@@ -8304,7 +7482,7 @@ mod tests {
             },
         )));
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             let track = state
                 .tracks
                 .iter()
@@ -8328,7 +7506,7 @@ mod tests {
 
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.musical_key = crate::state::MusicalKey {
                 root: crate::state::NoteName::FSharp,
                 mode: crate::state::KeyMode::Minor,
@@ -8351,7 +7529,7 @@ mod tests {
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             assert_eq!(
                 state.musical_key,
                 crate::state::MusicalKey {
@@ -8374,7 +7552,7 @@ mod tests {
 
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.piano_scale_root = crate::message::PianoScaleRoot::FSharp;
             state.piano_scale_minor = true;
         }
@@ -8393,7 +7571,7 @@ mod tests {
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             assert_eq!(
                 state.piano_scale_root,
                 crate::message::PianoScaleRoot::FSharp
@@ -8432,7 +7610,7 @@ mod tests {
             .load(session_root.to_string_lossy().to_string())
             .expect("load legacy session");
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             assert_eq!(state.musical_key, crate::state::MusicalKey::default());
         }
 
@@ -8449,7 +7627,7 @@ mod tests {
         let session_root = std::env::temp_dir().join(format!("maolan_jack_save_{unique}"));
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.selected_backend = crate::state::AudioBackendOption::Jack;
             state.jack_graph = test_jack_graph();
         }
@@ -8483,7 +7661,7 @@ mod tests {
         let session_root = std::env::temp_dir().join(format!("maolan_jack_preserve_{unique}"));
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             select_non_jack_backend(&mut state);
             state.jack_session_routing = Some(test_jack_graph());
             state.jack_graph = maolan_engine::message::JackGraphInfo::default();
@@ -8528,13 +7706,13 @@ mod tests {
 
         let mut restored = Maolan::default();
         {
-            let mut state = restored.state.blocking_write();
+            let mut state = restored.state.write().expect("state lock poisoned");
             select_non_jack_backend(&mut state);
         }
         let _ = restored
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
-        let state = restored.state.blocking_read();
+        let state = restored.state.read().expect("state lock poisoned");
         assert_eq!(
             state
                 .jack_session_routing
@@ -8563,7 +7741,7 @@ mod tests {
         let saved_height = 200.0_f32;
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state
                 .tracks
                 .push(Track::new("Drums".to_string(), 0.0, 2, 2, 0, 0));
@@ -8585,7 +7763,7 @@ mod tests {
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             let (lanes, mode) = state
                 .pending_track_automation
                 .get("Drums")
@@ -8607,7 +7785,7 @@ mod tests {
             },
         )));
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             let track = state
                 .tracks
                 .iter()
@@ -8636,7 +7814,7 @@ mod tests {
 
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state
                 .clap_plugins
                 .push(maolan_engine::clap::ClapPluginInfo {
@@ -8664,7 +7842,7 @@ mod tests {
             bypassed: false,
         };
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state
                 .plugin_graphs_by_track
                 .insert(track_name.clone(), (vec![plugin.clone()], vec![]));
@@ -8692,7 +7870,7 @@ mod tests {
 
         let mut restored = Maolan::default();
         {
-            let mut state = restored.state.blocking_write();
+            let mut state = restored.state.write().expect("state lock poisoned");
             state
                 .clap_plugins
                 .push(maolan_engine::clap::ClapPluginInfo {
@@ -8706,7 +7884,7 @@ mod tests {
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
         {
-            let state = restored.state.blocking_read();
+            let state = restored.state.read().expect("state lock poisoned");
             let positions = state
                 .plugin_graph_plugin_positions
                 .get(&track_name)
@@ -8732,7 +7910,10 @@ mod tests {
             std::env::temp_dir().join(format!("maolan_zoom_session_compat_{unique}"));
 
         let app = Maolan {
-            zoom_visible_bars: 5.0,
+            ui: UiState {
+                zoom_visible_bars: 5.0,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
         app.save(session_root.to_string_lossy().to_string())
@@ -8753,14 +7934,17 @@ mod tests {
         .expect("write compatibility session");
 
         let mut restored = Maolan {
-            zoom_visible_bars: 42.0,
+            ui: UiState {
+                zoom_visible_bars: 42.0,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
         let _ = restored
             .load(session_root.to_string_lossy().to_string())
             .expect("load session");
 
-        assert!((restored.zoom_visible_bars - 42.0).abs() < f32::EPSILON);
+        assert!((restored.ui.zoom_visible_bars - 42.0).abs() < f32::EPSILON);
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
@@ -8778,7 +7962,7 @@ mod tests {
             ..Maolan::default()
         };
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             let mut track = crate::state::Track::new("Drums".to_string(), 0.0, 2, 2, 1, 1);
             track.midi.editor_view_mode = crate::message::MidiEditorViewMode::DrumGrid;
             state.tracks.push(track);
@@ -8893,11 +8077,17 @@ mod tests {
 
         assert!(
             matches!(
-                restored.pending_track_midi_editor_view_mode.get("Drums"),
+                restored
+                    .pending
+                    .pending_track_midi_editor_view_mode
+                    .get("Drums"),
                 Some(crate::message::MidiEditorViewMode::DrumGrid)
             ),
             "expected DrumGrid in pending map, got {:?}",
-            restored.pending_track_midi_editor_view_mode.get("Drums")
+            restored
+                .pending
+                .pending_track_midi_editor_view_mode
+                .get("Drums")
         );
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
@@ -9097,7 +8287,7 @@ mod tests {
             name: "audio/keep.wav".to_string(),
             ..Default::default()
         });
-        let state: crate::state::State = std::sync::Arc::new(tokio::sync::RwLock::new(data));
+        let state: crate::state::State = std::sync::Arc::new(std::sync::RwLock::new(data));
 
         let mut other_track = crate::state::Track::new("Other".to_string(), 0.0, 1, 1, 1, 1);
         other_track.audio.clips.push(crate::state::AudioClip {
@@ -9119,7 +8309,14 @@ mod tests {
         assert!(report.deleted_clips.is_empty());
         assert!(report.deleted_files.is_empty());
         assert!(session_root.join("audio/keep.wav").exists());
-        assert_eq!(state.blocking_read().unused_audio_clips.len(), 1);
+        assert_eq!(
+            state
+                .read()
+                .expect("state lock poisoned")
+                .unused_audio_clips
+                .len(),
+            1
+        );
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
@@ -9140,7 +8337,7 @@ mod tests {
             name: "audio/keep.wav".to_string(),
             ..Default::default()
         });
-        let state: crate::state::State = std::sync::Arc::new(tokio::sync::RwLock::new(data));
+        let state: crate::state::State = std::sync::Arc::new(std::sync::RwLock::new(data));
 
         let mut matrix = crate::state::SessionMatrix::default();
         matrix.ensure_track_slots("Track");
@@ -9173,7 +8370,14 @@ mod tests {
         assert!(report.deleted_clips.is_empty());
         assert!(report.deleted_files.is_empty());
         assert!(session_root.join("audio/keep.wav").exists());
-        assert_eq!(state.blocking_read().unused_audio_clips.len(), 1);
+        assert_eq!(
+            state
+                .read()
+                .expect("state lock poisoned")
+                .unused_audio_clips
+                .len(),
+            1
+        );
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
@@ -9194,7 +8398,7 @@ mod tests {
             name: "audio/gone.wav".to_string(),
             ..Default::default()
         });
-        let state: crate::state::State = std::sync::Arc::new(tokio::sync::RwLock::new(data));
+        let state: crate::state::State = std::sync::Arc::new(std::sync::RwLock::new(data));
 
         let report = Maolan::delete_unused_session_media_files_for(&state, "main", &session_root)
             .expect("cleanup");
@@ -9202,7 +8406,13 @@ mod tests {
         assert_eq!(report.deleted_clips, vec!["clip-2".to_string()]);
         assert!(report.deleted_files.contains(&"audio/gone.wav".to_string()));
         assert!(!session_root.join("audio/gone.wav").exists());
-        assert!(state.blocking_read().unused_audio_clips.is_empty());
+        assert!(
+            state
+                .read()
+                .expect("state lock poisoned")
+                .unused_audio_clips
+                .is_empty()
+        );
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
@@ -9305,7 +8515,10 @@ mod tests {
         });
 
         let key = Maolan::audio_clip_key("Track", "audio/import.wav", 0, 256, 0);
-        assert_eq!(app.pending_precomputed_peaks.get(&key), Some(&peaks));
+        assert_eq!(
+            app.pending.pending_precomputed_peaks.get(&key),
+            Some(&peaks)
+        );
     }
 
     #[test]
@@ -9321,10 +8534,14 @@ mod tests {
             peaks: Arc::new(Vec::new()),
             ..Default::default()
         });
-        app.state.blocking_write().tracks.push(track);
+        app.state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
 
         let key = Maolan::audio_clip_key("Track", "audio/import.wav", 0, 256, 0);
-        app.pending_peak_rebuilds.insert(key.clone());
+        app.pending.pending_peak_rebuilds.insert(key.clone());
 
         if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
             queue.clear();
@@ -9361,7 +8578,7 @@ mod tests {
 
         let _ = app.update(Message::DrainAudioPeakUpdates);
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         let clip = &state.tracks[0].audio.clips[0];
         assert_eq!(clip.peaks.len(), 1);
         assert_eq!(clip.peaks[0].len(), 4);
@@ -9369,7 +8586,7 @@ mod tests {
         assert_eq!(clip.peaks[0][3], [-0.1_f32, 0.9_f32]);
         drop(state);
 
-        assert!(!app.pending_peak_rebuilds.contains(&key));
+        assert!(!app.pending.pending_peak_rebuilds.contains(&key));
     }
 
     #[test]
@@ -9385,7 +8602,11 @@ mod tests {
             peaks: Arc::new(Vec::new()),
             ..Default::default()
         });
-        app.state.blocking_write().tracks.push(track);
+        app.state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
 
         if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
             queue.clear();
@@ -9432,7 +8653,7 @@ mod tests {
         }
         let _ = app.update(Message::DrainAudioPeakUpdates);
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         let clip = &state.tracks[0].audio.clips[0];
         assert_eq!(
             clip.peaks.as_ref(),
@@ -9448,7 +8669,10 @@ mod tests {
     #[test]
     fn import_progress_only_finishes_on_last_file_at_full_progress() {
         let mut app = Maolan {
-            import_in_progress: true,
+            transfer: TransferState {
+                import_in_progress: true,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
@@ -9459,7 +8683,7 @@ mod tests {
             filename: "first.wav".to_string(),
             operation: None,
         });
-        assert!(app.import_in_progress);
+        assert!(app.transfer.import_in_progress);
 
         let _ = app.update(Message::ImportProgress {
             file_index: 2,
@@ -9468,7 +8692,7 @@ mod tests {
             filename: "second.wav".to_string(),
             operation: Some("Decoding".to_string()),
         });
-        assert!(app.import_in_progress);
+        assert!(app.transfer.import_in_progress);
 
         let _ = app.update(Message::ImportProgress {
             file_index: 2,
@@ -9477,7 +8701,7 @@ mod tests {
             filename: "second.wav".to_string(),
             operation: None,
         });
-        assert!(!app.import_in_progress);
+        assert!(!app.transfer.import_in_progress);
     }
 
     #[cfg(unix)]
@@ -9604,105 +8828,149 @@ mod tests {
     #[test]
     fn core_toggle_transport_requires_loaded_hw() {
         let mut app = Maolan::default();
-        app.state.blocking_write().hw_loaded = false;
+        app.state.write().expect("state lock poisoned").hw_loaded = false;
 
         let _ = app.update(Message::ToggleTransport);
 
-        assert!(!app.playing);
-        assert!(!app.paused);
+        assert!(!app.transport.playing);
+        assert!(!app.transport.paused);
     }
 
     #[test]
     fn core_toggle_transport_stops_active_playback_and_clears_preview() {
         let mut app = Maolan {
-            playing: true,
-            paused: false,
-            recording_preview_start_sample: Some(12),
-            recording_preview_sample: Some(24),
+            transport: TransportUiState {
+                playing: true,
+                paused: false,
+                ..Default::default()
+            },
+            rec: RecordingPreviewState {
+                recording_preview_start_sample: Some(12),
+                recording_preview_sample: Some(24),
+                ..Default::default()
+            },
             ..Maolan::default()
         };
-        app.state.blocking_write().hw_loaded = true;
-        app.track_automation_runtime
+        app.state.write().expect("state lock poisoned").hw_loaded = true;
+        app.automation
+            .track_automation_runtime
             .insert("Track".to_string(), TrackAutomationRuntime::default());
-        app.touch_automation_overrides
+        app.automation
+            .touch_automation_overrides
             .insert("Track".to_string(), HashMap::new());
-        app.touch_active_keys
+        app.automation
+            .touch_active_keys
             .insert("Track".to_string(), HashSet::new());
-        app.latch_automation_overrides
+        app.automation
+            .latch_automation_overrides
             .insert("Track".to_string(), HashMap::new());
 
         let _ = app.update(Message::ToggleTransport);
 
-        assert!(!app.playing);
-        assert!(!app.paused);
-        assert!(app.recording_preview_start_sample.is_none());
-        assert!(app.track_automation_runtime.is_empty());
-        assert!(app.touch_automation_overrides.is_empty());
-        assert!(app.touch_active_keys.is_empty());
-        assert!(app.latch_automation_overrides.is_empty());
+        assert!(!app.transport.playing);
+        assert!(!app.transport.paused);
+        assert!(app.rec.recording_preview_start_sample.is_none());
+        assert!(app.automation.track_automation_runtime.is_empty());
+        assert!(app.automation.touch_automation_overrides.is_empty());
+        assert!(app.automation.touch_active_keys.is_empty());
+        assert!(app.automation.latch_automation_overrides.is_empty());
     }
 
     #[test]
     fn core_toggle_transport_starts_preview_when_record_armed() {
         let mut app = Maolan {
-            record_armed: true,
-            transport_samples: 128.0,
+            transport: TransportUiState {
+                record_armed: true,
+                transport_samples: 128.0,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
-        app.state.blocking_write().hw_loaded = true;
+        app.state.write().expect("state lock poisoned").hw_loaded = true;
 
         let _ = app.update(Message::ToggleTransport);
 
-        assert!(app.playing);
-        assert!(!app.paused);
-        assert_eq!(app.recording_preview_start_sample, Some(128));
-        assert_eq!(app.recording_preview_sample, Some(128));
+        assert!(app.transport.playing);
+        assert!(!app.transport.paused);
+        assert_eq!(app.rec.recording_preview_start_sample, Some(128));
+        assert_eq!(app.rec.recording_preview_sample, Some(128));
     }
 
     #[test]
     fn transport_play_in_session_view_starts_even_when_scene_is_empty() {
         let mut app = Maolan::default();
-        app.state.blocking_write().view = crate::state::View::Session;
+        app.state.write().expect("state lock poisoned").view = crate::state::View::Session;
 
         let _ = app.update(Message::TransportPlay);
 
-        assert!(app.live_session_playing);
+        assert!(app.transport.live_session_playing);
     }
 
     #[test]
     fn session_scene_pressed_selects_scene_while_live_playing() {
         let mut app = Maolan {
-            live_session_playing: true,
+            transport: TransportUiState {
+                live_session_playing: true,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::SessionScenePressed(0));
-        assert_eq!(app.state.blocking_read().selected_scene, Some(0));
+        assert_eq!(
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .selected_scene,
+            Some(0)
+        );
 
         // Pressing the selected scene again keeps the selection (the engine
         // re-triggers it at the end of the current pass).
         let _ = app.update(Message::SessionScenePressed(0));
-        assert_eq!(app.state.blocking_read().selected_scene, Some(0));
+        assert_eq!(
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .selected_scene,
+            Some(0)
+        );
     }
 
     #[test]
     fn session_scene_pressed_while_stopped_selects_scene() {
         let mut app = Maolan::default();
         // The default session has one scene; add a second so index 1 exists.
-        app.state.blocking_write().session.add_scene();
+        app.state
+            .write()
+            .expect("state lock poisoned")
+            .session
+            .add_scene();
 
         let _ = app.update(Message::SessionScenePressed(1));
-        assert_eq!(app.state.blocking_read().selected_scene, Some(1));
+        assert_eq!(
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .selected_scene,
+            Some(1)
+        );
 
         let _ = app.update(Message::SessionScenePressed(0));
-        assert_eq!(app.state.blocking_read().selected_scene, Some(0));
+        assert_eq!(
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .selected_scene,
+            Some(0)
+        );
     }
 
     #[test]
     fn transport_play_in_session_view_starts_selected_scene() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.view = crate::state::View::Session;
             state.session.add_scene();
             state.tracks.push(crate::state::Track::new(
@@ -9732,8 +9000,8 @@ mod tests {
 
         let _ = app.update(Message::TransportPlay);
 
-        assert!(app.live_session_playing);
-        let state = app.state.blocking_read();
+        assert!(app.transport.live_session_playing);
+        let state = app.state.read().expect("state lock poisoned");
         let runtime = state
             .slot_runtimes
             .get(&("Track 1".to_string(), 1))
@@ -9753,28 +9021,31 @@ mod tests {
 
         let _ = app.update(Message::ToggleLoop);
         let _ = app.update(Message::TogglePunch);
-        assert!(!app.loop_enabled);
-        assert!(!app.punch_enabled);
+        assert!(!app.transport.loop_enabled);
+        assert!(!app.transport.punch_enabled);
 
-        app.loop_range_samples = Some((10, 20));
-        app.punch_range_samples = Some((30, 40));
+        app.transport.loop_range_samples = Some((10, 20));
+        app.transport.punch_range_samples = Some((30, 40));
         let _ = app.update(Message::ToggleLoop);
         let _ = app.update(Message::TogglePunch);
 
-        assert!(app.loop_enabled);
-        assert!(app.punch_enabled);
+        assert!(app.transport.loop_enabled);
+        assert!(app.transport.punch_enabled);
     }
 
     #[test]
     fn simple_ui_render_mode_disables_normalize() {
         let mut app = Maolan {
-            export_format_flac: true,
-            export_normalize: true,
+            transfer: TransferState {
+                export_format_flac: true,
+                export_normalize: true,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
         let surround = crate::state::Track::new("Surround".to_string(), 0.0, 1, 4, 0, 0);
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.selected.insert("Surround".to_string());
             state.tracks.push(surround);
         }
@@ -9782,8 +9053,8 @@ mod tests {
         let _ = app.update(Message::ExportRenderModeSelected(
             ExportRenderMode::StemsPostFader,
         ));
-        assert!(!app.export_normalize);
-        assert!(app.export_format_flac);
+        assert!(!app.transfer.export_normalize);
+        assert!(app.transfer.export_format_flac);
     }
 
     #[test]
@@ -9795,7 +9066,7 @@ mod tests {
         let _ = app.update(Message::HWNPeriodsChanged(0));
         let _ = app.update(Message::HWSyncModeToggled(true));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert_eq!(state.hw_sample_rate_hz, 1);
         assert_eq!(state.oss_period_frames, 4);
         assert_eq!(state.oss_nperiods, 1);
@@ -9805,23 +9076,23 @@ mod tests {
     #[test]
     fn track_selection_modifier_messages_require_loaded_hw() {
         let mut app = Maolan::default();
-        app.state.blocking_write().hw_loaded = false;
+        app.state.write().expect("state lock poisoned").hw_loaded = false;
 
         let _ = app.update(Message::ShiftPressed);
-        assert!(!app.state.blocking_read().shift);
+        assert!(!app.state.read().expect("state lock poisoned").shift);
 
-        app.state.blocking_write().hw_loaded = true;
+        app.state.write().expect("state lock poisoned").hw_loaded = true;
         let _ = app.update(Message::ShiftPressed);
-        assert!(app.state.blocking_read().shift);
+        assert!(app.state.read().expect("state lock poisoned").shift);
         let _ = app.update(Message::CtrlPressed);
-        assert!(app.state.blocking_read().ctrl);
+        assert!(app.state.read().expect("state lock poisoned").ctrl);
     }
 
     #[test]
     fn remove_selected_plugin_graph_connection_works_without_loaded_hw() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.hw_loaded = false;
             state.view = crate::state::View::TrackPlugins;
             state.plugin_graph_track = Some("Track".to_string());
@@ -9841,7 +9112,8 @@ mod tests {
 
         assert!(
             app.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .plugin_graph_selected_connections
                 .is_empty()
         );
@@ -9851,7 +9123,7 @@ mod tests {
     fn remove_prefers_selected_connection_over_selected_viewed_track() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.view = crate::state::View::Workspace;
             state.hw_loaded = true;
             state.selected.insert("Synth".to_string());
@@ -9869,7 +9141,7 @@ mod tests {
 
         let _ = app.update(Message::Remove);
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(matches!(
             state.connection_view_selection,
             crate::state::ConnectionViewSelection::None
@@ -9892,7 +9164,7 @@ mod tests {
             to_port: 0,
         })));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(state.connections.is_empty());
         let cached = state.connectable_connections_by_track.get("Synth").unwrap();
         assert_eq!(cached.len(), 1);
@@ -9908,7 +9180,7 @@ mod tests {
     fn track_disconnect_response_reports_internal_graph_not_hardware_route() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.plugin_graph_track = Some("Synth".to_string());
             state.connectable_connections.push(ConnectableConnection {
                 from: ConnectableRef::TrackInput,
@@ -9931,7 +9203,7 @@ mod tests {
             to_port: 0,
         })));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(state.connections.is_empty());
         assert!(state.connectable_connections.is_empty());
         assert_eq!(
@@ -9945,7 +9217,10 @@ mod tests {
     #[test]
     fn plugin_connect_response_updates_active_plugin_graph_immediately() {
         let mut app = Maolan::default();
-        app.state.blocking_write().plugin_graph_track = Some("Synth".to_string());
+        app.state
+            .write()
+            .expect("state lock poisoned")
+            .plugin_graph_track = Some("Synth".to_string());
 
         let _ = app.update(Message::Response(Ok(Action::TrackConnectPluginAudio {
             track_name: "Synth".to_string(),
@@ -9955,7 +9230,7 @@ mod tests {
             to_port: 0,
         })));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert_eq!(state.plugin_graph_connections.len(), 1);
         assert_eq!(
             state.plugin_graph_connections[0].from_node,
@@ -9975,7 +9250,7 @@ mod tests {
     fn plugin_disconnect_response_updates_active_plugin_graph_immediately() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.plugin_graph_track = Some("Synth".to_string());
             state
                 .plugin_graph_connections
@@ -10000,7 +9275,7 @@ mod tests {
             to_port: 0,
         })));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(state.plugin_graph_connections.is_empty());
         assert_eq!(
             state.message,
@@ -10012,7 +9287,7 @@ mod tests {
     fn track_selection_select_track_ctrl_adds_to_existing_selection() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.ctrl = true;
             state.selected.insert("A".to_string());
             state.connection_view_selection =
@@ -10021,7 +9296,7 @@ mod tests {
 
         let _ = app.update(Message::SelectTrack("B".to_string()));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(state.selected.contains("A"));
         assert!(state.selected.contains("B"));
         match &state.connection_view_selection {
@@ -10036,13 +9311,16 @@ mod tests {
     #[test]
     fn track_selection_double_click_schedules_open_plugins() {
         let mut app = Maolan::default();
-        app.state.blocking_write().connections_last_track_click =
-            Some(("Track".to_string(), Instant::now()));
+        app.state
+            .write()
+            .expect("state lock poisoned")
+            .connections_last_track_click = Some(("Track".to_string(), Instant::now()));
 
         let _ = app.update(Message::SelectTrack("Track".to_string()));
         assert!(
             app.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .connections_last_track_click
                 .is_none()
         );
@@ -10052,7 +9330,8 @@ mod tests {
     fn track_setup_toggle_ignores_folder_tracks() {
         let mut app = Maolan::default();
         app.state
-            .blocking_write()
+            .write()
+            .expect("state lock poisoned")
             .tracks
             .push(crate::state::Track::new(
                 "Folder".to_string(),
@@ -10062,18 +9341,18 @@ mod tests {
                 0,
                 0,
             ));
-        app.state.blocking_write().tracks[0].is_folder = true;
+        app.state.write().expect("state lock poisoned").tracks[0].is_folder = true;
 
         let _ = app.update(Message::TrackSetupToggle("Folder".to_string()));
 
-        assert!(!app.state.blocking_read().tracks[0].setup_open);
+        assert!(!app.state.read().expect("state lock poisoned").tracks[0].setup_open);
     }
 
     #[test]
     fn track_setup_toggle_expands_narrow_tracks_panel() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.tracks_width = Length::Fixed(200.0);
             state.tracks.push(crate::state::Track::new(
                 "Track".to_string(),
@@ -10087,7 +9366,7 @@ mod tests {
 
         let _ = app.update(Message::TrackSetupToggle("Track".to_string()));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(state.tracks[0].setup_open);
         assert_eq!(state.tracks_width, Length::Fixed(338.6557));
     }
@@ -10096,7 +9375,7 @@ mod tests {
     fn track_setup_toggle_leaves_wide_tracks_panel_alone() {
         let mut app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.tracks_width = Length::Fixed(420.0);
             state.tracks.push(crate::state::Track::new(
                 "Track".to_string(),
@@ -10110,7 +9389,7 @@ mod tests {
 
         let _ = app.update(Message::TrackSetupToggle("Track".to_string()));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(state.tracks[0].setup_open);
         assert_eq!(state.tracks_width, Length::Fixed(420.0));
     }
@@ -10119,7 +9398,8 @@ mod tests {
     fn track_toggle_phase_ignores_folder_tracks() {
         let mut app = Maolan::default();
         app.state
-            .blocking_write()
+            .write()
+            .expect("state lock poisoned")
             .tracks
             .push(crate::state::Track::new(
                 "Folder".to_string(),
@@ -10129,37 +9409,46 @@ mod tests {
                 0,
                 0,
             ));
-        app.state.blocking_write().tracks[0].is_folder = true;
+        app.state.write().expect("state lock poisoned").tracks[0].is_folder = true;
 
         let _ = app.update(Message::Response(Ok(Action::TrackTogglePhase(
             "Folder".to_string(),
         ))));
 
-        assert!(!app.state.blocking_read().tracks[0].phase_inverted);
+        assert!(!app.state.read().expect("state lock poisoned").tracks[0].phase_inverted);
     }
 
     #[test]
     fn session_io_save_folder_selected_none_cancels_pending_exit() {
         let mut app = Maolan {
-            pending_exit_after_save: true,
+            session_ops: SessionOpsState {
+                pending_exit_after_save: true,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::SaveFolderSelected(None));
 
-        assert!(!app.pending_exit_after_save);
-        assert_eq!(app.state.blocking_read().message, "Close cancelled");
+        assert!(!app.session_ops.pending_exit_after_save);
+        assert_eq!(
+            app.state.read().expect("state lock poisoned").message,
+            "Close cancelled"
+        );
     }
 
     #[test]
     fn session_io_record_folder_selected_none_clears_pending_record() {
         let mut app = Maolan {
-            pending_record_after_save: true,
+            transport: TransportUiState {
+                pending_record_after_save: true,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::RecordFolderSelected(None));
-        assert!(!app.pending_record_after_save);
+        assert!(!app.transport.pending_record_after_save);
     }
 
     #[test]
@@ -10171,15 +9460,21 @@ mod tests {
         let path = std::env::temp_dir().join(format!("maolan_open_session_{unique}"));
         fs::create_dir_all(&path).expect("create session dir");
         let mut app = Maolan {
-            recording_preview_start_sample: Some(1),
-            recording_preview_sample: Some(2),
+            rec: RecordingPreviewState {
+                recording_preview_start_sample: Some(1),
+                recording_preview_sample: Some(2),
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::OpenFolderSelected(Some(path.clone())));
         assert_eq!(app.session_dir.as_ref(), Some(&path));
-        assert_eq!(app.state.blocking_read().message, "Loading session...");
-        assert!(app.recording_preview_start_sample.is_none());
+        assert_eq!(
+            app.state.read().expect("state lock poisoned").message,
+            "Loading session..."
+        );
+        assert!(app.rec.recording_preview_start_sample.is_none());
 
         fs::remove_dir_all(path).expect("cleanup session dir");
     }
@@ -10190,49 +9485,58 @@ mod tests {
 
         let _ = app.update(Message::SetLoopRange(Some((20, 10))));
         let _ = app.update(Message::SetPunchRange(Some((40, 10))));
-        assert!(app.loop_range_samples.is_none());
-        assert!(app.punch_range_samples.is_none());
-        assert!(!app.loop_enabled);
-        assert!(!app.punch_enabled);
+        assert!(app.transport.loop_range_samples.is_none());
+        assert!(app.transport.punch_range_samples.is_none());
+        assert!(!app.transport.loop_enabled);
+        assert!(!app.transport.punch_enabled);
 
         let _ = app.update(Message::SetLoopRange(Some((10, 20))));
         let _ = app.update(Message::SetPunchRange(Some((30, 40))));
-        assert_eq!(app.loop_range_samples, Some((10, 20)));
-        assert_eq!(app.punch_range_samples, Some((30, 40)));
-        assert!(app.loop_enabled);
-        assert!(app.punch_enabled);
+        assert_eq!(app.transport.loop_range_samples, Some((10, 20)));
+        assert_eq!(app.transport.punch_range_samples, Some((30, 40)));
+        assert!(app.transport.loop_enabled);
+        assert!(app.transport.punch_enabled);
     }
 
     #[test]
     fn transport_playback_tick_updates_tempo_and_time_signature_inputs() {
         let mut app = Maolan {
-            last_sent_tempo_bpm: None,
-            last_sent_time_signature: None,
+            timing: TimingState {
+                last_sent_tempo_bpm: None,
+                last_sent_time_signature: None,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::PlaybackTick);
 
-        assert_eq!(app.tempo_input, "120.00");
-        assert_eq!(app.time_signature_num_input, "4");
-        assert_eq!(app.time_signature_denom_input, "4");
-        assert_eq!(app.last_sent_tempo_bpm, Some(120.0));
-        assert_eq!(app.last_sent_time_signature, Some((4, 4)));
+        assert_eq!(app.timing.tempo_input, "120.00");
+        assert_eq!(app.timing.time_signature_num_input, "4");
+        assert_eq!(app.timing.time_signature_denom_input, "4");
+        assert_eq!(app.timing.last_sent_tempo_bpm, Some(120.0));
+        assert_eq!(app.timing.last_sent_time_signature, Some((4, 4)));
     }
 
     #[test]
     fn confirm_close_cancel_clears_modal_and_resets_exit_flag() {
         let mut app = Maolan {
             modal: Some(Show::UnsavedChanges),
-            pending_exit_after_save: true,
+            session_ops: SessionOpsState {
+                pending_exit_after_save: true,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::ConfirmCloseCancel);
 
         assert!(app.modal.is_none());
-        assert!(!app.pending_exit_after_save);
-        assert_eq!(app.state.blocking_read().message, "Close cancelled");
+        assert!(!app.session_ops.pending_exit_after_save);
+        assert_eq!(
+            app.state.read().expect("state lock poisoned").message,
+            "Close cancelled"
+        );
     }
 
     #[test]
@@ -10241,7 +9545,7 @@ mod tests {
             modal: Some(Show::AddTrack),
             ..Maolan::default()
         };
-        app.state.blocking_write().marker_dialog = Some(crate::state::MarkerDialog {
+        app.track_marker.open(crate::state::MarkerDialog {
             sample: 10,
             marker_index: None,
             name: "Marker".to_string(),
@@ -10249,17 +9553,18 @@ mod tests {
 
         let _ = app.update(Message::EscapePressed);
         assert!(app.modal.is_none());
-        assert!(app.state.blocking_read().marker_dialog.is_some());
+        assert!(app.track_marker.is_open());
 
         let _ = app.update(Message::EscapePressed);
-        assert!(app.state.blocking_read().marker_dialog.is_none());
+        assert!(!app.track_marker.is_open());
     }
 
     #[test]
     fn add_track_submit_rejects_duplicate_name() {
         let mut app = Maolan::default();
         app.state
-            .blocking_write()
+            .write()
+            .expect("state lock poisoned")
             .tracks
             .push(crate::state::Track::new(
                 "Existing".to_string(),
@@ -10277,14 +9582,18 @@ mod tests {
 
         let _ = app.update(Message::AddTrack(crate::message::AddTrack::Submit));
 
-        assert_eq!(app.state.blocking_read().tracks.len(), 1);
+        assert_eq!(
+            app.state.read().expect("state lock poisoned").tracks.len(),
+            1
+        );
         assert!(
             app.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .message
                 .contains("Track 'Existing' already exists"),
             "expected error message, got: {}",
-            app.state.blocking_read().message
+            app.state.read().expect("state lock poisoned").message
         );
         assert!(app.modal.is_some());
     }
@@ -10293,7 +9602,8 @@ mod tests {
     fn add_folder_submit_rejects_duplicate_name() {
         let mut app = Maolan::default();
         app.state
-            .blocking_write()
+            .write()
+            .expect("state lock poisoned")
             .tracks
             .push(crate::state::Track::new(
                 "Existing".to_string(),
@@ -10313,10 +9623,14 @@ mod tests {
 
         let _ = app.update(Message::AddTrack(crate::message::AddTrack::Submit));
 
-        assert_eq!(app.state.blocking_read().tracks.len(), 1);
+        assert_eq!(
+            app.state.read().expect("state lock poisoned").tracks.len(),
+            1
+        );
         assert!(
             app.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .tracks
                 .iter()
                 .all(|t| !t.is_folder),
@@ -10324,11 +9638,12 @@ mod tests {
         );
         assert!(
             app.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .message
                 .contains("Track 'Existing' already exists"),
             "expected error message, got: {}",
-            app.state.blocking_read().message
+            app.state.read().expect("state lock poisoned").message
         );
         assert!(app.modal.is_some());
     }
@@ -10349,7 +9664,8 @@ mod tests {
         assert!(app.modal.is_none());
         assert!(
             app.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .session
                 .slots
                 .contains_key("Live Track"),
@@ -10361,7 +9677,8 @@ mod tests {
     fn live_view_add_track_rejects_duplicate_name() {
         let mut app = Maolan::default();
         app.state
-            .blocking_write()
+            .write()
+            .expect("state lock poisoned")
             .tracks
             .push(crate::state::Track::new(
                 "Live Track".to_string(),
@@ -10380,14 +9697,18 @@ mod tests {
 
         let _ = app.update(Message::AddTrack(crate::message::AddTrack::Submit));
 
-        assert_eq!(app.state.blocking_read().tracks.len(), 1);
+        assert_eq!(
+            app.state.read().expect("state lock poisoned").tracks.len(),
+            1
+        );
         assert!(
             app.state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .message
                 .contains("Track 'Live Track' already exists"),
             "expected error message, got: {}",
-            app.state.blocking_read().message
+            app.state.read().expect("state lock poisoned").message
         );
         assert!(app.modal.is_some());
     }
@@ -10398,7 +9719,7 @@ mod tests {
 
         let _ = app.update(Message::SetSnapMode(SnapMode::Sixteenth));
 
-        assert_eq!(app.snap_mode, SnapMode::Sixteenth);
+        assert_eq!(app.timing.snap_mode, SnapMode::Sixteenth);
     }
 
     #[test]
@@ -10407,45 +9728,62 @@ mod tests {
 
         let _ = app.update(Message::SetMidiSnapMode(SnapMode::Beat));
 
-        assert_eq!(app.midi_snap_mode, SnapMode::Beat);
+        assert_eq!(app.timing.midi_snap_mode, SnapMode::Beat);
     }
 
     #[test]
     fn recording_preview_tick_tracks_current_sample_and_respects_punch() {
         let mut app = Maolan {
-            playing: true,
-            record_armed: true,
-            transport_samples: 96.0,
-            recording_preview_start_sample: Some(0),
+            transport: TransportUiState {
+                playing: true,
+                record_armed: true,
+                transport_samples: 96.0,
+                ..Default::default()
+            },
+            rec: RecordingPreviewState {
+                recording_preview_start_sample: Some(0),
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::RecordingPreviewTick);
-        assert_eq!(app.recording_preview_sample, Some(96));
+        assert_eq!(app.rec.recording_preview_sample, Some(96));
 
-        app.punch_enabled = true;
-        app.punch_range_samples = Some((100, 120));
+        app.transport.punch_enabled = true;
+        app.transport.punch_range_samples = Some((100, 120));
         let _ = app.update(Message::RecordingPreviewTick);
-        assert!(app.recording_preview_sample.is_none());
+        assert!(app.rec.recording_preview_sample.is_none());
     }
 
     #[test]
     fn recording_preview_peaks_tick_collects_armed_track_meter_values() {
         let mut app = Maolan {
-            playing: true,
-            record_armed: true,
-            transport_samples: 64.0,
-            recording_preview_start_sample: Some(0),
+            transport: TransportUiState {
+                playing: true,
+                record_armed: true,
+                transport_samples: 64.0,
+                ..Default::default()
+            },
+            rec: RecordingPreviewState {
+                recording_preview_start_sample: Some(0),
+                ..Default::default()
+            },
             ..Maolan::default()
         };
         let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 2, 0, 0);
         track.armed = true;
         track.meter_out_db = vec![-6.0, -90.0];
-        app.state.blocking_write().tracks.push(track);
+        app.state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
 
         let _ = app.update(Message::RecordingPreviewPeaksTick);
 
         let peaks = app
+            .rec
             .recording_preview_peaks
             .get("Track")
             .expect("preview peaks");
@@ -10460,38 +9798,41 @@ mod tests {
     fn zoom_and_scroll_messages_clamp_and_update_positions() {
         let mut app = Maolan {
             size: Size::new(800.0, 600.0),
-            zoom_visible_bars: 8.0,
-            editor_scroll_origin_samples: 10_000.0,
+            ui: UiState {
+                zoom_visible_bars: 8.0,
+                editor_scroll_origin_samples: 10_000.0,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::ZoomSliderChanged(0.0));
-        assert_eq!(app.zoom_visible_bars, MIN_ZOOM_VISIBLE_BARS);
-        assert!(app.editor_scroll_x >= 0.0 && app.editor_scroll_x <= 1.0);
+        assert_eq!(app.ui.zoom_visible_bars, MIN_ZOOM_VISIBLE_BARS);
+        assert!(app.ui.editor_scroll_x >= 0.0 && app.ui.editor_scroll_x <= 1.0);
 
-        app.zoom_visible_bars = 8.0;
+        app.ui.zoom_visible_bars = 8.0;
         let _ = app.update(Message::TimelineZoomByScroll(1.0));
-        assert!(app.zoom_visible_bars < 8.0);
-        let zoomed_in = app.zoom_visible_bars;
+        assert!(app.ui.zoom_visible_bars < 8.0);
+        let zoomed_in = app.ui.zoom_visible_bars;
         let _ = app.update(Message::TimelineZoomByScroll(-1.0));
-        assert!(app.zoom_visible_bars > zoomed_in);
+        assert!(app.ui.zoom_visible_bars > zoomed_in);
 
-        app.zoom_visible_bars = MAX_ZOOM_VISIBLE_BARS;
+        app.ui.zoom_visible_bars = MAX_ZOOM_VISIBLE_BARS;
         let _ = app.update(Message::TimelineZoomByScroll(-1.0));
-        assert!(app.zoom_visible_bars > MAX_ZOOM_VISIBLE_BARS);
+        assert!(app.ui.zoom_visible_bars > MAX_ZOOM_VISIBLE_BARS);
 
-        app.zoom_visible_bars = MIN_ZOOM_VISIBLE_BARS;
+        app.ui.zoom_visible_bars = MIN_ZOOM_VISIBLE_BARS;
         let _ = app.update(Message::TimelineZoomByScroll(1.0));
-        assert_eq!(app.zoom_visible_bars, MIN_ZOOM_VISIBLE_BARS);
+        assert_eq!(app.ui.zoom_visible_bars, MIN_ZOOM_VISIBLE_BARS);
 
         let _ = app.update(Message::EditorScrollXChanged(2.0));
-        assert_eq!(app.editor_scroll_x, 1.0);
+        assert_eq!(app.ui.editor_scroll_x, 1.0);
 
         let _ = app.update(Message::EditorScrollYChanged(-1.0));
-        assert_eq!(app.editor_scroll_y, 0.0);
+        assert_eq!(app.ui.editor_scroll_y, 0.0);
 
         let _ = app.update(Message::MixerScrollXChanged(0.25));
-        assert_eq!(app.mixer_scroll_x, 0.25);
+        assert_eq!(app.ui.mixer_scroll_x, 0.25);
     }
 
     #[test]
@@ -10505,7 +9846,7 @@ mod tests {
         let _ = app.update(Message::PianoScrollXChanged(0.25));
         let _ = app.update(Message::PianoScrollYChanged(0.75));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(state.piano_zoom_x > 3.0);
         assert_eq!(state.piano_zoom_y, 2.0);
         assert_eq!(state.piano_scroll_x, 0.25);
@@ -10520,7 +9861,7 @@ mod tests {
             crate::message::PianoControllerLane::SysEx,
         ));
         {
-            let state = app.state.blocking_read();
+            let state = app.state.read().expect("state lock poisoned");
             assert_eq!(
                 state.piano_controller_lane,
                 crate::message::PianoControllerLane::SysEx
@@ -10539,7 +9880,7 @@ mod tests {
             crate::message::PianoNrpnKind::VibratoDepth,
         ));
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert_eq!(
             state.piano_controller_lane,
             crate::message::PianoControllerLane::Nrpn
@@ -10564,18 +9905,21 @@ mod tests {
     fn transport_record_toggle_arms_when_session_exists_and_disarms_when_already_armed() {
         let mut app = Maolan {
             session_dir: Some(PathBuf::from("/tmp/session")),
-            playing: true,
+            transport: TransportUiState {
+                playing: true,
+                ..Default::default()
+            },
             ..Maolan::default()
         };
 
         let _ = app.update(Message::TransportRecordToggle);
-        assert!(app.record_armed);
-        assert_eq!(app.recording_preview_start_sample, Some(0));
+        assert!(app.transport.record_armed);
+        assert_eq!(app.rec.recording_preview_start_sample, Some(0));
 
         let _ = app.update(Message::TransportRecordToggle);
-        assert!(!app.record_armed);
-        assert!(!app.pending_record_after_save);
-        assert!(app.recording_preview_start_sample.is_none());
+        assert!(!app.transport.record_armed);
+        assert!(!app.transport.pending_record_after_save);
+        assert!(app.rec.recording_preview_start_sample.is_none());
     }
 
     #[test]
@@ -10584,8 +9928,8 @@ mod tests {
 
         let _ = app.update(Message::TransportRecordToggle);
 
-        assert!(app.pending_record_after_save);
-        assert!(!app.record_armed);
+        assert!(app.transport.pending_record_after_save);
+        assert!(!app.transport.record_armed);
     }
 
     #[cfg(unix)]
@@ -10631,7 +9975,7 @@ mod tests {
     fn gui_generate_audio_defaults_match_generate_defaults() {
         let app = Maolan::default();
         assert_eq!(
-            app.generate_audio_cfg_scale_input,
+            app.generate.generate_audio_cfg_scale_input,
             maolan_generate::DEFAULT_CFG_SCALE.to_string()
         );
     }
@@ -10652,14 +9996,17 @@ mod tests {
     fn generate_audio_cfg_scale_input_preserves_decimal_text() {
         let mut app = Maolan::default();
         let _ = app.update(Message::GenerateAudioCfgScaleInput("6.1".to_string()));
-        assert_eq!(app.generate_audio_cfg_scale_input, "6.1");
+        assert_eq!(app.generate.generate_audio_cfg_scale_input, "6.1");
     }
 
     #[test]
     fn session_message_switches_view_to_session() {
         let mut app = Maolan::default();
         let _ = app.update(Message::Session);
-        assert_eq!(app.state.blocking_read().view, crate::state::View::Session);
+        assert_eq!(
+            app.state.read().expect("state lock poisoned").view,
+            crate::state::View::Session
+        );
     }
 
     #[test]
@@ -10668,7 +10015,7 @@ mod tests {
         let _ = app.update(Message::Session);
         let _ = app.update(Message::Workspace);
         assert_eq!(
-            app.state.blocking_read().view,
+            app.state.read().expect("state lock poisoned").view,
             crate::state::View::Workspace
         );
     }
@@ -10736,7 +10083,7 @@ mod tests {
     #[test]
     fn samples_per_beat_calculation() {
         let app = Maolan::default();
-        let spp = app.samples_per_beat();
+        let spp = app.transport.samples_per_beat(&app.state);
 
         assert!(spp > 0.0);
     }
@@ -10744,7 +10091,7 @@ mod tests {
     #[test]
     fn samples_per_bar_calculation() {
         let app = Maolan::default();
-        let spb = app.samples_per_bar();
+        let spb = app.transport.samples_per_bar(&app.state);
 
         assert!(spb > 0.0);
     }
@@ -10793,7 +10140,10 @@ mod tests {
     #[test]
     fn snap_interval_samples_returns_positive_value() {
         let app = Maolan::default();
-        let interval = app.snap_interval_samples();
+        let interval = app.timing.snap_interval_samples(
+            app.transport.samples_per_beat(&app.state),
+            app.transport.samples_per_bar(&app.state),
+        );
 
         assert!(interval > 0);
     }
@@ -10801,7 +10151,11 @@ mod tests {
     #[test]
     fn snap_sample_to_bar_returns_valid_sample() {
         let app = Maolan::default();
-        let sample = app.snap_sample_to_bar(1000.0);
+        let sample = app.timing.snap_sample_to_bar(
+            1000.0,
+            app.transport.samples_per_beat(&app.state),
+            app.transport.samples_per_bar(&app.state),
+        );
         assert!(sample < 10000);
     }
 

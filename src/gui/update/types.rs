@@ -35,9 +35,9 @@ pub(super) struct MidiMappingsFile {
 }
 
 #[derive(Clone)]
-pub(super) struct AutomationTrackView {
-    pub(super) name: String,
-    pub(super) automation_mode: TrackAutomationMode,
-    pub(super) automation_lanes: Vec<TrackAutomationLane>,
-    pub(super) frozen: bool,
+pub(crate) struct AutomationTrackView {
+    pub(crate) name: String,
+    pub(crate) automation_mode: TrackAutomationMode,
+    pub(crate) automation_lanes: Vec<TrackAutomationLane>,
+    pub(crate) frozen: bool,
 }

@@ -30,39 +30,39 @@ impl Maolan {
     ) -> Option<Task<Message>> {
         match message {
             Message::ShiftPressed => {
-                if !self.state.blocking_read().hw_loaded {
+                if !self.state.read().expect("state lock poisoned").hw_loaded {
                     return Some(Task::none());
                 }
-                self.state.blocking_write().shift = true;
+                self.state.write().expect("state lock poisoned").shift = true;
                 None
             }
             Message::ShiftReleased => {
-                if !self.state.blocking_read().hw_loaded {
+                if !self.state.read().expect("state lock poisoned").hw_loaded {
                     return Some(Task::none());
                 }
-                self.state.blocking_write().shift = false;
+                self.state.write().expect("state lock poisoned").shift = false;
                 None
             }
             Message::CtrlPressed => {
-                if !self.state.blocking_read().hw_loaded {
+                if !self.state.read().expect("state lock poisoned").hw_loaded {
                     return Some(Task::none());
                 }
-                self.state.blocking_write().ctrl = true;
+                self.state.write().expect("state lock poisoned").ctrl = true;
                 None
             }
             Message::CtrlReleased => {
-                if !self.state.blocking_read().hw_loaded {
+                if !self.state.read().expect("state lock poisoned").hw_loaded {
                     return Some(Task::none());
                 }
-                self.state.blocking_write().ctrl = false;
+                self.state.write().expect("state lock poisoned").ctrl = false;
                 None
             }
             Message::SelectTrack(ref name) => {
                 let now = Instant::now();
                 let track_name = name.clone();
-                let shift = self.state.blocking_read().shift;
-                let ctrl = self.state.blocking_read().ctrl;
-                let mut state = self.state.blocking_write();
+                let shift = self.state.read().expect("state lock poisoned").shift;
+                let ctrl = self.state.read().expect("state lock poisoned").ctrl;
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.track_context_menu = None;
                 if shift || ctrl {
                     state.connections_last_track_click = None;
@@ -152,9 +152,9 @@ impl Maolan {
                 None
             }
             Message::SelectTrackFromMixer(ref name) => {
-                let shift = self.state.blocking_read().shift;
-                let ctrl = self.state.blocking_read().ctrl;
-                let mut state = self.state.blocking_write();
+                let shift = self.state.read().expect("state lock poisoned").shift;
+                let ctrl = self.state.read().expect("state lock poisoned").ctrl;
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.track_context_menu = None;
                 state.connections_last_track_click = None;
 
@@ -222,5 +222,42 @@ impl Maolan {
             }
             _ => None,
         }
+    }
+}
+
+impl Maolan {
+    pub(super) fn handle_selection_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::DeselectAll => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.selected.clear();
+                state.selected_clips.clear();
+                state.track_context_menu = None;
+                state.connection_view_selection = ConnectionViewSelection::None;
+                state.plugin_graph_selected_connectable_connections.clear();
+            }
+            Message::DeselectClips => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                if state.clip_click_consumed {
+                    state.clip_click_consumed = false;
+                    return Task::none();
+                }
+                self.drag.clip = None;
+                if self.modal.is_none() && matches!(state.view, View::Workspace) {
+                    state.mouse_left_down = true;
+                }
+                state.mouse_right_down = false;
+                state.clip_context_menu = None;
+                state.track_context_menu = None;
+                state.clip_marquee_start = None;
+                state.clip_marquee_end = None;
+                state.midi_clip_create_start = None;
+                state.midi_clip_create_end = None;
+                state.selected_clips.clear();
+            }
+            _ => {}
+        }
+        self.update_children(&message);
+        Task::none()
     }
 }

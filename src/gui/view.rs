@@ -82,10 +82,10 @@ impl Maolan {
                     button("Close").on_press(Message::ToggleLogVisibility),
                 ]
                 .spacing(12),
-                text_editor(&self.log_viewer_content)
+                text_editor(&self.ui.log_viewer_content)
                     .on_action(Message::LogViewAction)
                     .highlight_with::<LogHighlighter>(
-                        self.log_viewer_highlights.clone(),
+                        self.ui.log_viewer_highlights.clone(),
                         log_highlight_format,
                     )
                     .height(Length::Fill),
@@ -124,7 +124,7 @@ impl Maolan {
         &'a self,
         content: maolan_widgets::iced::Element<'a, Message>,
     ) -> maolan_widgets::iced::Element<'a, Message> {
-        if !self.show_log_window {
+        if !self.ui.show_log_window {
             return content;
         }
         let overlay = container(self.log_window())
@@ -178,8 +178,9 @@ impl Maolan {
             let segment_len = next_change.saturating_sub(cursor);
 
             if segment_len > 0 {
-                let samples_per_quarter =
-                    (self.playback_rate_hz.max(1.0) * 60.0 / bpm.max(1.0) as f64).max(1.0);
+                let samples_per_quarter = (self.transport.playback_rate_hz.max(1.0) * 60.0
+                    / bpm.max(1.0) as f64)
+                    .max(1.0);
                 let segment_quarters = segment_len as f64 / samples_per_quarter;
                 let quarters_per_bar =
                     (numerator.max(1) as f64 * (4.0 / denominator.max(1) as f64)).max(1.0e-9);
@@ -216,27 +217,27 @@ impl Maolan {
     }
 
     pub fn view(&self) -> maolan_widgets::iced::Element<'_, Message> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         if state.hw_loaded {
-            if state.clip_rename_dialog.is_some() {
+            if self.clip_rename.is_open() {
                 return self.wrap_with_log_window(self.clip_rename.view());
             }
-            if state.track_rename_dialog.is_some() {
+            if self.track_rename.is_open() {
                 return self.wrap_with_log_window(self.track_rename.view());
             }
-            if state.scene_rename_dialog.is_some() {
+            if self.scene_rename.is_open() {
                 return self.wrap_with_log_window(self.scene_rename.view());
             }
-            if state.track_template_save_dialog.is_some() {
+            if self.track_template_save.is_open() {
                 return self.wrap_with_log_window(self.track_template_save.view());
             }
-            if state.template_save_dialog.is_some() {
+            if self.template_save.is_open() {
                 return self.wrap_with_log_window(self.template_save.view());
             }
-            if state.apply_template_dialog.is_some() {
+            if self.apply_template.is_open() {
                 return self.wrap_with_log_window(self.apply_template.view());
             }
-            if state.modulator_target_dialog.is_some() {
+            if self.modulator_target_dialog.is_open() {
                 return self.wrap_with_log_window(self.modulator_target_dialog.view());
             }
             match self.modal {
@@ -266,11 +267,11 @@ impl Maolan {
                 }
                 #[cfg(unix)]
                 Some(Show::TrackPluginList) => {
-                    self.wrap_with_log_window(self.track_plugin_list_view())
+                    self.wrap_with_log_window(self.plugin_scan.track_plugin_list_view(&self.state))
                 }
                 #[cfg(windows)]
                 Some(Show::TrackPluginList) => {
-                    self.wrap_with_log_window(self.track_plugin_list_view())
+                    self.wrap_with_log_window(self.plugin_scan.track_plugin_list_view(&self.state))
                 }
                 Some(Show::GenericPluginView { .. }) => {
                     self.wrap_with_log_window(self.generic_plugin_view())
@@ -283,15 +284,16 @@ impl Maolan {
                         .iter()
                         .filter(|track| track.name != METRONOME_TRACK_ID)
                         .any(|track| !track.audio.clips.is_empty() || !track.midi.clips.is_empty());
-                    let playhead_sample = self.transport_samples.max(0.0) as usize;
-                    let playhead_seconds = playhead_sample as f64 / self.playback_rate_hz.max(1.0);
+                    let playhead_sample = self.transport.transport_samples.max(0.0) as usize;
+                    let playhead_seconds =
+                        playhead_sample as f64 / self.transport.playback_rate_hz.max(1.0);
                     let minutes = (playhead_seconds / 60.0).floor() as u64;
                     let seconds = (playhead_seconds % 60.0).floor() as u64;
                     let millis = (playhead_seconds.fract() * 1000.0) as u64;
                     let playhead_time_label = format!("{minutes:02}:{seconds:02}.{millis:03}");
                     let (playhead_bar, playhead_beat) =
                         self.playhead_bar_beat(&state, playhead_sample);
-                    let show_marker_dialog = state.marker_dialog.is_some();
+                    let show_marker_dialog = self.track_marker.is_open();
                     let shortcuts_hint = state.shortcuts_hint.clone();
                     let status_message = state.message.clone();
                     let plugin_graph_track = state.plugin_graph_track.clone();
@@ -313,7 +315,7 @@ impl Maolan {
                             .unwrap_or_else(|| format!("clip {}", target.clip_idx));
                         format!("Clip: {}", clip_label)
                     });
-                    let clips_pane = if self.clips_pane_visible {
+                    let clips_pane = if self.ui.clips_pane_visible {
                         Some(ClipsPane::view(
                             &state.tracks,
                             &state.session,
@@ -329,54 +331,61 @@ impl Maolan {
                     let view = match view_kind {
                         View::Workspace => self.workspace.view(WorkspaceViewArgs {
                             session_root: self.session_dir.as_ref(),
-                            playhead_samples: Some(self.transport_samples),
-                            transport_active: self.playing,
+                            playhead_samples: Some(self.transport.transport_samples),
+                            transport_active: self.transport.playing,
                             pixels_per_sample: self.pixels_per_sample(),
                             beat_pixels: self.beat_pixels(),
-                            samples_per_bar: self.samples_per_bar() as f32,
-                            loop_range_samples: self.loop_range_samples,
-                            punch_range_samples: self.punch_range_samples,
-                            snap_mode: self.snap_mode,
-                            samples_per_beat: self.samples_per_beat(),
-                            zoom_visible_bars: self.zoom_visible_bars,
-                            editor_scroll_x: self.editor_scroll_x,
-                            mixer_scroll_x: self.mixer_scroll_x,
+                            samples_per_bar: self.transport.samples_per_bar(&self.state) as f32,
+                            loop_range_samples: self.transport.loop_range_samples,
+                            punch_range_samples: self.transport.punch_range_samples,
+                            snap_mode: self.timing.snap_mode,
+                            samples_per_beat: self.transport.samples_per_beat(&self.state),
+                            zoom_visible_bars: self.ui.zoom_visible_bars,
+                            editor_scroll_x: self.ui.editor_scroll_x,
+                            mixer_scroll_x: self.ui.mixer_scroll_x,
                             window_width: self.size.width,
                             window_height: self.size.height,
-                            editor_scroll_y: self.editor_scroll_y,
-                            tracks_filter: &self.tracks_filter,
+                            editor_scroll_y: self.ui.editor_scroll_y,
+                            tracks_filter: &self.ui.tracks_filter,
                             track_drag_active: self.track.is_some(),
-                            session_slot_drag_active: self.dragging_session_slot.is_some(),
-                            tracks_resize_hovered: self.tracks_resize_hovered,
-                            mixer_resize_hovered: self.mixer_resize_hovered,
-                            tracks_visible: self.tracks_visible,
-                            editor_visible: self.editor_visible,
-                            mixer_visible: self.mixer_visible,
-                            active_clip_drag: self.clip.as_ref(),
-                            active_clip_target_track: self.clip_preview_target_track.as_deref(),
-                            active_clip_target_valid: self.clip_preview_target_valid,
-                            active_clip_snap_adjust_samples: self.clip_preview_snap_adjust_samples,
-                            active_clip_snap_targets: &self.clip_snap_targets,
+                            session_slot_drag_active: self.drag.dragging_session_slot.is_some(),
+                            tracks_resize_hovered: self.ui.tracks_resize_hovered,
+                            mixer_resize_hovered: self.ui.mixer_resize_hovered,
+                            tracks_visible: self.ui.tracks_visible,
+                            editor_visible: self.ui.editor_visible,
+                            mixer_visible: self.ui.mixer_visible,
+                            active_clip_drag: self.drag.clip.as_ref(),
+                            active_clip_target_track: self
+                                .drag
+                                .clip_preview_target_track
+                                .as_deref(),
+                            active_clip_target_valid: self.drag.clip_preview_target_valid,
+                            active_clip_snap_adjust_samples: self
+                                .drag
+                                .clip_preview_snap_adjust_samples,
+                            active_clip_snap_targets: &self.drag.clip_snap_targets,
                             recording_preview_bounds: self.recording_preview_bounds(),
-                            recording_preview_peaks: Some(&self.recording_preview_peaks),
-                            midi_clip_previews: Some(&self.midi_clip_previews),
+                            recording_preview_peaks: Some(&self.rec.recording_preview_peaks),
+                            midi_clip_previews: Some(&self.transport.midi_clip_previews),
                             step_recording_active: false,
                             step_recording_cursor_samples: 0,
                             shift_pressed,
                             selected_tempo_points: self
+                                .timing
                                 .selected_tempo_points
                                 .iter()
                                 .copied()
                                 .collect(),
                             selected_time_signature_points: self
+                                .timing
                                 .selected_time_signature_points
                                 .iter()
                                 .copied()
                                 .collect(),
                             mixer_level_edit_track: self.mixer_level_edit_track.as_deref(),
                             mixer_level_edit_input: &self.mixer_level_edit_input,
-                            sample_rate: self.playback_rate_hz,
-                            modulators_pane_visible: self.modulators_pane_visible,
+                            sample_rate: self.transport.playback_rate_hz,
+                            modulators_pane_visible: self.ui.modulators_pane_visible,
                             selected_modulator: self
                                 .selected_modulator_id
                                 .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
@@ -392,8 +401,8 @@ impl Maolan {
                             )
                         }
                         View::AudioEditor => {
-                            let play_disabled =
-                                (self.playing && !self.paused) || self.live_session_playing;
+                            let play_disabled = (self.transport.playing && !self.transport.paused)
+                                || self.transport.live_session_playing;
                             maolan_editor::app::embedded_view_with_play_disabled(
                                 &self.audio_editor,
                                 play_disabled,
@@ -403,7 +412,7 @@ impl Maolan {
                         View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
                         View::Session => {
                             let session_view_connections = {
-                                let state = self.state.blocking_read();
+                                let state = self.state.read().expect("state lock poisoned");
                                 state.session_view_connections.clone()
                             };
                             let session_view: maolan_widgets::iced::Element<'_, Message> =
@@ -455,7 +464,7 @@ impl Maolan {
                                         .height(Length::Fill)
                                         .into()
                                 } else {
-                                    let state = self.state.blocking_read();
+                                    let state = self.state.read().expect("state lock poisoned");
                                     let hw_out_channels = state
                                         .hw_out
                                         .as_ref()
@@ -498,13 +507,13 @@ impl Maolan {
                                 self.mixer_level_edit_track.as_deref(),
                                 &self.mixer_level_edit_input,
                                 self.size.width,
-                                self.mixer_scroll_x,
-                                self.modulators_pane_visible,
+                                self.ui.mixer_scroll_x,
+                                self.ui.modulators_pane_visible,
                                 self.selected_modulator_id
                                     .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
                             );
 
-                            let mixer_resize_hovered = self.mixer_resize_hovered;
+                            let mixer_resize_hovered = self.ui.mixer_resize_hovered;
                             let mixer_resize_handle = mouse_area(
                                 container("")
                                     .width(Length::Fill)
@@ -543,21 +552,21 @@ impl Maolan {
                         }
                         View::Piano => self.workspace.piano_view(WorkspaceViewArgs {
                             session_root: None,
-                            playhead_samples: Some(self.transport_samples),
-                            transport_active: self.playing,
+                            playhead_samples: Some(self.transport.transport_samples),
+                            transport_active: self.transport.playing,
                             pixels_per_sample: self.pixels_per_sample(),
                             beat_pixels: self.beat_pixels(),
-                            samples_per_bar: self.samples_per_bar() as f32,
+                            samples_per_bar: self.transport.samples_per_bar(&self.state) as f32,
                             loop_range_samples: None,
                             punch_range_samples: None,
-                            snap_mode: self.snap_mode,
-                            samples_per_beat: self.samples_per_beat(),
-                            zoom_visible_bars: self.zoom_visible_bars,
-                            editor_scroll_x: self.editor_scroll_x,
+                            snap_mode: self.timing.snap_mode,
+                            samples_per_beat: self.transport.samples_per_beat(&self.state),
+                            zoom_visible_bars: self.ui.zoom_visible_bars,
+                            editor_scroll_x: self.ui.editor_scroll_x,
                             mixer_scroll_x: 0.0,
                             window_width: self.size.width,
                             window_height: self.size.height,
-                            editor_scroll_y: self.editor_scroll_y,
+                            editor_scroll_y: self.ui.editor_scroll_y,
                             tracks_filter: "",
                             track_drag_active: false,
                             session_slot_drag_active: false,
@@ -574,23 +583,27 @@ impl Maolan {
                             recording_preview_bounds: None,
                             recording_preview_peaks: None,
                             midi_clip_previews: None,
-                            step_recording_active: self.step_recording_active,
-                            step_recording_cursor_samples: self.step_recording_cursor_samples,
+                            step_recording_active: self.transport.step_recording_active,
+                            step_recording_cursor_samples: self
+                                .transport
+                                .step_recording_cursor_samples,
                             shift_pressed,
                             selected_tempo_points: self
+                                .timing
                                 .selected_tempo_points
                                 .iter()
                                 .copied()
                                 .collect(),
                             selected_time_signature_points: self
+                                .timing
                                 .selected_time_signature_points
                                 .iter()
                                 .copied()
                                 .collect(),
                             mixer_level_edit_track: None,
                             mixer_level_edit_input: "",
-                            sample_rate: self.playback_rate_hz,
-                            modulators_pane_visible: self.modulators_pane_visible,
+                            sample_rate: self.transport.playback_rate_hz,
+                            modulators_pane_visible: self.ui.modulators_pane_visible,
                             selected_modulator: self
                                 .selected_modulator_id
                                 .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
@@ -598,21 +611,21 @@ impl Maolan {
                         View::PitchCorrection => {
                             self.workspace.pitch_correction_view(WorkspaceViewArgs {
                                 session_root: None,
-                                playhead_samples: Some(self.transport_samples),
-                                transport_active: self.playing,
+                                playhead_samples: Some(self.transport.transport_samples),
+                                transport_active: self.transport.playing,
                                 pixels_per_sample: self.pixels_per_sample(),
                                 beat_pixels: self.beat_pixels(),
-                                samples_per_bar: self.samples_per_bar() as f32,
+                                samples_per_bar: self.transport.samples_per_bar(&self.state) as f32,
                                 loop_range_samples: None,
                                 punch_range_samples: None,
-                                snap_mode: self.snap_mode,
-                                samples_per_beat: self.samples_per_beat(),
-                                zoom_visible_bars: self.zoom_visible_bars,
-                                editor_scroll_x: self.editor_scroll_x,
+                                snap_mode: self.timing.snap_mode,
+                                samples_per_beat: self.transport.samples_per_beat(&self.state),
+                                zoom_visible_bars: self.ui.zoom_visible_bars,
+                                editor_scroll_x: self.ui.editor_scroll_x,
                                 mixer_scroll_x: 0.0,
                                 window_width: self.size.width,
                                 window_height: self.size.height,
-                                editor_scroll_y: self.editor_scroll_y,
+                                editor_scroll_y: self.ui.editor_scroll_y,
                                 tracks_filter: "",
                                 track_drag_active: false,
                                 session_slot_drag_active: false,
@@ -633,19 +646,21 @@ impl Maolan {
                                 step_recording_cursor_samples: 0,
                                 shift_pressed,
                                 selected_tempo_points: self
+                                    .timing
                                     .selected_tempo_points
                                     .iter()
                                     .copied()
                                     .collect(),
                                 selected_time_signature_points: self
+                                    .timing
                                     .selected_time_signature_points
                                     .iter()
                                     .copied()
                                     .collect(),
                                 mixer_level_edit_track: None,
                                 mixer_level_edit_input: "",
-                                sample_rate: self.playback_rate_hz,
-                                modulators_pane_visible: self.modulators_pane_visible,
+                                sample_rate: self.transport.playback_rate_hz,
+                                modulators_pane_visible: self.ui.modulators_pane_visible,
                                 selected_modulator: self
                                     .selected_modulator_id
                                     .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
@@ -654,7 +669,7 @@ impl Maolan {
                     };
 
                     let menu_state = {
-                        let state = self.state.blocking_read();
+                        let state = self.state.read().expect("state lock poisoned");
                         MenuViewState {
                             has_selected_track: !state.selected.is_empty(),
                             selected_tracks: state.selected.clone(),
@@ -663,41 +678,41 @@ impl Maolan {
                                 .is_none()
                                 .then(|| state.plugin_graph_track.clone())
                                 .flatten(),
-                            tracks_visible: self.tracks_visible,
-                            editor_visible: self.editor_visible,
-                            mixer_visible: self.mixer_visible,
-                            toolbar_visible: self.toolbar_visible,
-                            log_visible: self.show_log_window,
-                            shortcuts_pane_visible: self.shortcuts_pane_visible,
-                            modulators_pane_visible: self.modulators_pane_visible,
-                            clips_pane_visible: self.clips_pane_visible,
+                            tracks_visible: self.ui.tracks_visible,
+                            editor_visible: self.ui.editor_visible,
+                            mixer_visible: self.ui.mixer_visible,
+                            toolbar_visible: self.ui.toolbar_visible,
+                            log_visible: self.ui.show_log_window,
+                            shortcuts_pane_visible: self.ui.shortcuts_pane_visible,
+                            modulators_pane_visible: self.ui.modulators_pane_visible,
+                            clips_pane_visible: self.ui.clips_pane_visible,
                             active_view: state.view.clone(),
                         }
                     };
                     let mut content = column![self.menu.view(menu_state),];
-                    if self.toolbar_visible && !matches!(view_kind, View::AudioEditor) {
+                    if self.ui.toolbar_visible && !matches!(view_kind, View::AudioEditor) {
                         content = content.push(self.toolbar.view(ToolbarViewState {
-                            playing: self.playing,
-                            paused: self.paused,
+                            playing: self.transport.playing,
+                            paused: self.transport.paused,
                             live_session_playing: matches!(view_kind, View::Session)
-                                && self.live_session_playing,
-                            recording: self.record_armed,
-                            metronome_enabled: self.metronome_enabled,
+                                && self.transport.live_session_playing,
+                            recording: self.transport.record_armed,
+                            metronome_enabled: self.transport.metronome_enabled,
                             has_session_end,
-                            has_loop_range: self.loop_range_samples.is_some(),
-                            loop_enabled: self.loop_enabled,
-                            has_punch_range: self.punch_range_samples.is_some(),
-                            punch_enabled: self.punch_enabled,
-                            snap_mode: self.snap_mode,
+                            has_loop_range: self.transport.loop_range_samples.is_some(),
+                            loop_enabled: self.transport.loop_enabled,
+                            has_punch_range: self.transport.punch_range_samples.is_some(),
+                            punch_enabled: self.transport.punch_enabled,
+                            snap_mode: self.timing.snap_mode,
                             midi_editor_active: matches!(
                                 view_kind,
                                 View::Piano | View::PitchCorrection
                             ),
-                            midi_snap_mode: self.midi_snap_mode,
-                            step_recording_active: self.step_recording_active,
-                            tempo_input: self.tempo_input.clone(),
-                            tsig_num_input: self.time_signature_num_input.clone(),
-                            tsig_denom_input: self.time_signature_denom_input.clone(),
+                            midi_snap_mode: self.timing.midi_snap_mode,
+                            step_recording_active: self.transport.step_recording_active,
+                            tempo_input: self.timing.tempo_input.clone(),
+                            tsig_num_input: self.timing.time_signature_num_input.clone(),
+                            tsig_denom_input: self.timing.time_signature_denom_input.clone(),
                             playhead_time_label,
                             playhead_bar,
                             playhead_beat,
@@ -744,39 +759,39 @@ impl Maolan {
                             .padding(8),
                         );
                     }
-                    let has_timing_selection = !self.selected_tempo_points.is_empty()
-                        || !self.selected_time_signature_points.is_empty();
+                    let has_timing_selection = !self.timing.selected_tempo_points.is_empty()
+                        || !self.timing.selected_time_signature_points.is_empty();
                     let mut view: maolan_widgets::iced::Element<'_, Message> = if matches!(
                         view_kind,
                         View::Workspace | View::Piano | View::PitchCorrection
                     )
                         && has_timing_selection
                     {
-                        let lane_label = match self.timing_selection_lane {
+                        let lane_label = match self.timing.timing_selection_lane {
                             Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
                             Some(super::TimingSelectionLane::TimeSignature) => {
                                 "Time Signature Points"
                             }
                             None => "Timing Points",
                         };
-                        let selected_count = if !self.selected_tempo_points.is_empty() {
-                            self.selected_tempo_points.len()
+                        let selected_count = if !self.timing.selected_tempo_points.is_empty() {
+                            self.timing.selected_tempo_points.len()
                         } else {
-                            self.selected_time_signature_points.len()
+                            self.timing.selected_time_signature_points.len()
                         };
                         let editor_panel = container(
                             column![
                                 text(lane_label),
                                 text(format!("{selected_count} selected")).size(11),
-                                text_input("BPM", &self.tempo_input)
+                                text_input("BPM", &self.timing.tempo_input)
                                     .on_input(Message::TempoInputChanged)
                                     .on_submit(Message::TempoInputCommit),
                                 row![
-                                    text_input("Num", &self.time_signature_num_input)
+                                    text_input("Num", &self.timing.time_signature_num_input)
                                         .on_input(Message::TimeSignatureNumeratorInputChanged)
                                         .on_submit(Message::TimeSignatureInputCommit)
                                         .width(Length::Fill),
-                                    text_input("Den", &self.time_signature_denom_input)
+                                    text_input("Den", &self.timing.time_signature_denom_input)
                                         .on_input(Message::TimeSignatureDenominatorInputChanged)
                                         .on_submit(Message::TimeSignatureInputCommit)
                                         .width(Length::Fill),
@@ -784,14 +799,14 @@ impl Maolan {
                                 .spacing(6),
                                 row![
                                     button("Duplicate").on_press(
-                                        if !self.selected_tempo_points.is_empty() {
+                                        if !self.timing.selected_tempo_points.is_empty() {
                                             Message::TempoSelectionDuplicate
                                         } else {
                                             Message::TimeSignatureSelectionDuplicate
                                         }
                                     ),
                                     button("Reset").on_press(
-                                        if !self.selected_tempo_points.is_empty() {
+                                        if !self.timing.selected_tempo_points.is_empty() {
                                             Message::TempoSelectionResetToPrevious
                                         } else {
                                             Message::TimeSignatureSelectionResetToPrevious
@@ -801,7 +816,7 @@ impl Maolan {
                                 .spacing(6),
                                 row![
                                     button("Delete").on_press(
-                                        if !self.selected_tempo_points.is_empty() {
+                                        if !self.timing.selected_tempo_points.is_empty() {
                                             Message::TempoSelectionDelete
                                         } else {
                                             Message::TimeSignatureSelectionDelete
@@ -831,11 +846,12 @@ impl Maolan {
                     } else {
                         view
                     };
-                    if self.midi_mappings_panel_open {
-                        let mappings_list = if self.midi_mappings_report_lines.is_empty() {
+                    if self.ui.midi_mappings_panel_open {
+                        let mappings_list = if self.ui.midi_mappings_report_lines.is_empty() {
                             column![text("No MIDI mappings loaded").size(11)]
                         } else {
-                            self.midi_mappings_report_lines
+                            self.ui
+                                .midi_mappings_report_lines
                                 .iter()
                                 .fold(column![].spacing(4), |col, line| {
                                     col.push(text(line.clone()).size(11))
@@ -905,21 +921,21 @@ impl Maolan {
                         .height(Length::Fill)
                         .into();
                     }
-                    if self.shortcuts_pane_visible {
+                    if self.ui.shortcuts_pane_visible {
                         view = row![
                             container(view).width(Length::Fill),
                             crate::shortcuts_pane::ShortcutsPane::view(
                                 view_kind,
                                 shortcuts_hint.as_deref(),
                                 &self.shortcut_overrides,
-                                self.shortcut_capture_action,
+                                self.ui.shortcut_capture_action,
                             )
                         ]
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .into();
                     }
-                    if self.modulators_pane_visible {
+                    if self.ui.modulators_pane_visible {
                         view = row![
                             container(view).width(Length::Fill),
                             crate::modulators_pane::ModulatorsPane::view(
@@ -938,39 +954,44 @@ impl Maolan {
                             .into();
                     }
                     content = content.push(view);
-                    if self.import_in_progress {
-                        let overall_progress = if self.import_total_files > 0 {
-                            (self.import_current_file as f32 - 1.0 + self.import_file_progress)
-                                / self.import_total_files as f32
+                    if self.transfer.import_in_progress {
+                        let overall_progress = if self.transfer.import_total_files > 0 {
+                            (self.transfer.import_current_file as f32 - 1.0
+                                + self.transfer.import_file_progress)
+                                / self.transfer.import_total_files as f32
                         } else {
                             0.0
                         }
                         .clamp(0.0, 1.0);
 
-                        let operation_text = if let Some(ref op) = self.import_current_operation {
-                            format!(" [{}]", op)
-                        } else {
-                            String::new()
-                        };
+                        let operation_text =
+                            if let Some(ref op) = self.transfer.import_current_operation {
+                                format!(" [{}]", op)
+                            } else {
+                                String::new()
+                            };
 
                         content = content.push(
                             container(
                                 column![
                                     text(format!(
                                         "Importing file {}/{}{}{}",
-                                        self.import_current_file,
-                                        self.import_total_files,
+                                        self.transfer.import_current_file,
+                                        self.transfer.import_total_files,
                                         operation_text,
-                                        if self.import_current_filename.is_empty() {
+                                        if self.transfer.import_current_filename.is_empty() {
                                             String::new()
                                         } else {
-                                            format!(": {}", self.import_current_filename)
+                                            format!(": {}", self.transfer.import_current_filename)
                                         }
                                     )),
                                     row![
                                         text("File:"),
-                                        progress_bar(0.0..=1.0, self.import_file_progress),
-                                        text(format!("{:.0}%", self.import_file_progress * 100.0))
+                                        progress_bar(0.0..=1.0, self.transfer.import_file_progress),
+                                        text(format!(
+                                            "{:.0}%",
+                                            self.transfer.import_file_progress * 100.0
+                                        ))
                                     ]
                                     .spacing(8)
                                     .align_y(maolan_widgets::iced::Alignment::Center),
@@ -988,9 +1009,9 @@ impl Maolan {
                             .padding(8),
                         );
                     }
-                    if self.clip_pitch_correction_in_progress {
+                    if self.generate.clip_pitch_correction_in_progress {
                         let operation_text =
-                            if let Some(ref op) = self.clip_pitch_correction_operation {
+                            if let Some(ref op) = self.generate.clip_pitch_correction_operation {
                                 format!(" [{}]", op)
                             } else {
                                 String::new()
@@ -1001,21 +1022,25 @@ impl Maolan {
                                     text(format!(
                                         "Running pitch detection{}{}",
                                         operation_text,
-                                        if self.clip_pitch_correction_clip_name.is_empty() {
+                                        if self.generate.clip_pitch_correction_clip_name.is_empty()
+                                        {
                                             String::new()
                                         } else {
-                                            format!(": {}", self.clip_pitch_correction_clip_name)
+                                            format!(
+                                                ": {}",
+                                                self.generate.clip_pitch_correction_clip_name
+                                            )
                                         }
                                     )),
                                     row![
                                         text("Progress:"),
                                         progress_bar(
                                             0.0..=1.0,
-                                            self.clip_pitch_correction_progress
+                                            self.generate.clip_pitch_correction_progress
                                         ),
                                         text(format!(
                                             "{:.0}%",
-                                            self.clip_pitch_correction_progress * 100.0
+                                            self.generate.clip_pitch_correction_progress * 100.0
                                         ))
                                     ]
                                     .spacing(8)

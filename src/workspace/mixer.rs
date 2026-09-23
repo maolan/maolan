@@ -2,9 +2,8 @@ use crate::{
     consts::{state_ids::METRONOME_TRACK_ID, workspace_mixer::*},
     message::{Message, TrackAutomationTarget},
     state::{Modulator, State, Track},
-    style,
+    style, view_api,
 };
-use maolan_engine::message::{Action, TrackMidiLearnTarget};
 use maolan_widgets::iced::{
     Alignment, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme, mouse,
     widget::{
@@ -267,16 +266,13 @@ impl Mixer {
         });
         let slider = mouse_area(
             horizontal_slider(-1.0..=1.0, value, move |value| {
-                Message::Request(Action::TrackBalance(on_change_track.clone(), value))
+                view_api::track_balance(on_change_track.clone(), value)
             })
             .width(Length::Fixed(PAN_SLIDER_WIDTH))
             .height(Length::Fixed(PAN_ROW_HEIGHT))
             .double_click_reset(0.0),
         )
-        .on_right_press(Message::TrackMidiLearnArm {
-            track_name: learn_track,
-            target: TrackMidiLearnTarget::Balance,
-        });
+        .on_right_press(view_api::track_midi_learn_balance(learn_track));
         let control: Element<'static, Message> = if assignable {
             Stack::new()
                 .push(slider)
@@ -420,10 +416,7 @@ impl Mixer {
                         let slider = mouse_area(
                             container(
                                 slider(FADER_MIN_DB..=FADER_MAX_DB, value, move |value| {
-                                    Message::Request(Action::TrackLevel(
-                                        on_change_track.clone(),
-                                        value,
-                                    ))
+                                    view_api::track_level(on_change_track.clone(), value)
                                 })
                                 .width(Length::Fixed(FADER_WIDTH))
                                 .height(Length::Fixed(fader_height))
@@ -431,10 +424,7 @@ impl Mixer {
                             )
                             .padding([7.0, 8.0]),
                         )
-                        .on_right_press(Message::TrackMidiLearnArm {
-                            track_name: learn_track,
-                            target: TrackMidiLearnTarget::Volume,
-                        });
+                        .on_right_press(view_api::track_midi_learn_volume(learn_track));
                         let control = if assignable {
                             Stack::new()
                                 .push(slider)
@@ -751,14 +741,9 @@ impl Mixer {
                 .height(Length::Fixed(22.0))
                 .padding(0)
                 .style(move |theme, _state| style::mute::style(theme, muted))
-                .on_press(Message::Request(Action::TrackToggleMute(
-                    track_name.clone(),
-                ))),
+                .on_press(view_api::track_toggle_mute(track_name.clone())),
             )
-            .on_right_press(Message::TrackMidiLearnArm {
-                track_name: mute_track,
-                target: TrackMidiLearnTarget::Mute,
-            }),
+            .on_right_press(view_api::track_midi_learn_mute(mute_track)),
         );
         let track_name = track.name.clone();
         let solo_track = track_name.clone();
@@ -775,14 +760,9 @@ impl Mixer {
                 .height(Length::Fixed(22.0))
                 .padding(0)
                 .style(move |theme, _state| style::solo::style(theme, soloed, solo_upstream))
-                .on_press(Message::Request(Action::TrackToggleSolo(
-                    track_name.clone(),
-                ))),
+                .on_press(view_api::track_toggle_solo(track_name.clone())),
             )
-            .on_right_press(Message::TrackMidiLearnArm {
-                track_name: solo_track,
-                target: TrackMidiLearnTarget::Solo,
-            }),
+            .on_right_press(view_api::track_midi_learn_solo(solo_track)),
         );
         if !track.is_folder {
             let track_name = track.name.clone();
@@ -800,12 +780,9 @@ impl Mixer {
                     .height(Length::Fixed(22.0))
                     .padding(0)
                     .style(move |theme, _state| style::arm::style(theme, armed))
-                    .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
+                    .on_press(view_api::track_toggle_arm(track_name.clone())),
                 )
-                .on_right_press(Message::TrackMidiLearnArm {
-                    track_name: arm_track,
-                    target: TrackMidiLearnTarget::Arm,
-                }),
+                .on_right_press(view_api::track_midi_learn_arm(arm_track)),
             );
         }
         Some(controls.into())
@@ -913,7 +890,7 @@ impl Mixer {
         selected_modulator: Option<&'a crate::state::Modulator>,
     ) -> Element<'a, Message> {
         let mut strips = row![].spacing(2).align_y(Alignment::Start);
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let height = state.mixer_height;
         let hw_out_channels = state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0);
         let hw_out_level = state.hw_out_level;
@@ -989,7 +966,7 @@ impl Mixer {
                     continue;
                 }
                 for conn in &state.connections {
-                    if conn.kind == maolan_engine::kind::Kind::Audio
+                    if conn.kind == crate::state::Kind::Audio
                         && conn.to_track == target_name
                         && !soloed_track_names.contains(&conn.from_track)
                     {

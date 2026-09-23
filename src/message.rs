@@ -1295,6 +1295,23 @@ pub enum Message {
         track_idx: String,
         clip_idx: usize,
     },
+    TrackToggleDiskMonitor {
+        track_name: String,
+    },
+    TrackToggleInputMonitor {
+        track_name: String,
+    },
+    TrackToggleMidiDiskMonitor {
+        track_name: String,
+    },
+    TrackToggleMidiInputMonitor {
+        track_name: String,
+    },
+    AudioEditorBufferLoaded {
+        track_idx: String,
+        clip_idx: usize,
+        result: Result<maolan_editor::app::AudioBuffer, String>,
+    },
     OpenClipPlugins {
         track_idx: String,
         clip_idx: usize,

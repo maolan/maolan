@@ -456,7 +456,7 @@ impl Program<Message> for ControllerRollInteraction {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<CanvasAction<Message>> {
-        let app_state = self.state.blocking_read();
+        let app_state = self.state.read().expect("state lock poisoned");
         let roll = app_state.piano.as_ref()?;
         let lane = app_state.piano_controller_lane;
         let selected_row = match lane {
@@ -1038,7 +1038,11 @@ impl Program<Message> for ControllerRollInteraction {
                         .with_color(Color::from_rgba(0.98, 0.94, 0.2, 0.95)),
                 );
 
-                let lane = self.state.blocking_read().piano_controller_lane;
+                let lane = self
+                    .state
+                    .read()
+                    .expect("state lock poisoned")
+                    .piano_controller_lane;
                 let value_from_y = |y: f32| -> u16 {
                     if bounds.height <= f32::EPSILON {
                         return if matches!(
@@ -1088,7 +1092,7 @@ impl Program<Message> for ControllerRollInteraction {
                 start_value,
                 current_y,
             } => {
-                let app_state = self.state.blocking_read();
+                let app_state = self.state.read().expect("state lock poisoned");
                 let Some(roll) = app_state.piano.as_ref() else {
                     return vec![];
                 };
@@ -1181,7 +1185,7 @@ mod tests {
     use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use std::sync::RwLock;
 
     fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
@@ -1192,7 +1196,7 @@ mod tests {
     fn update_double_clicking_sysex_opens_editor() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.piano_controller_lane = PianoControllerLane::SysEx;
             data.piano_zoom_x = 1.0;
             data.piano = Some(crate::state::PianoData {

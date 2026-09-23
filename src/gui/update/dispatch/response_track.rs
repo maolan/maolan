@@ -4,7 +4,7 @@ impl Maolan {
     pub(super) fn handle_response_track_action(&mut self, action: &Action) -> bool {
         match action {
             Action::TrackLevel(name, level) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if name == "hw:out" {
                     state.hw_out_level = *level;
                 } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
@@ -13,7 +13,7 @@ impl Maolan {
                 true
             }
             Action::TrackBalance(name, balance) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if name == "hw:out" {
                     state.hw_out_balance = *balance;
                 } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
@@ -23,7 +23,7 @@ impl Maolan {
             }
             Action::TrackAutomationLevel(name, level) => {
                 tracing::debug!(%name, level, "DAW received TrackAutomationLevel");
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if name == "hw:out" {
                     state.hw_out_level = *level;
                 } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
@@ -33,7 +33,7 @@ impl Maolan {
             }
             Action::TrackAutomationBalance(name, balance) => {
                 tracing::debug!(%name, balance, "DAW received TrackAutomationBalance");
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if name == "hw:out" {
                     state.hw_out_balance = *balance;
                 } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
@@ -49,7 +49,7 @@ impl Maolan {
             } => {
                 let normalized = (*value).clamp(0.0, 1.0);
                 let (min, max) = {
-                    let state = self.state.blocking_read();
+                    let state = self.state.read().expect("state lock poisoned");
                     state
                         .plugin_parameters_by_track
                         .get(track_name)
@@ -94,7 +94,7 @@ impl Maolan {
                 true
             }
             Action::TrackToggleMute(name) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if name == "hw:out" {
                     state.hw_out_muted = !state.hw_out_muted;
                 } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
@@ -105,7 +105,8 @@ impl Maolan {
             Action::TrackTogglePhase(name) => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *name && !t.is_folder)
@@ -117,7 +118,8 @@ impl Maolan {
             Action::TrackToggleSolo(name) => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *name)
@@ -129,7 +131,8 @@ impl Maolan {
             Action::TrackToggleMaster(name) => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *name)
@@ -148,7 +151,8 @@ impl Maolan {
             Action::TrackToggleArm(name) => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *name)
@@ -161,7 +165,8 @@ impl Maolan {
             Action::TrackToggleInputMonitor { track_name, lane } => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *track_name)
@@ -174,7 +179,8 @@ impl Maolan {
             Action::TrackToggleDiskMonitor { track_name, lane } => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *track_name)
@@ -187,7 +193,8 @@ impl Maolan {
             Action::TrackToggleMidiInputMonitor { track_name, lane } => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *track_name)
@@ -200,7 +207,8 @@ impl Maolan {
             Action::TrackToggleMidiDiskMonitor { track_name, lane } => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *track_name)
@@ -213,7 +221,8 @@ impl Maolan {
             Action::TrackSetColor { track_name, color } => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *track_name)
@@ -230,7 +239,8 @@ impl Maolan {
             } => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *track_name)
@@ -245,7 +255,7 @@ impl Maolan {
                 true
             }
             Action::TrackAddAudioInput(name) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
                     track.audio.ins = track.audio.ins.saturating_add(1);
                     track.height = track.height.max(track.min_height_for_layout());
@@ -253,7 +263,7 @@ impl Maolan {
                 true
             }
             Action::TrackAddAudioOutput(name) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
                     track.audio.outs = track.audio.outs.saturating_add(1);
                     if track.meter_out_db.len() < track.audio.outs {
@@ -263,7 +273,7 @@ impl Maolan {
                 true
             }
             Action::TrackRemoveAudioInput(name) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let removed_port =
                     state
                         .tracks
@@ -287,7 +297,7 @@ impl Maolan {
                 true
             }
             Action::TrackRemoveAudioOutput(name) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let removed_port =
                     state
                         .tracks
@@ -311,7 +321,7 @@ impl Maolan {
                 true
             }
             Action::TrackArmMidiLearn { track_name, target } => {
-                self.state.blocking_write().message = format!(
+                self.state.write().expect("state lock poisoned").message = format!(
                     "MIDI learn armed for '{}' ({:?}). Move a hardware MIDI CC control.",
                     track_name, target
                 );
@@ -324,7 +334,8 @@ impl Maolan {
             } => {
                 if let Some(track) = self
                     .state
-                    .blocking_write()
+                    .write()
+                    .expect("state lock poisoned")
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == *track_name)
@@ -364,15 +375,16 @@ impl Maolan {
                 } else {
                     format!("MIDI learn cleared for '{}' {:?}", track_name, target)
                 };
-                self.state.blocking_write().message = message;
-                if self.midi_mappings_panel_open {
-                    self.rebuild_midi_mappings_report_lines_from_state();
+                self.state.write().expect("state lock poisoned").message = message;
+                if self.ui.midi_mappings_panel_open {
+                    self.ui
+                        .rebuild_midi_mappings_report_lines_from_state(&self.state);
                 }
                 true
             }
             Action::SetGlobalMidiLearnBinding { target, binding } => {
                 {
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     match target {
                         maolan_engine::message::GlobalMidiLearnTarget::PlayPause => {
                             state.global_midi_learn_play_pause = binding.clone();
@@ -385,24 +397,26 @@ impl Maolan {
                         }
                     }
                 }
-                self.state.blocking_write().message = if let Some(binding) = binding {
-                    format!(
-                        "Global MIDI learn mapped {:?} to CH{} CC{}",
-                        target,
-                        binding.channel + 1,
-                        binding.cc
-                    )
-                } else {
-                    format!("Global MIDI learn cleared for {:?}", target)
-                };
-                if self.midi_mappings_panel_open {
-                    self.rebuild_midi_mappings_report_lines_from_state();
+                self.state.write().expect("state lock poisoned").message =
+                    if let Some(binding) = binding {
+                        format!(
+                            "Global MIDI learn mapped {:?} to CH{} CC{}",
+                            target,
+                            binding.channel + 1,
+                            binding.cc
+                        )
+                    } else {
+                        format!("Global MIDI learn cleared for {:?}", target)
+                    };
+                if self.ui.midi_mappings_panel_open {
+                    self.ui
+                        .rebuild_midi_mappings_report_lines_from_state(&self.state);
                 }
                 true
             }
             Action::SetSessionMidiLearnBinding { target, binding } => {
                 {
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     match target {
                         maolan_engine::message::SessionMidiLearnTarget::Slot {
                             track_name,
@@ -441,23 +455,25 @@ impl Maolan {
                         }
                     }
                 }
-                self.state.blocking_write().message = if let Some(binding) = binding {
-                    format!(
-                        "Session MIDI learn mapped {:?} to CH{} CC{}",
-                        target,
-                        binding.channel + 1,
-                        binding.cc
-                    )
-                } else {
-                    format!("Session MIDI learn cleared for {:?}", target)
-                };
-                if self.midi_mappings_panel_open {
-                    self.rebuild_midi_mappings_report_lines_from_state();
+                self.state.write().expect("state lock poisoned").message =
+                    if let Some(binding) = binding {
+                        format!(
+                            "Session MIDI learn mapped {:?} to CH{} CC{}",
+                            target,
+                            binding.channel + 1,
+                            binding.cc
+                        )
+                    } else {
+                        format!("Session MIDI learn cleared for {:?}", target)
+                    };
+                if self.ui.midi_mappings_panel_open {
+                    self.ui
+                        .rebuild_midi_mappings_report_lines_from_state(&self.state);
                 }
                 true
             }
             Action::TrackSetFrozen { track_name, frozen } => {
-                self.state.blocking_write().message = if *frozen {
+                self.state.write().expect("state lock poisoned").message = if *frozen {
                     format!("Track '{track_name}' frozen")
                 } else {
                     format!("Track '{track_name}' unfrozen")
@@ -469,7 +485,7 @@ impl Maolan {
                 clip_index,
                 plugin_graph_json,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                     && let Some(clip) = track.audio.clips.get_mut(*clip_index)
                 {
@@ -482,7 +498,7 @@ impl Maolan {
                 lanes,
                 mode,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     let previous_lane_height = track
                         .lane_layout()
@@ -505,7 +521,7 @@ impl Maolan {
                 bypassed,
                 ..
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if state.plugin_graph_track.as_deref() == Some(track_name)
                     && let Some(plugin) = state
                         .plugin_graph_plugins

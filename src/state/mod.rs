@@ -19,15 +19,16 @@ use crate::message::{
 
 pub use clip::{AudioClip, ClipPeaks, MIDIClip, generate_clip_id};
 pub use connection::Connection;
+pub use maolan_engine::kind::Kind;
 #[cfg(unix)]
 use maolan_engine::lv2::Lv2PluginInfo;
+pub use maolan_engine::message::MidiLearnBinding;
 use maolan_engine::message::{
     ConnectableConnection, PluginGraphConnection, PluginGraphNode, PluginGraphPlugin,
     PluginGraphSnapshot,
 };
 use maolan_engine::{
     clap::{ClapPluginInfo, ClapPluginState},
-    kind::Kind,
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
 use maolan_widgets::iced::{Length, Point};
@@ -121,13 +122,13 @@ pub use session::{
     LaunchMode, LaunchQuantization, Scene, SelectedSlots, SessionMatrix, SlotClipRef,
     SlotPlayState, SlotRuntimes,
 };
+use std::sync::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::RwLock;
 pub use track::{EditorMarker, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
 
 pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
@@ -1588,14 +1589,6 @@ pub struct StateData {
     pub connections_last_track_click: Option<(String, Instant)>,
     pub last_selected_track: Option<String>,
     pub selected_modulator_id: Option<usize>,
-    pub clip_rename_dialog: Option<ClipRenameDialog>,
-    pub track_rename_dialog: Option<TrackRenameDialog>,
-    pub scene_rename_dialog: Option<SceneRenameDialog>,
-    pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
-    pub marker_dialog: Option<MarkerDialog>,
-    pub modulator_target_dialog: Option<ModulatorTargetDialog>,
-    pub template_save_dialog: Option<TemplateSaveDialog>,
-    pub apply_template_dialog: Option<ApplyTemplateDialog>,
     pub pending_track_template_loads: Vec<(String, String)>,
     pub pending_folder_template_loads: Vec<PendingFolderTemplateLoad>,
     pub piano: Option<PianoData>,
@@ -1832,14 +1825,6 @@ impl Default for StateData {
             connections_last_track_click: None,
             last_selected_track: None,
             selected_modulator_id: None,
-            clip_rename_dialog: None,
-            track_rename_dialog: None,
-            scene_rename_dialog: None,
-            track_template_save_dialog: None,
-            marker_dialog: None,
-            modulator_target_dialog: None,
-            template_save_dialog: None,
-            apply_template_dialog: None,
             pending_track_template_loads: Vec::new(),
             pending_folder_template_loads: Vec::new(),
             piano: None,
