@@ -100,12 +100,13 @@ impl Maolan {
     }
 
     pub(super) fn prepare_pending_autosave_recovery(&mut self) -> Result<(), String> {
-        if let Some(pending) = self.pending_autosave_recovery.as_mut() {
+        if let Some(pending) = self.session_ops.pending_autosave_recovery.as_mut() {
             pending.confirm_armed = false;
             return Ok(());
         }
 
         let base_session_dir = self
+            .session_ops
             .pending_recovery_session_dir
             .clone()
             .or_else(|| self.session_dir.clone())
@@ -115,7 +116,7 @@ impl Maolan {
         if snapshots.is_empty() {
             return Err("No autosave snapshot found for this session".to_string());
         }
-        self.pending_autosave_recovery = Some(super::super::PendingAutosaveRecovery {
+        self.session_ops.pending_autosave_recovery = Some(super::super::PendingAutosaveRecovery {
             session_dir: base_session_dir,
             snapshots,
             selected_index: 0,
@@ -125,25 +126,26 @@ impl Maolan {
     }
 
     pub(super) fn apply_pending_autosave_recovery(&mut self) -> Task<Message> {
-        let Some(pending) = self.pending_autosave_recovery.clone() else {
-            self.state.blocking_write().message = "No autosave recovery pending".to_string();
+        let Some(pending) = self.session_ops.pending_autosave_recovery.clone() else {
+            self.state.write().expect("state lock poisoned").message =
+                "No autosave recovery pending".to_string();
             return Task::none();
         };
         if let Some(snapshot) = pending.snapshots.get(pending.selected_index) {
             self.session_dir = Some(pending.session_dir.clone());
-            self.stop_recording_preview();
-            self.pending_recovery_session_dir = None;
-            self.pending_autosave_recovery = None;
-            self.pending_open_session_dir = None;
-            self.has_unsaved_changes = true;
-            self.state.blocking_write().message =
+            self.rec.stop_recording_preview();
+            self.session_ops.pending_recovery_session_dir = None;
+            self.session_ops.pending_autosave_recovery = None;
+            self.session_ops.pending_open_session_dir = None;
+            self.session_ops.has_unsaved_changes = true;
+            self.state.write().expect("state lock poisoned").message =
                 format!("Recovering autosave snapshot '{}'...", snapshot.display());
             let snapshot = snapshot.clone();
             return Task::perform(async move { snapshot }, Message::LoadSessionPath);
         }
-        self.pending_autosave_recovery = None;
-        self.pending_open_session_dir = None;
-        self.state.blocking_write().message =
+        self.session_ops.pending_autosave_recovery = None;
+        self.session_ops.pending_open_session_dir = None;
+        self.state.write().expect("state lock poisoned").message =
             "Autosave recovery failed: no snapshot available".to_string();
         Task::none()
     }

@@ -23,7 +23,7 @@ fn visible_mixer_track_names(
     app: &Maolan,
     state: &StateData,
 ) -> Option<std::collections::HashSet<String>> {
-    if !app.mixer_visible {
+    if !app.ui.mixer_visible {
         return None;
     }
 
@@ -68,7 +68,8 @@ fn visible_mixer_track_names(
     }
 
     let max_scroll = (content_width - viewport_width).max(0.0);
-    let left_edge = (app.mixer_scroll_x.clamp(0.0, 1.0) * max_scroll - MIXER_OVERSCAN_PX).max(0.0);
+    let left_edge =
+        (app.ui.mixer_scroll_x.clamp(0.0, 1.0) * max_scroll - MIXER_OVERSCAN_PX).max(0.0);
     let right_edge = (left_edge + viewport_width + (MIXER_OVERSCAN_PX * 2.0)).min(content_width);
     let mut current_x = MIXER_ROW_PADDING_X;
     let mut visible = std::collections::HashSet::new();
@@ -95,27 +96,27 @@ impl Maolan {
                 output_path,
                 ..
             } => {
-                if self.export_in_progress
-                    && self.export_pending_bounces.remove(track_name)
-                    && self.export_pending_bounces.is_empty()
+                if self.transfer.export_in_progress
+                    && self.transfer.export_pending_bounces.remove(track_name)
+                    && self.transfer.export_pending_bounces.is_empty()
                 {
-                    if let Some(notify) = self.export_bounce_notify.take() {
+                    if let Some(notify) = self.transfer.export_bounce_notify.take() {
                         notify.notify_one();
                     }
                     return Some(Task::none());
                 }
-                self.freeze_in_progress = false;
-                self.freeze_track_name = None;
-                if let Some(pending) = self.pending_track_freeze_bounce.remove(track_name) {
-                    if self.freeze_cancel_requested {
-                        self.freeze_cancel_requested = false;
+                self.pending.freeze_in_progress = false;
+                self.pending.freeze_track_name = None;
+                if let Some(pending) = self.pending.pending_track_freeze_bounce.remove(track_name) {
+                    if self.pending.freeze_cancel_requested {
+                        self.pending.freeze_cancel_requested = false;
                         if let Err(_err) = std::fs::remove_file(output_path) {}
-                        self.state.blocking_write().message =
+                        self.state.write().expect("state lock poisoned").message =
                             format!("Freeze canceled for '{}'", track_name);
                         return Some(Task::none());
                     }
                     {
-                        let mut state = self.state.blocking_write();
+                        let mut state = self.state.write().expect("state lock poisoned");
                         if let Some(track_mut) =
                             state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
@@ -182,33 +183,36 @@ impl Maolan {
                 progress,
                 operation,
             } => {
-                if self.export_in_progress && self.export_pending_bounces.contains(track_name) {
-                    self.export_progress = 0.05 + progress * 0.15;
-                    self.export_operation = operation
+                if self.transfer.export_in_progress
+                    && self.transfer.export_pending_bounces.contains(track_name)
+                {
+                    self.transfer.export_progress = 0.05 + progress * 0.15;
+                    self.transfer.export_operation = operation
                         .clone()
                         .or_else(|| Some("Bouncing tracks...".to_string()));
                     return Some(Task::none());
                 }
-                self.freeze_in_progress = true;
-                self.freeze_track_name = Some(track_name.clone());
-                self.freeze_progress = *progress;
+                self.pending.freeze_in_progress = true;
+                self.pending.freeze_track_name = Some(track_name.clone());
+                self.pending.freeze_progress = *progress;
                 let percent = (progress * 100.0).round().clamp(0.0, 100.0) as u32;
-                self.state.blocking_write().message = if self.freeze_cancel_requested {
-                    format!("Canceling freeze ({percent}%)...")
-                } else if let Some(op) = operation {
-                    format!("{} ({percent}%)", op)
-                } else {
-                    format!("Rendering freeze ({percent}%)")
-                };
+                self.state.write().expect("state lock poisoned").message =
+                    if self.pending.freeze_cancel_requested {
+                        format!("Canceling freeze ({percent}%)...")
+                    } else if let Some(op) = operation {
+                        format!("{} ({percent}%)", op)
+                    } else {
+                        format!("Rendering freeze ({percent}%)")
+                    };
                 Some(Task::none())
             }
             Action::TrackOfflineBounceCanceled { track_name } => {
-                self.freeze_in_progress = false;
-                self.freeze_track_name = None;
-                self.freeze_progress = 0.0;
-                self.freeze_cancel_requested = false;
-                self.pending_track_freeze_bounce.remove(track_name);
-                self.state.blocking_write().message =
+                self.pending.freeze_in_progress = false;
+                self.pending.freeze_track_name = None;
+                self.pending.freeze_progress = 0.0;
+                self.pending.freeze_cancel_requested = false;
+                self.pending.pending_track_freeze_bounce.remove(track_name);
+                self.state.write().expect("state lock poisoned").message =
                     format!("Freeze canceled for '{}'", track_name);
                 Some(Task::none())
             }
@@ -217,11 +221,11 @@ impl Maolan {
                 output_db,
             } => {
                 if track_name == "hw:out" {
-                    let mut state = self.state.blocking_write();
+                    let mut state = self.state.write().expect("state lock poisoned");
                     Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, output_db);
                     return Some(Task::none());
                 }
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
                 }
@@ -232,7 +236,7 @@ impl Maolan {
                 track_meters,
                 ..
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let visible_tracks = visible_mixer_track_names(self, &state);
                 if hw_out_db.is_empty() && !state.hw_out_meter_db.is_empty() {
                     let silence = vec![-90.0; state.hw_out_meter_db.len()];

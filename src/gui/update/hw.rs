@@ -3,19 +3,19 @@ use super::*;
 impl Maolan {
     #[cfg(unix)]
     pub(super) fn apply_hw_selected(&self, hw: &AudioDeviceOption) {
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         let selected = Self::selected_output_device_for_platform(&mut state, hw);
         state.selected_hw = Some(selected);
     }
 
     #[cfg(not(unix))]
     pub(super) fn apply_hw_selected(&self, hw: &String) {
-        self.state.blocking_write().selected_hw = Some(hw.to_string());
+        self.state.write().expect("state lock poisoned").selected_hw = Some(hw.to_string());
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "macos"))]
     pub(super) fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         let selected = Self::select_refreshed_device(
             &mut state.available_input_hw,
             hw,
@@ -27,7 +27,7 @@ impl Maolan {
 
     #[cfg(target_os = "linux")]
     pub(super) fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         let selected = Self::select_refreshed_device(
             &mut state.available_input_hw,
             hw,
@@ -39,11 +39,14 @@ impl Maolan {
 
     #[cfg(target_os = "windows")]
     pub(super) fn apply_hw_input_selected(&self, hw: &String) {
-        self.state.blocking_write().selected_input_hw = Some(hw.to_string());
+        self.state
+            .write()
+            .expect("state lock poisoned")
+            .selected_input_hw = Some(hw.to_string());
     }
 
     pub(super) fn apply_hw_backend_selected(&self, backend: &crate::state::AudioBackendOption) {
-        let mut state = self.state.blocking_write();
+        let mut state = self.state.write().expect("state lock poisoned");
         state.selected_backend = backend.clone();
         state.selected_hw = None;
         #[cfg(any(
@@ -238,7 +241,7 @@ mod tests {
 
         app.apply_hw_backend_selected(&backend);
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(matches!(
             state.selected_backend,
             crate::state::AudioBackendOption::Alsa
@@ -254,7 +257,7 @@ mod tests {
 
         app.apply_hw_backend_selected(&backend);
 
-        let state = app.state.blocking_read();
+        let state = app.state.read().expect("state lock poisoned");
         assert!(matches!(
             state.selected_backend,
             crate::state::AudioBackendOption::Jack

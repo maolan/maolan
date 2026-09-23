@@ -24,24 +24,40 @@ pub(crate) fn clean_clip_name(name: &str) -> String {
 #[derive(Debug)]
 pub struct ClipRenameView {
     state: State,
+    pub dialog: Option<crate::state::ClipRenameDialog>,
 }
 
 impl ClipRenameView {
     pub fn new(state: State) -> Self {
-        Self { state }
+        Self {
+            state,
+            dialog: None,
+        }
+    }
+
+    pub fn open(&mut self, dialog: crate::state::ClipRenameDialog) {
+        self.dialog = Some(dialog);
+    }
+
+    pub fn close(&mut self) {
+        self.dialog = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.dialog.is_some()
     }
 
     pub fn update(&mut self, message: &Message) {
         if let Message::ClipRenameInput(input) = message
-            && let Some(dialog) = &mut self.state.blocking_write().clip_rename_dialog
+            && let Some(dialog) = &mut self.dialog
         {
             dialog.new_name = input.clone();
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let state = self.state.blocking_read();
-        let Some(dialog) = &state.clip_rename_dialog else {
+        let state = self.state.read().expect("state lock poisoned");
+        let Some(dialog) = &self.dialog else {
             return container("").into();
         };
 
@@ -106,40 +122,34 @@ impl ClipRenameView {
 mod tests {
     use super::*;
     use maolan_engine::kind::Kind;
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
 
     #[test]
     fn update_sets_clip_rename_input_when_dialog_is_open() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().clip_rename_dialog = Some(crate::state::ClipRenameDialog {
+        let state = crate::state::State::default();
+        let mut view = ClipRenameView::new(state);
+        view.open(crate::state::ClipRenameDialog {
             track_idx: "Track".to_string(),
             clip_idx: 0,
             kind: Kind::Audio,
             new_name: "Old".to_string(),
         });
-        let mut view = ClipRenameView::new(state.clone());
 
         view.update(&Message::ClipRenameInput("New".to_string()));
 
         assert_eq!(
-            state
-                .blocking_read()
-                .clip_rename_dialog
-                .as_ref()
-                .map(|dialog| dialog.new_name.as_str()),
+            view.dialog.as_ref().map(|dialog| dialog.new_name.as_str()),
             Some("New")
         );
     }
 
     #[test]
     fn update_ignores_clip_rename_input_when_dialog_is_closed() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        let mut view = ClipRenameView::new(state.clone());
+        let state = crate::state::State::default();
+        let mut view = ClipRenameView::new(state);
 
         view.update(&Message::ClipRenameInput("New".to_string()));
 
-        assert!(state.blocking_read().clip_rename_dialog.is_none());
+        assert!(view.dialog.is_none());
     }
 
     #[test]
@@ -151,7 +161,7 @@ mod tests {
 
     #[test]
     fn view_returns_empty_when_no_dialog() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let state = crate::state::State::default();
         let view = ClipRenameView::new(state);
         let element = view.view();
         let _ = &element;

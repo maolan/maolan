@@ -127,7 +127,7 @@ impl MIDIEdit {
         playhead_x: Option<f32>,
         step_cursor_x: Option<f32>,
     ) -> Element<'_, Message> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let zoom_x = state.piano_zoom_x;
         let zoom_y = state.piano_zoom_y;
         let humanize_time_amount = state.piano_humanize_time_amount.clamp(0.0, 1.0);
@@ -1174,7 +1174,7 @@ impl MIDIEdit {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use std::sync::RwLock;
 
     #[test]
     fn midi_edit_new_creates_instance() {

@@ -1,12 +1,12 @@
 pub mod rename;
 
+use crate::state::MidiLearnBinding;
 use crate::{
     menu,
     message::Message,
     state::{SessionMatrix, SlotPlayState, SlotRuntimes, Track},
     style,
 };
-use maolan_engine::message::MidiLearnBinding;
 use maolan_widgets::iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Program};
 use maolan_widgets::iced::{
     Alignment, Background, Border, Color, Length, Point, Radians, Rectangle, Renderer, Theme,

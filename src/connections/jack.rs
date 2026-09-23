@@ -456,7 +456,7 @@ impl canvas::Program<Message> for Graph {
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
         let cursor_position = cursor.position_in(bounds)?;
-        let data = self.state.blocking_read();
+        let data = self.state.read().expect("state lock poisoned");
         let (ports, nodes) = Self::layout(&data.jack_graph, bounds, &data.jack_node_positions);
 
         match event {
@@ -581,7 +581,7 @@ impl canvas::Program<Message> for Graph {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(moving) = &state.moving_node {
                     drop(data);
-                    let mut data = self.state.blocking_write();
+                    let mut data = self.state.write().expect("state lock poisoned");
                     let graph_rect = nodes
                         .iter()
                         .find(|node| node.id == moving.id)
@@ -628,7 +628,7 @@ impl canvas::Program<Message> for Graph {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let data = self.state.blocking_read();
+        let data = self.state.read().expect("state lock poisoned");
         let mut frame = Frame::new(renderer, bounds.size());
         let (ports, nodes) = Self::layout(&data.jack_graph, bounds, &data.jack_node_positions);
 
@@ -752,7 +752,7 @@ mod tests {
     use maolan_widgets::iced::widget::canvas::Program;
     use maolan_widgets::iced::{Size, event};
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use std::sync::RwLock;
 
     fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
@@ -764,7 +764,7 @@ mod tests {
         bounds: Rectangle,
         name: &str,
     ) -> Point {
-        let data = state.blocking_read();
+        let data = state.read().expect("state lock poisoned");
         Graph::layout(&data.jack_graph, bounds, &data.jack_node_positions)
             .0
             .get(name)
@@ -777,7 +777,7 @@ mod tests {
         bounds: Rectangle,
         id: &str,
     ) -> Rectangle {
-        let data = state.blocking_read();
+        let data = state.read().expect("state lock poisoned");
         Graph::layout(&data.jack_graph, bounds, &data.jack_node_positions)
             .1
             .iter()
@@ -789,7 +789,7 @@ mod tests {
     #[test]
     fn dragging_output_to_matching_input_requests_jack_connect() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().jack_graph = JackGraphInfo {
+        state.write().expect("state lock poisoned").jack_graph = JackGraphInfo {
             ports: vec![
                 JackPortInfo {
                     name: "system:capture_1".to_string(),
@@ -857,7 +857,7 @@ mod tests {
     #[test]
     fn dragging_input_to_matching_output_requests_normalized_jack_connect() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().jack_graph = JackGraphInfo {
+        state.write().expect("state lock poisoned").jack_graph = JackGraphInfo {
             ports: vec![
                 JackPortInfo {
                     name: "system:capture_1".to_string(),
@@ -915,7 +915,7 @@ mod tests {
     fn shift_dragging_connects_parallel_jack_ports() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.shift = true;
             data.jack_graph = JackGraphInfo {
                 ports: vec![
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn toolbar_edits_maolan_jack_port_counts_in_place() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().jack_graph = JackGraphInfo {
+        state.write().expect("state lock poisoned").jack_graph = JackGraphInfo {
             ports: vec![
                 JackPortInfo {
                     name: "maolan:in_1".to_string(),
@@ -1052,7 +1052,7 @@ mod tests {
     #[test]
     fn middle_clicking_specific_maolan_jack_port_removes_that_port() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().jack_graph = JackGraphInfo {
+        state.write().expect("state lock poisoned").jack_graph = JackGraphInfo {
             ports: vec![
                 JackPortInfo {
                     name: "maolan:in_1".to_string(),
@@ -1104,7 +1104,7 @@ mod tests {
     #[test]
     fn dragging_maolan_updates_node_position() {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().jack_graph = JackGraphInfo {
+        state.write().expect("state lock poisoned").jack_graph = JackGraphInfo {
             ports: vec![JackPortInfo {
                 name: "maolan:in_1".to_string(),
                 kind: Kind::Audio,
@@ -1144,7 +1144,8 @@ mod tests {
 
         assert_eq!(
             state
-                .blocking_read()
+                .read()
+                .expect("state lock poisoned")
                 .jack_node_positions
                 .get("maolan")
                 .copied(),

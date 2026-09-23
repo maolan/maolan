@@ -6,25 +6,36 @@ use maolan_widgets::iced::{
 
 #[derive(Debug)]
 pub struct TrackTemplateSaveView {
-    state: State,
+    pub dialog: Option<crate::state::TrackTemplateSaveDialog>,
 }
 
 impl TrackTemplateSaveView {
-    pub fn new(state: State) -> Self {
-        Self { state }
+    pub fn new(_state: State) -> Self {
+        Self { dialog: None }
+    }
+
+    pub fn open(&mut self, dialog: crate::state::TrackTemplateSaveDialog) {
+        self.dialog = Some(dialog);
+    }
+
+    pub fn close(&mut self) {
+        self.dialog = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.dialog.is_some()
     }
 
     pub fn update(&mut self, message: &Message) {
         if let Message::TrackTemplateSaveInput(input) = message
-            && let Some(dialog) = &mut self.state.blocking_write().track_template_save_dialog
+            && let Some(dialog) = &mut self.dialog
         {
             dialog.name = input.clone();
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let state = self.state.blocking_read();
-        let Some(dialog) = &state.track_template_save_dialog else {
+        let Some(dialog) = &self.dialog else {
             return container("").into();
         };
 
@@ -72,49 +83,37 @@ impl TrackTemplateSaveView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
 
     #[test]
     fn update_sets_track_template_name_when_dialog_is_open() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().track_template_save_dialog =
-            Some(crate::state::TrackTemplateSaveDialog {
-                track_name: "Bass".to_string(),
-                name: "Old".to_string(),
-            });
-        let mut view = TrackTemplateSaveView::new(state.clone());
+        let state = crate::state::State::default();
+        let mut view = TrackTemplateSaveView::new(state);
+        view.open(crate::state::TrackTemplateSaveDialog {
+            track_name: "Bass".to_string(),
+            name: "Old".to_string(),
+        });
 
         view.update(&Message::TrackTemplateSaveInput("New".to_string()));
 
         assert_eq!(
-            state
-                .blocking_read()
-                .track_template_save_dialog
-                .as_ref()
-                .map(|dialog| dialog.name.as_str()),
+            view.dialog.as_ref().map(|dialog| dialog.name.as_str()),
             Some("New")
         );
     }
 
     #[test]
     fn update_ignores_non_matching_messages() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().track_template_save_dialog =
-            Some(crate::state::TrackTemplateSaveDialog {
-                track_name: "Bass".to_string(),
-                name: "Old".to_string(),
-            });
-        let mut view = TrackTemplateSaveView::new(state.clone());
+        let state = crate::state::State::default();
+        let mut view = TrackTemplateSaveView::new(state);
+        view.open(crate::state::TrackTemplateSaveDialog {
+            track_name: "Bass".to_string(),
+            name: "Old".to_string(),
+        });
 
         view.update(&Message::Cancel);
 
         assert_eq!(
-            state
-                .blocking_read()
-                .track_template_save_dialog
-                .as_ref()
-                .map(|dialog| dialog.name.as_str()),
+            view.dialog.as_ref().map(|dialog| dialog.name.as_str()),
             Some("Old")
         );
     }
@@ -128,7 +127,7 @@ mod tests {
 
     #[test]
     fn view_returns_empty_when_no_dialog() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let state = crate::state::State::default();
         let view = TrackTemplateSaveView::new(state);
         let element = view.view();
         let _ = &element;

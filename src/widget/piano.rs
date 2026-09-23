@@ -91,7 +91,7 @@ impl Program<Message> for PianoRollInteraction {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<CanvasAction<Message>> {
-        let app_state = self.state.blocking_read();
+        let app_state = self.state.read().expect("state lock poisoned");
         let roll = app_state.piano.as_ref()?;
 
         let zoom_x = app_state.piano_zoom_x;
@@ -299,7 +299,7 @@ impl Program<Message> for PianoRollInteraction {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let app_state = self.state.blocking_read();
+        let app_state = self.state.read().expect("state lock poisoned");
         let Some(roll) = app_state.piano.as_ref() else {
             return vec![];
         };
@@ -506,8 +506,8 @@ mod tests {
     use super::*;
     use maolan_widgets::iced::widget::canvas::Program;
     use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
+    use std::sync::RwLock;
     use std::{collections::HashMap, sync::Arc};
-    use tokio::sync::RwLock;
 
     fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
@@ -517,7 +517,7 @@ mod tests {
     fn piano_state_with_note(note: crate::state::PianoNote) -> State {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.piano_zoom_x = 1.0;
             data.piano_zoom_y = 1.0;
             data.piano = Some(crate::state::PianoData {
@@ -537,7 +537,7 @@ mod tests {
     fn piano_state_without_notes() -> State {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.piano_zoom_x = 1.0;
             data.piano_zoom_y = 1.0;
             data.piano = Some(crate::state::PianoData {

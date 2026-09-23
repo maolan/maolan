@@ -1,4 +1,4 @@
-use super::{CLIENT, Maolan};
+use super::{CLIENT, Maolan, field_groups::TransferState};
 use crate::{
     consts::state_ids::METRONOME_TRACK_ID,
     message::Message,
@@ -46,7 +46,7 @@ impl Maolan {
     }
 
     fn clip_clap_snapshot_targets(&self, track_names: &[String]) -> Vec<(String, usize, usize)> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         track_names
             .iter()
             .filter_map(|track_name| {
@@ -464,7 +464,7 @@ impl Maolan {
         let mut p = template_root.clone();
         p.push(filename);
         let file = File::create(&p)?;
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let tracks_width = match state.tracks_width {
             Length::Fixed(v) => v,
             _ => 200.0,
@@ -589,7 +589,8 @@ impl Maolan {
 
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
-        let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
+        let export_hw_out_ports: Vec<usize> =
+            self.transfer.export_hw_out_ports.iter().copied().collect();
 
         let result = json!({
             "tracks": tracks_json,
@@ -606,10 +607,10 @@ impl Maolan {
                 "scale_mode": if state.piano_scale_minor { "minor" } else { "major" },
             },
             "transport": {
-                "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
-                "loop_enabled": self.loop_enabled,
-                "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
-                "punch_enabled": self.punch_enabled,
+                "loop_range_samples": self.transport.loop_range_samples.map(|(start, end)| vec![start, end]),
+                "loop_enabled": self.transport.loop_enabled,
+                "punch_range_samples": self.transport.punch_range_samples.map(|(start, end)| vec![start, end]),
+                "punch_enabled": self.transport.punch_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
                 "hw_out_level": state.hw_out_level,
@@ -638,29 +639,29 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
-                "zoom_visible_bars": self.zoom_visible_bars,
-                "snap_mode": self.snap_mode,
-                "midi_snap_mode": self.midi_snap_mode,
+                "zoom_visible_bars": self.ui.zoom_visible_bars,
+                "snap_mode": self.timing.snap_mode,
+                "midi_snap_mode": self.timing.midi_snap_mode,
             },
             "export": {
-                "sample_rate_hz": self.export_sample_rate_hz,
-                "format_wav": self.export_format_wav,
-                "format_flac": self.export_format_flac,
-                "format_mp3": self.export_format_mp3,
-                "format_ogg": self.export_format_ogg,
-                "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
-                "dither": Self::export_dither_to_json(self.export_dither),
-                "render_mode": Self::export_render_mode_to_json(self.export_render_mode),
+                "sample_rate_hz": self.transfer.export_sample_rate_hz,
+                "format_wav": self.transfer.export_format_wav,
+                "format_flac": self.transfer.export_format_flac,
+                "format_mp3": self.transfer.export_format_mp3,
+                "format_ogg": self.transfer.export_format_ogg,
+                "bit_depth": Self::export_bit_depth_to_json(self.transfer.export_bit_depth),
+                "dither": Self::export_dither_to_json(self.transfer.export_dither),
+                "render_mode": Self::export_render_mode_to_json(self.transfer.export_render_mode),
                 "hw_out_ports": export_hw_out_ports,
-                "realtime_fallback": self.export_realtime_fallback,
-                "normalize": self.export_normalize,
-                "normalize_mode": Self::export_normalize_mode_to_json(self.export_normalize_mode),
-                "normalize_dbfs_input": self.export_normalize_dbfs_input,
-                "normalize_lufs_input": self.export_normalize_lufs_input,
-                "normalize_dbtp_input": self.export_normalize_dbtp_input,
-                "normalize_tp_limiter": self.export_normalize_tp_limiter,
-                "master_limiter": self.export_master_limiter,
-                "master_limiter_ceiling_input": self.export_master_limiter_ceiling_input,
+                "realtime_fallback": self.transfer.export_realtime_fallback,
+                "normalize": self.transfer.export_normalize,
+                "normalize_mode": Self::export_normalize_mode_to_json(self.transfer.export_normalize_mode),
+                "normalize_dbfs_input": self.transfer.export_normalize_dbfs_input,
+                "normalize_lufs_input": self.transfer.export_normalize_lufs_input,
+                "normalize_dbtp_input": self.transfer.export_normalize_dbtp_input,
+                "normalize_tp_limiter": self.transfer.export_normalize_tp_limiter,
+                "master_limiter": self.transfer.export_master_limiter,
+                "master_limiter_ceiling_input": self.transfer.export_master_limiter_ceiling_input,
             },
 
             "midi_learn_global": {
@@ -720,16 +721,16 @@ impl Maolan {
         track_name: String,
         path: String,
     ) -> Task<Message> {
-        self.pending_save_path = Some(path.clone());
-        self.pending_save_track_name = Some(track_name.clone());
+        self.pending.pending_save_path = Some(path.clone());
+        self.pending.pending_save_track_name = Some(track_name.clone());
         let track_names: std::collections::HashSet<String> = self
             .collect_folder_member_names(&track_name)
             .into_iter()
             .collect();
-        self.pending_save_tracks = track_names.clone();
-        self.pending_save_clap_tracks = track_names.clone();
-        self.pending_save_clap_clips.clear();
-        self.pending_save_is_template = false;
+        self.pending.pending_save_tracks = track_names.clone();
+        self.pending.pending_save_clap_tracks = track_names.clone();
+        self.pending.pending_save_clap_clips.clear();
+        self.pending.pending_save_is_template = false;
 
         let tasks: Vec<Task<Message>> = track_names
             .into_iter()
@@ -744,7 +745,8 @@ impl Maolan {
             })
             .collect();
 
-        self.state.blocking_write().message = format!("Saving track template for {}", track_name);
+        self.state.write().expect("state lock poisoned").message =
+            format!("Saving track template for {}", track_name);
 
         Task::batch(tasks)
     }
@@ -788,7 +790,7 @@ impl Maolan {
             && let Ok(mode) =
                 serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name) {
                 track.midi.editor_view_mode = mode;
             }
@@ -807,7 +809,7 @@ impl Maolan {
         let mut restore_actions = vec![];
 
         let (vst3_plugins, clap_plugins) = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             (state.vst3_plugins.clone(), state.clap_plugins.clone())
         };
         if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
@@ -957,7 +959,8 @@ impl Maolan {
                     ) && let Some(&instance_id) = index_to_id.get(&idx)
                     {
                         self.state
-                            .blocking_write()
+                            .write()
+                            .expect("state lock poisoned")
                             .plugin_graph_plugin_positions
                             .entry(track_name.to_string())
                             .or_default()
@@ -985,7 +988,8 @@ impl Maolan {
                 let controllers = Self::visible_controllers_from_json(controllers_v, &index_to_id);
                 if !controllers.is_empty() {
                     self.state
-                        .blocking_write()
+                        .write()
+                        .expect("state lock poisoned")
                         .plugin_graph_visible_controllers
                         .entry(track_name.to_string())
                         .or_default()
@@ -1136,7 +1140,8 @@ impl Maolan {
 
         let mut existing: std::collections::HashSet<String> = self
             .state
-            .blocking_read()
+            .read()
+            .expect("state lock poisoned")
             .tracks
             .iter()
             .map(|t| t.name.clone())
@@ -1174,7 +1179,8 @@ impl Maolan {
         let remaining: std::collections::HashSet<String> =
             members.iter().map(|m| m.new_name.clone()).collect();
         self.state
-            .blocking_write()
+            .write()
+            .expect("state lock poisoned")
             .pending_folder_template_loads
             .push(crate::state::PendingFolderTemplateLoad {
                 target_name,
@@ -1248,7 +1254,8 @@ impl Maolan {
         }
 
         self.state
-            .blocking_write()
+            .write()
+            .expect("state lock poisoned")
             .message
             .clone_from(&format!("Applied folder template '{}'", load.template_name));
 
@@ -1411,7 +1418,7 @@ impl Maolan {
     }
 
     fn collect_folder_member_names(&self, root_name: &str) -> Vec<String> {
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let mut result = vec![root_name.to_string()];
         let mut i = 0;
         while i < result.len() {
@@ -1554,7 +1561,7 @@ impl Maolan {
             p.push("track.json");
             let file = File::create(&p)?;
 
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
 
             let track = state
                 .tracks
@@ -1631,7 +1638,7 @@ impl Maolan {
         fs::create_dir_all(session_root.join("peaks"))?;
         fs::create_dir_all(session_root.join("pitch"))?;
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             for track in &mut state.tracks {
                 for clip in &mut track.audio.clips {
                     clip.ensure_id();
@@ -1648,7 +1655,7 @@ impl Maolan {
             }
         }
         let file = File::create(&p)?;
-        let state = self.state.blocking_read();
+        let state = self.state.read().expect("state lock poisoned");
         let tracks_width = match state.tracks_width {
             Length::Fixed(v) => v,
             _ => 200.0,
@@ -1834,7 +1841,8 @@ impl Maolan {
         };
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
-        let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
+        let export_hw_out_ports: Vec<usize> =
+            self.transfer.export_hw_out_ports.iter().copied().collect();
         let jack_routing = Self::jack_routing_for_save(&state);
         let connections: Vec<Connection> = state
             .connections
@@ -1860,10 +1868,10 @@ impl Maolan {
                 "scale_mode": if state.piano_scale_minor { "minor" } else { "major" },
             },
             "transport": {
-                "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
-                "loop_enabled": self.loop_enabled,
-                "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
-                "punch_enabled": self.punch_enabled,
+                "loop_range_samples": self.transport.loop_range_samples.map(|(start, end)| vec![start, end]),
+                "loop_enabled": self.transport.loop_enabled,
+                "punch_range_samples": self.transport.punch_range_samples.map(|(start, end)| vec![start, end]),
+                "punch_enabled": self.transport.punch_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
                 "hw_out_level": state.hw_out_level,
@@ -1892,29 +1900,29 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
-                "zoom_visible_bars": self.zoom_visible_bars,
-                "snap_mode": self.snap_mode,
-                "midi_snap_mode": self.midi_snap_mode,
+                "zoom_visible_bars": self.ui.zoom_visible_bars,
+                "snap_mode": self.timing.snap_mode,
+                "midi_snap_mode": self.timing.midi_snap_mode,
             },
             "export": {
-                "sample_rate_hz": self.export_sample_rate_hz,
-                "format_wav": self.export_format_wav,
-                "format_flac": self.export_format_flac,
-                "format_mp3": self.export_format_mp3,
-                "format_ogg": self.export_format_ogg,
-                "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
-                "dither": Self::export_dither_to_json(self.export_dither),
-                "render_mode": Self::export_render_mode_to_json(self.export_render_mode),
+                "sample_rate_hz": self.transfer.export_sample_rate_hz,
+                "format_wav": self.transfer.export_format_wav,
+                "format_flac": self.transfer.export_format_flac,
+                "format_mp3": self.transfer.export_format_mp3,
+                "format_ogg": self.transfer.export_format_ogg,
+                "bit_depth": Self::export_bit_depth_to_json(self.transfer.export_bit_depth),
+                "dither": Self::export_dither_to_json(self.transfer.export_dither),
+                "render_mode": Self::export_render_mode_to_json(self.transfer.export_render_mode),
                 "hw_out_ports": export_hw_out_ports,
-                "realtime_fallback": self.export_realtime_fallback,
-                "normalize": self.export_normalize,
-                "normalize_mode": Self::export_normalize_mode_to_json(self.export_normalize_mode),
-                "normalize_dbfs_input": self.export_normalize_dbfs_input,
-                "normalize_lufs_input": self.export_normalize_lufs_input,
-                "normalize_dbtp_input": self.export_normalize_dbtp_input,
-                "normalize_tp_limiter": self.export_normalize_tp_limiter,
-                "master_limiter": self.export_master_limiter,
-                "master_limiter_ceiling_input": self.export_master_limiter_ceiling_input,
+                "realtime_fallback": self.transfer.export_realtime_fallback,
+                "normalize": self.transfer.export_normalize,
+                "normalize_mode": Self::export_normalize_mode_to_json(self.transfer.export_normalize_mode),
+                "normalize_dbfs_input": self.transfer.export_normalize_dbfs_input,
+                "normalize_lufs_input": self.transfer.export_normalize_lufs_input,
+                "normalize_dbtp_input": self.transfer.export_normalize_dbtp_input,
+                "normalize_tp_limiter": self.transfer.export_normalize_tp_limiter,
+                "master_limiter": self.transfer.export_master_limiter,
+                "master_limiter_ceiling_input": self.transfer.export_master_limiter_ceiling_input,
             },
             "midi_learn_global": {
                 "play_pause": state.global_midi_learn_play_pause,
@@ -1967,16 +1975,17 @@ impl Maolan {
 
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
-        self.pending_peak_file_loads.clear();
-        self.pending_peak_rebuilds.clear();
-        self.midi_clip_previews.clear();
-        self.pending_midi_clip_previews.clear();
-        self.pending_track_freeze_restore.clear();
-        self.pending_track_midi_editor_view_mode.clear();
-        self.pending_track_freeze_bounce.clear();
+        self.pending.pending_peak_file_loads.clear();
+        self.pending.pending_peak_rebuilds.clear();
+        self.transport.midi_clip_previews.clear();
+        self.pending.pending_midi_clip_previews.clear();
+        self.pending.pending_track_freeze_restore.clear();
+        self.pending.pending_track_midi_editor_view_mode.clear();
+        self.pending.pending_track_freeze_bounce.clear();
         let existing_tracks: Vec<String> = self
             .state
-            .blocking_read()
+            .read()
+            .expect("state lock poisoned")
             .tracks
             .iter()
             .map(|t| t.name.clone())
@@ -1985,7 +1994,7 @@ impl Maolan {
             restore_actions.push(Action::RemoveTrack(name));
         }
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.connections.clear();
             state.selected.clear();
             state.selected_clips.clear();
@@ -2019,11 +2028,11 @@ impl Maolan {
                 serde_json::from_value::<maolan_engine::message::JackGraphInfo>(value.clone()).ok()
             });
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.jack_session_routing = loaded_jack_routing.clone();
         }
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.session = session
                 .get("session_matrix")
                 .and_then(|matrix| {
@@ -2035,10 +2044,10 @@ impl Maolan {
         // that refer to tracks which no longer exist.
         {
             let track_names: std::collections::HashSet<String> = {
-                let state = self.state.blocking_read();
+                let state = self.state.read().expect("state lock poisoned");
                 state.tracks.iter().map(|t| t.name.clone()).collect()
             };
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state
                 .session
                 .slots
@@ -2056,7 +2065,7 @@ impl Maolan {
         #[cfg(unix)]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
             let (lv2_plugins, vst3_plugins, clap_plugins) = {
-                let state = self.state.blocking_read();
+                let state = self.state.read().expect("state lock poisoned");
                 (
                     state.lv2_plugins.clone(),
                     state.vst3_plugins.clone(),
@@ -2077,10 +2086,11 @@ impl Maolan {
                 })
                 .collect::<std::collections::HashMap<_, _>>();
             self.state
-                .blocking_write()
+                .write()
+                .expect("state lock poisoned")
                 .plugin_graphs_by_track
                 .extend(snapshots);
-            let mut connectable = self.state.blocking_write();
+            let mut connectable = self.state.write().expect("state lock poisoned");
             for (track_name, graph) in graphs {
                 let snapshot = Self::plugin_graph_snapshot_from_json(
                     Some(graph),
@@ -2126,7 +2136,7 @@ impl Maolan {
         #[cfg(not(unix))]
         if let Some(graphs) = session.get("graphs").and_then(Value::as_object) {
             let (vst3_plugins, clap_plugins) = {
-                let state = self.state.blocking_read();
+                let state = self.state.read().expect("state lock poisoned");
                 (state.vst3_plugins.clone(), state.clap_plugins.clone())
             };
             let snapshots = graphs
@@ -2142,10 +2152,11 @@ impl Maolan {
                 })
                 .collect::<std::collections::HashMap<_, _>>();
             self.state
-                .blocking_write()
+                .write()
+                .expect("state lock poisoned")
                 .plugin_graphs_by_track
                 .extend(snapshots);
-            let mut connectable = self.state.blocking_write();
+            let mut connectable = self.state.write().expect("state lock poisoned");
             for (track_name, graph) in graphs {
                 let snapshot = Self::plugin_graph_snapshot_from_json(
                     Some(graph),
@@ -2290,7 +2301,7 @@ impl Maolan {
             }
         }
         if let Some(metadata) = session.get("metadata").and_then(Value::as_object) {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.session_author = metadata
                 .get("author")
                 .and_then(Value::as_str)
@@ -2340,31 +2351,33 @@ impl Maolan {
                 .unwrap_or(false);
         }
         if let Some(export) = session.get("export").and_then(Value::as_object) {
-            self.export_sample_rate_hz = export
+            self.transfer.export_sample_rate_hz = export
                 .get("sample_rate_hz")
                 .and_then(Value::as_u64)
                 .map(|v| v.max(1) as u32)
-                .unwrap_or(self.export_sample_rate_hz);
-            self.export_format_wav = export
+                .unwrap_or(self.transfer.export_sample_rate_hz);
+            self.transfer.export_format_wav = export
                 .get("format_wav")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_format_wav);
-            self.export_format_flac = export
+                .unwrap_or(self.transfer.export_format_wav);
+            self.transfer.export_format_flac = export
                 .get("format_flac")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_format_flac);
-            self.export_format_mp3 = export
+                .unwrap_or(self.transfer.export_format_flac);
+            self.transfer.export_format_mp3 = export
                 .get("format_mp3")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_format_mp3);
-            self.export_format_ogg = export
+                .unwrap_or(self.transfer.export_format_mp3);
+            self.transfer.export_format_ogg = export
                 .get("format_ogg")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_format_ogg);
-            self.export_bit_depth = Self::export_bit_depth_from_json(export.get("bit_depth"));
-            self.export_dither = Self::export_dither_from_json(export.get("dither"));
-            self.export_render_mode = Self::export_render_mode_from_json(export.get("render_mode"));
-            self.export_hw_out_ports = export
+                .unwrap_or(self.transfer.export_format_ogg);
+            self.transfer.export_bit_depth =
+                Self::export_bit_depth_from_json(export.get("bit_depth"));
+            self.transfer.export_dither = Self::export_dither_from_json(export.get("dither"));
+            self.transfer.export_render_mode =
+                Self::export_render_mode_from_json(export.get("render_mode"));
+            self.transfer.export_hw_out_ports = export
                 .get("hw_out_ports")
                 .and_then(Value::as_array)
                 .map(|ports| {
@@ -2374,49 +2387,49 @@ impl Maolan {
                         .map(|port| port as usize)
                         .collect()
                 })
-                .unwrap_or_else(|| self.default_export_hw_out_ports());
-            self.export_realtime_fallback = export
+                .unwrap_or_else(|| TransferState::default_hw_out_ports(&self.state));
+            self.transfer.export_realtime_fallback = export
                 .get("realtime_fallback")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_realtime_fallback);
-            self.export_normalize = export
+                .unwrap_or(self.transfer.export_realtime_fallback);
+            self.transfer.export_normalize = export
                 .get("normalize")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_normalize);
-            self.export_normalize_mode =
+                .unwrap_or(self.transfer.export_normalize);
+            self.transfer.export_normalize_mode =
                 Self::export_normalize_mode_from_json(export.get("normalize_mode"));
-            self.export_normalize_dbfs_input = export
+            self.transfer.export_normalize_dbfs_input = export
                 .get("normalize_dbfs_input")
                 .and_then(Value::as_str)
-                .unwrap_or(&self.export_normalize_dbfs_input)
+                .unwrap_or(&self.transfer.export_normalize_dbfs_input)
                 .to_string();
-            self.export_normalize_lufs_input = export
+            self.transfer.export_normalize_lufs_input = export
                 .get("normalize_lufs_input")
                 .and_then(Value::as_str)
-                .unwrap_or(&self.export_normalize_lufs_input)
+                .unwrap_or(&self.transfer.export_normalize_lufs_input)
                 .to_string();
-            self.export_normalize_dbtp_input = export
+            self.transfer.export_normalize_dbtp_input = export
                 .get("normalize_dbtp_input")
                 .and_then(Value::as_str)
-                .unwrap_or(&self.export_normalize_dbtp_input)
+                .unwrap_or(&self.transfer.export_normalize_dbtp_input)
                 .to_string();
-            self.export_normalize_tp_limiter = export
+            self.transfer.export_normalize_tp_limiter = export
                 .get("normalize_tp_limiter")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_normalize_tp_limiter);
-            self.export_master_limiter = export
+                .unwrap_or(self.transfer.export_normalize_tp_limiter);
+            self.transfer.export_master_limiter = export
                 .get("master_limiter")
                 .and_then(Value::as_bool)
-                .unwrap_or(self.export_master_limiter);
-            self.export_master_limiter_ceiling_input = export
+                .unwrap_or(self.transfer.export_master_limiter);
+            self.transfer.export_master_limiter_ceiling_input = export
                 .get("master_limiter_ceiling_input")
                 .and_then(Value::as_str)
-                .unwrap_or(&self.export_master_limiter_ceiling_input)
+                .unwrap_or(&self.transfer.export_master_limiter_ceiling_input)
                 .to_string();
         } else {
-            self.export_hw_out_ports = self.default_export_hw_out_ports();
+            self.transfer.export_hw_out_ports = TransferState::default_hw_out_ports(&self.state);
         }
-        self.normalize_export_hw_out_ports();
+        self.transfer.normalize_hw_out_ports(&self.state);
 
         let transport = session.get("transport").ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "No 'transport' in session")
@@ -2485,12 +2498,15 @@ impl Maolan {
             .and_then(Value::as_u64)
             .map(|v| v.max(1) as usize);
 
-        self.loop_range_samples = loaded_loop_range;
-        self.loop_enabled = loaded_loop_enabled;
-        self.punch_range_samples = loaded_punch_range;
-        self.punch_enabled = loaded_punch_enabled;
+        self.transport.loop_range_samples = loaded_loop_range;
+        self.transport.loop_enabled = loaded_loop_enabled;
+        self.transport.punch_range_samples = loaded_punch_range;
+        self.transport.punch_enabled = loaded_punch_enabled;
         if let Some(v) = loaded_period_frames {
-            self.state.blocking_write().oss_period_frames = v;
+            self.state
+                .write()
+                .expect("state lock poisoned")
+                .oss_period_frames = v;
         }
         let loaded_hw_out_level = transport
             .get("hw_out_level")
@@ -2520,7 +2536,7 @@ impl Maolan {
 
         if let Some(session_rate_hz) = loaded_sample_rate_hz {
             let (hw_loaded, hw_rate_hz) = {
-                let st = self.state.blocking_read();
+                let st = self.state.read().expect("state lock poisoned");
                 (st.hw_loaded, st.hw_sample_rate_hz.max(1))
             };
             if hw_loaded && hw_rate_hz != session_rate_hz {
@@ -2632,11 +2648,11 @@ impl Maolan {
                 },
             );
         }
-        self.tempo_input = format!("{:.2}", loaded_tempo);
-        self.time_signature_num_input = loaded_num.to_string();
-        self.time_signature_denom_input = loaded_denom.to_string();
-        self.last_sent_tempo_bpm = Some(loaded_tempo as f64);
-        self.last_sent_time_signature = Some((loaded_num as u16, loaded_denom as u16));
+        self.timing.tempo_input = format!("{:.2}", loaded_tempo);
+        self.timing.time_signature_num_input = loaded_num.to_string();
+        self.timing.time_signature_denom_input = loaded_denom.to_string();
+        self.timing.last_sent_tempo_bpm = Some(loaded_tempo as f64);
+        self.timing.last_sent_time_signature = Some((loaded_num as u16, loaded_denom as u16));
         restore_actions.push(Action::SetTempo(loaded_tempo as f64));
         restore_actions.push(Action::SetTimeSignature {
             numerator: loaded_num as u16,
@@ -2660,7 +2676,7 @@ impl Maolan {
                 .collect(),
         });
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.tempo = loaded_tempo;
             state.time_signature_num = loaded_num;
             state.time_signature_denom = loaded_denom;
@@ -2672,7 +2688,7 @@ impl Maolan {
         }
 
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.pending_track_positions.clear();
             state.pending_track_heights.clear();
             state.pending_track_folder_state.clear();
@@ -2693,7 +2709,7 @@ impl Maolan {
             state.tracks_width = Length::Fixed(tracks_width as f32);
             state.mixer_height = Length::Fixed(mixer_height as f32);
         }
-        self.zoom_visible_bars = session["ui"]["zoom_visible_bars"]
+        self.ui.zoom_visible_bars = session["ui"]["zoom_visible_bars"]
             .as_f64()
             .map(|zoom| {
                 (zoom as f32).clamp(
@@ -2701,20 +2717,20 @@ impl Maolan {
                     crate::gui::MAX_ZOOM_VISIBLE_BARS,
                 )
             })
-            .unwrap_or(self.zoom_visible_bars);
+            .unwrap_or(self.ui.zoom_visible_bars);
         if let Some(_mode) = session["ui"]["snap_mode"].as_str()
             && let Ok(mode) = serde_json::from_value::<crate::message::SnapMode>(
                 session["ui"]["snap_mode"].clone(),
             )
         {
-            self.snap_mode = mode;
+            self.timing.snap_mode = mode;
         }
         if let Some(_mode) = session["ui"]["midi_snap_mode"].as_str()
             && let Ok(mode) = serde_json::from_value::<crate::message::SnapMode>(
                 session["ui"]["midi_snap_mode"].clone(),
             )
         {
-            self.midi_snap_mode = mode;
+            self.timing.midi_snap_mode = mode;
         }
         if let Some(modulators) = session.get("modulators") {
             self.modulators =
@@ -2730,7 +2746,7 @@ impl Maolan {
                 .get("unused_midi_clips")
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .unwrap_or_default();
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.unused_audio_clips = unused_audio;
             state.unused_midi_clips = unused_midi;
         }
@@ -2752,14 +2768,16 @@ impl Maolan {
                     track["position"]["y"].as_f64(),
                 ) {
                     self.state
-                        .blocking_write()
+                        .write()
+                        .expect("state lock poisoned")
                         .pending_track_positions
                         .insert(name.clone(), Point::new(x as f32, y as f32));
                 }
 
                 if let Some(height) = track["height"].as_f64() {
                     self.state
-                        .blocking_write()
+                        .write()
+                        .expect("state lock poisoned")
                         .pending_track_heights
                         .insert(name.clone(), height as f32);
                 }
@@ -2779,7 +2797,8 @@ impl Maolan {
                         })
                         .unwrap_or(crate::message::TrackAutomationMode::Read);
                     self.state
-                        .blocking_write()
+                        .write()
+                        .expect("state lock poisoned")
                         .pending_track_automation
                         .insert(name.clone(), (lanes, mode));
                     restore_actions.push(Action::SetTrackAutomationLanes {
@@ -2921,7 +2940,8 @@ impl Maolan {
                         .and_then(Value::as_str)
                         .map(String::from);
                     self.state
-                        .blocking_write()
+                        .write()
+                        .expect("state lock poisoned")
                         .pending_track_folder_state
                         .insert(name.clone(), (is_folder, folder_open, parent_track.clone()));
                     if is_folder {
@@ -3025,7 +3045,8 @@ impl Maolan {
                     && let Ok(mode) =
                         serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
                 {
-                    self.pending_track_midi_editor_view_mode
+                    self.pending
+                        .pending_track_midi_editor_view_mode
                         .insert(name.clone(), mode);
                 }
                 if track["frozen"].as_bool().unwrap_or(false) {
@@ -3140,7 +3161,7 @@ impl Maolan {
                     || !frozen_midi_backup.is_empty()
                     || frozen_render_clip.is_some()
                 {
-                    self.pending_track_freeze_restore.insert(
+                    self.pending.pending_track_freeze_restore.insert(
                         name.clone(),
                         (frozen_audio_backup, frozen_midi_backup, frozen_render_clip),
                     );
@@ -3195,7 +3216,7 @@ impl Maolan {
                                     let key = Self::audio_clip_key(
                                         &name, &clip_name, start, length, offset,
                                     );
-                                    self.pending_peak_file_loads.insert(key, peaks_path);
+                                    self.pending.pending_peak_file_loads.insert(key, peaks_path);
                                 }
                             }
                             if let Some(saved_source_len) = clip
@@ -3206,7 +3227,9 @@ impl Maolan {
                             {
                                 let key =
                                     Self::audio_clip_key(&name, &clip_name, start, length, offset);
-                                self.pending_source_lengths.insert(key, saved_source_len);
+                                self.pending
+                                    .pending_source_lengths
+                                    .insert(key, saved_source_len);
                             }
                         }
 
@@ -3460,7 +3483,7 @@ impl Maolan {
         }
         if let Some(jack_routing) = loaded_jack_routing.as_ref() {
             let restore_jack = {
-                let state = self.state.blocking_read();
+                let state = self.state.read().expect("state lock poisoned");
                 Self::should_restore_jack_routing(&state.selected_backend)
             };
             if restore_jack {
@@ -3474,7 +3497,7 @@ impl Maolan {
         }
         {
             let (vst3_plugins, clap_plugins) = {
-                let state = self.state.blocking_read();
+                let state = self.state.read().expect("state lock poisoned");
                 (state.vst3_plugins.clone(), state.clap_plugins.clone())
             };
             let valid_track_names = session
@@ -3667,7 +3690,8 @@ impl Maolan {
                             ) && let Some(&instance_id) = index_to_id.get(&idx)
                             {
                                 self.state
-                                    .blocking_write()
+                                    .write()
+                                    .expect("state lock poisoned")
                                     .plugin_graph_plugin_positions
                                     .entry(track_name.clone())
                                     .or_default()
@@ -3727,7 +3751,7 @@ impl Maolan {
             }
         }
         {
-            let mut state = self.state.blocking_write();
+            let mut state = self.state.write().expect("state lock poisoned");
             state.selected_slots.clear();
             state.selected_scene = None;
             state.slot_runtimes.clear();
@@ -3737,7 +3761,7 @@ impl Maolan {
             }
         }
         {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             for (track_name, slots) in &state.session.slots {
                 for (scene_index, slot) in slots.iter().enumerate() {
                     if let Some(clip_ref) = slot.clip.as_ref() {
@@ -3763,7 +3787,7 @@ impl Maolan {
             }
         }
         if warnings.is_empty() {
-            self.state.blocking_write().message = "Session loaded".to_string();
+            self.state.write().expect("state lock poisoned").message = "Session loaded".to_string();
         } else {
             let shown = warnings.len().min(8);
             let mut msg = format!("Session loaded with {} warning(s):", warnings.len());
@@ -3774,7 +3798,7 @@ impl Maolan {
             if warnings.len() > shown {
                 msg.push_str(&format!("\n- ... and {} more", warnings.len() - shown));
             }
-            self.state.blocking_write().message = msg;
+            self.state.write().expect("state lock poisoned").message = msg;
         }
         for track_name in frozen_tracks {
             restore_actions.push(Action::TrackSetFrozen {
@@ -3786,7 +3810,7 @@ impl Maolan {
             self.modulators.iter().map(Into::into).collect();
         restore_actions.push(Action::SetModulators(engine_modulators));
         {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             restore_actions.push(Action::SetUnusedClips {
                 audio: state
                     .unused_audio_clips
@@ -3813,26 +3837,28 @@ impl Maolan {
     pub(super) fn refresh_graphs_then_save_template(&mut self, path: String) -> Task<Message> {
         let track_names: Vec<String> = self
             .state
-            .blocking_read()
+            .read()
+            .expect("state lock poisoned")
             .tracks
             .iter()
             .map(|t| t.name.clone())
             .collect();
-        self.pending_save_path = Some(path);
-        self.pending_save_tracks = track_names.iter().cloned().collect();
-        self.pending_save_clap_tracks = track_names.iter().cloned().collect();
+        self.pending.pending_save_path = Some(path);
+        self.pending.pending_save_tracks = track_names.iter().cloned().collect();
+        self.pending.pending_save_clap_tracks = track_names.iter().cloned().collect();
         let clip_targets = self.clip_clap_snapshot_targets(&track_names);
-        self.pending_save_clap_clips = clip_targets.iter().cloned().collect();
-        self.pending_save_is_template = true;
-        if self.pending_save_tracks.is_empty() {
-            let Some(path) = self.pending_save_path.take() else {
+        self.pending.pending_save_clap_clips = clip_targets.iter().cloned().collect();
+        self.pending.pending_save_is_template = true;
+        if self.pending.pending_save_tracks.is_empty() {
+            let Some(path) = self.pending.pending_save_path.take() else {
                 return Task::none();
             };
             if let Err(e) = self.save_template(path.clone()) {
-                self.state.blocking_write().message = format!("Failed to save template: {}", e);
+                self.state.write().expect("state lock poisoned").message =
+                    format!("Failed to save template: {}", e);
                 return Task::none();
             }
-            self.state.blocking_write().message = "Template saved".to_string();
+            self.state.write().expect("state lock poisoned").message = "Template saved".to_string();
             return Task::none();
         }
         let tasks = track_names
@@ -3864,25 +3890,27 @@ impl Maolan {
     pub(super) fn refresh_graphs_then_save(&mut self, path: String) -> Task<Message> {
         let track_names: Vec<String> = self
             .state
-            .blocking_read()
+            .read()
+            .expect("state lock poisoned")
             .tracks
             .iter()
             .map(|t| t.name.clone())
             .collect();
-        self.pending_save_path = Some(path);
-        self.pending_save_tracks = track_names.iter().cloned().collect();
-        self.pending_save_clap_tracks = track_names.iter().cloned().collect();
+        self.pending.pending_save_path = Some(path);
+        self.pending.pending_save_tracks = track_names.iter().cloned().collect();
+        self.pending.pending_save_clap_tracks = track_names.iter().cloned().collect();
         let clip_targets = self.clip_clap_snapshot_targets(&track_names);
         for (_tn, _ci, _id) in &clip_targets {}
-        self.pending_save_clap_clips = clip_targets.iter().cloned().collect();
-        self.pending_save_is_template = false;
-        if self.pending_save_tracks.is_empty() {
-            let Some(path) = self.pending_save_path.take() else {
+        self.pending.pending_save_clap_clips = clip_targets.iter().cloned().collect();
+        self.pending.pending_save_is_template = false;
+        if self.pending.pending_save_tracks.is_empty() {
+            let Some(path) = self.pending.pending_save_path.take() else {
                 return Task::none();
             };
             if let Err(e) = self.save(path.clone()) {
-                self.pending_exit_after_save = false;
-                self.state.blocking_write().message = format!("Failed to save session: {}", e);
+                self.session_ops.pending_exit_after_save = false;
+                self.state.write().expect("state lock poisoned").message =
+                    format!("Failed to save session: {}", e);
                 return Task::none();
             }
             return self.send(Action::SetSessionPath(path));
@@ -3953,7 +3981,7 @@ impl Maolan {
         };
 
         let track = {
-            let state = self.state.blocking_read();
+            let state = self.state.read().expect("state lock poisoned");
             state.tracks.iter().find(|t| t.name == track_name).cloned()
         };
         let Some(track) = track else {
@@ -4261,7 +4289,7 @@ mod tests {
 
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state.tracks.push(crate::state::Track::new(
                 "Drums".to_string(),
                 0.0,
@@ -4382,7 +4410,7 @@ mod tests {
     fn build_track_template_actions_resolves_clap_plugin_id() {
         let app = Maolan::default();
         {
-            let mut state = app.state.blocking_write();
+            let mut state = app.state.write().expect("state lock poisoned");
             state
                 .clap_plugins
                 .push(maolan_engine::clap::ClapPluginInfo {

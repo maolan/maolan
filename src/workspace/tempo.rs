@@ -4,7 +4,7 @@ use crate::consts::workspace::{
     TEMPO_HEIGHT, TEMPO_HIT_HEIGHT, TIME_SIG_HIT_X_SPLIT,
 };
 use crate::message::{Message, SnapMode};
-use maolan_engine::message::Action as EngineAction;
+use crate::view_api;
 use maolan_widgets::iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
@@ -15,13 +15,6 @@ use maolan_widgets::iced::{
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
-fn clip_kind_key(kind: maolan_engine::kind::Kind) -> u8 {
-    match kind {
-        maolan_engine::kind::Kind::Audio => 0,
-        maolan_engine::kind::Kind::MIDI => 1,
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct Tempo;
@@ -254,7 +247,9 @@ impl canvas::Program<Message> for TempoCanvas {
                     a.track_idx
                         .cmp(&b.track_idx)
                         .then_with(|| a.clip_idx.cmp(&b.clip_idx))
-                        .then_with(|| clip_kind_key(a.kind).cmp(&clip_kind_key(b.kind)))
+                        .then_with(|| {
+                            view_api::clip_kind_key(a.kind).cmp(&view_api::clip_kind_key(b.kind))
+                        })
                 });
                 snap_targets.dedup();
                 let snapped_sample = self
@@ -490,7 +485,8 @@ impl canvas::Program<Message> for TempoCanvas {
                                         .cmp(&b.track_idx)
                                         .then_with(|| a.clip_idx.cmp(&b.clip_idx))
                                         .then_with(|| {
-                                            clip_kind_key(a.kind).cmp(&clip_kind_key(b.kind))
+                                            view_api::clip_kind_key(a.kind)
+                                                .cmp(&view_api::clip_kind_key(b.kind))
                                         })
                                 });
                                 snap_targets.dedup();
@@ -542,8 +538,8 @@ impl canvas::Program<Message> for TempoCanvas {
                         let drag_delta = (last_x - drag_start_x).abs();
                         if drag_delta < 3.0 {
                             let sample = snap_sample(sample_at_x(last_x)).0;
-                            return Some(CanvasAction::publish(Message::Request(
-                                EngineAction::TransportPosition(sample),
+                            return Some(CanvasAction::publish(view_api::transport_position(
+                                sample,
                             )));
                         }
 
@@ -1636,8 +1632,8 @@ mod tests {
 
     #[test]
     fn clip_kind_key_returns_expected_values() {
-        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::Audio), 0);
-        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::MIDI), 1);
+        assert_eq!(view_api::clip_kind_key(crate::state::Kind::Audio), 0);
+        assert_eq!(view_api::clip_kind_key(crate::state::Kind::MIDI), 1);
     }
 
     #[test]

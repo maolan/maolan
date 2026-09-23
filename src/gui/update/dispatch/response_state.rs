@@ -14,7 +14,7 @@ impl Maolan {
                 to_port,
                 kind,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if from_track == to_track && from_track != "hw:in" && to_track != "hw:out" {
                     return true;
                 }
@@ -34,7 +34,7 @@ impl Maolan {
                 to_port,
                 kind,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let original_len = state.connections.len();
                 if from_track == to_track && from_track != "hw:in" && to_track != "hw:out" {
                     return true;
@@ -66,7 +66,7 @@ impl Maolan {
                 to_node,
                 to_port,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let connection = PluginGraphConnection {
                     from_node: from_node.clone(),
                     from_port: *from_port,
@@ -118,7 +118,7 @@ impl Maolan {
                 to_node,
                 to_port,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let kind = action_to_kind(action);
                 if let Some((_, cached_connections)) =
                     state.plugin_graphs_by_track.get_mut(track_name)
@@ -166,7 +166,7 @@ impl Maolan {
                 to,
                 to_port,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let connection = ConnectableConnection {
                     from: from.clone(),
                     from_port: *from_port,
@@ -217,7 +217,7 @@ impl Maolan {
                 to,
                 to_port,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let kind = action_to_kind(action);
                 if let Some(cached) = state.connectable_connections_by_track.get_mut(track_name) {
                     cached.retain(|conn| {
@@ -277,7 +277,7 @@ impl Maolan {
                 ring_buffer_multiplier: _,
                 auto_open_midi_devices: _,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let configured_period_frames = if *actual_period_frames > 0 {
                     *actual_period_frames
                 } else {
@@ -303,7 +303,7 @@ impl Maolan {
                 true
             }
             Action::OpenMidiInputDevice(s) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if !state.opened_midi_in_hw.iter().any(|name| name == s) {
                     state.opened_midi_in_hw.push(s.clone());
                 }
@@ -315,7 +315,7 @@ impl Maolan {
                 true
             }
             Action::OpenMidiOutputDevice(s) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if !state.opened_midi_out_hw.iter().any(|name| name == s) {
                     state.opened_midi_out_hw.push(s.clone());
                 }
@@ -332,9 +332,9 @@ impl Maolan {
                 input,
             } => {
                 if *rate > 0 {
-                    self.playback_rate_hz = *rate as f64;
+                    self.transport.playback_rate_hz = *rate as f64;
                 }
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if *rate > 0 {
                     state.hw_sample_rate_hz = *rate as i32;
                 }
@@ -358,7 +358,7 @@ impl Maolan {
                 true
             }
             Action::JackGraph(graph) => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.jack_graph = graph.clone();
                 state.jack_session_routing = Some(graph.clone());
                 state.message = format!(
@@ -372,7 +372,7 @@ impl Maolan {
                 source,
                 destination,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.jack_connecting = None;
                 state.message = format!("Connected JACK {source} -> {destination}");
                 true
@@ -381,20 +381,20 @@ impl Maolan {
                 source,
                 destination,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.message = format!("Disconnected JACK {source} -> {destination}");
                 true
             }
             Action::MidiLearnMappingsReport { lines } => {
                 let report = lines.join(" | ");
-                self.midi_mappings_report_lines = lines.clone();
-                let mut state = self.state.blocking_write();
+                self.ui.midi_mappings_report_lines = lines.clone();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.message = format!("MIDI mappings: {}", report);
                 true
             }
             Action::ClearAllMidiLearnBindings => {
-                self.midi_mappings_report_lines.clear();
-                let mut state = self.state.blocking_write();
+                self.ui.midi_mappings_report_lines.clear();
+                let mut state = self.state.write().expect("state lock poisoned");
                 state.global_midi_learn_play_pause = None;
                 state.global_midi_learn_stop = None;
                 state.global_midi_learn_record_toggle = None;
@@ -422,7 +422,7 @@ impl Maolan {
                 track_name,
                 is_folder,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     // The master track can never be turned into a folder.
                     if *is_folder && track.is_master {
@@ -436,14 +436,14 @@ impl Maolan {
                 track_name,
                 parent_name,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     track.parent_track = parent_name.clone();
                 }
                 true
             }
             Action::TrackToggleFolder { track_name } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     track.folder_open = !track.folder_open;
                 }
@@ -456,7 +456,7 @@ impl Maolan {
                 play_position_samples,
                 elapsed_samples,
             } => {
-                let mut state = self.state.blocking_write();
+                let mut state = self.state.write().expect("state lock poisoned");
                 let runtime = state
                     .slot_runtimes
                     .entry((track_name.clone(), *scene_index))

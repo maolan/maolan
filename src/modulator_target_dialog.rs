@@ -5,17 +5,28 @@ use maolan_widgets::iced::{
 };
 
 pub struct ModulatorTargetDialogView {
-    state: State,
+    pub dialog: Option<crate::state::ModulatorTargetDialog>,
 }
 
 impl ModulatorTargetDialogView {
-    pub fn new(state: State) -> Self {
-        Self { state }
+    pub fn new(_state: State) -> Self {
+        Self { dialog: None }
+    }
+
+    pub fn open(&mut self, dialog: crate::state::ModulatorTargetDialog) {
+        self.dialog = Some(dialog);
+    }
+
+    pub fn close(&mut self) {
+        self.dialog = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.dialog.is_some()
     }
 
     pub fn update(&mut self, message: &Message) {
-        let mut state = self.state.blocking_write();
-        let Some(dialog) = &mut state.modulator_target_dialog else {
+        let Some(dialog) = &mut self.dialog else {
             return;
         };
         match message {
@@ -26,8 +37,7 @@ impl ModulatorTargetDialogView {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let state = self.state.blocking_read();
-        let Some(dialog) = &state.modulator_target_dialog else {
+        let Some(dialog) = &self.dialog else {
             return container("").into();
         };
 

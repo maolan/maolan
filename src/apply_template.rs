@@ -8,16 +8,32 @@ use maolan_widgets::iced::{
 #[derive(Debug)]
 pub struct ApplyTemplateView {
     state: State,
+    pub dialog: Option<crate::state::ApplyTemplateDialog>,
 }
 
 impl ApplyTemplateView {
     pub fn new(state: State) -> Self {
-        Self { state }
+        Self {
+            state,
+            dialog: None,
+        }
+    }
+
+    pub fn open(&mut self, dialog: crate::state::ApplyTemplateDialog) {
+        self.dialog = Some(dialog);
+    }
+
+    pub fn close(&mut self) {
+        self.dialog = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.dialog.is_some()
     }
 
     pub fn update(&mut self, message: &Message) {
         if let Message::ApplyTemplate(ApplyTemplate::TemplateSelected(template)) = message
-            && let Some(dialog) = &mut self.state.blocking_write().apply_template_dialog
+            && let Some(dialog) = &mut self.dialog
         {
             dialog.selected_template = Some(template.clone());
         }
@@ -50,8 +66,8 @@ impl ApplyTemplateView {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let state = self.state.blocking_read();
-        let Some(dialog) = &state.apply_template_dialog else {
+        let state = self.state.read().expect("state lock poisoned");
+        let Some(dialog) = &self.dialog else {
             return container("").into();
         };
 
@@ -188,7 +204,7 @@ impl ApplyTemplateView {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use std::sync::RwLock;
 
     #[test]
     fn new_creates_view() {
@@ -198,23 +214,21 @@ mod tests {
 
     #[test]
     fn update_sets_selected_template() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
-        state.blocking_write().apply_template_dialog = Some(crate::state::ApplyTemplateDialog {
+        let state = crate::state::State::default();
+        let mut view = ApplyTemplateView::new(state);
+        view.open(crate::state::ApplyTemplateDialog {
             track_name: "Kick".to_string(),
             selected_template: None,
             available_templates: vec![],
             available_folder_templates: vec![],
         });
-        let mut view = ApplyTemplateView::new(state.clone());
 
         view.update(&Message::ApplyTemplate(ApplyTemplate::TemplateSelected(
             "Drum".to_string(),
         )));
 
         assert_eq!(
-            state
-                .blocking_read()
-                .apply_template_dialog
+            view.dialog
                 .as_ref()
                 .and_then(|d| d.selected_template.as_deref()),
             Some("Drum")
@@ -223,7 +237,7 @@ mod tests {
 
     #[test]
     fn view_returns_empty_when_dialog_closed() {
-        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let state = crate::state::State::default();
         let view = ApplyTemplateView::new(state);
         let _element = view.view();
     }

@@ -1545,7 +1545,7 @@ mod tests {
     use maolan_widgets::iced::widget::canvas::Program;
     use maolan_widgets::iced::{Point, Rectangle, Size, event, mouse};
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use std::sync::RwLock;
 
     fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
@@ -1573,7 +1573,7 @@ mod tests {
             bypassed: false,
         };
         {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.tracks.push(crate::state::Track::new(
                 "Track".to_string(),
                 0.0,
@@ -1586,7 +1586,7 @@ mod tests {
             data.plugin_graph_plugins.push(plugin.clone());
         }
         let plugin_pos = {
-            let data = state.blocking_read();
+            let data = state.read().expect("state lock poisoned");
             Graph::plugin_pos(&data, &plugin, 0, bounds)
         };
         let cursor = mouse::Cursor::Available(Point::new(plugin_pos.x + 5.0, plugin_pos.y + 5.0));
@@ -1604,7 +1604,7 @@ mod tests {
         let (message, status) = action_message(action);
         assert!(message.is_none());
         assert_eq!(status, event::Status::Captured);
-        let data = state.blocking_read();
+        let data = state.read().expect("state lock poisoned");
         assert!(data.plugin_graph_selected_plugins.contains(&7));
         assert_eq!(
             data.plugin_graph_moving_plugin
@@ -1619,7 +1619,7 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(700.0, 400.0));
         let cursor_pos = {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.tracks.push(crate::state::Track::new(
                 "Synth".to_string(),
                 0.0,
@@ -1672,7 +1672,7 @@ mod tests {
         let state = Arc::new(RwLock::new(crate::state::StateData::default()));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(700.0, 400.0));
         let cursor_pos = {
-            let mut data = state.blocking_write();
+            let mut data = state.write().expect("state lock poisoned");
             data.tracks.push(crate::state::Track::new(
                 "Synth".to_string(),
                 0.0,
@@ -1714,7 +1714,7 @@ mod tests {
             .expect("action");
 
         let (_message, _status) = action_message(action);
-        let data = state.blocking_read();
+        let data = state.read().expect("state lock poisoned");
         assert!(
             data.plugin_graph_selected_connectable_connections
                 .contains(&0)
