@@ -1113,7 +1113,10 @@ pub fn run_vst3(args: Vst3RunArgs) {
         let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
         if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-            let _ = events.signal_daw();
+            header.mark_block_response();
+            if !header.block_response_eventless() {
+                let _ = events.signal_daw();
+            }
             continue;
         }
 
@@ -1165,7 +1168,8 @@ pub fn run_vst3(args: Vst3RunArgs) {
             }
         }
 
-        if let Err(_e) = events.signal_daw() {
+        header.mark_block_response();
+        if !header.block_response_eventless() && events.signal_daw().is_err() {
             break;
         }
     }
@@ -2661,7 +2665,10 @@ pub fn run_lv2(
         let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
         if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-            let _ = events.signal_daw();
+            header.mark_block_response();
+            if !header.block_response_eventless() {
+                let _ = events.signal_daw();
+            }
             continue;
         }
 
@@ -2716,7 +2723,8 @@ pub fn run_lv2(
             }
         }
 
-        if let Err(_e) = events.signal_daw() {
+        header.mark_block_response();
+        if !header.block_response_eventless() && events.signal_daw().is_err() {
             break;
         }
     }

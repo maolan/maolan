@@ -364,7 +364,10 @@ impl HostRuntime {
             let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
             if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-                let _ = self.events.signal_daw();
+                header.mark_block_response();
+                if !header.block_response_eventless() {
+                    let _ = self.events.signal_daw();
+                }
                 continue;
             }
 
@@ -377,7 +380,8 @@ impl HostRuntime {
                 }
             }
 
-            if let Err(_e) = self.events.signal_daw() {
+            header.mark_block_response();
+            if !header.block_response_eventless() && self.events.signal_daw().is_err() {
                 break;
             }
         }
@@ -1166,7 +1170,10 @@ impl HostRuntime {
             let num_out = header.num_output_channels.load(Ordering::Acquire) as usize;
 
             if block_size == 0 || block_size > MAX_BLOCK_SIZE {
-                let _ = self.events.signal_daw();
+                header.mark_block_response();
+                if !header.block_response_eventless() {
+                    let _ = self.events.signal_daw();
+                }
                 continue;
             }
 
@@ -1375,7 +1382,8 @@ impl HostRuntime {
                 }
             }
 
-            if let Err(_e) = self.events.signal_daw() {
+            header.mark_block_response();
+            if !header.block_response_eventless() && self.events.signal_daw().is_err() {
                 break;
             }
         }
