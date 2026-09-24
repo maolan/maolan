@@ -23,7 +23,7 @@ use crate::{
     },
     platform_caps,
     state::{
-        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
+        ConnectionViewSelection, PianoData, PianoSysExPoint, Resizing, TempoPoint,
         TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
         engine_note_to_widgets, mpe_engine_to_widgets, mpe_widgets_to_engine, piano_note_to_engine,
     },

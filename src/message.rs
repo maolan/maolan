@@ -845,6 +845,10 @@ pub enum Message {
 
     Request(Action),
     Response(Result<Action, String>),
+    /// Unsolicited engine state report / event.
+    EngineEvent(maolan_engine::message::Event),
+    /// Typed answer to a `Request*`/`Get*` query.
+    EngineQueryReply(maolan_engine::message::QueryReply),
 
     Show(Show),
     Cancel,

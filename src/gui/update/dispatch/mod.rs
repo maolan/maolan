@@ -20,6 +20,7 @@ mod modulators;
 mod piano;
 mod plugins;
 mod response;
+mod response_events;
 mod response_freeze_meter;
 mod response_session_state;
 mod response_state;
@@ -1302,7 +1303,10 @@ impl Maolan {
             | Message::PianoVelocityShapeAmountChanged(_)
             | Message::MidiClipPreviewLoaded { .. }
             | Message::OpenMidiPiano { .. } => return self.handle_piano_message(message),
-            Message::Response(Ok(_)) | Message::Response(Err(_)) => {
+            Message::Response(Ok(_))
+            | Message::Response(Err(_))
+            | Message::EngineEvent(_)
+            | Message::EngineQueryReply(_) => {
                 return self.handle_response_message(message);
             }
             Message::TrackFreezeToggle { .. }

@@ -231,43 +231,46 @@ impl Maolan {
                 }
                 Some(Task::none())
             }
-            Action::MeterSnapshot {
-                hw_out_db,
-                track_meters,
-                ..
-            } => {
-                let mut state = self.state.write().expect("state lock poisoned");
-                let visible_tracks = visible_mixer_track_names(self, &state);
-                if hw_out_db.is_empty() && !state.hw_out_meter_db.is_empty() {
-                    let silence = vec![-90.0; state.hw_out_meter_db.len()];
-                    Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, &silence);
-                } else {
-                    Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
-                }
-                for track in &mut state.tracks {
-                    if let Some(visible_tracks) = visible_tracks.as_ref()
-                        && track.name != crate::consts::state_ids::METRONOME_TRACK_ID
-                        && !visible_tracks.contains(track.name.as_str())
-                    {
-                        continue;
-                    }
-                    if track_meters.is_empty() {
-                        let silence = vec![-90.0; track.meter_out_db.len()];
-                        Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
-                    } else if let Some((_, output_db)) = track_meters
-                        .iter()
-                        .find(|(track_name, _)| track_name.as_str() == track.name.as_str())
-                    {
-                        Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
-                    } else if !track.meter_out_db.is_empty() {
-                        let silence = vec![-90.0; track.meter_out_db.len()];
-                        Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
-                    }
-                }
-
-                Some(Task::none())
-            }
             _ => None,
         }
+    }
+
+    /// Apply a meter snapshot to the visible mixer state (smoothing
+    /// included). Shared by engine `QueryReply::MeterSnapshot` answers and
+    /// the local meter poll, which reads the triple-buffer consumer.
+    pub(crate) fn apply_meter_snapshot(
+        &mut self,
+        hw_out_db: &[f32],
+        track_meters: &[(String, Vec<f32>)],
+    ) -> Task<Message> {
+        let mut state = self.state.write().expect("state lock poisoned");
+        let visible_tracks = visible_mixer_track_names(self, &state);
+        if hw_out_db.is_empty() && !state.hw_out_meter_db.is_empty() {
+            let silence = vec![-90.0; state.hw_out_meter_db.len()];
+            Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, &silence);
+        } else {
+            Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
+        }
+        for track in &mut state.tracks {
+            if let Some(visible_tracks) = visible_tracks.as_ref()
+                && track.name != crate::consts::state_ids::METRONOME_TRACK_ID
+                && !visible_tracks.contains(track.name.as_str())
+            {
+                continue;
+            }
+            if track_meters.is_empty() {
+                let silence = vec![-90.0; track.meter_out_db.len()];
+                Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
+            } else if let Some((_, output_db)) = track_meters
+                .iter()
+                .find(|(track_name, _)| track_name.as_str() == track.name.as_str())
+            {
+                Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
+            } else if !track.meter_out_db.is_empty() {
+                let silence = vec![-90.0; track.meter_out_db.len()];
+                Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
+            }
+        }
+        Task::none()
     }
 }
