@@ -75,49 +75,53 @@ impl Maolan {
                         loop {
                             match rx.recv().await {
                                 Some(EngineMessage::Response(r)) => {
-                                    if let Ok(action) = &r {
-                                        match action {
-                                            EngineAction::TrackMeters {
-                                                track_name,
-                                                output_db,
-                                            } => {
-                                                let should_forward = match last_meters
-                                                    .get(track_name)
-                                                {
-                                                    Some(prev) => meter_changed(prev, output_db),
-                                                    None => true,
-                                                };
-                                                if !should_forward {
-                                                    continue;
-                                                }
-                                                last_meters
-                                                    .insert(track_name.clone(), output_db.clone());
-                                            }
-                                            EngineAction::MeterSnapshot {
-                                                hw_out_db,
-                                                track_meters,
-                                                ..
-                                            } => {
-                                                // Always forward meter snapshots so the GUI can
-                                                // keep smoothing levels down even when the engine
-                                                // has already reached silence (for example after
-                                                // playback stops).
-                                                last_hw_out.clear();
-                                                last_hw_out.extend_from_slice(hw_out_db);
-                                                last_meters.clear();
-                                                last_meters.reserve(track_meters.len());
-                                                for (track_name, output_db) in track_meters.iter() {
-                                                    last_meters.insert(
-                                                        track_name.clone(),
-                                                        output_db.clone(),
-                                                    );
-                                                }
-                                            }
-                                            _ => {}
+                                    if let Ok(EngineAction::TrackMeters {
+                                        track_name,
+                                        output_db,
+                                    }) = &r
+                                    {
+                                        let should_forward = match last_meters.get(track_name) {
+                                            Some(prev) => meter_changed(prev, output_db),
+                                            None => true,
+                                        };
+                                        if !should_forward {
+                                            continue;
                                         }
+                                        last_meters.insert(track_name.clone(), output_db.clone());
                                     }
                                     return Some((
                                         Message::Response(r),
+                                        (rx, last_hw_out, last_meters),
+                                    ));
+                                }
+                                Some(EngineMessage::Event(e)) => {
+                                    return Some((
+                                        Message::EngineEvent(e),
+                                        (rx, last_hw_out, last_meters),
+                                    ));
+                                }
+                                Some(EngineMessage::QueryReply(q)) => {
+                                    if let maolan_engine::message::QueryReply::MeterSnapshot {
+                                        hw_out_db,
+                                        track_meters,
+                                        ..
+                                    } = &q
+                                    {
+                                        // Always forward meter snapshots so the GUI can
+                                        // keep smoothing levels down even when the engine
+                                        // has already reached silence (for example after
+                                        // playback stops).
+                                        last_hw_out.clear();
+                                        last_hw_out.extend_from_slice(hw_out_db);
+                                        last_meters.clear();
+                                        last_meters.reserve(track_meters.len());
+                                        for (track_name, output_db) in track_meters.iter() {
+                                            last_meters
+                                                .insert(track_name.clone(), output_db.clone());
+                                        }
+                                    }
+                                    return Some((
+                                        Message::EngineQueryReply(q),
                                         (rx, last_hw_out, last_meters),
                                     ));
                                 }

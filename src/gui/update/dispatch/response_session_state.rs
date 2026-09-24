@@ -1,4 +1,5 @@
 use super::*;
+use maolan_engine::message::QueryReply;
 
 impl Maolan {
     pub(super) fn handle_response_session_state_action(
@@ -30,8 +31,19 @@ impl Maolan {
                 }
                 Some(Task::none())
             }
+
+            _ => None,
+        }
+    }
+
+    /// Plugin-list query answers (ported from `handle_response_session_state_action`).
+    pub(super) fn handle_query_reply_session_state(
+        &mut self,
+        q: &QueryReply,
+    ) -> Option<Task<Message>> {
+        match q {
             #[cfg(unix)]
-            Action::Lv2Plugins(plugins) => {
+            QueryReply::Lv2Plugins(plugins) => {
                 let blocklist = crate::plugin_blocklist::Blocklist::load();
                 let (filtered, blocked): (Vec<_>, Vec<_>) =
                     plugins.iter().cloned().partition(|p| {
@@ -49,7 +61,7 @@ impl Maolan {
                 Some(Task::none())
             }
             #[cfg(unix)]
-            Action::Lv2PluginsUnavailable { error } => {
+            QueryReply::Lv2PluginsUnavailable { error } => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.lv2_plugins = vec![];
                 state.lv2_plugins_loaded = true;
@@ -57,7 +69,7 @@ impl Maolan {
                 state.message = format!("LV2 plugin scan unavailable: {error}");
                 Some(Task::none())
             }
-            Action::Vst3Plugins(plugins) => {
+            QueryReply::Vst3Plugins(plugins) => {
                 let blocklist = crate::plugin_blocklist::Blocklist::load();
                 let (filtered, blocked): (Vec<_>, Vec<_>) = plugins
                     .iter()
@@ -74,7 +86,7 @@ impl Maolan {
                 );
                 Some(Task::none())
             }
-            Action::Vst3PluginsUnavailable { error } => {
+            QueryReply::Vst3PluginsUnavailable { error } => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.vst3_plugins = vec![];
                 state.vst3_plugins_loaded = true;
@@ -82,7 +94,7 @@ impl Maolan {
                 state.message = format!("VST3 plugin scan unavailable: {error}");
                 Some(Task::none())
             }
-            Action::ClapPlugins(plugins) => {
+            QueryReply::ClapPlugins(plugins) => {
                 let blocklist = crate::plugin_blocklist::Blocklist::load();
                 let (filtered, blocked): (Vec<_>, Vec<_>) = plugins
                     .iter()
@@ -99,7 +111,7 @@ impl Maolan {
                 );
                 Some(Task::none())
             }
-            Action::ClapPluginsUnavailable { error } => {
+            QueryReply::ClapPluginsUnavailable { error } => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.clap_plugins = vec![];
                 state.clap_plugins_loaded = true;

@@ -10,6 +10,8 @@ use crate::gui::update::AutomationTrackView;
 use crate::message::TrackAutomationMode;
 use maolan_widgets::iced::widget::{column, row};
 
+pub(crate) type MeterSnapshotData = (Vec<f32>, Vec<(String, Vec<f32>)>);
+
 /// Transport, playback, loop/punch, record-arm, and step-recording state.
 #[derive(Debug)]
 pub struct TransportUiState {
@@ -491,27 +493,23 @@ impl TransportUiState {
         self.meter_stop_decay = None;
     }
 
-    pub(crate) fn meter_stop_decay_action(&mut self) -> Option<Action> {
+    pub(crate) fn meter_stop_decay_snapshot(&mut self) -> Option<MeterSnapshotData> {
         let decay = self.meter_stop_decay.as_ref()?;
         let elapsed = decay.started_at.elapsed();
         let fraction = (elapsed.as_secs_f32() / Duration::from_secs(1).as_secs_f32()).min(1.0);
         let target = |db: f32| db + ((-90.0 - db) * fraction);
-        let action = Action::MeterSnapshot {
-            hw_out_db: std::sync::Arc::new(decay.hw_out_db.iter().copied().map(target).collect()),
-            track_meters: std::sync::Arc::new(
-                decay
-                    .track_meters
-                    .iter()
-                    .map(|(name, meters)| {
-                        (name.clone(), meters.iter().copied().map(target).collect())
-                    })
-                    .collect(),
-            ),
-        };
+        let snapshot = (
+            decay.hw_out_db.iter().copied().map(target).collect(),
+            decay
+                .track_meters
+                .iter()
+                .map(|(name, meters)| (name.clone(), meters.iter().copied().map(target).collect()))
+                .collect(),
+        );
         if fraction >= 1.0 {
             self.meter_stop_decay = None;
         }
-        Some(action)
+        Some(snapshot)
     }
 
     pub(crate) fn record_automation_point(

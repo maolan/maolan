@@ -477,11 +477,11 @@ impl App {
 
     fn handle_engine_message(&mut self, message: EngineMessage) {
         match message {
-            EngineMessage::Response(Ok(Action::HWInfo {
+            EngineMessage::Event(maolan_engine::message::Event::HWInfo {
                 channels,
                 rate,
                 input,
-            })) => {
+            }) => {
                 self.hw_ready = true;
                 self.sample_rate_hz = rate;
                 if input {
@@ -528,11 +528,11 @@ impl App {
                 self.playing = false;
                 self.paused = false;
             }
-            EngineMessage::Response(Ok(Action::MeterSnapshot {
+            EngineMessage::QueryReply(maolan_engine::message::QueryReply::MeterSnapshot {
                 hw_out_db,
                 track_meters,
                 ..
-            })) => {
+            }) => {
                 self.hw_out_db = hw_out_db.as_ref().clone();
                 self.track_meters = track_meters.as_ref().clone();
             }
@@ -548,8 +548,10 @@ impl App {
                     self.sticky_status = true;
                 }
             }
-            EngineMessage::OfflineBounceFinished { result: Err(err) } => {
-                self.status = err;
+            EngineMessage::Event(maolan_engine::message::Event::OfflineBounceFinished(result))
+                if result.is_err() =>
+            {
+                self.status = result.err().unwrap_or_default();
                 self.sticky_status = true;
             }
             _ => {}

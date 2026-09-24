@@ -267,19 +267,13 @@ impl Maolan {
                 if !self.transport.playing
                     && !self.transport.paused
                     && !self.transport.live_session_playing
-                    && let Some(action) = self.transport.meter_stop_decay_action()
+                    && let Some((hw_out_db, track_meters)) =
+                        self.transport.meter_stop_decay_snapshot()
                 {
-                    return self
-                        .handle_response_freeze_meter_action(&action)
-                        .unwrap_or_else(Task::none);
+                    return self.apply_meter_snapshot(&hw_out_db, &track_meters);
                 }
                 if let Some(snapshot) = CLIENT.meter_snapshot() {
-                    let action = Action::MeterSnapshot {
-                        hw_out_db: std::sync::Arc::new(snapshot.hw_out_db),
-                        track_meters: std::sync::Arc::new(snapshot.track_meters),
-                    };
-                    self.handle_response_freeze_meter_action(&action)
-                        .unwrap_or_else(Task::none)
+                    self.apply_meter_snapshot(&snapshot.hw_out_db, &snapshot.track_meters)
                 } else {
                     Task::none()
                 }

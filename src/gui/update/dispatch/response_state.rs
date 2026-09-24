@@ -1,5 +1,4 @@
 use super::*;
-use crate::state::SlotPlayState;
 use maolan_engine::message::{
     ConnectableConnection, ConnectableRef, PluginGraphConnection, PluginGraphNode,
 };
@@ -326,48 +325,6 @@ impl Maolan {
                 state.message = format!("Opened MIDI output {s}");
                 true
             }
-            Action::HWInfo {
-                channels,
-                rate,
-                input,
-            } => {
-                if *rate > 0 {
-                    self.transport.playback_rate_hz = *rate as f64;
-                }
-                let mut state = self.state.write().expect("state lock poisoned");
-                if *rate > 0 {
-                    state.hw_sample_rate_hz = *rate as i32;
-                }
-                if !state.hw_loaded {
-                    state.hw_loaded = true;
-                }
-                let direction = if *input { "input" } else { "output" };
-                state.message = format!("HW {direction} channels: {channels} @ {rate} Hz");
-                if *input {
-                    state.hw_in = Some(HW {
-                        channels: *channels,
-                    });
-                } else {
-                    state.hw_out = Some(HW {
-                        channels: *channels,
-                    });
-                    if state.hw_out_meter_db.len() != *channels {
-                        state.hw_out_meter_db = vec![-90.0; *channels];
-                    }
-                }
-                true
-            }
-            Action::JackGraph(graph) => {
-                let mut state = self.state.write().expect("state lock poisoned");
-                state.jack_graph = graph.clone();
-                state.jack_session_routing = Some(graph.clone());
-                state.message = format!(
-                    "JACK graph: {} ports, {} connections",
-                    graph.ports.len(),
-                    graph.connections.len()
-                );
-                true
-            }
             Action::JackConnect {
                 source,
                 destination,
@@ -383,13 +340,6 @@ impl Maolan {
             } => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.message = format!("Disconnected JACK {source} -> {destination}");
-                true
-            }
-            Action::MidiLearnMappingsReport { lines } => {
-                let report = lines.join(" | ");
-                self.ui.midi_mappings_report_lines = lines.clone();
-                let mut state = self.state.write().expect("state lock poisoned");
-                state.message = format!("MIDI mappings: {}", report);
                 true
             }
             Action::ClearAllMidiLearnBindings => {
@@ -447,28 +397,6 @@ impl Maolan {
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                     track.folder_open = !track.folder_open;
                 }
-                true
-            }
-            Action::SessionRuntimeReport {
-                track_name,
-                scene_index,
-                state: engine_state,
-                play_position_samples,
-                elapsed_samples,
-            } => {
-                let mut state = self.state.write().expect("state lock poisoned");
-                let runtime = state
-                    .slot_runtimes
-                    .entry((track_name.clone(), *scene_index))
-                    .or_default();
-                runtime.state = match engine_state {
-                    EngineSessionSlotState::Stopped => SlotPlayState::Stopped,
-                    EngineSessionSlotState::Queued => SlotPlayState::Queued,
-                    EngineSessionSlotState::Playing => SlotPlayState::Playing,
-                    EngineSessionSlotState::Stopping => SlotPlayState::Stopping,
-                };
-                runtime.play_position_samples = *play_position_samples;
-                runtime.elapsed_samples = *elapsed_samples;
                 true
             }
             _ => false,
