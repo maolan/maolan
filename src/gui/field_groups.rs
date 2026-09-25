@@ -320,6 +320,12 @@ pub struct UiState {
     pub midi_mappings_report_lines: Vec<String>,
     pub log_viewer_content: text_editor::Content,
     pub log_viewer_highlights: LogHighlightSettings,
+    /// Cached filtered track-name list for the track-picker; rebuilt only when
+    /// the names in state no longer match.
+    pub track_names_cache: std::cell::RefCell<Vec<String>>,
+    /// Last status message shown in the status bar; re-cloned from state only
+    /// when the message changed.
+    pub status_message_cache: std::cell::RefCell<String>,
 }
 
 impl Default for UiState {
@@ -348,6 +354,8 @@ impl Default for UiState {
                 "[INFO] Thank you for using Maolan!",
             ),
             log_viewer_highlights: LogHighlightSettings::default(),
+            track_names_cache: std::cell::RefCell::new(Vec::new()),
+            status_message_cache: std::cell::RefCell::new(String::new()),
         }
     }
 }
@@ -772,7 +780,7 @@ impl AutomationRuntimeState {
     pub(crate) fn collect_track_automation_actions(
         &mut self,
         sample: usize,
-        tracks: &[AutomationTrackView],
+        tracks: &[AutomationTrackView<'_>],
     ) -> Vec<Action> {
         let now = Instant::now();
         for (track_name, active_keys) in self.touch_active_keys.iter_mut() {
@@ -806,23 +814,26 @@ impl AutomationRuntimeState {
             let mut vol = None;
             let mut bal = None;
             let mut midi_cc_updates: Vec<(u8, u8, u8)> = Vec::new();
-            let runtime = self
-                .track_automation_runtime
-                .entry(track.name.clone())
-                .or_default();
-            for lane in &track.automation_lanes {
+            let runtime = match self.track_automation_runtime.get_mut(track.name) {
+                Some(runtime) => runtime,
+                None => self
+                    .track_automation_runtime
+                    .entry(track.name.to_string())
+                    .or_default(),
+            };
+            for lane in track.automation_lanes {
                 let Some(key) = Maolan::automation_key(&lane.target) else {
                     continue;
                 };
                 let override_value = match track.automation_mode {
                     TrackAutomationMode::Touch => self
                         .touch_automation_overrides
-                        .get(&track.name)
+                        .get(track.name)
                         .and_then(|values| values.get(&key))
                         .and_then(|entry| {
                             let active = self
                                 .touch_active_keys
-                                .get(&track.name)
+                                .get(track.name)
                                 .is_some_and(|set| set.contains(&key));
                             let fresh =
                                 now.duration_since(entry.updated_at) <= Duration::from_millis(220);
@@ -830,7 +841,7 @@ impl AutomationRuntimeState {
                         }),
                     TrackAutomationMode::Latch => self
                         .latch_automation_overrides
-                        .get(&track.name)
+                        .get(track.name)
                         .and_then(|values| values.get(&key))
                         .copied(),
                     _ => None,
@@ -869,7 +880,7 @@ impl AutomationRuntimeState {
                             {
                                 runtime.lv2_params.insert(key, param_value);
                                 actions.push(Action::TrackSetLv2ControlValue {
-                                    track_name: track.name.clone(),
+                                    track_name: track.name.to_string(),
                                     instance_id: *instance_id,
                                     index: *index,
                                     value: param_value,
@@ -896,7 +907,7 @@ impl AutomationRuntimeState {
                             {
                                 runtime.vst3_params.insert(key, param_value);
                                 actions.push(Action::TrackSetVst3Parameter {
-                                    track_name: track.name.clone(),
+                                    track_name: track.name.to_string(),
                                     instance_id: *instance_id,
                                     param_id: *param_id,
                                     value: param_value,
@@ -925,7 +936,7 @@ impl AutomationRuntimeState {
                             {
                                 runtime.clap_params.insert(key, param_value);
                                 actions.push(Action::TrackSetClapParameterAt {
-                                    track_name: track.name.clone(),
+                                    track_name: track.name.to_string(),
                                     instance_id: *instance_id,
                                     param_id: *param_id,
                                     value: param_value,
@@ -945,7 +956,10 @@ impl AutomationRuntimeState {
                     .is_none_or(|current| (current - level_db).abs() >= 0.1)
                 {
                     runtime.level_db = Some(level_db);
-                    actions.push(Action::TrackAutomationLevel(track.name.clone(), level_db));
+                    actions.push(Action::TrackAutomationLevel(
+                        track.name.to_string(),
+                        level_db,
+                    ));
                 }
             }
             if let Some(v) = bal {
@@ -955,7 +969,10 @@ impl AutomationRuntimeState {
                     .is_none_or(|current| (current - balance).abs() >= 0.01)
                 {
                     runtime.balance = Some(balance);
-                    actions.push(Action::TrackAutomationBalance(track.name.clone(), balance));
+                    actions.push(Action::TrackAutomationBalance(
+                        track.name.to_string(),
+                        balance,
+                    ));
                 }
             }
             for (channel, cc, value) in midi_cc_updates {
@@ -967,7 +984,7 @@ impl AutomationRuntimeState {
                 {
                     runtime.midi_cc.insert(key, value);
                     actions.push(Action::TrackMidiCc {
-                        track_name: track.name.clone(),
+                        track_name: track.name.to_string(),
                         channel,
                         cc,
                         value,

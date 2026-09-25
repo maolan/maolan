@@ -31,6 +31,7 @@ fn spawn_plugin_host(
     format: &str,
     plugin_id: &str,
     instance_id: &str,
+    clap_search_root: Option<&std::path::Path>,
 ) -> Result<(Child, ShmMapping, EventPair), String> {
     let pid = std::process::id();
     let shm_name = format!("/maolan-{pid}-{instance_id}");
@@ -58,6 +59,9 @@ fn spawn_plugin_host(
         .arg(events.host_to_daw_name());
     if let Some(home) = real_user_home_dir() {
         cmd.env("HOME", home);
+    }
+    if let Some(root) = clap_search_root {
+        cmd.env("CLAP_PATH", root);
     }
     append_parent_log_level(&mut cmd);
     hide_console_window(&mut cmd);
@@ -190,13 +194,113 @@ fn build_plugin_host_binary(profile_dir: &std::path::Path, host_name: &str) -> O
 
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
     use std::time::Instant;
+
+    /// Plugin ID exercised by `clap_plugin_load_and_process`. This was
+    /// formerly `rs.maolan.monitoring`; the plugin was renamed to vumeter.
+    const TEST_CLAP_PLUGIN_ID: &str = "rs.maolan.vumeter";
+
+    static UNIQUE_BUNDLE_DIR_COUNTER: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    /// A Maolan CLAP bundle located without depending on a user-global
+    /// install, plus the directory to hand to the spawned host via CLAP_PATH.
+    struct TestClapBundle {
+        search_root: PathBuf,
+        bundle: PathBuf,
+        temp_dir: Option<PathBuf>,
+    }
+
+    impl TestClapBundle {
+        fn cleanup(&self) {
+            if let Some(dir) = &self.temp_dir {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
+    }
+
+    /// Returns true if `path` is a readable binary that advertises `plugin_id`.
+    fn binary_contains_plugin_id(path: &Path, plugin_id: &str) -> bool {
+        std::fs::read(path)
+            .map(|data| {
+                data.windows(plugin_id.len())
+                    .any(|window| window == plugin_id.as_bytes())
+            })
+            .unwrap_or(false)
+    }
+
+    /// Locates (or assembles) a Maolan CLAP bundle containing `plugin_id`,
+    /// without relying on `~/.clap` holding a current build:
+    ///
+    /// 1. `MAOLAN_TEST_CLAP_BUNDLE` env var, if set and containing the ID.
+    /// 2. A temp bundle linked from the sibling `../plugins` debug cdylib.
+    ///
+    /// Returns `None` (caller skips) when no usable bundle exists.
+    fn prepare_test_clap_bundle(plugin_id: &str) -> Option<TestClapBundle> {
+        if let Ok(override_path) = std::env::var("MAOLAN_TEST_CLAP_BUNDLE") {
+            let bundle = PathBuf::from(override_path);
+            if binary_contains_plugin_id(&bundle, plugin_id) {
+                let search_root = bundle.parent()?.to_path_buf();
+                return Some(TestClapBundle {
+                    search_root,
+                    bundle,
+                    temp_dir: None,
+                });
+            }
+            return None;
+        }
+
+        let lib_name = if cfg!(windows) {
+            "maolan_plugins.dll"
+        } else if cfg!(target_os = "macos") {
+            "libmaolan_plugins.dylib"
+        } else {
+            "libmaolan_plugins.so"
+        };
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let sibling_workspace = manifest_dir.parent()?;
+        let cdylib = sibling_workspace
+            .join("plugins")
+            .join("target")
+            .join("debug")
+            .join(lib_name);
+        if !binary_contains_plugin_id(&cdylib, plugin_id) {
+            return None;
+        }
+
+        let unique = UNIQUE_BUNDLE_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp_dir =
+            std::env::temp_dir().join(format!("maolan-clap-test-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).ok()?;
+        let bundle = temp_dir.join("Maolan.clap");
+        let linked = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&cdylib, &bundle).is_ok()
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
+        };
+        if !linked && std::fs::copy(&cdylib, &bundle).is_err() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return None;
+        }
+
+        Some(TestClapBundle {
+            search_root: temp_dir.clone(),
+            bundle,
+            temp_dir: Some(temp_dir),
+        })
+    }
 
     #[test]
     fn minimal_ipc_handshake() {
         let instance_id = "test-instance-001";
         let (mut child, mapping, events) =
-            spawn_plugin_host("__test__", "__test__", instance_id).unwrap();
+            spawn_plugin_host("__test__", "__test__", instance_id, None).unwrap();
 
         let header = unsafe { header_ref(mapping.as_ptr()) };
         assert!(
@@ -215,7 +319,7 @@ mod tests {
     fn watchdog_kills_hung_host() {
         let instance_id = "test-hang-003";
         let (mut child, mapping, events) =
-            spawn_plugin_host("__test__", "__hang__", instance_id).unwrap();
+            spawn_plugin_host("__test__", "__hang__", instance_id, None).unwrap();
 
         let header = unsafe { header_ref(mapping.as_ptr()) };
         assert!(
@@ -236,7 +340,7 @@ mod tests {
     fn null_plugin_passthrough() {
         let instance_id = "test-null-004";
         let (mut child, mapping, events) =
-            spawn_plugin_host("null", "__test__", instance_id).unwrap();
+            spawn_plugin_host("null", "__test__", instance_id, None).unwrap();
 
         let header = unsafe { header_ref(mapping.as_ptr()) };
         assert!(
@@ -292,15 +396,19 @@ mod tests {
 
     #[test]
     fn clap_plugin_load_and_process() {
-        let plugin_path = "/home/meka/.clap/Maolan.clap";
-        if !std::path::Path::new(plugin_path).exists() {
+        let Some(clap_bundle) = prepare_test_clap_bundle(TEST_CLAP_PLUGIN_ID) else {
             return;
-        }
+        };
 
-        let plugin_id = "rs.maolan.monitoring";
+        let plugin_id = TEST_CLAP_PLUGIN_ID;
         let instance_id = "test-clap-005";
-        let (mut child, mapping, events) =
-            spawn_plugin_host("clap", plugin_id, instance_id).unwrap();
+        let (mut child, mapping, events) = spawn_plugin_host(
+            "clap",
+            plugin_id,
+            instance_id,
+            Some(&clap_bundle.search_root),
+        )
+        .unwrap();
 
         let header = unsafe { header_ref(mapping.as_ptr()) };
         assert!(
@@ -381,29 +489,32 @@ mod tests {
             }
             Err(e) => panic!("failed to wait for plugin host: {e}"),
         }
+
+        clap_bundle.cleanup();
     }
 
     #[test]
     fn scanner_blocklist_crashing_plugin() {
         let host_bin = find_plugin_host_binary().expect("maolan-plugin-host binary not found");
-        let plugin_path = "/home/meka/.clap/Maolan.clap";
-
-        if !std::path::Path::new(plugin_path).exists() {
+        let Some(clap_bundle) = prepare_test_clap_bundle(TEST_CLAP_PLUGIN_ID) else {
             return;
-        }
+        };
+        let plugin_path = clap_bundle.bundle.to_string_lossy().into_owned();
 
         let mut blocklist = crate::plugin_blocklist::Blocklist::default();
         let result = scanner::scan_or_blocklist(
             &host_bin,
             "clap",
-            plugin_path,
+            &plugin_path,
             &mut blocklist,
             Duration::from_secs(10),
         );
 
+        clap_bundle.cleanup();
+
         assert!(result.is_some(), "expected scan to succeed");
         assert!(
-            !blocklist.contains(plugin_path),
+            !blocklist.contains(&plugin_path),
             "plugin should not be blocklisted when scan succeeds"
         );
     }
@@ -412,7 +523,7 @@ mod tests {
     fn watchdog_detects_hung_host() {
         let instance_id = "test-watchdog-006";
         let (mut child, mapping, events) =
-            spawn_plugin_host("null", "__hang__", instance_id).unwrap();
+            spawn_plugin_host("null", "__hang__", instance_id, None).unwrap();
 
         let header = unsafe { header_ref(mapping.as_ptr()) };
         assert!(
@@ -435,7 +546,7 @@ mod tests {
     fn ipc_latency_benchmark() {
         let instance_id = "test-bench-007";
         let (mut child, mapping, events) =
-            spawn_plugin_host("null", "__test__", instance_id).unwrap();
+            spawn_plugin_host("null", "__test__", instance_id, None).unwrap();
 
         let header = unsafe { header_ref(mapping.as_ptr()) };
         assert!(

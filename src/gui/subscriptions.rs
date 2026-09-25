@@ -8,7 +8,7 @@ use crate::{
         RECORDING_PREVIEW_UPDATE_INTERVAL,
     },
 };
-use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
+use maolan_engine::message::Message as EngineMessage;
 use maolan_widgets::iced::futures::{Stream, StreamExt, stream};
 use maolan_widgets::iced::keyboard::Event as KeyEvent;
 use maolan_widgets::iced::{Subscription, event, keyboard, mouse, window};
@@ -75,10 +75,16 @@ impl Maolan {
                         loop {
                             match rx.recv().await {
                                 Some(EngineMessage::Response(r)) => {
-                                    if let Ok(EngineAction::TrackMeters {
+                                    return Some((
+                                        Message::Response(r),
+                                        (rx, last_hw_out, last_meters),
+                                    ));
+                                }
+                                Some(EngineMessage::Event(e)) => {
+                                    if let maolan_engine::message::Event::TrackMeters {
                                         track_name,
                                         output_db,
-                                    }) = &r
+                                    } = &e
                                     {
                                         let should_forward = match last_meters.get(track_name) {
                                             Some(prev) => meter_changed(prev, output_db),
@@ -89,12 +95,6 @@ impl Maolan {
                                         }
                                         last_meters.insert(track_name.clone(), output_db.clone());
                                     }
-                                    return Some((
-                                        Message::Response(r),
-                                        (rx, last_hw_out, last_meters),
-                                    ));
-                                }
-                                Some(EngineMessage::Event(e)) => {
                                     return Some((
                                         Message::EngineEvent(e),
                                         (rx, last_hw_out, last_meters),
