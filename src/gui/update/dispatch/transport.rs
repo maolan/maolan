@@ -251,22 +251,21 @@ impl Maolan {
                     }
                 }
                 if self.transport.playing && !self.transport.paused {
-                    let tracks = {
+                    let actions = {
                         let state = self.state.read().expect("state lock poisoned");
-                        state
+                        let tracks = state
                             .tracks
                             .iter()
                             .map(|track| AutomationTrackView {
-                                name: track.name.clone(),
+                                name: &track.name,
                                 automation_mode: track.automation_mode,
-                                automation_lanes: track.automation_lanes.clone(),
+                                automation_lanes: &track.automation_lanes,
                                 frozen: track.frozen,
                             })
-                            .collect::<Vec<_>>()
+                            .collect::<Vec<_>>();
+                        self.automation
+                            .collect_track_automation_actions(now_sample, &tracks)
                     };
-                    let actions = self
-                        .automation
-                        .collect_track_automation_actions(now_sample, &tracks);
                     if !actions.is_empty() {
                         tasks.extend(actions.into_iter().map(|a| self.send(a)));
                     }

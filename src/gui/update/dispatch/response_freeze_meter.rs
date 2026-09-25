@@ -216,21 +216,6 @@ impl Maolan {
                     format!("Freeze canceled for '{}'", track_name);
                 Some(Task::none())
             }
-            Action::TrackMeters {
-                track_name,
-                output_db,
-            } => {
-                if track_name == "hw:out" {
-                    let mut state = self.state.write().expect("state lock poisoned");
-                    Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, output_db);
-                    return Some(Task::none());
-                }
-                let mut state = self.state.write().expect("state lock poisoned");
-                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
-                    Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
-                }
-                Some(Task::none())
-            }
             _ => None,
         }
     }

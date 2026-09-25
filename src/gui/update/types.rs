@@ -34,10 +34,13 @@ pub(super) struct MidiMappingsFile {
     pub(super) session_stop_all: Option<maolan_engine::message::MidiLearnBinding>,
 }
 
-#[derive(Clone)]
-pub(crate) struct AutomationTrackView {
-    pub(crate) name: String,
+/// Borrowed per-tick view of a track's automation-relevant fields, built
+/// under a short `state.read()` in `PlaybackTick` instead of cloning names
+/// and lane vectors every tick.
+#[derive(Clone, Copy)]
+pub(crate) struct AutomationTrackView<'a> {
+    pub(crate) name: &'a str,
     pub(crate) automation_mode: TrackAutomationMode,
-    pub(crate) automation_lanes: Vec<TrackAutomationLane>,
+    pub(crate) automation_lanes: &'a [TrackAutomationLane],
     pub(crate) frozen: bool,
 }

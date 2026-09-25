@@ -295,16 +295,35 @@ impl Maolan {
                         self.playhead_bar_beat(&state, playhead_sample);
                     let show_marker_dialog = self.track_marker.is_open();
                     let shortcuts_hint = state.shortcuts_hint.clone();
-                    let status_message = state.message.clone();
+                    {
+                        let mut cache = self.ui.status_message_cache.borrow_mut();
+                        if *cache != state.message {
+                            *cache = state.message.clone();
+                        }
+                    }
                     let plugin_graph_track = state.plugin_graph_track.clone();
                     let plugin_graph_clip = state.plugin_graph_clip.clone();
                     let connections_folder = state.connections_folder.clone();
-                    let track_names: Vec<String> = state
-                        .tracks
-                        .iter()
-                        .filter(|t| t.name != METRONOME_TRACK_ID)
-                        .map(|t| t.name.clone())
-                        .collect();
+                    {
+                        let mut cache = self.ui.track_names_cache.borrow_mut();
+                        let unchanged = {
+                            let filtered =
+                                state.tracks.iter().filter(|t| t.name != METRONOME_TRACK_ID);
+                            cache.len() == filtered.clone().count()
+                                && cache
+                                    .iter()
+                                    .zip(filtered.map(|t| t.name.as_str()))
+                                    .all(|(cached, name)| cached == name)
+                        };
+                        if !unchanged {
+                            *cache = state
+                                .tracks
+                                .iter()
+                                .filter(|t| t.name != METRONOME_TRACK_ID)
+                                .map(|t| t.name.clone())
+                                .collect();
+                        }
+                    }
                     let clip_header = plugin_graph_clip.as_ref().map(|target| {
                         let clip_label = state
                             .tracks
@@ -725,7 +744,7 @@ impl Maolan {
                                 text(header.clone()).into()
                             } else {
                                 pick_list(
-                                    track_names,
+                                    self.ui.track_names_cache.borrow().clone(),
                                     plugin_graph_track,
                                     Message::OpenTrackPlugins,
                                 )
@@ -1052,9 +1071,11 @@ impl Maolan {
                             .padding(8),
                         );
                     }
-                    let status_bar = container(last_message_status_text(&status_message))
-                        .width(Length::Fill)
-                        .padding(8);
+                    let status_bar = container(last_message_status_text(
+                        &self.ui.status_message_cache.borrow(),
+                    ))
+                    .width(Length::Fill)
+                    .padding(8);
                     self.wrap_with_log_window(
                         column![
                             container(content).width(Length::Fill).height(Length::Fill),

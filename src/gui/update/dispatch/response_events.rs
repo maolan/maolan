@@ -14,6 +14,43 @@ impl Maolan {
             Event::Log { source, message } => {
                 self.info(format!("[{source}] {message}"));
             }
+            Event::TrackAutomationLevel { track_name, level } => {
+                tracing::debug!(%track_name, level, "DAW received TrackAutomationLevel");
+                let mut state = self.state.write().expect("state lock poisoned");
+                if track_name == "hw:out" {
+                    state.hw_out_level = *level;
+                } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                {
+                    track.level = *level;
+                }
+            }
+            Event::TrackAutomationBalance {
+                track_name,
+                balance,
+            } => {
+                tracing::debug!(%track_name, balance, "DAW received TrackAutomationBalance");
+                let mut state = self.state.write().expect("state lock poisoned");
+                if track_name == "hw:out" {
+                    state.hw_out_balance = *balance;
+                } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                {
+                    track.balance = *balance;
+                }
+            }
+            Event::TrackMeters {
+                track_name,
+                output_db,
+            } => {
+                if track_name == "hw:out" {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, output_db);
+                } else {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
+                    }
+                }
+            }
             _ => {}
         }
         if let Event::StepRecordMidiNote {
