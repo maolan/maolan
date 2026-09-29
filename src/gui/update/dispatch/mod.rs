@@ -1152,6 +1152,7 @@ impl Maolan {
             | Message::PlaybackTick
             | Message::AutosaveSnapshotTick
             | Message::SetLoopRange(_)
+            | Message::SetSessionRange(_)
             | Message::SetPunchRange(_) => return self.handle_transport_message(message),
             Message::TempoAdjust(_)
             | Message::TempoPointAdd(_)
@@ -1356,6 +1357,8 @@ impl Maolan {
                 clip_idx: _,
             } => return self.handle_plugin_message_graph(message),
             Message::MarkerLaneCreate { .. }
+            | Message::MarkerLaneCreateAtPlayhead
+            | Message::MarkerLaneEdit { .. }
             | Message::MarkerNameInput(_)
             | Message::MarkerNameConfirm
             | Message::MarkerNameCancel

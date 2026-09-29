@@ -1,4 +1,6 @@
-use super::{ClipSnapEdge, tempo::TimelineZoomTarget, timeline_x_to_sample_f32};
+use super::{
+    ClipSnapEdge, snap_range_samples, tempo::TimelineZoomTarget, timeline_x_to_sample_f32,
+};
 use crate::consts::workspace::{
     BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
 };
@@ -241,13 +243,7 @@ impl canvas::Program<Message> for RulerCanvas {
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
-                if let Some(pos) = cursor_position {
-                    let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
-                    state.dragging = true;
-                    state.drag_adjust_loop_edge = false;
-                    state.drag_with_right = true;
-                    state.drag_start_x = x;
-                    state.last_x = x;
+                if cursor_position.is_some() {
                     return Some(CanvasAction::capture());
                 }
             }
@@ -329,106 +325,29 @@ impl canvas::Program<Message> for RulerCanvas {
                     return Some(CanvasAction::publish(view_api::transport_position(sample)));
                 }
 
-                let snap_interval = match self.snap_mode {
-                    SnapMode::NoSnap => 1.0,
-                    SnapMode::Clips => 1.0,
-                    SnapMode::Bar => self.samples_per_bar.max(1.0),
-                    SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
-                    SnapMode::Beat => self.samples_per_beat.max(1.0),
-                    SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
-                    SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
-                    SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
-                    SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
-                };
-
                 let start_x = state.drag_start_x.min(state.last_x).max(0.0);
                 let end_x = state.drag_start_x.max(state.last_x).max(0.0);
-
-                let snap_interval_f32 = snap_interval as f32;
-
-                let start_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                    snap_to_clips((start_x / self.pixels_per_sample).max(0.0) as usize).0 as f32
-                } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                    (start_x / self.pixels_per_sample).max(0.0)
-                } else {
-                    ((start_x / self.pixels_per_sample) / snap_interval_f32).floor()
-                        * snap_interval_f32
-                };
-
-                let mut end_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                    snap_to_clips((end_x / self.pixels_per_sample).max(0.0) as usize).0 as f32
-                } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                    (end_x / self.pixels_per_sample).max(0.0)
-                } else {
-                    ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil()
-                        * snap_interval_f32
-                };
-
-                if end_sample <= start_sample {
-                    end_sample = start_sample + snap_interval_f32;
-                }
+                let (start_sample, end_sample) = snap_range_samples(
+                    start_x,
+                    end_x,
+                    self.pixels_per_sample,
+                    self.timeline_left_inset_px,
+                    self.snap_mode,
+                    self.samples_per_beat,
+                    self.samples_per_bar,
+                    &self.clip_snap_edges,
+                );
                 return Some(CanvasAction::publish(Message::SetLoopRange(Some((
-                    start_sample.max(0.0) as usize,
-                    end_sample.max(0.0) as usize,
+                    start_sample,
+                    end_sample,
                 )))));
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right))
-                if state.dragging && state.drag_with_right =>
-            {
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
                 state.dragging = false;
+                state.drag_with_right = false;
                 state.drag_adjust_loop_edge = false;
-                if self.pixels_per_sample <= 1.0e-9 {
-                    return None;
-                }
-
-                let drag_delta = (state.last_x - state.drag_start_x).abs();
-                if drag_delta < 3.0 {
-                    return Some(CanvasAction::publish(Message::SetLoopRange(None)).and_capture());
-                }
-
-                let snap_interval = match self.snap_mode {
-                    SnapMode::NoSnap => 1.0,
-                    SnapMode::Clips => 1.0,
-                    SnapMode::Bar => self.samples_per_bar.max(1.0),
-                    SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
-                    SnapMode::Beat => self.samples_per_beat.max(1.0),
-                    SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
-                    SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
-                    SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
-                    SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
-                };
-
-                let start_x = state.drag_start_x.min(state.last_x).max(0.0);
-                let end_x = state.drag_start_x.max(state.last_x).max(0.0);
-
-                let snap_interval_f32 = snap_interval as f32;
-
-                let start_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                    snap_to_clips((start_x / self.pixels_per_sample).max(0.0) as usize).0 as f32
-                } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                    (start_x / self.pixels_per_sample).max(0.0)
-                } else {
-                    ((start_x / self.pixels_per_sample) / snap_interval_f32).floor()
-                        * snap_interval_f32
-                };
-
-                let mut end_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                    snap_to_clips((end_x / self.pixels_per_sample).max(0.0) as usize).0 as f32
-                } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                    (end_x / self.pixels_per_sample).max(0.0)
-                } else {
-                    ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil()
-                        * snap_interval_f32
-                };
-
-                if end_sample <= start_sample {
-                    end_sample = start_sample + snap_interval_f32;
-                }
-
-                return Some(CanvasAction::publish(Message::SetLoopRange(Some((
-                    start_sample.max(0.0) as usize,
-                    end_sample.max(0.0) as usize,
-                )))));
+                state.drag_move_loop_range = false;
+                return Some(CanvasAction::capture());
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) if state.dragging => {
                 state.dragging = false;
@@ -497,6 +416,41 @@ impl canvas::Program<Message> for RulerCanvas {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
+        let snap_preview_x = |x: f32| {
+            if matches!(self.snap_mode, SnapMode::NoSnap) {
+                return x.max(0.0);
+            }
+            let sample =
+                timeline_x_to_sample_f32(x, self.pixels_per_sample, self.timeline_left_inset_px)
+                    .max(0.0) as usize;
+            let snapped_sample = match self.snap_mode {
+                SnapMode::NoSnap => sample,
+                SnapMode::Clips => {
+                    let threshold_samples = (12.0 / self.pixels_per_sample.max(1.0e-6)).max(1.0);
+                    self.clip_snap_edges
+                        .iter()
+                        .map(|edge| (sample.abs_diff(edge.sample), edge.sample))
+                        .filter(|(distance, _)| (*distance as f32) <= threshold_samples)
+                        .min_by_key(|(distance, edge_sample)| (*distance, *edge_sample))
+                        .map(|(_, edge_sample)| edge_sample)
+                        .unwrap_or(sample)
+                }
+                snap_mode => {
+                    let interval = match snap_mode {
+                        SnapMode::Bar => self.samples_per_bar.max(1.0),
+                        SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
+                        SnapMode::Beat => self.samples_per_beat.max(1.0),
+                        SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
+                        SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
+                        SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
+                        SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
+                        SnapMode::NoSnap | SnapMode::Clips => unreachable!(),
+                    };
+                    ((sample as f64 / interval).round() * interval).max(0.0) as usize
+                }
+            };
+            snapped_sample as f32 * self.pixels_per_sample
+        };
         let mut hasher = DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
         bounds.height.to_bits().hash(&mut hasher);
@@ -572,10 +526,11 @@ impl canvas::Program<Message> for RulerCanvas {
                 if state.dragging {
                     let (start_x, end_x) = if state.drag_move_loop_range {
                         let delta_x = state.last_x - state.drag_start_x;
-                        let start_x = (state.loop_move_original_start as f32
+                        let raw_start_x = (state.loop_move_original_start as f32
                             * self.pixels_per_sample
                             + delta_x)
                             .max(0.0);
+                        let start_x = snap_preview_x(raw_start_x);
                         let end_x = start_x
                             + (state.loop_move_original_end - state.loop_move_original_start)
                                 as f32
@@ -583,7 +538,7 @@ impl canvas::Program<Message> for RulerCanvas {
                         (start_x, end_x)
                     } else if state.drag_adjust_loop_edge {
                         if let Some((loop_start, loop_end)) = self.loop_range_samples {
-                            let moved_x = state.last_x.max(0.0);
+                            let moved_x = snap_preview_x(state.last_x).max(0.0);
                             if state.adjust_loop_start {
                                 (
                                     moved_x.min(loop_end as f32 * self.pixels_per_sample),
@@ -603,8 +558,8 @@ impl canvas::Program<Message> for RulerCanvas {
                         }
                     } else {
                         (
-                            state.drag_start_x.min(state.last_x).max(0.0),
-                            state.drag_start_x.max(state.last_x).max(0.0),
+                            snap_preview_x(state.drag_start_x.min(state.last_x)).max(0.0),
+                            snap_preview_x(state.drag_start_x.max(state.last_x)).max(0.0),
                         )
                     };
                     frame.fill(
@@ -870,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn right_click_inside_loop_clears_range() {
+    fn right_click_inside_loop_does_not_adjust_range() {
         let canvas = RulerCanvas {
             playhead_x: None,
             beat_pixels: 16.0,
@@ -898,9 +853,9 @@ mod tests {
             .expect("press action");
         let (_, status) = action_message(press);
         assert_eq!(status, event::Status::Captured);
-        assert!(state.dragging);
+        assert!(!state.dragging);
         assert!(!state.drag_move_loop_range);
-        assert!(state.drag_with_right);
+        assert!(!state.drag_with_right);
 
         let release = canvas
             .update(
@@ -913,10 +868,7 @@ mod tests {
         let (message, status) = action_message(release);
         assert_eq!(status, event::Status::Captured);
         assert!(!state.dragging);
-        match message {
-            Some(Message::SetLoopRange(None)) => {}
-            other => panic!("unexpected message: {other:?}"),
-        }
+        assert!(message.is_none());
     }
 
     #[test]
@@ -987,12 +939,12 @@ mod tests {
     }
 
     #[test]
-    fn right_click_drag_outside_loop_creates_range() {
+    fn right_click_without_loop_does_nothing() {
         let canvas = RulerCanvas {
             playhead_x: None,
             beat_pixels: 16.0,
             pixels_per_sample: 2.0,
-            loop_range_samples: Some((40, 80)),
+            loop_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -1015,22 +967,22 @@ mod tests {
             .expect("press action");
         let (_, status) = action_message(press);
         assert_eq!(status, event::Status::Captured);
-        assert!(state.dragging);
-        assert!(state.drag_with_right);
+        assert!(!state.dragging);
+        assert!(!state.drag_with_right);
 
         let dragged = mouse::Cursor::Available(Point::new(260.0, 10.0));
-        let move_action = canvas
-            .update(
-                &mut state,
-                &Event::Mouse(mouse::Event::CursorMoved {
-                    position: Point::new(260.0, 10.0),
-                }),
-                bounds,
-                dragged,
-            )
-            .expect("move action");
-        let (_, status) = action_message(move_action);
-        assert_eq!(status, event::Status::Captured);
+        assert!(
+            canvas
+                .update(
+                    &mut state,
+                    &Event::Mouse(mouse::Event::CursorMoved {
+                        position: Point::new(260.0, 10.0),
+                    }),
+                    bounds,
+                    dragged,
+                )
+                .is_none()
+        );
 
         let release = canvas
             .update(
@@ -1042,12 +994,6 @@ mod tests {
             .expect("release action");
         let (message, _status) = action_message(release);
         assert!(!state.dragging);
-        match message {
-            Some(Message::SetLoopRange(Some((start, end)))) => {
-                assert_eq!(start, 100);
-                assert_eq!(end, 130);
-            }
-            other => panic!("unexpected message: {other:?}"),
-        }
+        assert!(message.is_none());
     }
 }

@@ -345,6 +345,7 @@ fn workspace_shortcuts(
                 ),
                 keyboard_row(ShortcutAction::ToggleClipsPane, "Toggle clips pane"),
                 keyboard_row(ShortcutAction::ToggleCutIndicator, "Toggle cut indicator"),
+                keyboard_row(ShortcutAction::CreateMarker, "Create marker at playhead"),
             ],
             hint,
             overrides,
@@ -397,7 +398,7 @@ fn workspace_shortcuts(
         section(
             "Markers",
             vec![
-                static_row("Right click empty header: Create marker"),
+                static_row("Right click or N: Create marker at playhead"),
                 static_row("Left drag marker: Move"),
                 static_row("Right click marker: Rename"),
                 static_row("Middle click marker: Delete"),
@@ -433,7 +434,7 @@ fn workspace_shortcuts(
                 static_row("Left drag: Set loop range"),
                 static_row("Middle drag inside loop: Move loop range"),
                 static_row("Middle drag loop edge: Adjust loop start/end"),
-                static_row("Right click: Clear loop range"),
+                static_row("Right drag: Adjust nearest loop edge"),
             ],
             hint,
             overrides,

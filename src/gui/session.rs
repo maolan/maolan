@@ -608,6 +608,7 @@ impl Maolan {
             },
             "transport": {
                 "loop_range_samples": self.transport.loop_range_samples.map(|(start, end)| vec![start, end]),
+                "session_range_samples": self.transport.session_range_samples.map(|(start, end)| vec![start, end]),
                 "loop_enabled": self.transport.loop_enabled,
                 "punch_range_samples": self.transport.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.transport.punch_enabled,
@@ -1869,6 +1870,7 @@ impl Maolan {
             },
             "transport": {
                 "loop_range_samples": self.transport.loop_range_samples.map(|(start, end)| vec![start, end]),
+                "session_range_samples": self.transport.session_range_samples.map(|(start, end)| vec![start, end]),
                 "loop_enabled": self.transport.loop_enabled,
                 "punch_range_samples": self.transport.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.transport.punch_enabled,
@@ -2486,6 +2488,11 @@ impl Maolan {
         };
 
         let loaded_loop_range = parse_range("loop_range_samples")?;
+        let loaded_session_range = if transport.get("session_range_samples").is_some() {
+            parse_range("session_range_samples")?
+        } else {
+            None
+        };
         let loaded_loop_enabled = parse_enabled("loop_enabled")?;
         let loaded_punch_range = parse_range("punch_range_samples")?;
         let loaded_punch_enabled = parse_enabled("punch_enabled")?;
@@ -2499,6 +2506,7 @@ impl Maolan {
             .map(|v| v.max(1) as usize);
 
         self.transport.loop_range_samples = loaded_loop_range;
+        self.transport.session_range_samples = loaded_session_range;
         self.transport.loop_enabled = loaded_loop_enabled;
         self.transport.punch_range_samples = loaded_punch_range;
         self.transport.punch_enabled = loaded_punch_enabled;

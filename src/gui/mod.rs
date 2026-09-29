@@ -24,7 +24,7 @@ use crate::{
     menu,
     message::{
         BurnBackendOption, DraggedClip, ExportBitDepth, ExportDither, ExportFormat,
-        ExportNormalizeMode, ExportRenderMode, GenerateAudioAceStepLmOption,
+        ExportNormalizeMode, ExportRange, ExportRenderMode, GenerateAudioAceStepLmOption,
         GenerateAudioModelOption, GenerateMidiModelOption, Message, PreferencesDeviceOption, Show,
         SnapMode, TrackAutomationTarget,
     },
@@ -363,6 +363,10 @@ struct ExportSessionOptions {
     sample_rate: i32,
     formats: Vec<ExportFormat>,
     render_mode: ExportRenderMode,
+    export_range: ExportRange,
+    session_range: Option<(usize, usize)>,
+    loop_range: Option<(usize, usize)>,
+    punch_range: Option<(usize, usize)>,
     selected_hw_out_ports: Vec<usize>,
     realtime_fallback: bool,
     bit_depth: ExportBitDepth,
@@ -3822,6 +3826,30 @@ impl Maolan {
         Ok(mixed)
     }
 
+    fn crop_export_range(
+        buffer: &[f32],
+        source_start: usize,
+        source_end: usize,
+        output_channels: usize,
+    ) -> Vec<f32> {
+        let output_channels = output_channels.max(1);
+        let length = source_end.saturating_sub(source_start);
+        let mut cropped = vec![0.0; length * output_channels];
+        let source_frames = buffer.len() / output_channels;
+        let copy_start = source_start.min(source_frames);
+        let copy_end = source_end.min(source_frames);
+        if copy_end > copy_start {
+            let copy_frames = copy_end - copy_start;
+            let source_offset = copy_start * output_channels;
+            let destination_offset = (copy_start - source_start) * output_channels;
+            cropped[destination_offset..destination_offset + copy_frames * output_channels]
+                .copy_from_slice(
+                    &buffer[source_offset..source_offset + copy_frames * output_channels],
+                );
+        }
+        cropped
+    }
+
     /// Compute which hw:out ports a track's output port reaches, following
     /// track-to-track and folder routing. This mirrors the engine's routing
     /// enough to make the offline export sound like the live playback.
@@ -4215,6 +4243,21 @@ impl Maolan {
                 "No audio clips found. Nothing to export.".to_string(),
             ));
         }
+        let (range_start, range_end) = match options.export_range {
+            ExportRange::Session => options.session_range,
+            ExportRange::Loop => options.loop_range,
+            ExportRange::Punch => options.punch_range,
+            ExportRange::All => Some((0, total_length)),
+        }
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "The selected export range ({}) is not available",
+                options.export_range
+            ))
+        })?;
+        if range_end <= range_start {
+            return Err(io::Error::other("Export range must have a positive length"));
+        }
         if export_formats.is_empty() {
             return Err(io::Error::other("Select at least one export format"));
         }
@@ -4386,6 +4429,8 @@ impl Maolan {
                 );
                 tokio::task::yield_now().await;
             }
+            mixed_buffer =
+                Self::crop_export_range(&mixed_buffer, range_start, range_end, output_channels);
             if realtime_fallback {
                 progress_callback(0.82, Some("Real-time fallback pacing".to_string()));
                 let seconds = (total_length as f64 / sample_rate.max(1) as f64).max(0.0);
@@ -4452,6 +4497,7 @@ impl Maolan {
 
             let is_post_fader = matches!(render_mode, ExportRenderMode::StemsPostFader);
             let can_zero_copy = is_post_fader
+                && matches!(options.export_range, ExportRange::All)
                 && export_formats.len() == 1
                 && export_formats[0] == ExportFormat::Wav
                 && bit_depth == ExportBitDepth::Float32
@@ -4552,6 +4598,9 @@ impl Maolan {
                     false,
                 )?
             };
+
+            let stem_buffer =
+                Self::crop_export_range(&stem_buffer, range_start, range_end, output_channels);
 
             for format in &export_formats {
                 let stem_file = stem_dir.join(format!(
@@ -5886,6 +5935,23 @@ impl Maolan {
                                 Message::ExportRenderModeSelected
                             )
                             .placeholder("Choose render mode")
+                            .width(Length::Fixed(220.0)),
+                        ]
+                        .spacing(10)
+                        .align_y(maolan_widgets::iced::Alignment::Center),
+                        row![
+                            text("Range:"),
+                            pick_list(
+                                vec![
+                                    ExportRange::Session,
+                                    ExportRange::Loop,
+                                    ExportRange::Punch,
+                                    ExportRange::All,
+                                ],
+                                Some(self.transfer.export_range),
+                                Message::ExportRangeSelected
+                            )
+                            .placeholder("Choose range")
                             .width(Length::Fixed(220.0)),
                         ]
                         .spacing(10)

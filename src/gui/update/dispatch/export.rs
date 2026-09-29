@@ -586,6 +586,9 @@ impl Maolan {
                 self.transfer.normalize_hw_out_ports(&self.state);
                 self.modal = Some(crate::message::Show::ExportSettings);
             }
+            Message::ExportRangeSelected(range) => {
+                self.transfer.export_range = range;
+            }
             Message::MidiLearnMappingsPanelToggle => {
                 self.ui.midi_mappings_panel_open = !self.ui.midi_mappings_panel_open;
                 if self.ui.midi_mappings_panel_open {
@@ -766,6 +769,10 @@ impl Maolan {
                     self.transfer.export_hw_out_ports.iter().copied().collect();
                 let state_clone = self.state.clone();
                 let render_mode = self.transfer.export_render_mode;
+                let export_range = self.transfer.export_range;
+                let session_range = self.transport.session_range_samples;
+                let loop_range = self.transport.loop_range_samples;
+                let punch_range = self.transport.punch_range_samples;
 
                 self.transfer.export_in_progress = true;
                 self.transfer.export_progress = 0.0;
@@ -828,6 +835,10 @@ impl Maolan {
                                 sample_rate,
                                 formats: export_formats,
                                 render_mode,
+                                export_range,
+                                session_range,
+                                loop_range,
+                                punch_range,
                                 selected_hw_out_ports,
                                 realtime_fallback: export_realtime_fallback,
                                 bit_depth: export_bit_depth,
