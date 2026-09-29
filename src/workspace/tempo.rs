@@ -1,4 +1,4 @@
-use super::{ClipSnapEdge, timeline_sample_to_x, timeline_x_to_sample_f32};
+use super::{ClipSnapEdge, snap_range_samples, timeline_sample_to_x, timeline_x_to_sample_f32};
 use crate::consts::workspace::{
     CONTEXT_MENU_ITEM_HEIGHT, CONTEXT_MENU_WIDTH, LEFT_HIT_WIDTH, MIN_LABEL_SPACING_PX,
     TEMPO_HEIGHT, TEMPO_HIT_HEIGHT, TIME_SIG_HIT_X_SPLIT,
@@ -61,6 +61,21 @@ enum DragMode {
         fixed_sample: usize,
         current_sample: usize,
     },
+    Time {
+        drag_start_x: f32,
+        last_x: f32,
+    },
+    MoveTimeRange {
+        original_start: usize,
+        original_end: usize,
+        drag_start_x: f32,
+        last_x: f32,
+    },
+    AdjustTimeEdge {
+        adjust_start: bool,
+        fixed_sample: usize,
+        current_sample: usize,
+    },
     Marker {
         lane: MarkerLane,
         original_samples: Vec<usize>,
@@ -79,6 +94,7 @@ struct ContextMenuState {
 #[derive(Debug)]
 struct TempoState {
     drag_mode: DragMode,
+    time_range_samples: Option<(usize, usize)>,
     context_menu: Option<ContextMenuState>,
     cache: canvas::Cache,
     last_hash: Cell<u64>,
@@ -88,6 +104,7 @@ impl Default for TempoState {
     fn default() -> Self {
         Self {
             drag_mode: DragMode::None,
+            time_range_samples: None,
             context_menu: None,
             cache: canvas::Cache::default(),
             last_hash: Cell::new(0),
@@ -102,6 +119,7 @@ struct TempoCanvas {
     pixels_per_sample: f32,
     playhead_x: Option<f32>,
     punch_range_samples: Option<(usize, usize)>,
+    session_range_samples: Option<(usize, usize)>,
     clip_snap_edges: Vec<ClipSnapEdge>,
     snap_mode: SnapMode,
     samples_per_beat: f64,
@@ -125,6 +143,7 @@ pub struct TempoViewArgs {
     pub pixels_per_sample: f32,
     pub playhead_x: Option<f32>,
     pub punch_range_samples: Option<(usize, usize)>,
+    pub session_range_samples: Option<(usize, usize)>,
     pub clip_snap_edges: Vec<ClipSnapEdge>,
     pub snap_mode: SnapMode,
     pub samples_per_beat: f64,
@@ -183,6 +202,7 @@ impl Tempo {
             pixels_per_sample: args.pixels_per_sample,
             playhead_x: args.playhead_x,
             punch_range_samples: args.punch_range_samples,
+            session_range_samples: args.session_range_samples,
             clip_snap_edges: args.clip_snap_edges,
             snap_mode: args.snap_mode,
             samples_per_beat: args.samples_per_beat,
@@ -214,6 +234,11 @@ impl canvas::Program<Message> for TempoCanvas {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<CanvasAction<Message>> {
+        if matches!(state.drag_mode, DragMode::None)
+            && state.time_range_samples != self.session_range_samples
+        {
+            state.time_range_samples = self.session_range_samples;
+        }
         let signed_step = |v: f32| if v >= 0.0 { 1_i8 } else { -1_i8 };
         let sample_at_x = |x: f32| {
             timeline_x_to_sample_f32(x, self.pixels_per_sample, self.timeline_left_inset_px)
@@ -395,6 +420,11 @@ impl canvas::Program<Message> for TempoCanvas {
                         return Some(CanvasAction::capture());
                     }
                     if pos.y > TEMPO_HIT_HEIGHT && pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
+                        state.drag_mode = DragMode::Time {
+                            drag_start_x: x,
+                            last_x: x,
+                        };
                         return Some(CanvasAction::capture());
                     }
                     if pos.y > TEMPO_HIT_HEIGHT * 2.0
@@ -454,6 +484,16 @@ impl canvas::Program<Message> for TempoCanvas {
                             })
                             .and_capture(),
                         );
+                    }
+                    // Empty space above the punch lanes belongs to the marker/time
+                    // ruler, never to punch-range creation.
+                    if pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
+                        state.drag_mode = DragMode::Time {
+                            drag_start_x: x,
+                            last_x: x,
+                        };
+                        return Some(CanvasAction::capture());
                     }
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     state.drag_mode = DragMode::Punch {
@@ -516,6 +556,18 @@ impl canvas::Program<Message> for TempoCanvas {
                             }
                             return Some(CanvasAction::request_redraw().and_capture());
                         }
+                        DragMode::Time { last_x, .. } => {
+                            *last_x = x;
+                            return Some(CanvasAction::request_redraw().and_capture());
+                        }
+                        DragMode::MoveTimeRange { last_x, .. } => {
+                            *last_x = x;
+                            return Some(CanvasAction::request_redraw().and_capture());
+                        }
+                        DragMode::AdjustTimeEdge { current_sample, .. } => {
+                            *current_sample = snap_sample(sample_at_x(x)).0;
+                            return Some(CanvasAction::request_redraw().and_capture());
+                        }
                         DragMode::Marker { current_sample, .. } => {
                             *current_sample = snap_sample(sample_at_x(x)).0;
                             return Some(CanvasAction::request_redraw().and_capture());
@@ -543,48 +595,45 @@ impl canvas::Program<Message> for TempoCanvas {
                             )));
                         }
 
-                        let snap_interval = match self.snap_mode {
-                            SnapMode::NoSnap => 1.0,
-                            SnapMode::Clips => 1.0,
-                            SnapMode::Bar => self.samples_per_bar.max(1.0),
-                            SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
-                            SnapMode::Beat => self.samples_per_beat.max(1.0),
-                            SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
-                            SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
-                            SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
-                            SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
-                        };
-
                         let start_x = drag_start_x.min(last_x).max(0.0);
                         let end_x = drag_start_x.max(last_x).max(0.0);
-
-                        let snap_interval_f32 = snap_interval as f32;
-
-                        let start_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                            snap_sample(sample_at_x(start_x)).0 as f32
-                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                            (start_x / self.pixels_per_sample).max(0.0)
-                        } else {
-                            ((start_x / self.pixels_per_sample) / snap_interval_f32).floor()
-                                * snap_interval_f32
-                        };
-
-                        let mut end_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                            snap_sample(sample_at_x(end_x)).0 as f32
-                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                            (end_x / self.pixels_per_sample).max(0.0)
-                        } else {
-                            ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil()
-                                * snap_interval_f32
-                        };
-
-                        if end_sample <= start_sample {
-                            end_sample = start_sample + snap_interval_f32;
-                        }
+                        let (start_sample, end_sample) = snap_range_samples(
+                            start_x,
+                            end_x,
+                            self.pixels_per_sample,
+                            self.timeline_left_inset_px,
+                            self.snap_mode,
+                            self.samples_per_beat,
+                            self.samples_per_bar,
+                            &self.clip_snap_edges,
+                        );
                         return Some(CanvasAction::publish(Message::SetPunchRange(Some((
-                            start_sample.max(0.0) as usize,
-                            end_sample.max(0.0) as usize,
+                            start_sample,
+                            end_sample,
                         )))));
+                    }
+                    DragMode::Time {
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        if self.pixels_per_sample <= 1.0e-9 {
+                            return Some(CanvasAction::capture());
+                        }
+                        let (start, end) = snap_range_samples(
+                            drag_start_x,
+                            last_x,
+                            self.pixels_per_sample,
+                            self.timeline_left_inset_px,
+                            self.snap_mode,
+                            self.samples_per_beat,
+                            self.samples_per_bar,
+                            &self.clip_snap_edges,
+                        );
+                        state.time_range_samples = Some((start, end));
+                        return Some(
+                            CanvasAction::publish(Message::SetSessionRange(Some((start, end))))
+                                .and_capture(),
+                        );
                     }
                     DragMode::Marker {
                         lane,
@@ -621,6 +670,9 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     DragMode::MovePunchRange { .. } => return Some(CanvasAction::capture()),
                     DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
+                    DragMode::MoveTimeRange { .. } | DragMode::AdjustTimeEdge { .. } => {
+                        return Some(CanvasAction::capture());
+                    }
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
@@ -630,12 +682,38 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     if pos.y <= TEMPO_HIT_HEIGHT {
                         let sample = snap_sample(sample_at_x(pos.x)).0;
+                        let marker_index = self
+                            .markers
+                            .iter()
+                            .enumerate()
+                            .map(|(index, (marker_sample, _))| {
+                                let marker_x = timeline_sample_to_x(
+                                    *marker_sample,
+                                    self.pixels_per_sample,
+                                    self.timeline_left_inset_px,
+                                );
+                                (index, (marker_x - pos.x).abs())
+                            })
+                            .min_by(|(_, distance_a), (_, distance_b)| {
+                                distance_a
+                                    .partial_cmp(distance_b)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .filter(|(_, distance)| *distance <= 6.0)
+                            .map(|(index, _)| index);
+                        if let Some(marker_index) = marker_index {
+                            return Some(
+                                CanvasAction::publish(Message::MarkerLaneEdit { marker_index })
+                                    .and_capture(),
+                            );
+                        }
                         return Some(
                             CanvasAction::publish(Message::MarkerLaneCreate { sample })
                                 .and_capture(),
                         );
                     }
                     if pos.y > TEMPO_HIT_HEIGHT && pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        state.drag_mode = DragMode::None;
                         return Some(CanvasAction::capture());
                     }
                     if pos.y > TEMPO_HIT_HEIGHT * 2.0
@@ -677,11 +755,7 @@ impl canvas::Program<Message> for TempoCanvas {
                         );
                     }
                     state.context_menu = None;
-                    let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
-                    state.drag_mode = DragMode::Punch {
-                        drag_start_x: x,
-                        last_x: x,
-                    };
+                    state.drag_mode = DragMode::None;
                     return Some(
                         CanvasAction::publish(Message::ClearTimingPointSelection).and_capture(),
                     );
@@ -690,68 +764,56 @@ impl canvas::Program<Message> for TempoCanvas {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
                 let drag_mode = std::mem::replace(&mut state.drag_mode, DragMode::None);
                 match drag_mode {
-                    DragMode::None => {}
-                    DragMode::Punch {
-                        drag_start_x,
-                        last_x,
-                    } => {
-                        if self.pixels_per_sample <= 1.0e-9 {
-                            return None;
-                        }
-
-                        let drag_delta = (last_x - drag_start_x).abs();
-                        if drag_delta < 3.0 {
-                            return Some(
-                                CanvasAction::publish(Message::SetPunchRange(None)).and_capture(),
-                            );
-                        }
-
-                        let snap_interval = match self.snap_mode {
-                            SnapMode::NoSnap => 1.0,
-                            SnapMode::Clips => 1.0,
-                            SnapMode::Bar => self.samples_per_bar.max(1.0),
-                            SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
-                            SnapMode::Beat => self.samples_per_beat.max(1.0),
-                            SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
-                            SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
-                            SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
-                            SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
-                        };
-
-                        let start_x = drag_start_x.min(last_x).max(0.0);
-                        let end_x = drag_start_x.max(last_x).max(0.0);
-
-                        let snap_interval_f32 = snap_interval as f32;
-
-                        let start_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                            snap_sample(sample_at_x(start_x)).0 as f32
-                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                            (start_x / self.pixels_per_sample).max(0.0)
-                        } else {
-                            ((start_x / self.pixels_per_sample) / snap_interval_f32).floor()
-                                * snap_interval_f32
-                        };
-
-                        let mut end_sample = if matches!(self.snap_mode, SnapMode::Clips) {
-                            snap_sample(sample_at_x(end_x)).0 as f32
-                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
-                            (end_x / self.pixels_per_sample).max(0.0)
-                        } else {
-                            ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil()
-                                * snap_interval_f32
-                        };
-
-                        if end_sample <= start_sample {
-                            end_sample = start_sample + snap_interval_f32;
-                        }
-                        return Some(CanvasAction::publish(Message::SetPunchRange(Some((
-                            start_sample.max(0.0) as usize,
-                            end_sample.max(0.0) as usize,
-                        )))));
-                    }
+                    DragMode::None => return Some(CanvasAction::capture()),
+                    DragMode::Punch { .. } => return Some(CanvasAction::capture()),
                     DragMode::Marker { .. } => return Some(CanvasAction::capture()),
-                    DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
+                    DragMode::AdjustPunchEdge {
+                        adjust_start,
+                        fixed_sample,
+                        current_sample,
+                    } => {
+                        let (start, end) = if adjust_start {
+                            (
+                                current_sample.min(fixed_sample.saturating_sub(1)),
+                                fixed_sample,
+                            )
+                        } else {
+                            (
+                                fixed_sample,
+                                current_sample.max(fixed_sample.saturating_add(1)),
+                            )
+                        };
+                        return Some(
+                            CanvasAction::publish(Message::SetPunchRange(Some((start, end))))
+                                .and_capture(),
+                        );
+                    }
+                    DragMode::AdjustTimeEdge {
+                        adjust_start,
+                        fixed_sample,
+                        current_sample,
+                    } => {
+                        let (start, end) = if adjust_start {
+                            (
+                                current_sample.min(fixed_sample.saturating_sub(1)),
+                                fixed_sample,
+                            )
+                        } else {
+                            (
+                                fixed_sample,
+                                current_sample.max(fixed_sample.saturating_add(1)),
+                            )
+                        };
+                        state.time_range_samples = Some((start, end));
+                        return Some(
+                            CanvasAction::publish(Message::SetSessionRange(Some((start, end))))
+                                .and_capture(),
+                        );
+                    }
                     DragMode::MovePunchRange { .. } => return Some(CanvasAction::capture()),
+                    DragMode::Time { .. } | DragMode::MoveTimeRange { .. } => {
+                        return Some(CanvasAction::capture());
+                    }
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
@@ -793,6 +855,43 @@ impl canvas::Program<Message> for TempoCanvas {
                             };
                             return Some(CanvasAction::capture());
                         }
+                    }
+                    if pos.y > TEMPO_HIT_HEIGHT && pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        if let Some((range_start, range_end)) = state.time_range_samples
+                            && range_end > range_start
+                        {
+                            let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
+                            let start_x = timeline_sample_to_x(
+                                range_start,
+                                self.pixels_per_sample,
+                                self.timeline_left_inset_px,
+                            );
+                            let end_x = timeline_sample_to_x(
+                                range_end,
+                                self.pixels_per_sample,
+                                self.timeline_left_inset_px,
+                            );
+                            let start_hit = (x - start_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
+                            let end_hit = (x - end_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
+                            if start_hit || end_hit {
+                                state.drag_mode = DragMode::AdjustTimeEdge {
+                                    adjust_start: start_hit,
+                                    fixed_sample: if start_hit { range_end } else { range_start },
+                                    current_sample: if start_hit { range_start } else { range_end },
+                                };
+                                return Some(CanvasAction::capture());
+                            }
+                            if x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                                state.drag_mode = DragMode::MoveTimeRange {
+                                    original_start: range_start,
+                                    original_end: range_end,
+                                    drag_start_x: x,
+                                    last_x: x,
+                                };
+                                return Some(CanvasAction::capture());
+                            }
+                        }
+                        return Some(CanvasAction::capture());
                     }
                     let sample = snap_sample(sample_at_x(pos.x)).0;
                     if pos.y <= TEMPO_HIT_HEIGHT {
@@ -836,6 +935,50 @@ impl canvas::Program<Message> for TempoCanvas {
                         };
                         return Some(
                             CanvasAction::publish(Message::SetPunchRange(Some((start, end))))
+                                .and_capture(),
+                        );
+                    }
+                    DragMode::AdjustTimeEdge {
+                        adjust_start,
+                        fixed_sample,
+                        current_sample,
+                    } => {
+                        let (start, end) = if adjust_start {
+                            (
+                                current_sample.min(fixed_sample.saturating_sub(1)),
+                                fixed_sample,
+                            )
+                        } else {
+                            (
+                                fixed_sample,
+                                current_sample.max(fixed_sample.saturating_add(1)),
+                            )
+                        };
+                        state.time_range_samples = Some((start, end));
+                        return Some(
+                            CanvasAction::publish(Message::SetSessionRange(Some((start, end))))
+                                .and_capture(),
+                        );
+                    }
+                    DragMode::MoveTimeRange {
+                        original_start,
+                        original_end,
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        if self.pixels_per_sample <= 1.0e-9 {
+                            return Some(CanvasAction::capture());
+                        }
+                        let delta_samples = (last_x - drag_start_x) / self.pixels_per_sample;
+                        let raw_start = (original_start as f32 + delta_samples).max(0.0);
+                        let snapped_start = snap_sample(raw_start as usize).0;
+                        let range = (
+                            snapped_start,
+                            snapped_start + (original_end - original_start),
+                        );
+                        state.time_range_samples = Some(range);
+                        return Some(
+                            CanvasAction::publish(Message::SetSessionRange(Some(range)))
                                 .and_capture(),
                         );
                     }
@@ -926,6 +1069,32 @@ impl canvas::Program<Message> for TempoCanvas {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
+        let snap_preview_sample = |sample: usize| match self.snap_mode {
+            SnapMode::NoSnap => sample,
+            SnapMode::Clips => {
+                let threshold_samples = (12.0 / self.pixels_per_sample.max(1.0e-6)).max(1.0);
+                self.clip_snap_edges
+                    .iter()
+                    .map(|edge| (sample.abs_diff(edge.sample), edge.sample))
+                    .filter(|(distance, _)| (*distance as f32) <= threshold_samples)
+                    .min_by_key(|(distance, edge_sample)| (*distance, *edge_sample))
+                    .map(|(_, edge_sample)| edge_sample)
+                    .unwrap_or(sample)
+            }
+            snap_mode => {
+                let interval = match snap_mode {
+                    SnapMode::Bar => self.samples_per_bar.max(1.0),
+                    SnapMode::BarHalf => (self.samples_per_bar / 2.0).max(1.0),
+                    SnapMode::Beat => self.samples_per_beat.max(1.0),
+                    SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
+                    SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
+                    SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
+                    SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
+                    SnapMode::NoSnap | SnapMode::Clips => unreachable!(),
+                };
+                ((sample as f64 / interval).round() * interval).max(0.0) as usize
+            }
+        };
         let cursor_hash = cursor
             .position_in(bounds)
             .map(|p| (p.x.to_bits(), p.y.to_bits()));
@@ -937,6 +1106,8 @@ impl canvas::Program<Message> for TempoCanvas {
         self.pixels_per_sample.to_bits().hash(&mut hasher);
         self.playhead_x.map(f32::to_bits).hash(&mut hasher);
         self.punch_range_samples.hash(&mut hasher);
+        state.time_range_samples.hash(&mut hasher);
+        self.session_range_samples.hash(&mut hasher);
         Tempo::snap_mode_key(self.snap_mode).hash(&mut hasher);
         self.samples_per_beat.to_bits().hash(&mut hasher);
         self.samples_per_bar.to_bits().hash(&mut hasher);
@@ -1003,6 +1174,36 @@ impl canvas::Program<Message> for TempoCanvas {
                 fixed_sample.hash(&mut hasher);
                 current_sample.hash(&mut hasher);
             }
+            DragMode::Time {
+                drag_start_x,
+                last_x,
+            } => {
+                5_u8.hash(&mut hasher);
+                drag_start_x.to_bits().hash(&mut hasher);
+                last_x.to_bits().hash(&mut hasher);
+            }
+            DragMode::MoveTimeRange {
+                original_start,
+                original_end,
+                drag_start_x,
+                last_x,
+            } => {
+                6_u8.hash(&mut hasher);
+                original_start.hash(&mut hasher);
+                original_end.hash(&mut hasher);
+                drag_start_x.to_bits().hash(&mut hasher);
+                last_x.to_bits().hash(&mut hasher);
+            }
+            DragMode::AdjustTimeEdge {
+                adjust_start,
+                fixed_sample,
+                current_sample,
+            } => {
+                7_u8.hash(&mut hasher);
+                adjust_start.hash(&mut hasher);
+                fixed_sample.hash(&mut hasher);
+                current_sample.hash(&mut hasher);
+            }
         }
         if let Some(menu) = state.context_menu {
             1_u8.hash(&mut hasher);
@@ -1028,6 +1229,39 @@ impl canvas::Program<Message> for TempoCanvas {
                         self.pixels_per_sample,
                         self.timeline_left_inset_px,
                     )
+                };
+                let sample_at_x = |x: f32| {
+                    timeline_x_to_sample_f32(x, self.pixels_per_sample, self.timeline_left_inset_px)
+                        .max(0.0) as usize
+                };
+                let draw_time_range = |frame: &mut Frame, start_x: f32, end_x: f32| {
+                    let range_y = 0.0;
+                    let range_h = TEMPO_HIT_HEIGHT * 2.0;
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(start_x.max(0.0), range_y),
+                            maolan_widgets::iced::Size::new((end_x - start_x).max(1.0), range_h),
+                        ),
+                        Color::from_rgba(0.20, 0.45, 0.75, 0.30),
+                    );
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(start_x.max(0.0), range_y),
+                            Point::new(start_x.max(0.0), range_y + range_h),
+                        ),
+                        Stroke::default()
+                            .with_width(1.5)
+                            .with_color(Color::from_rgba(0.40, 0.70, 0.98, 0.95)),
+                    );
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(end_x.max(0.0), range_y),
+                            Point::new(end_x.max(0.0), range_y + range_h),
+                        ),
+                        Stroke::default()
+                            .with_width(1.5)
+                            .with_color(Color::from_rgba(0.40, 0.70, 0.98, 0.95)),
+                    );
                 };
                 frame.fill(
                     &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
@@ -1274,14 +1508,44 @@ impl canvas::Program<Message> for TempoCanvas {
                     );
                 }
 
+                if !matches!(
+                    state.drag_mode,
+                    DragMode::Time { .. }
+                        | DragMode::MoveTimeRange { .. }
+                        | DragMode::AdjustTimeEdge { .. }
+                ) && let Some((range_start, range_end)) =
+                    state.time_range_samples.or(self.session_range_samples)
+                    && range_end > range_start
+                {
+                    draw_time_range(frame, sample_to_x(range_start), sample_to_x(range_end));
+                }
+
                 match &state.drag_mode {
                     DragMode::None => {}
                     DragMode::Punch {
                         drag_start_x,
                         last_x,
                     } => {
-                        let start_x = drag_start_x.min(*last_x).max(0.0);
-                        let end_x = drag_start_x.max(*last_x).max(0.0);
+                        let sample_at_x = |x: f32| {
+                            timeline_x_to_sample_f32(
+                                x,
+                                self.pixels_per_sample,
+                                self.timeline_left_inset_px,
+                            )
+                            .max(0.0) as usize
+                        };
+                        let start_raw_x = drag_start_x.min(*last_x).max(0.0);
+                        let end_raw_x = drag_start_x.max(*last_x).max(0.0);
+                        let start_x = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                            start_raw_x
+                        } else {
+                            sample_to_x(snap_preview_sample(sample_at_x(start_raw_x))).max(0.0)
+                        };
+                        let end_x = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                            end_raw_x
+                        } else {
+                            sample_to_x(snap_preview_sample(sample_at_x(end_raw_x))).max(0.0)
+                        };
                         let punch_h = TEMPO_HIT_HEIGHT * 2.0;
                         let punch_y = TEMPO_HIT_HEIGHT * 2.0;
                         frame.fill(
@@ -1313,6 +1577,53 @@ impl canvas::Program<Message> for TempoCanvas {
                                 .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
                         );
                     }
+                    DragMode::Time {
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        let start_x = sample_to_x(snap_preview_sample(sample_at_x(
+                            drag_start_x.min(*last_x),
+                        )));
+                        let end_x = sample_to_x(snap_preview_sample(sample_at_x(
+                            drag_start_x.max(*last_x),
+                        )));
+                        draw_time_range(frame, start_x, end_x);
+                    }
+                    DragMode::MoveTimeRange {
+                        original_start,
+                        original_end,
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        let delta_x = last_x - drag_start_x;
+                        let raw_start = (*original_start as f32
+                            + delta_x / self.pixels_per_sample.max(1.0e-9))
+                        .max(0.0);
+                        let snapped_start = snap_preview_sample(raw_start as usize);
+                        let start_x = sample_to_x(snapped_start).max(0.0);
+                        let end_x = start_x
+                            + (*original_end - *original_start) as f32 * self.pixels_per_sample;
+                        draw_time_range(frame, start_x, end_x);
+                    }
+                    DragMode::AdjustTimeEdge {
+                        adjust_start,
+                        fixed_sample,
+                        current_sample,
+                    } => {
+                        let fixed_x = sample_to_x(*fixed_sample);
+                        let current_x = sample_to_x(*current_sample);
+                        let start_x = if *adjust_start {
+                            current_x.min(fixed_x)
+                        } else {
+                            fixed_x.min(current_x)
+                        };
+                        let end_x = if *adjust_start {
+                            fixed_x.max(current_x)
+                        } else {
+                            current_x.max(fixed_x)
+                        };
+                        draw_time_range(frame, start_x, end_x);
+                    }
                     DragMode::MovePunchRange {
                         original_start,
                         original_end,
@@ -1320,8 +1631,14 @@ impl canvas::Program<Message> for TempoCanvas {
                         last_x,
                     } => {
                         let delta_x = last_x - drag_start_x;
-                        let start_x =
-                            (*original_start as f32 * self.pixels_per_sample + delta_x).max(0.0);
+                        let raw_start = (*original_start as f32
+                            + delta_x / self.pixels_per_sample.max(1.0e-9))
+                        .max(0.0);
+                        let start_x = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                            raw_start * self.pixels_per_sample
+                        } else {
+                            sample_to_x(snap_preview_sample(raw_start as usize)).max(0.0)
+                        };
                         let end_x = start_x
                             + (*original_end - *original_start) as f32 * self.pixels_per_sample;
                         let punch_h = TEMPO_HIT_HEIGHT * 2.0;
@@ -1671,6 +1988,7 @@ mod tests {
             pixels_per_sample: 1.0,
             playhead_x: None,
             punch_range_samples: None,
+            session_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -1714,6 +2032,7 @@ mod tests {
             pixels_per_sample: 1.0,
             playhead_x: None,
             punch_range_samples: None,
+            session_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -1760,6 +2079,7 @@ mod tests {
             pixels_per_sample: 1.0,
             playhead_x: None,
             punch_range_samples: None,
+            session_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -1807,6 +2127,7 @@ mod tests {
             pixels_per_sample: 1.0,
             playhead_x: None,
             punch_range_samples: Some((140, 180)),
+            session_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -1879,13 +2200,14 @@ mod tests {
     }
 
     #[test]
-    fn right_click_inside_punch_clears_range() {
+    fn right_click_inside_punch_does_not_adjust_range() {
         let canvas = TempoCanvas {
             bpm: 120.0,
             time_signature: (4, 4),
             pixels_per_sample: 1.0,
             playhead_x: None,
             punch_range_samples: Some((140, 180)),
+            session_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -1918,7 +2240,7 @@ mod tests {
             .expect("press action");
         let (_, status) = action_message(press);
         assert_eq!(status, event::Status::Captured);
-        assert!(matches!(state.drag_mode, DragMode::Punch { .. }));
+        assert!(matches!(state.drag_mode, DragMode::None));
 
         let release = canvas
             .update(
@@ -1931,10 +2253,7 @@ mod tests {
         let (message, status) = action_message(release);
         assert_eq!(status, event::Status::Captured);
         assert!(matches!(state.drag_mode, DragMode::None));
-        match message {
-            Some(Message::SetPunchRange(None)) => {}
-            other => panic!("unexpected message: {other:?}"),
-        }
+        assert!(message.is_none());
     }
 
     #[test]
@@ -1945,6 +2264,7 @@ mod tests {
             pixels_per_sample: 1.0,
             playhead_x: None,
             punch_range_samples: Some((140, 180)),
+            session_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -2015,13 +2335,14 @@ mod tests {
     }
 
     #[test]
-    fn right_click_drag_outside_punch_creates_range() {
+    fn right_click_drag_without_punch_does_nothing() {
         let canvas = TempoCanvas {
             bpm: 120.0,
             time_signature: (4, 4),
             pixels_per_sample: 1.0,
             playhead_x: None,
-            punch_range_samples: Some((140, 180)),
+            punch_range_samples: None,
+            session_range_samples: None,
             clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
@@ -2054,40 +2375,35 @@ mod tests {
             .expect("press action");
         let (_, status) = action_message(press);
         assert_eq!(status, event::Status::Captured);
-        assert!(matches!(state.drag_mode, DragMode::Punch { .. }));
+        assert!(matches!(state.drag_mode, DragMode::None));
 
         let dragged = mouse::Cursor::Available(Point::new(
             300.0,
             TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
         ));
-        let move_action = canvas
-            .update(
-                &mut state,
-                &Event::Mouse(mouse::Event::CursorMoved {
-                    position: Point::new(300.0, TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0)),
-                }),
-                bounds,
-                dragged,
-            )
-            .expect("move action");
-        let (_, _status) = action_message(move_action);
+        assert!(
+            canvas
+                .update(
+                    &mut state,
+                    &Event::Mouse(mouse::Event::CursorMoved {
+                        position: Point::new(
+                            300.0,
+                            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0)
+                        ),
+                    }),
+                    bounds,
+                    dragged,
+                )
+                .is_none()
+        );
 
-        let release = canvas
-            .update(
-                &mut state,
-                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
-                bounds,
-                dragged,
-            )
-            .expect("release action");
-        let (message, _status) = action_message(release);
+        let release = canvas.update(
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+            bounds,
+            dragged,
+        );
         assert!(matches!(state.drag_mode, DragMode::None));
-        match message {
-            Some(Message::SetPunchRange(Some((start, end)))) => {
-                assert_eq!(start, 240);
-                assert_eq!(end, 300);
-            }
-            other => panic!("unexpected message: {other:?}"),
-        }
+        assert!(release.is_some());
     }
 }

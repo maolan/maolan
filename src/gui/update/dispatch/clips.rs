@@ -13,6 +13,36 @@ impl Maolan {
                     crate::track_marker::MarkerView::name_input_id(),
                 );
             }
+            Message::MarkerLaneCreateAtPlayhead => {
+                self.track_marker.open(crate::state::MarkerDialog {
+                    sample: self.transport.transport_samples.max(0.0) as usize,
+                    marker_index: None,
+                    name: String::new(),
+                });
+                return maolan_widgets::iced::widget::operation::focus(
+                    crate::track_marker::MarkerView::name_input_id(),
+                );
+            }
+            Message::MarkerLaneEdit { marker_index } => {
+                let marker = self
+                    .state
+                    .read()
+                    .expect("state lock poisoned")
+                    .session_markers
+                    .get(marker_index)
+                    .cloned();
+                let Some(marker) = marker else {
+                    return Task::none();
+                };
+                self.track_marker.open(crate::state::MarkerDialog {
+                    sample: marker.sample,
+                    marker_index: Some(marker_index),
+                    name: marker.name,
+                });
+                return maolan_widgets::iced::widget::operation::focus(
+                    crate::track_marker::MarkerView::name_input_id(),
+                );
+            }
             Message::MarkerNameInput(_) => {}
             Message::MarkerNameConfirm => {
                 let dialog = self.track_marker.dialog.clone();

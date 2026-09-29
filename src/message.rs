@@ -676,6 +676,14 @@ pub enum ExportRenderMode {
     StemsPreFader,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportRange {
+    Session,
+    Loop,
+    Punch,
+    All,
+}
+
 impl fmt::Display for ExportNormalizeMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -702,6 +710,17 @@ impl fmt::Display for ExportRenderMode {
             ExportRenderMode::Mixdown => write!(f, "Mixdown"),
             ExportRenderMode::StemsPostFader => write!(f, "Stems (Post-Fader)"),
             ExportRenderMode::StemsPreFader => write!(f, "Stems (Pre-Fader)"),
+        }
+    }
+}
+
+impl fmt::Display for ExportRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportRange::Session => write!(f, "Session"),
+            ExportRange::Loop => write!(f, "Loop"),
+            ExportRange::Punch => write!(f, "Punch"),
+            ExportRange::All => write!(f, "All"),
         }
     }
 }
@@ -929,6 +948,10 @@ pub enum Message {
     MarkerLaneCreate {
         sample: usize,
     },
+    MarkerLaneCreateAtPlayhead,
+    MarkerLaneEdit {
+        marker_index: usize,
+    },
     SelectClip {
         track_idx: String,
         clip_idx: usize,
@@ -1000,6 +1023,7 @@ pub enum Message {
     ExportFormatMp3Toggled(bool),
     ExportFormatOggToggled(bool),
     ExportRenderModeSelected(ExportRenderMode),
+    ExportRangeSelected(ExportRange),
     ExportHwOutPortToggled(usize, bool),
     ExportRealtimeFallbackToggled(bool),
     ExportBitDepthSelected(ExportBitDepth),
@@ -1180,6 +1204,7 @@ pub enum Message {
     TransportRecordToggle,
     ToggleLoop,
     SetLoopRange(Option<(usize, usize)>),
+    SetSessionRange(Option<(usize, usize)>),
     TogglePunch,
     SetPunchRange(Option<(usize, usize)>),
     SetClipSnapTargets(Vec<crate::state::ClipId>),

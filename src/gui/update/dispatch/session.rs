@@ -135,6 +135,8 @@ impl Maolan {
                 self.automation.latch_automation_overrides.clear();
                 self.transport.loop_enabled = false;
                 self.transport.loop_range_samples = None;
+                let samples_per_bar = self.transport.samples_per_bar(&self.state).max(1.0) as usize;
+                self.transport.session_range_samples = Some((0, samples_per_bar));
                 self.transport.punch_enabled = false;
                 self.transport.punch_range_samples = None;
                 self.transport.last_playback_tick = None;

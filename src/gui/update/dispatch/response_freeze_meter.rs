@@ -243,6 +243,10 @@ impl Maolan {
             {
                 continue;
             }
+            if track.muted {
+                track.meter_out_db.fill(-90.0);
+                continue;
+            }
             if track_meters.is_empty() {
                 let silence = vec![-90.0; track.meter_out_db.len()];
                 Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);

@@ -65,6 +65,60 @@ pub(crate) struct ClipSnapEdge {
     pub sample: usize,
 }
 
+pub(crate) fn snap_range_samples(
+    start_x: f32,
+    end_x: f32,
+    pixels_per_sample: f32,
+    timeline_left_inset_px: f32,
+    snap_mode: SnapMode,
+    samples_per_beat: f64,
+    samples_per_bar: f64,
+    clip_snap_edges: &[ClipSnapEdge],
+) -> (usize, usize) {
+    let snap_interval = match snap_mode {
+        SnapMode::NoSnap | SnapMode::Clips => 1.0,
+        SnapMode::Bar => samples_per_bar.max(1.0),
+        SnapMode::BarHalf => (samples_per_bar / 2.0).max(1.0),
+        SnapMode::Beat => samples_per_beat.max(1.0),
+        SnapMode::Eighth => (samples_per_beat / 2.0).max(1.0),
+        SnapMode::Sixteenth => (samples_per_beat / 4.0).max(1.0),
+        SnapMode::ThirtySecond => (samples_per_beat / 8.0).max(1.0),
+        SnapMode::SixtyFourth => (samples_per_beat / 16.0).max(1.0),
+    };
+    let range_start_x = start_x.min(end_x).max(0.0);
+    let range_end_x = start_x.max(end_x).max(0.0);
+    let sample_at_x = |x: f32| {
+        timeline_x_to_sample_f32(x, pixels_per_sample, timeline_left_inset_px)
+            .round()
+            .max(0.0) as usize
+    };
+    let snap_clip = |sample: usize| {
+        let threshold_samples = (12.0 / pixels_per_sample.max(1.0e-6)).max(1.0);
+        clip_snap_edges
+            .iter()
+            .map(|edge| (sample.abs_diff(edge.sample), edge.sample))
+            .filter(|(distance, _)| (*distance as f32) <= threshold_samples)
+            .min_by_key(|(distance, edge_sample)| (*distance, *edge_sample))
+            .map(|(_, edge_sample)| edge_sample)
+            .unwrap_or(sample)
+    };
+    let snap_x = |x: f32| {
+        if matches!(snap_mode, SnapMode::Clips) {
+            snap_clip(sample_at_x(x)) as f32
+        } else if matches!(snap_mode, SnapMode::NoSnap) {
+            (x / pixels_per_sample).max(0.0)
+        } else {
+            ((x / pixels_per_sample) / snap_interval as f32).round() * snap_interval as f32
+        }
+    };
+    let start_sample = snap_x(range_start_x);
+    let mut end_sample = snap_x(range_end_x);
+    if end_sample <= start_sample {
+        end_sample = start_sample + snap_interval as f32;
+    }
+    (start_sample as usize, end_sample as usize)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct VisibleTrackWindow {
     pub start_index: usize,
@@ -144,6 +198,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub beat_pixels: f32,
     pub samples_per_bar: f32,
     pub loop_range_samples: Option<(usize, usize)>,
+    pub session_range_samples: Option<(usize, usize)>,
     pub punch_range_samples: Option<(usize, usize)>,
     pub snap_mode: SnapMode,
     pub samples_per_beat: f64,
@@ -278,6 +333,7 @@ impl Workspace {
             beat_pixels,
             samples_per_bar,
             loop_range_samples,
+            session_range_samples,
             punch_range_samples,
             snap_mode,
             samples_per_beat,
@@ -566,6 +622,7 @@ impl Workspace {
             pixels_per_sample,
             playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
             punch_range_samples,
+            session_range_samples,
             clip_snap_edges: clip_snap_edges.clone(),
             snap_mode,
             samples_per_beat,
@@ -995,6 +1052,7 @@ impl Workspace {
                         pixels_per_sample: horizontal_pixels_per_sample,
                         playhead_x,
                         punch_range_samples: None,
+                        session_range_samples: None,
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
@@ -1153,6 +1211,7 @@ impl Workspace {
                         pixels_per_sample: horizontal_pixels_per_sample,
                         playhead_x,
                         punch_range_samples: None,
+                        session_range_samples: None,
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,

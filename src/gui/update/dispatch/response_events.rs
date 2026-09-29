@@ -47,7 +47,11 @@ impl Maolan {
                 } else {
                     let mut state = self.state.write().expect("state lock poisoned");
                     if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
-                        Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
+                        if track.muted {
+                            track.meter_out_db.fill(-90.0);
+                        } else {
+                            Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
+                        }
                     }
                 }
             }

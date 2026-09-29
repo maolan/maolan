@@ -339,6 +339,11 @@ impl Maolan {
                 self.drag.clip_snap_targets.clear();
                 self.send(Action::SetLoopRange(normalized))
             }
+            Message::SetSessionRange(range) => {
+                self.transport.session_range_samples =
+                    range.and_then(|(start, end)| (end > start).then_some((start, end)));
+                Task::none()
+            }
             Message::SetPunchRange(range) => {
                 let normalized = range.and_then(|(start, end)| {
                     if end > start {

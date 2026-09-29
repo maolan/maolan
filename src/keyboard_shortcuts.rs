@@ -28,6 +28,7 @@ pub enum ShortcutAction {
     ToggleModulatorsPane,
     ToggleClipsPane,
     ToggleCutIndicator,
+    CreateMarker,
     ToggleSelectedPluginBypass,
     ToggleWorkspaceSession,
     QuantizeSelectedNotes,
@@ -46,7 +47,7 @@ pub enum ShortcutAction {
 }
 
 impl ShortcutAction {
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 36] = [
         Self::NewSession,
         Self::OpenSession,
         Self::SaveSession,
@@ -67,6 +68,7 @@ impl ShortcutAction {
         Self::ToggleModulatorsPane,
         Self::ToggleClipsPane,
         Self::ToggleCutIndicator,
+        Self::CreateMarker,
         Self::ToggleSelectedPluginBypass,
         Self::ToggleWorkspaceSession,
         Self::QuantizeSelectedNotes,
@@ -104,6 +106,7 @@ impl ShortcutAction {
             Self::ToggleModulatorsPane => Message::ToggleModulatorsPane,
             Self::ToggleClipsPane => Message::ToggleClipsPane,
             Self::ToggleCutIndicator => Message::ToggleCutIndicator,
+            Self::CreateMarker => Message::MarkerLaneCreateAtPlayhead,
             Self::ToggleSelectedPluginBypass => Message::ToggleSelectedPluginBypass,
             Self::ToggleWorkspaceSession => {
                 if matches!(current_view, crate::state::View::Session) {
@@ -272,6 +275,7 @@ pub fn default_binding(action: ShortcutAction) -> ShortcutBinding {
         Action::ToggleCutIndicator => {
             ShortcutBinding::new(Key::Character("x".into()), false, false)
         }
+        Action::CreateMarker => ShortcutBinding::new(Key::Character("n".into()), false, false),
         Action::ToggleSelectedPluginBypass => {
             ShortcutBinding::new(Key::Character("b".into()), false, false)
         }
@@ -353,6 +357,7 @@ fn shortcut_priority(current_view: crate::state::View) -> Vec<ShortcutAction> {
         Action::ToggleModulatorsPane,
         Action::ToggleClipsPane,
         Action::ToggleCutIndicator,
+        Action::CreateMarker,
         Action::ToggleSelectedPluginBypass,
         Action::ToggleWorkspaceSession,
         Action::QuantizeSelectedNotes,

@@ -79,6 +79,9 @@ impl Maolan {
                     state.hw_out_muted = !state.hw_out_muted;
                 } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
                     track.muted = !track.muted;
+                    if track.muted {
+                        track.meter_out_db.fill(-90.0);
+                    }
                 }
                 true
             }
