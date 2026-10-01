@@ -708,6 +708,11 @@ impl Maolan {
                             shortcuts_pane_visible: self.ui.shortcuts_pane_visible,
                             modulators_pane_visible: self.ui.modulators_pane_visible,
                             clips_pane_visible: self.ui.clips_pane_visible,
+                            iodelay_enabled: state
+                                .iodelay_section
+                                .get("enabled")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false),
                             active_view: state.view.clone(),
                         }
                     };

@@ -1216,6 +1216,8 @@ impl Maolan {
             | Message::ToggleClipsPane
             | Message::ToggleModulatorsPane
             | Message::ToggleCutIndicator
+            | Message::ToggleIoDelay
+            | Message::AddIoDelayMeasurement
             | Message::LogViewAction(_) => return self.handle_ui_message(message),
             Message::PianoZoomXChanged(_)
             | Message::PianoTimelineZoomByScroll(_)

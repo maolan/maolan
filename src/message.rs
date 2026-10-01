@@ -1268,6 +1268,8 @@ pub enum Message {
     ToggleShortcutsPane,
     ToggleModulatorsPane,
     ToggleClipsPane,
+    ToggleIoDelay,
+    AddIoDelayMeasurement,
     ToggleSelectedPluginBypass,
     ModulatorAdd,
     ModulatorRemove(usize),

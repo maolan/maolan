@@ -156,7 +156,55 @@ fn load_session_restore_actions_from_value(
         &vst3_plugins,
     )?;
     actions.extend(graph_actions);
+    let enabled = session["iodelay"]["enabled"].as_bool().unwrap_or(false);
+    let gain = session["iodelay"]["gain"].as_f64().unwrap_or(1.0) as f32;
+    actions.push(Action::IoDelayConfigure { enabled, gain });
+    if enabled {
+        let mut measurement_ids = session["iodelay"]["measurements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|measurement| measurement["id"].as_u64())
+            .collect::<Vec<_>>();
+        if measurement_ids.is_empty()
+            && (session["iodelay"]["measurement_added"]
+                .as_bool()
+                .unwrap_or(false)
+                || session["connections"]
+                    .as_array()
+                    .is_some_and(|connections| {
+                        connections.iter().any(|connection| {
+                            connection["to_track"].as_str().is_some_and(|target| {
+                                target == "iodelay" || target.starts_with("iodelay:measurement:")
+                            })
+                        })
+                    }))
+        {
+            measurement_ids.push(0);
+        }
+        measurement_ids.sort_unstable();
+        measurement_ids.dedup();
+        actions.extend(measurement_ids.into_iter().map(|measurement_id| {
+            Action::IoDelayAddMeasurement {
+                measurement_id,
+                gain,
+            }
+        }));
+    }
+    let connection_start = actions.len();
     push_connection_restore_actions(&mut actions, session.get("connections"))?;
+    if !enabled {
+        let mut connection_actions = actions.split_off(connection_start);
+        connection_actions.retain(|action| {
+            !matches!(action,
+            Action::Connect { from_track, to_track, .. }
+                if from_track == "iodelay"
+                    || from_track.starts_with("iodelay:measurement:")
+                    || to_track == "iodelay"
+                    || to_track.starts_with("iodelay:measurement:"))
+        });
+        actions.extend(connection_actions);
+    }
 
     actions.push(Action::EndSessionRestore);
     Ok(actions)
@@ -989,6 +1037,74 @@ fn parse_kind(value: Option<&Value>) -> Option<Kind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iodelay_section_emits_configure_before_connections() {
+        let dir = Path::new("maolan-cli-support-iodelay-test");
+        let session = serde_json::json!({
+            "transport": {
+                "loop_range_samples": null,
+                "loop_enabled": false,
+                "punch_range_samples": null,
+                "punch_enabled": false,
+                "tempo": 120.0,
+                "time_signature_num": 4,
+                "time_signature_denom": 4
+            },
+            "iodelay": {"enabled": true, "gain": 2.5},
+            "tracks": [{
+                "name": "t",
+                "audio": {"ins": 1, "outs": 1, "clips": []},
+                "midi": {"ins": 0, "outs": 0, "clips": []}
+            }],
+            "connections": [{
+                "from_track": "iodelay",
+                "from_port": 0,
+                "to_track": "hw:out",
+                "to_port": 2,
+                "kind": "Audio"
+            },{
+                "from_track": "hw:in",
+                "from_port": 7,
+                "to_track": "iodelay",
+                "to_port": 0,
+                "kind": "Audio"
+            }]
+        });
+        std::fs::create_dir_all(dir).expect("test session dir");
+        std::fs::write(
+            dir.join("main.json"),
+            serde_json::to_string(&session).expect("serialize"),
+        )
+        .expect("write test session");
+        let actions = load_session_restore_actions(dir, "main").expect("restore actions build");
+        std::fs::remove_dir_all(dir).ok();
+
+        let configure_at = actions.iter().position(|a| {
+            matches!(
+                a,
+                Action::IoDelayConfigure {
+                    enabled: true,
+                    gain
+                } if (*gain - 2.5).abs() < f32::EPSILON
+            )
+        });
+        let first_iodelay_connect = actions.iter().position(|a| {
+            matches!(
+                a,
+                Action::Connect { from_track, .. } if from_track == "iodelay"
+            ) || matches!(
+                a,
+                Action::Connect { to_track, .. } if to_track == "iodelay"
+            )
+        });
+        let configure_at = configure_at.expect("IoDelayConfigure action emitted");
+        let first_iodelay_connect = first_iodelay_connect.expect("iodelay connections replayed");
+        assert!(
+            configure_at < first_iodelay_connect,
+            "component configured before its connections replay"
+        );
+    }
 
     #[test]
     fn load_session_restore_actions_parses_tracks_and_connections() {
