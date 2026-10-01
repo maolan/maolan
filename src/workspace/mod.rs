@@ -17,7 +17,7 @@ use crate::{
         },
     },
     message::{DraggedClip, Message, Show, SnapMode},
-    state::{ClipPeaks, MidiClipPreviewMap, State},
+    state::{MidiClipPreviewMap, State},
     view_api,
     widget::{midi_edit, pitch_correction},
 };
@@ -222,7 +222,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub active_clip_snap_adjust_samples: f32,
     pub active_clip_snap_targets: &'a [crate::state::ClipId],
     pub recording_preview_bounds: Option<(usize, usize)>,
-    pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    pub recording_preview_peaks:
+        Option<&'a HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
     pub step_recording_active: bool,
     pub step_recording_cursor_samples: usize,

@@ -413,41 +413,7 @@ impl Maolan {
                     && self.transport.record_armed
                     && self.rec.recording_preview_start_sample.is_some() =>
             {
-                let sample = self.transport.transport_samples.max(0.0) as usize;
-                if self.transport.punch_enabled
-                    && let Some((punch_start, punch_end)) = self.transport.punch_range_samples
-                    && punch_end > punch_start
-                    && (sample < punch_start || sample >= punch_end)
-                {
-                    return Task::none();
-                }
-                let peaks = &mut self.rec.recording_preview_peaks;
-                let state = self.state.read().expect("state lock poisoned");
-                for track in state.tracks.iter().filter(|track| track.armed) {
-                    let channels = track.audio.outs.max(1);
-                    let entry = peaks
-                        .entry(track.name.clone())
-                        .or_insert_with(|| std::sync::Arc::new(vec![vec![]; channels]));
-                    if entry.len() != channels {
-                        *entry = std::sync::Arc::new(vec![vec![]; channels]);
-                    }
-                    let entry_mut = std::sync::Arc::make_mut(entry);
-                    for (channel_idx, channel_entry) in
-                        entry_mut.iter_mut().enumerate().take(channels)
-                    {
-                        let db = track
-                            .meter_out_db
-                            .get(channel_idx)
-                            .copied()
-                            .unwrap_or(-90.0);
-                        let amp = if db <= -90.0 {
-                            0.0
-                        } else {
-                            10.0_f32.powf(db / 20.0).clamp(0.0, 1.0)
-                        };
-                        channel_entry.push([-amp, amp]);
-                    }
-                }
+                return self.send(Action::RequestRecordingPeaks);
             }
             Message::TransportRecordToggle => {
                 self.toolbar.update(&message);

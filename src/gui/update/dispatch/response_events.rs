@@ -402,6 +402,18 @@ impl Maolan {
             return task;
         }
         match q {
+            QueryReply::RecordingPeaks(previews) => {
+                // A reply can arrive after Stop or record-disarm.
+                if self.transport.playing
+                    && self.transport.record_armed
+                    && self.rec.recording_preview_start_sample.is_some()
+                {
+                    self.rec.recording_preview_peaks = previews
+                        .iter()
+                        .map(|preview| (preview.track_name.clone(), preview.clone()))
+                        .collect();
+                }
+            }
             QueryReply::JackGraph(graph) => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.jack_graph = graph.clone();

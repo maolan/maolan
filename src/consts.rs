@@ -49,7 +49,7 @@ pub mod ui_timing {
     pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);
     pub const PLAYHEAD_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
     pub const RECORDING_PREVIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
-    pub const RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+    pub const RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 }
 
 pub mod platform_caps {
