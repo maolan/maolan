@@ -29,6 +29,7 @@ pub struct MenuViewState {
     pub shortcuts_pane_visible: bool,
     pub modulators_pane_visible: bool,
     pub clips_pane_visible: bool,
+    pub iodelay_enabled: bool,
     pub active_view: View,
 }
 
@@ -112,6 +113,13 @@ impl Menu {
                     (menu_item("Undo", Message::Undo)),
                     (menu_item("Redo", Message::Redo)),
                     (menu_item("Preferences", Message::Show(Show::Preferences))),
+                    (menu_checkbox_item("IO Delay", state.iodelay_enabled, Message::ToggleIoDelay)),
+                    (menu_item_maybe(
+                        "Add Measurement",
+                        state
+                            .iodelay_enabled
+                            .then_some(Message::AddIoDelayMeasurement),
+                    )),
                     (menu_item(
                         "Toggle MIDI Mappings Panel",
                         Message::MidiLearnMappingsPanelToggle

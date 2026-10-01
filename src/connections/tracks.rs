@@ -12,9 +12,10 @@ use crate::{
     },
     message::{Message, TrackAutomationTarget},
     state::{
-        Connecting, ConnectionViewSelection, HW_IN_ID, HW_OUT_ID, Hovering, MIDI_HW_IN_ID,
-        MIDI_HW_OUT_ID, Modulator, ModulatorTarget, MovingPlugin, MovingTrack, PluginConnecting,
-        PluginControllerMenuState, PluginParameterInfo, ShownPluginController, State, StateData,
+        Connecting, ConnectionViewSelection, HW_IN_ID, HW_OUT_ID, Hovering, IO_DELAY_ID,
+        MIDI_HW_IN_ID, MIDI_HW_OUT_ID, Modulator, ModulatorTarget, MovingPlugin, MovingTrack,
+        PluginConnecting, PluginControllerMenuState, PluginParameterInfo, ShownPluginController,
+        State, StateData,
     },
     ui_timing::DOUBLE_CLICK,
 };
@@ -136,6 +137,8 @@ impl Graph {
                     } else {
                         Some(Kind::Audio)
                     }
+                } else if Self::is_iodelay_node(track_idx) {
+                    Some(Kind::Audio)
                 } else if track_idx.starts_with(MIDI_HW_IN_ID)
                     || track_idx.starts_with(MIDI_HW_OUT_ID)
                 {
@@ -219,6 +222,9 @@ impl Graph {
     }
 
     const TRACK_NODE_SIZE: f32 = 140.0;
+    // Separate canvas boxes for the generator output and measurement input.
+    const IO_DELAY_W: f32 = 160.0;
+    const IO_DELAY_H: f32 = 160.0;
 
     fn track_box_size(_track: &crate::state::Track) -> maolan_widgets::iced::Size {
         maolan_widgets::iced::Size::new(Self::TRACK_NODE_SIZE, Self::TRACK_NODE_SIZE)
@@ -529,6 +535,197 @@ impl Graph {
 
     fn is_track_view_hw_node(name: &str) -> bool {
         name == HW_IN_ID || name == HW_OUT_ID
+    }
+
+    fn is_iodelay_node(name: &str) -> bool {
+        name == IO_DELAY_ID || Self::iodelay_measurement_id(name).is_some()
+    }
+
+    fn iodelay_measurement_id(endpoint: &str) -> Option<u64> {
+        if endpoint == IO_DELAY_ID {
+            Some(0)
+        } else {
+            endpoint.strip_prefix("iodelay:measurement:")?.parse().ok()
+        }
+    }
+
+    fn iodelay_measurement_endpoint(id: u64) -> String {
+        if id == 0 {
+            IO_DELAY_ID.to_string()
+        } else {
+            format!("{IO_DELAY_ID}:measurement:{id}")
+        }
+    }
+
+    fn iodelay_measurement_ids(data: &StateData) -> Vec<u64> {
+        let ids = data.iodelay_section["measurements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|measurement| measurement["id"].as_u64())
+            .collect::<Vec<_>>();
+        if !ids.is_empty() {
+            return ids;
+        }
+        if data.iodelay_section["measurement_added"]
+            .as_bool()
+            .unwrap_or(false)
+            || data.connections.iter().any(|connection| {
+                connection.to_track == IO_DELAY_ID
+                    || connection.to_track.starts_with("iodelay:measurement:")
+            })
+        {
+            vec![0]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn iodelay_enabled(data: &StateData) -> bool {
+        data.iodelay_section
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    fn iodelay_readout(data: &StateData, measurement_id: u64) -> String {
+        use maolan_engine::mtdm::IoDelayStatus;
+        let report = data
+            .iodelay_reports
+            .get(&measurement_id)
+            .copied()
+            .or_else(|| {
+                (measurement_id == 0)
+                    .then_some(data.iodelay_report)
+                    .flatten()
+            });
+        match report {
+            None => "Waiting for audio".into(),
+            Some(report) => match report.status {
+                IoDelayStatus::BelowThreshold => "No return signal".into(),
+                IoDelayStatus::Collecting => "Collecting…".into(),
+                IoDelayStatus::Resolved => format!(
+                    "{:.3} frames\n{:.3} ms\n{:.3} periods{}",
+                    report.delay_frames,
+                    report.delay_frames * 1000.0 / f64::from(data.hw_sample_rate_hz.max(1)),
+                    report.delay_frames / data.oss_period_frames.max(1) as f64,
+                    if report.inverted { " (inverted)" } else { "" },
+                ),
+            },
+        }
+    }
+
+    fn iodelay_calibrate_rect(data: &StateData, bounds: Rectangle, id: u64) -> Rectangle {
+        let rect = Self::iodelay_measurement_box_rect(data, bounds, id);
+        Rectangle::new(
+            Point::new(rect.x + 8.0, rect.y + rect.height - 26.0),
+            maolan_widgets::iced::Size::new(rect.width - 16.0, 22.0),
+        )
+    }
+
+    fn iodelay_can_calibrate(data: &StateData, id: u64) -> bool {
+        data.iodelay_reports
+            .get(&id)
+            .or_else(|| (id == 0).then_some(data.iodelay_report.as_ref()).flatten())
+            .is_some_and(|report| report.status == maolan_engine::mtdm::IoDelayStatus::Resolved)
+    }
+
+    const IO_DELAY_GENERATOR_UI_ID: &str = "iodelay:generator-ui";
+    const IO_DELAY_MEASUREMENT_UI_PREFIX: &str = "iodelay:measurement-ui:";
+
+    fn iodelay_measurement_ui_id(id: u64) -> String {
+        format!("{}{id}", Self::IO_DELAY_MEASUREMENT_UI_PREFIX)
+    }
+
+    fn iodelay_measurement_ui_measurement_id(track_idx: &str) -> Option<u64> {
+        track_idx
+            .strip_prefix(Self::IO_DELAY_MEASUREMENT_UI_PREFIX)?
+            .parse()
+            .ok()
+    }
+
+    fn iodelay_box_rect(data: &StateData, bounds: Rectangle, generator: bool) -> Rectangle {
+        let section = &data.iodelay_section;
+        let (x, y) = if generator {
+            (
+                section["generator_position"]["x"].as_f64(),
+                section["generator_position"]["y"].as_f64(),
+            )
+        } else {
+            (
+                section["position"]["x"].as_f64(),
+                section["position"]["y"].as_f64(),
+            )
+        };
+        if let (Some(x), Some(y)) = (x, y) {
+            return Rectangle::new(
+                Point::new(x as f32, y as f32),
+                maolan_widgets::iced::Size::new(Self::IO_DELAY_W, Self::IO_DELAY_H),
+            );
+        }
+        let measurement_x = (bounds.width - FOLDER_HW_WIDTH - 10.0 - Self::IO_DELAY_W).max(0.0);
+        let x = if generator {
+            (measurement_x - Self::IO_DELAY_W - 20.0).max(0.0)
+        } else {
+            measurement_x
+        };
+        let y = ((bounds.height - Self::IO_DELAY_H) / 2.0).max(0.0);
+        Rectangle::new(
+            Point::new(x, y),
+            maolan_widgets::iced::Size::new(Self::IO_DELAY_W, Self::IO_DELAY_H),
+        )
+    }
+
+    fn iodelay_measurement_box_rect(data: &StateData, bounds: Rectangle, id: u64) -> Rectangle {
+        let key = id.to_string();
+        if let (Some(x), Some(y)) = (
+            data.iodelay_section["measurement_positions"][&key]["x"].as_f64(),
+            data.iodelay_section["measurement_positions"][&key]["y"].as_f64(),
+        ) {
+            return Rectangle::new(
+                Point::new(x as f32, y as f32),
+                maolan_widgets::iced::Size::new(Self::IO_DELAY_W, Self::IO_DELAY_H),
+            );
+        }
+        if id == 0 {
+            return Self::iodelay_box_rect(data, bounds, false);
+        }
+        let ids = Self::iodelay_measurement_ids(data);
+        let index = ids
+            .iter()
+            .position(|candidate| *candidate == id)
+            .unwrap_or(0);
+        let rows = (((bounds.height - 40.0).max(Self::IO_DELAY_H) / (Self::IO_DELAY_H + 20.0))
+            .floor() as usize)
+            .max(1);
+        let base = Self::iodelay_box_rect(data, bounds, false);
+        let column = index / rows;
+        let row = index % rows;
+        Rectangle::new(
+            Point::new(
+                (base.x - column as f32 * (Self::IO_DELAY_W + 20.0)).max(0.0),
+                20.0 + row as f32 * (Self::IO_DELAY_H + 20.0),
+            ),
+            maolan_widgets::iced::Size::new(Self::IO_DELAY_W, Self::IO_DELAY_H),
+        )
+    }
+
+    fn iodelay_measurement_port_pos(data: &StateData, bounds: Rectangle, id: u64) -> Point {
+        let rect = Self::iodelay_measurement_box_rect(data, bounds, id);
+        Point::new(rect.x, rect.y + rect.height / 2.0)
+    }
+
+    fn iodelay_port_pos(data: &StateData, bounds: Rectangle, is_input: bool) -> Point {
+        let rect = Self::iodelay_box_rect(data, bounds, !is_input);
+        let y = rect.y + rect.height / 2.0;
+        Point::new(
+            if is_input {
+                rect.x
+            } else {
+                rect.x + rect.width
+            },
+            y,
+        )
     }
 
     fn visible_track_names(&self, data: &StateData) -> std::collections::HashSet<String> {
@@ -1683,6 +1880,68 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
+                    if !folder_view && Self::iodelay_enabled(&data) {
+                        let out_pos = Self::iodelay_port_pos(&data, bounds, false);
+                        if cursor_position.distance(out_pos) < 10.0 {
+                            data.connecting = Some(Connecting {
+                                from_track: IO_DELAY_ID.to_string(),
+                                from_port: 0,
+                                kind: Kind::Audio,
+                                point: cursor_position,
+                                is_input: false,
+                            });
+                            return Some(Action::capture());
+                        }
+                        for measurement_id in Self::iodelay_measurement_ids(&data) {
+                            let in_pos =
+                                Self::iodelay_measurement_port_pos(&data, bounds, measurement_id);
+                            if cursor_position.distance(in_pos) < 10.0 {
+                                data.connecting = Some(Connecting {
+                                    from_track: Self::iodelay_measurement_endpoint(measurement_id),
+                                    from_port: 0,
+                                    kind: Kind::Audio,
+                                    point: cursor_position,
+                                    is_input: true,
+                                });
+                                return Some(Action::capture());
+                            }
+                        }
+                        for id in Self::iodelay_measurement_ids(&data) {
+                            if Self::iodelay_calibrate_rect(&data, bounds, id)
+                                .contains(cursor_position)
+                            {
+                                return Some(if Self::iodelay_can_calibrate(&data, id) {
+                                    Action::publish(Message::Request(
+                                        EngineAction::IoDelayCalibrate { measurement_id: id },
+                                    ))
+                                } else {
+                                    Action::capture()
+                                });
+                            }
+                        }
+                        let mut boxes = vec![(
+                            Self::IO_DELAY_GENERATOR_UI_ID.to_string(),
+                            Self::iodelay_box_rect(&data, bounds, true),
+                        )];
+                        boxes.extend(Self::iodelay_measurement_ids(&data).into_iter().map(|id| {
+                            (
+                                Self::iodelay_measurement_ui_id(id),
+                                Self::iodelay_measurement_box_rect(&data, bounds, id),
+                            )
+                        }));
+                        for (track_idx, rect) in boxes {
+                            if rect.contains(cursor_position) {
+                                data.moving_track = Some(MovingTrack {
+                                    track_idx,
+                                    offset_x: cursor_position.x - rect.x,
+                                    offset_y: cursor_position.y - rect.y,
+                                    start_position: Point::new(rect.x, rect.y),
+                                });
+                                return Some(Action::capture());
+                            }
+                        }
+                    }
+
                     if !folder_view {
                         for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
                             let label = Self::midi_device_label(&data, device);
@@ -2100,6 +2359,7 @@ impl canvas::Program<Message> for Graph {
                                 || visible_names.contains(&conn.from_track)
                         } else {
                             Self::is_hw_node(&conn.from_track)
+                                || Self::is_iodelay_node(&conn.from_track)
                                 || visible_names.contains(&conn.from_track)
                         };
                         let to_visible = if self.effective_folder(&data).is_some() {
@@ -2107,6 +2367,7 @@ impl canvas::Program<Message> for Graph {
                                 || visible_names.contains(&conn.to_track)
                         } else {
                             Self::is_hw_node(&conn.to_track)
+                                || Self::is_iodelay_node(&conn.to_track)
                                 || visible_names.contains(&conn.to_track)
                         };
                         if !from_visible || !to_visible {
@@ -2154,6 +2415,9 @@ impl canvas::Program<Message> for Graph {
                                         midi_hw_box_gap,
                                     )
                                 })
+                        } else if conn.from_track == IO_DELAY_ID {
+                            Self::iodelay_enabled(&data)
+                                .then(|| Self::iodelay_port_pos(&data, bounds, false))
                         } else {
                             start_track_option.map(|t| {
                                 let track_size = Self::track_box_size(t);
@@ -2204,6 +2468,14 @@ impl canvas::Program<Message> for Graph {
                                         midi_hw_box_gap,
                                     )
                                 })
+                        } else if let Some(measurement_id) =
+                            Self::iodelay_measurement_id(&conn.to_track)
+                        {
+                            (Self::iodelay_enabled(&data)
+                                && Self::iodelay_measurement_ids(&data).contains(&measurement_id))
+                            .then(|| {
+                                Self::iodelay_measurement_port_pos(&data, bounds, measurement_id)
+                            })
                         } else {
                             end_track_option.map(|t| {
                                 let track_size = Self::track_box_size(t);
@@ -2351,6 +2623,17 @@ impl canvas::Program<Message> for Graph {
                                 }
                             }
 
+                            if target_port.is_none()
+                                && from_t != IO_DELAY_ID
+                                && self.effective_folder(&data).is_none()
+                                && Self::iodelay_enabled(&data)
+                            {
+                                let pos = Self::iodelay_port_pos(&data, bounds, false);
+                                if cursor_position.distance(pos) < 10.0 {
+                                    target_port = Some((IO_DELAY_ID.to_string(), 0));
+                                }
+                            }
+
                             if kind == Kind::MIDI
                                 && target_port.is_none()
                                 && self.effective_folder(&data).is_none()
@@ -2421,6 +2704,21 @@ impl canvas::Program<Message> for Graph {
                                             target_port = Some((HW_OUT_ID.to_string(), j));
                                             break;
                                         }
+                                    }
+                                }
+                            }
+
+                            if target_port.is_none()
+                                && (!Self::is_iodelay_node(&from_t) || from_t == IO_DELAY_ID)
+                                && self.effective_folder(&data).is_none()
+                                && Self::iodelay_enabled(&data)
+                            {
+                                for id in Self::iodelay_measurement_ids(&data) {
+                                    let pos = Self::iodelay_measurement_port_pos(&data, bounds, id);
+                                    if cursor_position.distance(pos) < 10.0 {
+                                        target_port =
+                                            Some((Self::iodelay_measurement_endpoint(id), 0));
+                                        break;
                                     }
                                 }
                             }
@@ -2688,7 +2986,9 @@ impl canvas::Program<Message> for Graph {
 
                             let is_target_midi_hw = to_t_name.starts_with(MIDI_HW_IN_ID)
                                 || to_t_name.starts_with(MIDI_HW_OUT_ID);
-                            let target_kind = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
+                            let target_kind = if Self::is_iodelay_node(&to_t_name) {
+                                Kind::Audio
+                            } else if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
                                 if let Some(folder) = self.folder_track(&data) {
                                     Self::track_port_kind(folder, to_p, to_t_name == HW_IN_ID)
                                 } else {
@@ -2706,6 +3006,7 @@ impl canvas::Program<Message> for Graph {
                                 let is_source_hw_audio = from_t == HW_IN_ID || from_t == HW_OUT_ID;
                                 let is_source_midi_hw = from_t.starts_with(MIDI_HW_IN_ID)
                                     || from_t.starts_with(MIDI_HW_OUT_ID);
+                                let is_source_iodelay = from_t == IO_DELAY_ID;
 
                                 let parallel_count = if data.shift {
                                     let src_count = if is_source_hw_audio {
@@ -2723,7 +3024,7 @@ impl canvas::Program<Message> for Graph {
                                                 .map(|h| h.channels.saturating_sub(from_p))
                                                 .unwrap_or(0)
                                         }
-                                    } else if is_source_midi_hw {
+                                    } else if is_source_midi_hw || is_source_iodelay {
                                         1usize.saturating_sub(from_p)
                                     } else if let Some(t) =
                                         data.tracks.iter().find(|t| t.name == from_t)
@@ -2759,7 +3060,8 @@ impl canvas::Program<Message> for Graph {
                                                 .map(|h| h.channels.saturating_sub(to_p))
                                                 .unwrap_or(0)
                                         }
-                                    } else if is_target_midi_hw {
+                                    } else if is_target_midi_hw || Self::is_iodelay_node(&to_t_name)
+                                    {
                                         1usize.saturating_sub(to_p)
                                     } else if let Some(t) = target_track_option {
                                         let total = if !is_input {
@@ -2782,7 +3084,10 @@ impl canvas::Program<Message> for Graph {
 
                                 let mut actions = Vec::with_capacity(parallel_count);
                                 for offset in 0..parallel_count {
-                                    let f_p_idx = if is_source_hw_audio || is_source_midi_hw {
+                                    let f_p_idx = if is_source_hw_audio
+                                        || is_source_midi_hw
+                                        || is_source_iodelay
+                                    {
                                         from_p + offset
                                     } else {
                                         let t =
@@ -2797,6 +3102,7 @@ impl canvas::Program<Message> for Graph {
 
                                     let t_p_idx = if to_t_name == HW_IN_ID
                                         || to_t_name == HW_OUT_ID
+                                        || Self::is_iodelay_node(&to_t_name)
                                         || is_target_midi_hw
                                     {
                                         to_p + offset
@@ -2960,6 +3266,17 @@ impl canvas::Program<Message> for Graph {
                         }
                         return Some(Action::request_redraw());
                     }
+                    if let Some(mt) = data.moving_track.as_ref() {
+                        let rect = if mt.track_idx == Self::IO_DELAY_GENERATOR_UI_ID {
+                            Some(Self::iodelay_box_rect(&data, bounds, true))
+                        } else {
+                            Self::iodelay_measurement_ui_measurement_id(&mt.track_idx)
+                                .map(|id| Self::iodelay_measurement_box_rect(&data, bounds, id))
+                        };
+                        if let Some(rect) = rect {
+                            positions_changed |= Point::new(rect.x, rect.y) != mt.start_position;
+                        }
+                    }
                     if let Some(mt) = data.moving_track.take()
                         && !mt.track_idx.starts_with(MIDI_HW_IN_ID)
                         && !mt.track_idx.starts_with(MIDI_HW_OUT_ID)
@@ -3104,6 +3421,32 @@ impl canvas::Program<Message> for Graph {
                                     is_input: true,
                                 });
                                 break;
+                            }
+                        }
+                    }
+
+                    if new_h.is_none() && !folder_view && Self::iodelay_enabled(&data) {
+                        for id in Self::iodelay_measurement_ids(&data) {
+                            if cursor_position
+                                .distance(Self::iodelay_measurement_port_pos(&data, bounds, id))
+                                < 10.0
+                            {
+                                new_h = Some(Hovering::Port {
+                                    track_idx: Self::iodelay_measurement_endpoint(id),
+                                    port_idx: 0,
+                                    is_input: true,
+                                });
+                                break;
+                            }
+                        }
+                        if new_h.is_none() {
+                            let out_pos = Self::iodelay_port_pos(&data, bounds, false);
+                            if cursor_position.distance(out_pos) < 10.0 {
+                                new_h = Some(Hovering::Port {
+                                    track_idx: IO_DELAY_ID.to_string(),
+                                    port_idx: 0,
+                                    is_input: false,
+                                });
                             }
                         }
                     }
@@ -3275,7 +3618,23 @@ impl canvas::Program<Message> for Graph {
                         redraw_needed = true;
                     }
                     if let Some(mt) = data.moving_track.clone() {
-                        if let Some(t) = data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx) {
+                        if mt.track_idx == Self::IO_DELAY_GENERATOR_UI_ID {
+                            data.iodelay_section["generator_position"] = serde_json::json!({
+                                "x": cursor_position.x - mt.offset_x,
+                                "y": cursor_position.y - mt.offset_y,
+                            });
+                            redraw_needed = true;
+                        } else if let Some(id) =
+                            Self::iodelay_measurement_ui_measurement_id(&mt.track_idx)
+                        {
+                            data.iodelay_section["measurement_positions"][id.to_string()] = serde_json::json!({
+                                "x": cursor_position.x - mt.offset_x,
+                                "y": cursor_position.y - mt.offset_y,
+                            });
+                            redraw_needed = true;
+                        } else if let Some(t) =
+                            data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx)
+                        {
                             if visible_names.contains(&mt.track_idx) {
                                 t.position.x = cursor_position.x - mt.offset_x;
                                 t.position.y = cursor_position.y - mt.offset_y;
@@ -3479,13 +3838,17 @@ impl canvas::Program<Message> for Graph {
                     Self::is_track_view_hw_node(&conn.from_track)
                         || visible_names.contains(&conn.from_track)
                 } else {
-                    Self::is_hw_node(&conn.from_track) || visible_names.contains(&conn.from_track)
+                    Self::is_hw_node(&conn.from_track)
+                        || Self::is_iodelay_node(&conn.from_track)
+                        || visible_names.contains(&conn.from_track)
                 };
                 let to_visible = if self.effective_folder(&data).is_some() {
                     Self::is_track_view_hw_node(&conn.to_track)
                         || visible_names.contains(&conn.to_track)
                 } else {
-                    Self::is_hw_node(&conn.to_track) || visible_names.contains(&conn.to_track)
+                    Self::is_hw_node(&conn.to_track)
+                        || Self::is_iodelay_node(&conn.to_track)
+                        || visible_names.contains(&conn.to_track)
                 };
                 if !from_visible || !to_visible {
                     continue;
@@ -3529,6 +3892,9 @@ impl canvas::Program<Message> for Graph {
                                 midi_hw_box_gap,
                             )
                         })
+                } else if conn.from_track == IO_DELAY_ID {
+                    Self::iodelay_enabled(&data)
+                        .then(|| Self::iodelay_port_pos(&data, bounds, false))
                 } else {
                     start_track_option.map(|t| {
                         let track_size = Self::track_box_size(t);
@@ -3573,6 +3939,10 @@ impl canvas::Program<Message> for Graph {
                                 midi_hw_box_gap,
                             )
                         })
+                } else if let Some(measurement_id) = Self::iodelay_measurement_id(&conn.to_track) {
+                    (Self::iodelay_enabled(&data)
+                        && Self::iodelay_measurement_ids(&data).contains(&measurement_id))
+                    .then(|| Self::iodelay_measurement_port_pos(&data, bounds, measurement_id))
                 } else {
                     end_track_option.map(|t| {
                         let track_size = Self::track_box_size(t);
@@ -3869,6 +4239,9 @@ impl canvas::Program<Message> for Graph {
                                     midi_hw_box_gap,
                                 )
                             })
+                    } else if conn.from_track == IO_DELAY_ID {
+                        Self::iodelay_enabled(&data)
+                            .then(|| Self::iodelay_port_pos(&data, bounds, conn.is_input))
                     } else {
                         start_track_option.map(|t| {
                             let track_size = Self::track_box_size(t);
@@ -4087,6 +4460,121 @@ impl canvas::Program<Message> for Graph {
                         &Path::circle(Point::new(pos.x, py), hover_radius(5.0, can_highlight_port)),
                         audio_port_color(),
                     );
+                }
+            }
+
+            if self.effective_folder(&data).is_none() && Self::iodelay_enabled(&data) {
+                let mut boxes = vec![(
+                    None,
+                    "Generator".to_string(),
+                    Self::iodelay_box_rect(&data, bounds, true),
+                )];
+                boxes.extend(Self::iodelay_measurement_ids(&data).into_iter().map(|id| {
+                    (
+                        Some(id),
+                        format!("Measurement {}", id + 1),
+                        Self::iodelay_measurement_box_rect(&data, bounds, id),
+                    )
+                }));
+                for (measurement_id, title, rect) in boxes {
+                    let rect_path = Path::rectangle(
+                        Point::new(rect.x, rect.y),
+                        maolan_widgets::iced::Size::new(rect.width, rect.height),
+                    );
+                    frame.fill(&rect_path, edge_panel);
+                    frame.stroke(
+                        &rect_path,
+                        canvas::Stroke::default()
+                            .with_color(edge_panel_border)
+                            .with_width(2.0),
+                    );
+                    frame.fill_text(Text {
+                        content: title,
+                        position: Point::new(rect.center_x(), rect.y + 20.0),
+                        color: Color::WHITE,
+                        align_x: Horizontal::Center.into(),
+                        ..Default::default()
+                    });
+                    if let Some(id) = measurement_id {
+                        frame.fill_text(Text {
+                            content: "Return input".into(),
+                            position: Point::new(rect.center_x(), rect.y + 55.0),
+                            color: Color::WHITE,
+                            size: 12.0.into(),
+                            align_x: Horizontal::Center.into(),
+                            ..Default::default()
+                        });
+                        frame.fill_text(Text {
+                            content: Self::iodelay_readout(&data, id),
+                            position: Point::new(rect.center_x(), rect.y + 78.0),
+                            color: Color::WHITE,
+                            size: 12.0.into(),
+                            align_x: Horizontal::Center.into(),
+                            ..Default::default()
+                        });
+                        let button = Self::iodelay_calibrate_rect(&data, bounds, id);
+                        frame.stroke(
+                            &Path::rectangle(button.position(), button.size()),
+                            canvas::Stroke::default().with_color(edge_panel_border),
+                        );
+                        frame.fill_text(Text {
+                            content: "Calibrate latency".into(),
+                            position: Point::new(button.center_x(), button.y + 3.0),
+                            color: if Self::iodelay_can_calibrate(&data, id) {
+                                Color::WHITE
+                            } else {
+                                Color::from_rgb(0.5, 0.5, 0.5)
+                            },
+                            size: 12.0.into(),
+                            align_x: Horizontal::Center.into(),
+                            ..Default::default()
+                        });
+                        let hover = Hovering::Port {
+                            track_idx: Self::iodelay_measurement_endpoint(id),
+                            port_idx: 0,
+                            is_input: true,
+                        };
+                        let can_highlight = data.hovering == Some(hover.clone())
+                            || should_highlight_port(
+                                false,
+                                data.connecting.as_ref().map(|c| c.kind),
+                                self.get_port_kind(&data, &hover).unwrap_or(Kind::Audio),
+                            );
+                        frame.fill(
+                            &Path::circle(
+                                Self::iodelay_measurement_port_pos(&data, bounds, id),
+                                hover_radius(5.0, can_highlight),
+                            ),
+                            audio_port_color(),
+                        );
+                    } else {
+                        frame.fill_text(Text {
+                            content: "Tone output".into(),
+                            position: Point::new(rect.center_x(), rect.y + 65.0),
+                            color: Color::WHITE,
+                            size: 12.0.into(),
+                            align_x: Horizontal::Center.into(),
+                            ..Default::default()
+                        });
+                        let hover = Hovering::Port {
+                            track_idx: IO_DELAY_ID.to_string(),
+                            port_idx: 0,
+                            is_input: false,
+                        };
+                        let can_highlight = data.hovering == Some(hover.clone())
+                            || should_highlight_port(
+                                false,
+                                data.connecting.as_ref().map(|c| c.kind),
+                                self.get_port_kind(&data, &hover).unwrap_or(Kind::Audio),
+                            );
+                        frame.fill(
+                            &Path::circle(
+                                Point::new(rect.x + rect.width, rect.y + rect.height / 2.0),
+                                hover_radius(5.0, can_highlight),
+                            ),
+                            audio_port_color(),
+                        );
+                    }
                 }
             }
 
@@ -5390,5 +5878,499 @@ mod tests {
             Message::RequestBatch(actions) => assert_eq!(actions.len(), 2),
             other => panic!("expected RequestBatch, got {other:?}"),
         }
+    }
+
+    fn iodelay_state(enabled: bool) -> Arc<RwLock<crate::state::StateData>> {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.write().expect("state lock poisoned").iodelay_section =
+            serde_json::json!({"enabled": enabled, "gain": 1.0, "measurement_added": true});
+        state
+    }
+
+    #[test]
+    fn iodelay_calibration_button_requires_resolved_report_and_does_not_drag() {
+        use maolan_engine::mtdm::{IoDelayReport, IoDelayStatus};
+        let state = iodelay_state(true);
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor = Graph::iodelay_calibrate_rect(&state.read().unwrap(), bounds, 0).center();
+        for resolved in [false, true] {
+            if resolved {
+                state.write().unwrap().iodelay_reports.insert(
+                    0,
+                    IoDelayReport {
+                        status: IoDelayStatus::Resolved,
+                        delay_frames: 1217.574,
+                        error: 0.004,
+                        inverted: false,
+                        final_report: false,
+                    },
+                );
+            }
+            let action = graph
+                .update(
+                    &mut GraphState::default(),
+                    &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    bounds,
+                    mouse::Cursor::Available(cursor),
+                )
+                .expect("button click");
+            let message = action_message(action).0;
+            if resolved {
+                assert!(matches!(
+                    message,
+                    Some(Message::Request(EngineAction::IoDelayCalibrate {
+                        measurement_id: 0
+                    }))
+                ));
+            } else {
+                assert!(message.is_none());
+            }
+            assert!(state.read().unwrap().moving_track.is_none());
+        }
+    }
+
+    #[test]
+    fn iodelay_box_rect_sits_left_of_hw_out_panel() {
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let rect = Graph::iodelay_box_rect(&StateData::default(), bounds, false);
+        assert_eq!(rect.width, Graph::IO_DELAY_W);
+        assert_eq!(rect.height, Graph::IO_DELAY_H);
+        // 10px gap to the left of the hw:out side panel (width FOLDER_HW_WIDTH).
+        assert_eq!(rect.x + rect.width + 10.0, bounds.width - 70.0);
+        // Vertically centered.
+        assert_eq!(rect.y, (600.0 - Graph::IO_DELAY_H) / 2.0);
+    }
+
+    #[test]
+    fn iodelay_ports_sit_on_left_and_right_box_edges() {
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let state = StateData::default();
+        let measurement = Graph::iodelay_box_rect(&state, bounds, false);
+        let generator = Graph::iodelay_box_rect(&state, bounds, true);
+        assert_eq!(
+            Graph::iodelay_port_pos(&state, bounds, true),
+            Point::new(measurement.x, measurement.y + measurement.height / 2.0)
+        );
+        assert_eq!(
+            Graph::iodelay_port_pos(&state, bounds, false),
+            Point::new(
+                generator.x + generator.width,
+                generator.y + generator.height / 2.0
+            )
+        );
+    }
+
+    #[test]
+    fn iodelay_port_kind_is_audio() {
+        let state = iodelay_state(true);
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let data = state.read().expect("state lock poisoned");
+        for is_input in [true, false] {
+            let hover = Hovering::Port {
+                track_idx: IO_DELAY_ID.to_string(),
+                port_idx: 0,
+                is_input,
+            };
+            assert_eq!(graph.get_port_kind(&data, &hover), Some(Kind::Audio));
+        }
+    }
+
+    fn press_and_release(
+        graph: &Graph,
+        press_at: Point,
+        release_at: Point,
+        bounds: Rectangle,
+    ) -> (Option<Message>, event::Status) {
+        let press = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(press_at),
+            )
+            .expect("press action");
+        let (press_message, press_status) = action_message(press);
+        assert!(press_message.is_none());
+        assert_eq!(press_status, event::Status::Captured);
+
+        let release = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(release_at),
+            )
+            .expect("release action");
+        action_message(release)
+    }
+
+    #[test]
+    fn update_drag_from_iodelay_output_to_track_input_connects() {
+        let state = iodelay_state(true);
+        let track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
+        state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let out_pos = Graph::iodelay_port_pos(&StateData::default(), bounds, false);
+
+        let press = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(out_pos),
+            )
+            .expect("press action");
+        let (press_message, press_status) = action_message(press);
+        assert!(press_message.is_none());
+        assert_eq!(press_status, event::Status::Captured);
+        {
+            let data = state.read().expect("state lock poisoned");
+            let conn = data.connecting.as_ref().expect("connecting after press");
+            assert_eq!(conn.from_track, IO_DELAY_ID);
+            assert_eq!(conn.from_port, 0);
+            assert_eq!(conn.kind, Kind::Audio);
+            assert!(!conn.is_input);
+        }
+
+        let data = state.read().expect("state lock poisoned");
+        let track = data
+            .tracks
+            .iter()
+            .find(|t| t.name == "Track")
+            .expect("track");
+        let input_pos =
+            Graph::track_port_position(track, 0, track.position, Graph::track_box_size(track));
+        drop(data);
+
+        let release = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(input_pos),
+            )
+            .expect("release action");
+        let (message, _status) = action_message(release);
+        assert!(
+            matches!(
+                &message,
+                Some(Message::Request(EngineAction::Connect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                })) if from_track == IO_DELAY_ID
+                    && *from_port == 0
+                    && to_track == "Track"
+                    && *to_port == 0
+                    && *kind == Kind::Audio
+            ),
+            "expected iodelay -> track Connect, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn update_drag_from_track_output_to_iodelay_input_connects() {
+        let state = iodelay_state(true);
+        let track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
+        state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let in_pos = Graph::iodelay_port_pos(&StateData::default(), bounds, true);
+
+        let data = state.read().expect("state lock poisoned");
+        let track = data
+            .tracks
+            .iter()
+            .find(|t| t.name == "Track")
+            .expect("track");
+        let output_pos = Graph::track_output_port_position(
+            track,
+            0,
+            track.position,
+            Graph::track_box_size(track),
+        );
+        drop(data);
+
+        let (message, _status) = press_and_release(&graph, output_pos, in_pos, bounds);
+        assert!(
+            matches!(
+                &message,
+                Some(Message::Request(EngineAction::Connect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                })) if from_track == "Track"
+                    && *from_port == 0
+                    && to_track == IO_DELAY_ID
+                    && *to_port == 0
+                    && *kind == Kind::Audio
+            ),
+            "expected track -> iodelay Connect, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn update_drag_from_iodelay_input_to_track_output_connects() {
+        let state = iodelay_state(true);
+        let track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
+        state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let in_pos = Graph::iodelay_port_pos(&StateData::default(), bounds, true);
+
+        let data = state.read().expect("state lock poisoned");
+        let track = data
+            .tracks
+            .iter()
+            .find(|t| t.name == "Track")
+            .expect("track");
+        let output_pos = Graph::track_output_port_position(
+            track,
+            0,
+            track.position,
+            Graph::track_box_size(track),
+        );
+        drop(data);
+
+        let (message, _status) = press_and_release(&graph, in_pos, output_pos, bounds);
+        assert!(
+            matches!(
+                &message,
+                Some(Message::Request(EngineAction::Connect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                })) if from_track == "Track"
+                    && *from_port == 0
+                    && to_track == IO_DELAY_ID
+                    && *to_port == 0
+                    && *kind == Kind::Audio
+            ),
+            "expected track -> iodelay Connect, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn update_drag_from_iodelay_output_to_midi_input_is_rejected() {
+        let state = iodelay_state(true);
+        let track = crate::state::Track::new("MidiTrack".to_string(), 0.0, 1, 1, 1, 0);
+        state
+            .write()
+            .expect("state lock poisoned")
+            .tracks
+            .push(track);
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let out_pos = Graph::iodelay_port_pos(&StateData::default(), bounds, false);
+
+        let data = state.read().expect("state lock poisoned");
+        let track = data
+            .tracks
+            .iter()
+            .find(|t| t.name == "MidiTrack")
+            .expect("track");
+        let midi_flat = track.primary_audio_ins();
+        assert_eq!(Graph::track_port_kind(track, midi_flat, true), Kind::MIDI);
+        let midi_pos = Graph::track_port_position(
+            track,
+            midi_flat,
+            track.position,
+            Graph::track_box_size(track),
+        );
+        drop(data);
+
+        let (message, _status) = press_and_release(&graph, out_pos, midi_pos, bounds);
+        assert!(
+            !matches!(
+                message,
+                Some(Message::Request(EngineAction::Connect { .. }))
+            ),
+            "MIDI drop must not produce a Connect action"
+        );
+    }
+
+    #[test]
+    fn update_press_on_iodelay_port_does_nothing_when_disabled() {
+        let state = iodelay_state(false);
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let out_pos = Graph::iodelay_port_pos(&StateData::default(), bounds, false);
+
+        let action = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(out_pos),
+            )
+            .expect("action");
+        let (_message, _status) = action_message(action);
+        let data = state.read().expect("state lock poisoned");
+        assert!(data.connecting.is_none());
+    }
+    #[test]
+    fn iodelay_hardware_ports_connect_in_both_drag_directions() {
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        for reverse in [false, true] {
+            for output in [false, true] {
+                let state = iodelay_state(true);
+                {
+                    let mut data = state.write().unwrap();
+                    data.hw_in = Some(crate::state::HW { channels: 2 });
+                    data.hw_out = Some(crate::state::HW { channels: 2 });
+                    data.shift = true;
+                }
+                let graph = Graph::new_with_focus(state, None, None);
+                let node = Graph::iodelay_port_pos(&StateData::default(), bounds, !output);
+                let hw = Point::new(if output { 730.0 } else { 70.0 }, 410.0);
+                let (start, end) = if reverse { (hw, node) } else { (node, hw) };
+                let (message, _) = press_and_release(&graph, start, end, bounds);
+                let Some(Message::Request(EngineAction::Connect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                })) = message
+                else {
+                    panic!("expected one audio connection: {message:?}");
+                };
+                assert_eq!(kind, Kind::Audio);
+                if output {
+                    assert_eq!(
+                        (from_track.as_str(), from_port, to_track.as_str(), to_port),
+                        (IO_DELAY_ID, 0, HW_OUT_ID, 1)
+                    );
+                } else {
+                    assert_eq!(
+                        (from_track.as_str(), from_port, to_track.as_str(), to_port),
+                        (HW_IN_ID, 1, IO_DELAY_ID, 0)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn iodelay_connection_curve_can_be_selected_and_disconnected() {
+        let state = iodelay_state(true);
+        {
+            let mut data = state.write().unwrap();
+            data.hw_in = Some(crate::state::HW { channels: 1 });
+            data.connections.push(crate::state::Connection {
+                from_track: HW_IN_ID.into(),
+                from_port: 0,
+                to_track: IO_DELAY_ID.into(),
+                to_port: 0,
+                kind: Kind::Audio,
+            });
+        }
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let start = Point::new(70.0, 320.0);
+        let end = Graph::iodelay_port_pos(&StateData::default(), bounds, true);
+        let cursor = Point::new((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
+        let action = graph
+            .update(
+                &mut GraphState::default(),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(cursor),
+            )
+            .expect("click action");
+        assert!(matches!(
+            action_message(action).0,
+            Some(Message::ConnectionViewSelectConnection(0))
+        ));
+        let actions = crate::connections::selection::track_disconnect_actions(
+            &state.read().unwrap(),
+            &[0].into_iter().collect(),
+        );
+        assert!(
+            matches!(&actions[0], EngineAction::Disconnect { from_track, to_track, .. }
+            if from_track == HW_IN_ID && to_track == IO_DELAY_ID)
+        );
+    }
+    #[test]
+    fn dragging_iodelay_moves_its_ports_and_marks_position_changed() {
+        let state = iodelay_state(true);
+        state.write().unwrap().hw_out = Some(crate::state::HW { channels: 1 });
+        let graph = Graph::new_with_focus(state.clone(), None, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let rect = Graph::iodelay_box_rect(&state.read().unwrap(), bounds, true);
+        let press_at = Point::new(rect.x + 30.0, rect.y + 20.0);
+        let moved_to = Point::new(330.0, 120.0);
+        let mut graph_state = GraphState::default();
+        let press = graph
+            .update(
+                &mut graph_state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(press_at),
+            )
+            .expect("press");
+        assert_eq!(action_message(press).1, event::Status::Captured);
+        assert!(state.read().unwrap().connecting.is_none());
+        graph
+            .update(
+                &mut graph_state,
+                &Event::Mouse(mouse::Event::CursorMoved { position: moved_to }),
+                bounds,
+                mouse::Cursor::Available(moved_to),
+            )
+            .expect("move");
+        let release = graph
+            .update(
+                &mut graph_state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(moved_to),
+            )
+            .expect("release");
+        assert!(matches!(
+            action_message(release).0,
+            Some(Message::ConnectionPositionsChanged)
+        ));
+        let output = {
+            let data = state.read().unwrap();
+            assert!(data.moving_track.is_none());
+            assert_eq!(
+                Graph::iodelay_box_rect(&data, bounds, true).position(),
+                Point::new(300.0, 100.0)
+            );
+            assert_eq!(
+                Graph::iodelay_port_pos(&data, bounds, true),
+                Point::new(560.0, 300.0)
+            );
+            let output = Graph::iodelay_port_pos(&data, bounds, false);
+            assert_eq!(output, Point::new(460.0, 180.0));
+            output
+        };
+        let (message, _) = press_and_release(&graph, output, Point::new(730.0, 320.0), bounds);
+        assert!(
+            matches!(message, Some(Message::Request(EngineAction::Connect {
+            from_track, to_track, ..
+        })) if from_track == IO_DELAY_ID && to_track == HW_OUT_ID)
+        );
     }
 }

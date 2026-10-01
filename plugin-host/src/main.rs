@@ -37,6 +37,44 @@ fn setup_parent_death_signal() {
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn setup_parent_death_signal() {}
 
+/// Realtime priority for the host process. Deliberately below the engine's hw
+/// cycle thread (prio 18, engine/src/workers/hw_worker.rs) so a busy host can
+/// never preempt the cycle thread that waits on it, yet high enough to answer
+/// an audio block within the engine's bounded plugin wait.
+#[cfg(unix)]
+const RT_PRIORITY_HOST: i32 = 14;
+
+/// Best-effort realtime setup for the plugin-host process: lock memory pages
+/// and request SCHED_FIFO. Never fails startup — the engine's wait has a
+/// timeout and falls back to bypass either way.
+#[cfg(unix)]
+fn configure_realtime_process() {
+    unsafe {
+        let rc = libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE);
+        if rc != 0 {
+            eprintln!(
+                "maolan-plugin-host: mlockall(MCL_CURRENT|MCL_FUTURE) failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+    let param = unsafe {
+        let mut p = std::mem::zeroed::<libc::sched_param>();
+        p.sched_priority = RT_PRIORITY_HOST;
+        p
+    };
+    let rc = unsafe { libc::pthread_setschedparam(libc::pthread_self(), libc::SCHED_FIFO, &param) };
+    if rc != 0 {
+        eprintln!(
+            "maolan-plugin-host: pthread_setschedparam(SCHED_FIFO, {RT_PRIORITY_HOST}) failed: {}",
+            std::io::Error::from_raw_os_error(rc)
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_realtime_process() {}
+
 fn parse_log_level(args: &mut Vec<String>) -> Option<Option<tracing::Level>> {
     if let Some(pos) = args.iter().position(|a| a == "--log-level") {
         args.remove(pos);
@@ -263,6 +301,8 @@ fn main() {
             .with_max_level(tracing::Level::INFO)
             .init();
     }
+
+    configure_realtime_process();
 
     fn handle_special_plugin(
         spec: &str,

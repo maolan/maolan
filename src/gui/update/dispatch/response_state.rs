@@ -17,6 +17,15 @@ impl Maolan {
                 if from_track == to_track && from_track != "hw:in" && to_track != "hw:out" {
                     return true;
                 }
+                if state.connections.iter().any(|connection| {
+                    connection.from_track == *from_track
+                        && connection.from_port == *from_port
+                        && connection.to_track == *to_track
+                        && connection.to_port == *to_port
+                        && connection.kind == *kind
+                }) {
+                    return true;
+                }
                 state.connections.push(crate::state::Connection {
                     from_track: from_track.clone(),
                     from_port: *from_port,

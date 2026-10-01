@@ -8,6 +8,47 @@ use maolan_engine::message::{Event, QueryReply};
 impl Maolan {
     pub(super) fn handle_engine_event(&mut self, e: &Event) -> Task<Message> {
         match e {
+            Event::IoDelayCalibrated {
+                measurement_id,
+                frames,
+                playback_lead,
+                record_back,
+            } => {
+                self.info(format!("Measurement {}: play ahead {playback_lead} frames, record back {record_back} frames ({frames} total)", measurement_id + 1));
+            }
+            Event::IoDelayReport {
+                measurement_id,
+                report,
+            } => {
+                let (enabled, sample_rate, period_frames) = {
+                    let state = self.state.read().expect("state lock poisoned");
+                    (
+                        state.iodelay_section["enabled"].as_bool().unwrap_or(false),
+                        state.hw_sample_rate_hz.max(1) as f64,
+                        state.oss_period_frames.max(1) as f64,
+                    )
+                };
+                if enabled {
+                    tracing::info!(
+                        target: "iodelay",
+                        measurement_id,
+                        status = ?report.status,
+                        delay_frames = report.delay_frames,
+                        delay_ms = report.delay_frames * 1000.0 / sample_rate,
+                        delay_periods = report.delay_frames / period_frames,
+                        err = report.error,
+                        inverted = report.inverted,
+                        "iodelay measurement"
+                    );
+                }
+                let mut state = self.state.write().expect("state lock poisoned");
+                if enabled {
+                    state.iodelay_reports.insert(*measurement_id, *report);
+                    if *measurement_id == 0 {
+                        state.iodelay_report = Some(*report);
+                    }
+                }
+            }
             Event::HistoryState { dirty } => {
                 self.session_ops.engine_dirty = *dirty;
             }

@@ -379,6 +379,116 @@ impl Maolan {
             Message::ToggleLogVisibility => {
                 self.ui.show_log_window = !self.ui.show_log_window;
             }
+            Message::AddIoDelayMeasurement => {
+                let (measurement_id, gain) = {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    if !state.iodelay_section["enabled"].as_bool().unwrap_or(false) {
+                        return Task::none();
+                    }
+                    let measurements = state.iodelay_section["measurements"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                    let measurement_id = measurements
+                        .iter()
+                        .filter_map(|measurement| measurement["id"].as_u64())
+                        .max()
+                        .map_or(0, |id| id + 1);
+                    let mut measurements = measurements;
+                    measurements.push(serde_json::json!({ "id": measurement_id }));
+                    state.iodelay_section["measurements"] = measurements.into();
+                    state.iodelay_reports.remove(&measurement_id);
+                    state.message = format!("IO Delay measurement {measurement_id} added");
+                    let gain = state.iodelay_section["gain"].as_f64().unwrap_or(1.0) as f32;
+                    (measurement_id, gain)
+                };
+                self.session_ops.engine_dirty = true;
+                return self.send(Action::IoDelayAddMeasurement {
+                    measurement_id,
+                    gain,
+                });
+            }
+            Message::ToggleIoDelay => {
+                let actions = {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    let enabled = !state
+                        .iodelay_section
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false);
+                    let gain = state
+                        .iodelay_section
+                        .get("gain")
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(1.0) as f32;
+                    if enabled && !state.hw_loaded {
+                        state.message = "Open an audio device before enabling IO Delay".to_string();
+                        return Task::none();
+                    }
+                    state.iodelay_report = None;
+                    state.iodelay_reports.clear();
+                    state.connecting = None;
+                    state.hovering = None;
+                    state.connection_view_selection = crate::state::ConnectionViewSelection::None;
+                    if !state.iodelay_section.is_object() {
+                        state.iodelay_section = serde_json::json!({});
+                    }
+                    state.iodelay_section["enabled"] = enabled.into();
+                    state.iodelay_section["gain"] = f64::from(gain).into();
+                    state.message = if enabled {
+                        "IO Delay measurement enabled".to_string()
+                    } else {
+                        "IO Delay measurement disabled".to_string()
+                    };
+                    let mut actions = vec![Action::IoDelayConfigure { enabled, gain }];
+                    if enabled {
+                        let measurement_ids = state.iodelay_section["measurements"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|measurement| measurement["id"].as_u64())
+                            .collect::<Vec<_>>();
+                        let measurement_ids = if measurement_ids.is_empty()
+                            && state.iodelay_section["measurement_added"]
+                                .as_bool()
+                                .unwrap_or(false)
+                        {
+                            vec![0]
+                        } else {
+                            measurement_ids
+                        };
+                        actions.extend(measurement_ids.into_iter().map(|measurement_id| {
+                            Action::IoDelayAddMeasurement {
+                                measurement_id,
+                                gain,
+                            }
+                        }));
+                        actions.extend(
+                            state
+                                .connections
+                                .iter()
+                                .filter(|connection| {
+                                    connection.from_track == crate::state::IO_DELAY_ID
+                                        || connection.from_track.starts_with("iodelay:measurement:")
+                                        || connection.to_track == crate::state::IO_DELAY_ID
+                                        || connection.to_track.starts_with("iodelay:measurement:")
+                                })
+                                .map(|connection| Action::Connect {
+                                    from_track: connection.from_track.clone(),
+                                    from_port: connection.from_port,
+                                    to_track: connection.to_track.clone(),
+                                    to_port: connection.to_port,
+                                    kind: connection.kind,
+                                }),
+                        );
+                    }
+                    actions
+                };
+                // Session content changed, and the engine's
+                // IO Delay configuration and measurement creation are not history-recorded.
+                self.session_ops.engine_dirty = true;
+                return Self::restore_actions_task(actions);
+            }
             Message::ToggleShortcutsPane => {
                 self.ui.shortcuts_pane_visible = !self.ui.shortcuts_pane_visible;
             }
@@ -421,5 +531,61 @@ impl Maolan {
         }
         self.update_children(&message);
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod iodelay_tests {
+    use super::*;
+    use maolan_engine::mtdm::{IoDelayReport, IoDelayStatus};
+
+    #[test]
+    fn iodelay_toggle_keeps_wiring_and_clears_live_report() {
+        let mut app = Maolan::default();
+        app.state.write().unwrap().hw_loaded = true;
+        app.state.write().unwrap().iodelay_section = serde_json::json!({
+            "position": { "x": 300.0, "y": 100.0 }
+        });
+        let connect = Action::Connect {
+            from_track: "iodelay".into(),
+            from_port: 0,
+            to_track: "hw:out".into(),
+            to_port: 2,
+            kind: maolan_engine::kind::Kind::Audio,
+        };
+        assert!(app.handle_response_engine_state_action(&connect));
+        let _ = app.handle_ui_message(Message::ToggleIoDelay);
+        let report = IoDelayReport {
+            status: IoDelayStatus::Resolved,
+            delay_frames: 1217.574,
+            error: 0.004,
+            inverted: false,
+            final_report: false,
+        };
+        let _ = app.handle_engine_event(&maolan_engine::message::Event::IoDelayReport {
+            measurement_id: 0,
+            report,
+        });
+        assert!(app.state.read().unwrap().iodelay_report.is_some());
+        let _ = app.handle_ui_message(Message::ToggleIoDelay);
+        let _ = app.handle_engine_event(&maolan_engine::message::Event::IoDelayReport {
+            measurement_id: 0,
+            report,
+        });
+        {
+            let state = app.state.read().unwrap();
+            assert_eq!(state.iodelay_section["enabled"], false);
+            assert!(state.iodelay_report.is_none());
+            assert_eq!(state.connections.len(), 1);
+        }
+        let _ = app.handle_ui_message(Message::ToggleIoDelay);
+        assert!(app.handle_response_engine_state_action(&connect));
+        let state = app.state.read().unwrap();
+        assert_eq!(state.iodelay_section["enabled"], true);
+        assert_eq!(
+            state.iodelay_section["position"],
+            serde_json::json!({"x": 300.0, "y": 100.0})
+        );
+        assert_eq!(state.connections.len(), 1);
     }
 }

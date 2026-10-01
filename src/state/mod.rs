@@ -131,7 +131,9 @@ use std::{
 };
 pub use track::{EditorMarker, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
 
-pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
+pub use crate::consts::state_ids::{
+    HW_IN_ID, HW_OUT_ID, IO_DELAY_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum ModulatorShape {
@@ -1639,6 +1641,13 @@ pub struct StateData {
     pub session_year: String,
     pub session_track_number: String,
     pub session_genre: String,
+    /// Passthrough for the session's top-level `iodelay` section (in-engine
+    /// MTDM latency measurement component, see `maolan_engine::iodelay_node`).
+    /// Seeded at session load and emitted verbatim on save so the component
+    /// survives load/save cycles.
+    pub iodelay_section: serde_json::Value,
+    pub iodelay_report: Option<maolan_engine::mtdm::IoDelayReport>,
+    pub iodelay_reports: HashMap<u64, maolan_engine::mtdm::IoDelayReport>,
     pub available_templates: Vec<String>,
     pub session: SessionMatrix,
     pub session_view_scroll_x: f32,
@@ -1882,6 +1891,9 @@ impl Default for StateData {
             session_year: String::new(),
             session_track_number: String::new(),
             session_genre: String::new(),
+            iodelay_section: serde_json::Value::Null,
+            iodelay_report: None,
+            iodelay_reports: HashMap::new(),
             available_templates: vec![],
             session: SessionMatrix::default(),
             session_view_scroll_x: 0.0,

@@ -87,6 +87,7 @@ pub mod workspace_ids {
 pub mod state_ids {
     pub const HW_IN_ID: &str = "hw:in";
     pub const HW_OUT_ID: &str = "hw:out";
+    pub const IO_DELAY_ID: &str = "iodelay";
     pub const METRONOME_TRACK_ID: &str = "metronome";
     pub const MIDI_HW_IN_ID: &str = "midi:hw:in";
     pub const MIDI_HW_OUT_ID: &str = "midi:hw:out";
@@ -326,6 +327,7 @@ mod tests {
     fn state_ids_are_expected_values() {
         assert_eq!(state_ids::HW_IN_ID, "hw:in");
         assert_eq!(state_ids::HW_OUT_ID, "hw:out");
+        assert_eq!(state_ids::IO_DELAY_ID, "iodelay");
         assert_eq!(state_ids::METRONOME_TRACK_ID, "metronome");
         assert_eq!(state_ids::MIDI_HW_IN_ID, "midi:hw:in");
         assert_eq!(state_ids::MIDI_HW_OUT_ID, "midi:hw:out");

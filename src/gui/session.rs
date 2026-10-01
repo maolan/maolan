@@ -1856,6 +1856,7 @@ impl Maolan {
             "unused_audio_clips": serde_json::to_value(&state.unused_audio_clips).unwrap_or(Value::Array(vec![])),
             "unused_midi_clips": serde_json::to_value(&state.unused_midi_clips).unwrap_or(Value::Array(vec![])),
             "modulators": &self.modulators,
+            "iodelay": &state.iodelay_section,
             "connections": connections,
             "jack_routing": jack_routing,
             "graphs": graphs,
@@ -2032,6 +2033,30 @@ impl Maolan {
         {
             let mut state = self.state.write().expect("state lock poisoned");
             state.jack_session_routing = loaded_jack_routing.clone();
+        }
+        {
+            let mut state = self.state.write().expect("state lock poisoned");
+            state.iodelay_section = session
+                .get("iodelay")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            state.iodelay_report = None;
+            if !state.iodelay_section["enabled"].as_bool().unwrap_or(false)
+                && let Some(connections) = session.get("connections").and_then(Value::as_array)
+            {
+                state.connections.extend(
+                    connections
+                        .iter()
+                        .filter_map(|connection| {
+                            serde_json::from_value::<crate::state::Connection>(connection.clone())
+                                .ok()
+                        })
+                        .filter(|connection| {
+                            connection.from_track == crate::state::IO_DELAY_ID
+                                || connection.to_track == crate::state::IO_DELAY_ID
+                        }),
+                );
+            }
         }
         {
             let mut state = self.state.write().expect("state lock poisoned");
@@ -3471,10 +3496,47 @@ impl Maolan {
             ));
         }
 
+        let iodelay_enabled = session["iodelay"]["enabled"].as_bool().unwrap_or(false);
+        restore_actions.push(Action::IoDelayConfigure {
+            enabled: iodelay_enabled,
+            gain: session["iodelay"]["gain"].as_f64().unwrap_or(1.0) as f32,
+        });
+        if iodelay_enabled {
+            let gain = session["iodelay"]["gain"].as_f64().unwrap_or(1.0) as f32;
+            let mut measurement_ids = session["iodelay"]["measurements"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|measurement| measurement["id"].as_u64())
+                .collect::<Vec<_>>();
+            if measurement_ids.is_empty()
+                && session["iodelay"]["measurement_added"]
+                    .as_bool()
+                    .unwrap_or(false)
+            {
+                measurement_ids.push(0);
+            }
+            measurement_ids.sort_unstable();
+            measurement_ids.dedup();
+            restore_actions.extend(measurement_ids.into_iter().map(|measurement_id| {
+                Action::IoDelayAddMeasurement {
+                    measurement_id,
+                    gain,
+                }
+            }));
+        }
         if let Some(connections_value) = session.get("connections") {
             match serde_json::from_value::<Vec<Connection>>(connections_value.clone()) {
                 Ok(saved_connections) => {
                     for conn in saved_connections {
+                        if !iodelay_enabled
+                            && (conn.from_track == crate::state::IO_DELAY_ID
+                                || conn.from_track.starts_with("iodelay:measurement:")
+                                || conn.to_track == crate::state::IO_DELAY_ID
+                                || conn.to_track.starts_with("iodelay:measurement:"))
+                        {
+                            continue;
+                        }
                         restore_actions.push(Action::Connect {
                             from_track: conn.from_track,
                             from_port: conn.from_port,

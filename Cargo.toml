@@ -65,6 +65,3 @@ windows = { version = "0.62.2", features = ["Win32_Devices_Properties", "Win32_M
 
 [build-dependencies]
 winresource = "0.1"
-
-[patch.crates-io]
-maolan-engine = { path = "../engine" }

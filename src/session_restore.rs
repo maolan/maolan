@@ -131,7 +131,55 @@ fn load_session_restore_actions_from_value(
         &vst3_plugins,
     )?;
     actions.extend(graph_actions);
+    let enabled = session["iodelay"]["enabled"].as_bool().unwrap_or(false);
+    let gain = session["iodelay"]["gain"].as_f64().unwrap_or(1.0) as f32;
+    actions.push(Action::IoDelayConfigure { enabled, gain });
+    if enabled {
+        let mut measurement_ids = session["iodelay"]["measurements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|measurement| measurement["id"].as_u64())
+            .collect::<Vec<_>>();
+        if measurement_ids.is_empty()
+            && (session["iodelay"]["measurement_added"]
+                .as_bool()
+                .unwrap_or(false)
+                || session["connections"]
+                    .as_array()
+                    .is_some_and(|connections| {
+                        connections.iter().any(|connection| {
+                            connection["to_track"].as_str().is_some_and(|target| {
+                                target == "iodelay" || target.starts_with("iodelay:measurement:")
+                            })
+                        })
+                    }))
+        {
+            measurement_ids.push(0);
+        }
+        measurement_ids.sort_unstable();
+        measurement_ids.dedup();
+        actions.extend(measurement_ids.into_iter().map(|measurement_id| {
+            Action::IoDelayAddMeasurement {
+                measurement_id,
+                gain,
+            }
+        }));
+    }
+    let connection_start = actions.len();
     push_connection_restore_actions(&mut actions, session.get("connections"))?;
+    if !enabled {
+        let mut connection_actions = actions.split_off(connection_start);
+        connection_actions.retain(|action| {
+            !matches!(action,
+            Action::Connect { from_track, to_track, .. }
+                if from_track == "iodelay"
+                    || from_track.starts_with("iodelay:measurement:")
+                    || to_track == "iodelay"
+                    || to_track.starts_with("iodelay:measurement:"))
+        });
+        actions.extend(connection_actions);
+    }
 
     actions.push(Action::EndSessionRestore);
     Ok(actions)
@@ -881,5 +929,46 @@ fn parse_kind(value: Option<&Value>) -> Option<Kind> {
         Some("audio") | Some("Audio") => Some(Kind::Audio),
         Some("midi") | Some("MIDI") => Some(Kind::MIDI),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod iodelay_tests {
+    use super::*;
+
+    #[test]
+    fn iodelay_restore_configures_before_routing_and_skips_hidden_routes() {
+        for enabled in [false, true] {
+            let session = serde_json::json!({
+                "tracks": [], "iodelay": { "enabled": enabled, "gain": 2.5 },
+                "connections": [
+                    {"from_track": "iodelay", "from_port": 0,
+                     "to_track": "hw:out", "to_port": 2, "kind": "Audio"},
+                    {"from_track": "hw:in", "from_port": 7,
+                     "to_track": "iodelay", "to_port": 0, "kind": "Audio"}
+                ]
+            });
+            let actions = load_session_restore_actions_from_value(Path::new("/tmp"), &session)
+                .expect("restore actions");
+            let configure = actions
+                .iter()
+                .position(|action| {
+                    matches!(action,
+                Action::IoDelayConfigure { enabled: value, gain }
+                    if *value == enabled && *gain == 2.5)
+                })
+                .expect("configure");
+            let routes: Vec<_> = actions
+                .iter()
+                .enumerate()
+                .filter(|(_, action)| {
+                    matches!(action,
+                Action::Connect { from_track, to_track, .. }
+                    if from_track == "iodelay" || to_track == "iodelay")
+                })
+                .collect();
+            assert_eq!(routes.len(), if enabled { 2 } else { 0 });
+            assert!(routes.iter().all(|(index, _)| *index > configure));
+        }
     }
 }
