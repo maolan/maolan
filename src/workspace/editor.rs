@@ -8,7 +8,7 @@ use crate::{
         workspace::{AUDIO_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BASE, MIN_TICK_SPACING_PX},
     },
     message::{DraggedClip, Message, SnapMode},
-    state::{ClipPeaks, MidiClipPreviewMap, State, StateData, Track},
+    state::{MidiClipPreviewMap, State, StateData, Track},
 };
 use maolan_widgets::clip::{
     AudioClip as AudioClipWidget, AudioClipData as WidgetAudioClipData,
@@ -439,7 +439,8 @@ struct TrackNodeViewArgs<'a> {
     active_clip_snap_adjust_samples: f32,
     active_clip_snap_targets: &'a [crate::state::ClipId],
     recording_preview_bounds: Option<(usize, usize)>,
-    recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    recording_preview_peaks:
+        Option<&'a HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     midi_clip_previews: Option<&'a MidiClipPreviewMap>,
 }
 
@@ -481,7 +482,8 @@ struct TrackElementViewArgs<'a> {
     active_clip_snap_adjust_samples: f32,
     active_clip_snap_targets: &'a [crate::state::ClipId],
     recording_preview_bounds: Option<(usize, usize)>,
-    recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    recording_preview_peaks:
+        Option<&'a HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     midi_clip_previews: Option<&'a MidiClipPreviewMap>,
 }
 
@@ -1645,16 +1647,24 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         }
     }
 
+    let recorded_preview = recording_preview_peaks.and_then(|map| map.get(&track.name));
+    let preview_bounds = recorded_preview
+        .map(|preview| {
+            (
+                preview.start_sample,
+                preview.start_sample.saturating_add(preview.length_samples),
+            )
+        })
+        .or(recording_preview_bounds);
     if track.armed
-        && let Some((preview_start, preview_current)) = recording_preview_bounds
+        && let Some((preview_start, preview_current)) = preview_bounds
         && preview_current > preview_start
     {
         let preview_width =
             ((preview_current - preview_start) as f32 * pixels_per_sample).max(12.0);
         let preview_top = track.lane_top(Kind::Audio, 0) + 1.0;
-        let preview_peaks = recording_preview_peaks
-            .and_then(|map| map.get(&track.name))
-            .cloned()
+        let preview_peaks = recorded_preview
+            .map(|preview| preview.peaks.clone())
             .unwrap_or_default();
         let preview_length = preview_current - preview_start;
         let preview_clip = container(
@@ -2009,7 +2019,8 @@ pub struct EditorViewArgs<'a> {
     pub active_clip_snap_adjust_samples: f32,
     pub active_clip_snap_targets: &'a [crate::state::ClipId],
     pub recording_preview_bounds: Option<(usize, usize)>,
-    pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    pub recording_preview_peaks:
+        Option<&'a HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
     pub visible_track_window: VisibleTrackWindow,
 }
@@ -2025,7 +2036,8 @@ pub struct OwnedEditorViewArgs {
     pub active_clip_snap_adjust_samples: f32,
     pub active_clip_snap_targets: Vec<crate::state::ClipId>,
     pub recording_preview_bounds: Option<(usize, usize)>,
-    pub recording_preview_peaks: Option<HashMap<String, ClipPeaks>>,
+    pub recording_preview_peaks:
+        Option<HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     pub midi_clip_previews: Option<MidiClipPreviewMap>,
     pub visible_track_window: VisibleTrackWindow,
 }
@@ -2179,17 +2191,15 @@ impl Editor {
             keys.sort_unstable();
             for key in keys {
                 key.hash(&mut hasher);
-                if let Some(peaks) = peaks_by_track.get(key) {
-                    peaks.len().hash(&mut hasher);
-                    for channel in peaks.iter() {
+                if let Some(preview) = peaks_by_track.get(key) {
+                    preview.start_sample.hash(&mut hasher);
+                    preview.length_samples.hash(&mut hasher);
+                    preview.peaks.len().hash(&mut hasher);
+                    for channel in preview.peaks.iter() {
                         channel.len().hash(&mut hasher);
-                        if let Some(first) = channel.first() {
-                            first[0].to_bits().hash(&mut hasher);
-                            first[1].to_bits().hash(&mut hasher);
-                        }
-                        if let Some(last) = channel.last() {
-                            last[0].to_bits().hash(&mut hasher);
-                            last[1].to_bits().hash(&mut hasher);
+                        for pair in channel {
+                            pair[0].to_bits().hash(&mut hasher);
+                            pair[1].to_bits().hash(&mut hasher);
                         }
                     }
                 }

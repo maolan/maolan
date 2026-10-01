@@ -369,7 +369,7 @@ impl Default for UiState {
 pub struct RecordingPreviewState {
     pub recording_preview_start_sample: Option<usize>,
     pub recording_preview_sample: Option<usize>,
-    pub recording_preview_peaks: HashMap<String, ClipPeaks>,
+    pub recording_preview_peaks: HashMap<String, maolan_engine::message::RecordingPeakPreview>,
 }
 
 /// Tempo/time-signature inputs, selection, and snap modes.

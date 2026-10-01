@@ -9823,7 +9823,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_preview_peaks_tick_collects_armed_track_meter_values() {
+    fn recording_preview_uses_capture_peaks_and_ignores_late_replies() {
         let mut app = Maolan {
             transport: TransportUiState {
                 playing: true,
@@ -9847,17 +9847,29 @@ mod tests {
             .push(track);
 
         let _ = app.update(Message::RecordingPreviewPeaksTick);
-
-        let peaks = app
+        assert!(app.rec.recording_preview_peaks.is_empty());
+        let reply = maolan_engine::message::QueryReply::RecordingPeaks(vec![
+            maolan_engine::message::RecordingPeakPreview {
+                track_name: "Track".into(),
+                start_sample: 12,
+                length_samples: 48_000,
+                peaks: std::sync::Arc::new(vec![vec![[-0.8, 0.2]], vec![[-0.4, 0.9]]]),
+            },
+        ]);
+        let _ = app.update(Message::EngineQueryReply(reply.clone()));
+        let preview = app
             .rec
             .recording_preview_peaks
             .get("Track")
             .expect("preview peaks");
-        assert_eq!(peaks.len(), 2);
-        assert_eq!(peaks[0].len(), 1);
-        assert_eq!(peaks[1].len(), 1);
-        assert!(peaks[0][0][1] > 0.49 && peaks[0][0][1] < 0.51);
-        assert_eq!(peaks[1][0], [0.0, 0.0]);
+        assert_eq!(preview.start_sample, 12);
+        assert_eq!(preview.length_samples, 48_000);
+        assert_eq!(preview.peaks[0], vec![[-0.8, 0.2]]);
+        // The second output meter was silent; captured audio still draws.
+        assert_eq!(preview.peaks[1], vec![[-0.4, 0.9]]);
+        app.rec.stop_recording_preview();
+        let _ = app.update(Message::EngineQueryReply(reply));
+        assert!(app.rec.recording_preview_peaks.is_empty());
     }
 
     #[test]
