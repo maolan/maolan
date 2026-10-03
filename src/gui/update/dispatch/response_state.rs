@@ -282,8 +282,7 @@ impl Maolan {
                 input_channels,
                 output_channels,
                 bytes_per_frame,
-                ring_buffer_multiplier: _,
-                auto_open_midi_devices: _,
+                ..
             } => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 let configured_period_frames = if *actual_period_frames > 0 {

@@ -144,6 +144,26 @@ impl HW {
     ) -> Action {
         let device = Self::selected_device_id(selected_is_jack, selected_hw);
         let bits = Self::selected_bits(selected_is_jack, selection.chosen_bits);
+        #[cfg(target_os = "freebsd")]
+        let io_latency_calibration = {
+            let cfg = crate::config::Config::load().unwrap_or_default();
+            cfg.oss_calibrations
+                .iter()
+                .find(|c| {
+                    c.measurement_path == "engine_io_delay_v1"
+                        && c.bits == bits as usize
+                        && c.nperiods == selection.nperiods
+                        && c.sync_mode == selection.sync_mode
+                        && c.exclusive == selection.exclusive
+                        && c.output_device_id == device
+                        && c.input_device_id == selection.input_device.as_deref().unwrap_or(&device)
+                        && c.period_frames == selection.period_frames.max(1).next_power_of_two()
+                        && c.sample_rate_hz == selection.chosen_sample_rate_hz as usize
+                })
+                .map(|c| (c.input_latency_frames, c.output_latency_frames))
+        };
+        #[cfg(not(target_os = "freebsd"))]
+        let io_latency_calibration = None;
 
         Action::OpenAudioDevice {
             device,
@@ -154,6 +174,7 @@ impl HW {
             period_frames: selection.period_frames,
             nperiods: selection.nperiods,
             sync_mode: selection.sync_mode,
+            io_latency_calibration,
             actual_period_frames: 0,
             input_channels: 0,
             output_channels: 0,

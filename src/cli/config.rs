@@ -9,6 +9,23 @@ pub struct CliConfig {
     pub osc_enabled: bool,
     pub default_output_device_id: Option<String>,
     pub default_input_device_id: Option<String>,
+    pub oss_calibrations: Vec<CliOssCalibration>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CliOssCalibration {
+    pub measurement_path: String,
+    pub bits: usize,
+    pub nperiods: usize,
+    pub sync_mode: bool,
+    pub exclusive: bool,
+    pub input_device_id: String,
+    pub output_device_id: String,
+    pub period_frames: usize,
+    pub sample_rate_hz: usize,
+    pub input_latency_frames: usize,
+    pub output_latency_frames: usize,
 }
 
 impl CliConfig {
