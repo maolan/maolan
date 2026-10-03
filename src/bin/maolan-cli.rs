@@ -1674,6 +1674,24 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
     } else {
         options.bits
     };
+    #[cfg(target_os = "freebsd")]
+    let io_latency_calibration = config
+        .oss_calibrations
+        .iter()
+        .find(|c| {
+            c.measurement_path == "engine_io_delay_v1"
+                && c.bits == bits
+                && c.nperiods == options.nperiods
+                && c.sync_mode == options.sync_mode
+                && c.exclusive == options.exclusive
+                && c.output_device_id == device
+                && c.input_device_id == input_device.as_deref().unwrap_or(&device)
+                && c.period_frames == options.period_frames.max(1).next_power_of_two()
+                && c.sample_rate_hz == options.sample_rate_hz as usize
+        })
+        .map(|c| (c.input_latency_frames, c.output_latency_frames));
+    #[cfg(not(target_os = "freebsd"))]
+    let io_latency_calibration = None;
     Ok(Action::OpenAudioDevice {
         device,
         input_device,
@@ -1683,6 +1701,7 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
         period_frames: options.period_frames,
         nperiods: options.nperiods,
         sync_mode: options.sync_mode,
+        io_latency_calibration,
         actual_period_frames: 0,
         input_channels: 0,
         output_channels: 0,
@@ -1910,6 +1929,56 @@ mod tests {
         assert_eq!(map_key_event(key), AppCommand::Panic);
     }
 
+    #[cfg(target_os = "freebsd")]
+    #[test]
+    fn engine_calibration_is_optional_and_legacy_measurements_are_ignored() {
+        let options = CliOptions {
+            device: Some("out".into()),
+            input_device: Some("in".into()),
+            ..Default::default()
+        };
+        let mut config = CliConfig {
+            oss_calibrations: vec![cli::config::CliOssCalibration {
+                measurement_path: "engine_io_delay_v1".into(),
+                input_device_id: "in".into(),
+                output_device_id: "out".into(),
+                bits: options.bits,
+                sample_rate_hz: options.sample_rate_hz as usize,
+                period_frames: options.period_frames,
+                nperiods: options.nperiods,
+                sync_mode: options.sync_mode,
+                exclusive: options.exclusive,
+                input_latency_frames: 615,
+                output_latency_frames: 616,
+            }],
+            ..Default::default()
+        };
+        assert!(matches!(
+            resolve_open_audio_action(&options, &config).unwrap(),
+            Action::OpenAudioDevice {
+                io_latency_calibration: Some((615, 616)),
+                ..
+            }
+        ));
+        config.oss_calibrations[0].input_latency_frames = 0;
+        config.oss_calibrations[0].output_latency_frames = 0;
+        assert!(matches!(
+            resolve_open_audio_action(&options, &config).unwrap(),
+            Action::OpenAudioDevice {
+                io_latency_calibration: Some((0, 0)),
+                ..
+            }
+        ));
+        config.oss_calibrations[0].measurement_path.clear();
+        assert!(matches!(
+            resolve_open_audio_action(&options, &config).unwrap(),
+            Action::OpenAudioDevice {
+                io_latency_calibration: None,
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn resolve_open_audio_action_uses_cli_device_over_config() {
         let options = CliOptions {
@@ -1923,6 +1992,7 @@ mod tests {
             osc_enabled: false,
             default_output_device_id: Some("config-device".to_string()),
             default_input_device_id: Some("config-input".to_string()),
+            oss_calibrations: Vec::new(),
         };
 
         let action = resolve_open_audio_action(&options, &config).expect("open audio action");
@@ -1961,6 +2031,7 @@ mod tests {
             osc_enabled: false,
             default_output_device_id: Some("config-device".to_string()),
             default_input_device_id: Some("config-input".to_string()),
+            oss_calibrations: Vec::new(),
         };
 
         let action = resolve_open_audio_action(&options, &config).expect("open audio action");

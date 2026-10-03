@@ -21,6 +21,24 @@ pub struct Config {
     pub default_input_device_id: Option<String>,
     pub recent_session_paths: Vec<String>,
     pub shortcut_overrides: ShortcutBindings,
+    pub oss_calibrations: Vec<OssCalibration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[derive(Default)]
+pub struct OssCalibration {
+    pub measurement_path: String,
+    pub bits: usize,
+    pub nperiods: usize,
+    pub sync_mode: bool,
+    pub exclusive: bool,
+    pub input_device_id: String,
+    pub output_device_id: String,
+    pub period_frames: usize,
+    pub sample_rate_hz: usize,
+    pub input_latency_frames: usize,
+    pub output_latency_frames: usize,
 }
 
 impl Default for Config {
@@ -39,6 +57,7 @@ impl Default for Config {
             default_input_device_id: None,
             recent_session_paths: Vec::new(),
             shortcut_overrides: ShortcutBindings::new(),
+            oss_calibrations: Vec::new(),
         }
     }
 }
@@ -78,6 +97,9 @@ impl Config {
             }
             if config.default_input_device_id.is_none() {
                 config.default_input_device_id = existing.default_input_device_id;
+            }
+            if config.oss_calibrations.is_empty() {
+                config.oss_calibrations = existing.oss_calibrations;
             }
         }
 
