@@ -409,6 +409,7 @@ impl Maolan {
                 });
             }
             Message::ToggleIoDelay => {
+                let start_monitoring = !self.transport.playing;
                 let actions = {
                     let mut state = self.state.write().expect("state lock poisoned");
                     let enabled = !state
@@ -481,6 +482,9 @@ impl Maolan {
                                     kind: connection.kind,
                                 }),
                         );
+                        if start_monitoring {
+                            actions.push(Action::Pause);
+                        }
                     }
                     actions
                 };

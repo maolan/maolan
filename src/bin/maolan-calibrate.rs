@@ -10,7 +10,7 @@
 //! the GUI for two seconds per supported device period. Saves each successful
 //! calibration before proceeding to the next period.
 
-#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+#[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "linux"))]
 mod calibrator {
 
     use maolan_engine::{
@@ -323,8 +323,11 @@ mod calibrator {
                 sync_mode: args.sync_mode,
                 io_latency_calibration: None,
                 actual_period_frames: 0,
-                input_channels: 0,
-                output_channels: 0,
+                // ALSA opens the requested channel width. Requesting the
+                // selected port count makes higher numbered hardware channels
+                // available to the IO Delay graph.
+                input_channels: args.input_channel,
+                output_channels: args.output_channel,
                 bytes_per_frame: 0,
                 ring_buffer_multiplier: 0,
                 auto_open_midi_devices: false,
@@ -458,6 +461,175 @@ mod calibrator {
         Ok(periods)
     }
 
+    #[cfg(target_os = "linux")]
+    fn alsa_period_range(
+        device: &str,
+        direction: alsa::Direction,
+        channels: usize,
+        args: &Args,
+    ) -> Result<(usize, usize), String> {
+        use alsa::ValueOr;
+        use alsa::pcm::{Access, Format, HwParams, PCM};
+
+        let pcm = PCM::new(device, direction, false)
+            .map_err(|error| format!("cannot open ALSA {direction:?} device {device}: {error}"))?;
+        let params = HwParams::any(&pcm).map_err(|error| error.to_string())?;
+        if params.set_access(Access::MMapInterleaved).is_err() {
+            params
+                .set_access(Access::RWInterleaved)
+                .map_err(|error| error.to_string())?;
+        }
+        let formats = match args.bits {
+            32 => vec![
+                if cfg!(target_endian = "little") {
+                    Format::S32LE
+                } else {
+                    Format::S32BE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S32BE
+                } else {
+                    Format::S32LE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S24LE
+                } else {
+                    Format::S24BE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S24BE
+                } else {
+                    Format::S24LE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S16LE
+                } else {
+                    Format::S16BE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S16BE
+                } else {
+                    Format::S16LE
+                },
+                Format::S8,
+            ],
+            24 => vec![
+                if cfg!(target_endian = "little") {
+                    Format::S24LE
+                } else {
+                    Format::S24BE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S24BE
+                } else {
+                    Format::S24LE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S16LE
+                } else {
+                    Format::S16BE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S16BE
+                } else {
+                    Format::S16LE
+                },
+                Format::S8,
+            ],
+            16 => vec![
+                if cfg!(target_endian = "little") {
+                    Format::S16LE
+                } else {
+                    Format::S16BE
+                },
+                if cfg!(target_endian = "little") {
+                    Format::S16BE
+                } else {
+                    Format::S16LE
+                },
+                Format::S8,
+            ],
+            _ => vec![Format::S8],
+        };
+        if !formats
+            .into_iter()
+            .any(|format| params.set_format(format).is_ok())
+        {
+            return Err(format!(
+                "ALSA {direction:?} device {device} has no supported integer format"
+            ));
+        }
+        let actual_channels = params
+            .set_channels_near(channels.max(1) as u32)
+            .map_err(|error| error.to_string())?;
+        if actual_channels < channels as u32 {
+            return Err(format!(
+                "ALSA {direction:?} device {device} supports {actual_channels} channels, but channel {channels} was requested"
+            ));
+        }
+        params
+            .set_rate(args.rate as u32, ValueOr::Nearest)
+            .map_err(|error| error.to_string())?;
+        let min = params
+            .get_period_size_min()
+            .map_err(|error| error.to_string())? as usize;
+        let max = params
+            .get_period_size_max()
+            .map_err(|error| error.to_string())? as usize;
+        if min == 0 || max < min {
+            return Err(format!(
+                "ALSA {direction:?} device {device} reported an invalid period range"
+            ));
+        }
+        Ok((min, max))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn supported_periods(args: &Args) -> Result<Vec<usize>, String> {
+        use alsa::Direction;
+
+        let (input_min, input_max) = alsa_period_range(
+            &args.input_device,
+            Direction::Capture,
+            args.input_channel,
+            args,
+        )?;
+        let (output_min, output_max) = alsa_period_range(
+            &args.output_device,
+            Direction::Playback,
+            args.output_channel,
+            args,
+        )?;
+        let min = input_min.max(output_min);
+        let max = input_max.min(output_max);
+        if max < min {
+            return Err(format!(
+                "ALSA devices have no shared period range (capture {input_min}..{input_max}, playback {output_min}..{output_max} frames)"
+            ));
+        }
+        println!(
+            "ALSA period ranges: capture {input_min}..{input_max}, playback {output_min}..{output_max}; shared {min}..{max} frames"
+        );
+
+        // ALSA exposes a range rather than a portable list of discrete
+        // periods. Probe the range edges and conventional powers of two;
+        // opening the duplex device verifies each candidate and reports the
+        // period the driver actually negotiated.
+        let mut periods = vec![min, max];
+        if let Some(mut period) = min.checked_next_power_of_two() {
+            while period <= max {
+                periods.push(period);
+                let Some(next) = period.checked_mul(2) else {
+                    break;
+                };
+                period = next;
+            }
+        }
+        periods.sort_unstable();
+        periods.dedup();
+        Ok(periods)
+    }
+
     #[cfg(target_os = "macos")]
     fn list_devices() {
         for device in maolan_engine::audio_devices::discover_coreaudio_audio_devices() {
@@ -489,6 +661,33 @@ mod calibrator {
                 device.supports_output,
                 device.supported_sample_rates,
                 device.supported_bits,
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn list_devices() {
+        let Ok(pcms) = std::fs::read_to_string("/proc/asound/pcm") else {
+            eprintln!("maolan-calibrate: cannot read /proc/asound/pcm; is ALSA available?");
+            return;
+        };
+        for line in pcms.lines() {
+            let Some((identity, description)) = line.split_once(':') else {
+                continue;
+            };
+            let Some((card, device)) = identity.trim().split_once('-') else {
+                continue;
+            };
+            let (Ok(card), Ok(device)) = (card.parse::<u32>(), device.parse::<u32>()) else {
+                continue;
+            };
+            let has_input = description.contains("capture ");
+            let has_output = description.contains("playback ");
+            println!(
+                "hw:{card},{device}  {}  input={} output={}",
+                description.trim(),
+                has_input,
+                has_output,
             );
         }
     }
@@ -664,13 +863,13 @@ output_latency_frames = 280
     }
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+#[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "linux"))]
 #[tokio::main]
 async fn main() {
     calibrator::run().await;
 }
 
-#[cfg(not(any(target_os = "freebsd", target_os = "macos")))]
+#[cfg(not(any(target_os = "freebsd", target_os = "macos", target_os = "linux")))]
 fn main() {
     eprintln!("maolan-calibrate is available only on FreeBSD and macOS");
     std::process::exit(1);
