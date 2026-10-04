@@ -7,7 +7,7 @@
 //! ```
 //!
 //! Runs the same engine, hardware routing, and IO Delay calibration action as
-//! the GUI for two seconds per supported device period. Saves each successful
+//! the GUI for two seconds per selected device period. Saves each successful
 //! calibration before proceeding to the next period.
 
 #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "linux"))]
@@ -44,6 +44,7 @@ mod calibrator {
         gain: f32,
         bits: usize,
         nperiods: usize,
+        periods: Option<Vec<usize>>,
         sync_mode: bool,
         exclusive: bool,
     }
@@ -57,6 +58,7 @@ mod calibrator {
         let mut gain = 1.0f32;
         let mut bits = 32;
         let mut nperiods = 2;
+        let mut periods = None;
         let mut sync_mode = false;
         let mut exclusive = false;
         let mut it = std::env::args().skip(1);
@@ -84,6 +86,7 @@ mod calibrator {
                         .parse()
                         .map_err(|_| "invalid period count")?
                 }
+                "--periods" => periods = Some(parse_periods(&value("--periods")?)?),
                 "--sync-mode" => sync_mode = true,
                 "--exclusive" => exclusive = true,
                 "--rate" => {
@@ -100,7 +103,8 @@ mod calibrator {
                     println!(
                         "usage: maolan-calibrate --input-device <id> --input-channel <n> \
                      --output-device <path> --output-channel <n> [--rate <hz>] \
-                     [--gain <f>] [--bits <8|16|24|32>] [--nperiods <n>] [--sync-mode] [--exclusive]\n\
+                     [--gain <f>] [--bits <8|16|24|32>] [--nperiods <n>] \
+                     [--periods <n>[,<n>...]] [--sync-mode] [--exclusive]\n\
                      maolan-calibrate --list-devices"
                     );
                     std::process::exit(0);
@@ -135,9 +139,32 @@ mod calibrator {
             gain,
             bits,
             nperiods,
+            periods,
             sync_mode,
             exclusive,
         })
+    }
+
+    fn parse_periods(value: &str) -> Result<Vec<usize>, String> {
+        let mut periods = Vec::new();
+        for item in value.split(',') {
+            let period = item.trim().parse::<usize>().map_err(|_| {
+                format!(
+                    "--periods must be a comma-separated list of positive frame counts: {value:?}"
+                )
+            })?;
+            if period == 0 {
+                return Err("--periods values must be positive".into());
+            }
+            if periods.contains(&period) {
+                return Err(format!("--periods contains duplicate period {period}"));
+            }
+            periods.push(period);
+        }
+        if periods.is_empty() {
+            return Err("--periods requires at least one period".into());
+        }
+        Ok(periods)
     }
 
     #[cfg(target_os = "freebsd")]
@@ -293,6 +320,47 @@ mod calibrator {
         .map_err(|_| "engine request timed out".to_string())?
     }
 
+    /// Wait for the engine's terminal Quit acknowledgement before aborting
+    /// its event loop. Other responses can be in flight from hardware workers
+    /// and do not mean that shutdown has completed.
+    async fn shutdown_engine(
+        client: &Sender<Message>,
+        rx: &mut Receiver<Message>,
+        handle: tokio::task::JoinHandle<()>,
+    ) -> Result<(), String> {
+        let shutdown = async {
+            client
+                .send(Message::Request(Action::Quit))
+                .await
+                .map_err(|error| error.to_string())?;
+            timeout(Duration::from_secs(30), async {
+                let mut last_error = None;
+                loop {
+                    match rx.recv().await {
+                        Some(Message::Response(Ok(action)))
+                            if std::mem::discriminant(&action)
+                                == std::mem::discriminant(&Action::Quit) =>
+                        {
+                            return Ok(());
+                        }
+                        Some(Message::Response(Err(error))) => last_error = Some(error),
+                        None => {
+                            return Err(last_error
+                                .unwrap_or_else(|| "engine disconnected during shutdown".into()));
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .map_err(|_| "engine shutdown timed out".to_string())?
+        }
+        .await;
+        handle.abort();
+        let _ = handle.await;
+        shutdown
+    }
+
     async fn measure_period(
         client: &Sender<Message>,
         rx: &mut Receiver<Message>,
@@ -353,6 +421,11 @@ mod calibrator {
                     "channel out of range: device has {input_channels} inputs and {output_channels} outputs"
                 ));
             }
+            if actual_period_frames != period {
+                return Err(format!(
+                    "device negotiated {actual_period_frames} frames for requested period {period}; skipping to avoid saving a calibration under the wrong size"
+                ));
+            }
             println!(
                 "Measuring period {period} (actual {actual_period_frames}) frames: output {} -> input {}",
                 args.output_channel, args.input_channel
@@ -404,6 +477,8 @@ mod calibrator {
         // enables monitoring with the timeline stopped, so IO Delay runs and its
         // calibration action remains permitted (Play would advance the timeline).
         request(client, rx, Action::Pause).await?;
+        let mut last_report = None;
+        let mut xrun_count = None;
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut tick = tokio::time::interval(Duration::from_millis(25));
         loop {
@@ -412,6 +487,8 @@ mod calibrator {
                 _ = tick.tick() => if stop.load(Ordering::Relaxed) { return Err("interrupted".into()); },
                 message = rx.recv() => match message {
                     Some(Message::Response(Err(error))) => return Err(error),
+                    Some(Message::Event(Event::IoDelayReport { measurement_id: 1, report })) => last_report = Some(report),
+                    Some(Message::Event(Event::AudioXruns { count })) => xrun_count = Some(count),
                     None => return Err("engine disconnected".into()),
                     _ => {}
                 }
@@ -430,7 +507,22 @@ mod calibrator {
                     println!("  {frames} frames roundtrip: play ahead {playback_lead}, record back {record_back}");
                     return Ok((record_back, playback_lead));
                 }
-                Some(Message::Response(Err(error))) => return Err(error),
+                Some(Message::Response(Err(error))) => {
+                    let report = last_report.map_or_else(
+                        || "no IO Delay reports received".to_string(),
+                        |report: maolan_engine::mtdm::IoDelayReport| format!(
+                            "last IO Delay status {:?}, residual {:.3}, delay {:.1} frames, inverted={}",
+                            report.status, report.error, report.delay_frames, report.inverted
+                        ),
+                    );
+                    let xruns = xrun_count.map_or_else(
+                        || "xrun count unavailable".to_string(),
+                        |count| format!("{count} ALSA xruns"),
+                    );
+                    return Err(format!("{error} ({report}; {xruns})"));
+                }
+                Some(Message::Event(Event::IoDelayReport { measurement_id: 1, report })) => last_report = Some(report),
+                Some(Message::Event(Event::AudioXruns { count })) => xrun_count = Some(count),
                 None => return Err("engine disconnected".into()),
                 _ => {}
             }
@@ -728,13 +820,88 @@ mod calibrator {
         Ok(periods)
     }
 
+    async fn calibrate_in_child(
+        args: &Args,
+        period: usize,
+        stop: &AtomicBool,
+    ) -> Result<bool, String> {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let mut command = tokio::process::Command::new(executable);
+        command.args([
+            "--input-device".to_string(),
+            args.input_device.clone(),
+            "--input-channel".to_string(),
+            args.input_channel.to_string(),
+            "--output-device".to_string(),
+            args.output_device.clone(),
+            "--output-channel".to_string(),
+            args.output_channel.to_string(),
+            "--rate".to_string(),
+            args.rate.to_string(),
+            "--gain".to_string(),
+            args.gain.to_string(),
+            "--bits".to_string(),
+            args.bits.to_string(),
+            "--nperiods".to_string(),
+            args.nperiods.to_string(),
+            "--periods".to_string(),
+            period.to_string(),
+        ]);
+        if args.sync_mode {
+            command.arg("--sync-mode");
+        }
+        if args.exclusive {
+            command.arg("--exclusive");
+        }
+        let mut child = command
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|error| format!("cannot start calibration for period {period}: {error}"))?;
+        let mut tick = tokio::time::interval(Duration::from_millis(25));
+        let mut stopping = false;
+        let status = loop {
+            tokio::select! {
+                status = child.wait() => break status.map_err(|error| error.to_string())?,
+                _ = tick.tick(), if !stopping => {
+                    if stop.load(Ordering::Relaxed) {
+                        // SIGTERM also covers a signal delivered only to the
+                        // parent. The child handles it through its normal stop
+                        // flag, finishing device shutdown before we continue.
+                        if let Some(pid) = child.id() {
+                            let _ = nix::sys::signal::kill(
+                                nix::unistd::Pid::from_raw(pid as i32),
+                                Signal::SIGTERM,
+                            );
+                        }
+                        stopping = true;
+                    }
+                }
+            }
+        };
+        Ok(status.success())
+    }
+
     async fn calibrate(args: &Args, stop: &AtomicBool) -> Result<(), String> {
-        let periods = supported_periods(args)?;
+        let periods = match &args.periods {
+            Some(periods) => periods.clone(),
+            None => supported_periods(args)?,
+        };
+        // Recreating Engine does not recreate the Tokio runtime or reset
+        // process-wide/thread-local scheduling state. A fresh process per
+        // period gives a sweep the same lifecycle as separate --periods runs.
+        // Children receive exactly one period, so they never spawn recursively.
+        let isolate_periods = periods.len() > 1;
         let mut saved = 0;
         let mut failure = None;
         for period in periods {
             if stop.load(Ordering::Relaxed) {
                 break;
+            }
+            if isolate_periods {
+                if calibrate_in_child(args, period, stop).await? {
+                    saved += 1;
+                }
+                continue;
             }
             let (client, handle, _, _, _) = maolan_engine::init();
             let (events, mut rx) = channel(1024);
@@ -743,17 +910,7 @@ mod calibrator {
                 .await
                 .map_err(|e| e.to_string())?;
             let result = measure_period(&client, &mut rx, args, period, stop).await;
-            let cleanup = async {
-                request(&client, &mut rx, Action::Quit).await?;
-                // Wait for the engine's shutdown handler before starting another
-                // measurement with a different hardware period.
-                request(&client, &mut rx, Action::ClearHistory).await?;
-                Ok::<(), String>(())
-            }
-            .await;
-            handle.abort();
-            let _ = handle.await;
-            cleanup?;
+            shutdown_engine(&client, &mut rx, handle).await?;
             match result {
                 Ok((input, output)) => {
                     if let Err(error) = save_calibration(args, period, input, output) {
@@ -807,6 +964,14 @@ mod calibrator {
         use super::*;
 
         #[test]
+        fn periods_parse_as_positive_unique_comma_separated_frames() {
+            assert_eq!(parse_periods("64, 128,512").unwrap(), [64, 128, 512]);
+            assert!(parse_periods("64,,128").is_err());
+            assert!(parse_periods("0,128").is_err());
+            assert!(parse_periods("64,64").is_err());
+        }
+
+        #[test]
         fn saved_engine_totals_preserve_settings_and_replace_legacy_calibration() {
             let dir = std::env::temp_dir().join(format!(
                 "maolan-calibration-{}-{}",
@@ -840,6 +1005,7 @@ output_latency_frames = 280
                 gain: 1.0,
                 bits: 32,
                 nperiods: 2,
+                periods: None,
                 sync_mode: false,
                 exclusive: false,
             };
@@ -871,6 +1037,6 @@ async fn main() {
 
 #[cfg(not(any(target_os = "freebsd", target_os = "macos", target_os = "linux")))]
 fn main() {
-    eprintln!("maolan-calibrate is available only on FreeBSD and macOS");
+    eprintln!("maolan-calibrate is available only on Linux, FreeBSD, and macOS");
     std::process::exit(1);
 }
