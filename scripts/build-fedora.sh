@@ -199,12 +199,12 @@ strip "$STAGING_DIR/usr/bin/"*
 chmod 755 "$STAGING_DIR/usr/bin/"*
 
 # Desktop entry
-cp "$SOURCE_DIR/assets/desktop/maolan-linux.desktop" "$STAGING_DIR/usr/share/applications/maolan.desktop"
+cp "$SOURCE_DIR/assets/desktop/maolan.desktop" "$STAGING_DIR/usr/share/applications/maolan.desktop"
 chmod 644 "$STAGING_DIR/usr/share/applications/maolan.desktop"
 
 # Icon
-cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
-chmod 644 "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
+cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan.svg"
+chmod 644 "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan.svg"
 
 # Documentation
 cp "$SOURCE_DIR/README.md" "$STAGING_DIR/usr/share/doc/$PKG_NAME/"
@@ -250,7 +250,7 @@ tar xzf %{SOURCE0}
 /usr/bin/maolan-osc
 /usr/bin/maolan-plugin-host
 /usr/share/applications/maolan.desktop
-/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg
+/usr/share/icons/hicolor/scalable/apps/maolan.svg
 %doc /usr/share/doc/maolan/README.md
 %license /usr/share/doc/maolan/LICENSE
 
