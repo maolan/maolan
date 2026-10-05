@@ -199,12 +199,12 @@ strip "$STAGING_DIR/usr/bin/maolan-plugin-host"
 chmod 755 "$STAGING_DIR/usr/bin/"*
 
 # Desktop entry
-cp "$SOURCE_DIR/assets/desktop/maolan-linux.desktop" "$STAGING_DIR/usr/share/applications/maolan.desktop"
+cp "$SOURCE_DIR/assets/desktop/maolan.desktop" "$STAGING_DIR/usr/share/applications/maolan.desktop"
 chmod 644 "$STAGING_DIR/usr/share/applications/maolan.desktop"
 
 # Icon
-cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
-chmod 644 "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
+cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan.svg"
+chmod 644 "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan.svg"
 
 # Documentation
 cp "$SOURCE_DIR/README.md" "$STAGING_DIR/usr/share/doc/$PKG_NAME/"
@@ -260,11 +260,10 @@ cp "$BIN_DIR/maolan-cli" "$APPDIR/usr/bin/"
 cp "$BIN_DIR/maolan-osc" "$APPDIR/usr/bin/"
 cp "$BIN_DIR/maolan-plugin-host" "$APPDIR/usr/bin/"
 
-# AppImage desktop entry uses relative Exec/Icon paths.
-sed 's|^Exec=/usr/bin/maolan|Exec=maolan|; s|^Icon=/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg|Icon=maolan-icon|' \
-    "$SOURCE_DIR/assets/desktop/maolan-linux.desktop" > "$APPDIR/usr/share/applications/maolan.desktop"
+# The desktop entry already uses portable $PATH/theme-relative Exec/Icon values.
+cp "$SOURCE_DIR/assets/desktop/maolan.desktop" "$APPDIR/usr/share/applications/maolan.desktop"
 
-cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
+cp "$SOURCE_DIR/assets/images/maolan-icon.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan.svg"
 
 # Keep the linuxdeploy helper outside the deliverables directory.
 LINUXDEPLOY_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/maolan"
@@ -280,7 +279,7 @@ cd "$APPDIR_BASE"
 "$LINUXDEPLOY" --appimage-extract-and-run \
     --appdir "$APPDIR" \
     --desktop-file "$APPDIR/usr/share/applications/maolan.desktop" \
-    --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg" \
+    --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/maolan.svg" \
     --exclude-library "libjack*" \
     --exclude-library "libasound*" \
     --output appimage
