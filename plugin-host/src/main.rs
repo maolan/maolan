@@ -47,13 +47,23 @@ const RT_PRIORITY_HOST: i32 = 14;
 /// Best-effort realtime setup for the plugin-host process: lock memory pages
 /// and request SCHED_FIFO. Never fails startup — the engine's wait has a
 /// timeout and falls back to bypass either way.
+///
+/// `MCL_FUTURE` is only used when the memlock rlimit is unlimited. With a
+/// finite limit, `MCL_FUTURE` turns every later mapping that cannot be
+/// locked (such as the 4 MiB plugin shared-memory segment) into an `mmap`
+/// failure with `EAGAIN`, which would abort plugin hosting at attach time.
 #[cfg(unix)]
 fn configure_realtime_process() {
+    let lock_flags = if memlock_limit_is_unlimited() {
+        libc::MCL_CURRENT | libc::MCL_FUTURE
+    } else {
+        libc::MCL_CURRENT
+    };
     unsafe {
-        let rc = libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE);
+        let rc = libc::mlockall(lock_flags);
         if rc != 0 {
             eprintln!(
-                "maolan-plugin-host: mlockall(MCL_CURRENT|MCL_FUTURE) failed: {}",
+                "maolan-plugin-host: mlockall({lock_flags}) failed: {}",
                 std::io::Error::last_os_error()
             );
         }
@@ -74,6 +84,19 @@ fn configure_realtime_process() {
 
 #[cfg(not(unix))]
 fn configure_realtime_process() {}
+
+/// Returns true when `RLIMIT_MEMLOCK` is unlimited, so `MCL_FUTURE` cannot
+/// make later mappings fail.
+#[cfg(unix)]
+fn memlock_limit_is_unlimited() -> bool {
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    let rc = unsafe { libc::getrlimit(libc::RLIMIT_MEMLOCK, limit.as_mut_ptr()) };
+    if rc != 0 {
+        return false;
+    }
+    let limit = unsafe { limit.assume_init() };
+    limit.rlim_cur == libc::RLIM_INFINITY
+}
 
 fn parse_log_level(args: &mut Vec<String>) -> Option<Option<tracing::Level>> {
     if let Some(pos) = args.iter().position(|a| a == "--log-level") {
