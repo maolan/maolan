@@ -2,6 +2,10 @@ name: Rust
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,7 +52,8 @@ jobs:
             pkg-config \
             jackd2 \
             libjack-jackd2-dev \
-            libasound2-dev
+            libasound2-dev \
+            libx11-dev
 
       - name: Save apt cache
         run: |
@@ -101,7 +106,8 @@ jobs:
             pkg-config \
             jackd2 \
             libjack-jackd2-dev \
-            libasound2-dev
+            libasound2-dev \
+            libx11-dev
 
       - name: Save apt cache
         run: |

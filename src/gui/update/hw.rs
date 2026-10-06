@@ -246,7 +246,16 @@ mod tests {
             state.selected_backend,
             crate::state::AudioBackendOption::Alsa
         ));
-        assert!(state.selected_hw.is_none());
+        // Selecting the ALSA backend re-applies device defaults: the first
+        // discovered ALSA playback device becomes selected, or none when the
+        // machine has no ALSA devices (e.g. CI containers).
+        let expected_id = crate::state::discover_alsa_output_devices()
+            .first()
+            .map(|device| device.id.clone());
+        assert_eq!(
+            state.selected_hw.as_ref().map(|device| device.id.as_str()),
+            expected_id.as_deref()
+        );
     }
 
     #[test]
