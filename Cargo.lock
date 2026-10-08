@@ -5368,15 +5368,16 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.3.19"
+version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b22bce4fda826de953f9563c4222f31b16224d51702d5f6d20dd972b3370efd"
+checksum = "17e4b8f8c2de4c89d653dd58a9ec9cabb6ffc11e634c903eea87b5d2cbc97416"
 dependencies = [
  "alsa",
  "arc-swap",
  "audioadapter",
  "audioadapter-buffers",
  "basedrop",
+ "block",
  "byteorder",
  "jack",
  "libc",
