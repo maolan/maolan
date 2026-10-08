@@ -5368,9 +5368,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.3.17"
+version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eed408cd9955bbdc484d7f3290192179f05c7631c7c22f40205f06d1b1620bf"
+checksum = "938b4f7fc640d4ed763e998f2a9993fada97336314d387cb276e2d33b4822ac0"
 dependencies = [
  "alsa",
  "arc-swap",

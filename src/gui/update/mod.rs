@@ -1160,6 +1160,7 @@ impl Maolan {
         None
     }
 
+    #[cfg(unix)]
     fn rename_track_map_entry<T>(map: &mut HashMap<String, T>, old_name: &str, new_name: &str) {
         if let Some(value) = map.remove(old_name) {
             map.insert(new_name.to_string(), value);

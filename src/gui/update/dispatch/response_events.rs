@@ -354,6 +354,7 @@ impl Maolan {
                     clip.plugin_graph_json = Some(graph_json);
                 }
             }
+            #[cfg(unix)]
             Event::ClipLv2StateSnapshot {
                 track_name,
                 clip_idx,
@@ -617,6 +618,7 @@ impl Maolan {
                         .collect(),
                 );
             }
+            #[cfg(unix)]
             QueryReply::ClipLv2PluginControls {
                 track_name,
                 clip_idx,
@@ -643,6 +645,7 @@ impl Maolan {
                         .collect(),
                 );
             }
+            #[cfg(unix)]
             QueryReply::TrackLv2PluginControls {
                 track_name,
                 instance_id,
@@ -710,6 +713,7 @@ impl Maolan {
                     self.try_send_engine(EngineMessage::Request(action));
                 }
             }
+            #[cfg(unix)]
             QueryReply::TrackLv2Midnam {
                 track_name,
                 note_names,
