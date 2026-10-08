@@ -205,17 +205,43 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --workspace
 
-      - name: Install cargo-wix
-        run: cargo install --locked cargo-wix
+      # Same NSIS flow as scripts/build.ps1: stage the binaries plus the
+      # VC++ redistributable in C:\maolan-staging\daw, then compile
+      # scripts/installer.nsi with the version defines it expects.
+      - name: Install NSIS
+        run: choco install nsis --no-progress --yes
 
-      # WiX Toolset is preinstalled on GitHub's windows runners.
-      - name: Build .msi installer
-        run: cargo wix --nocapture
+      - name: Build NSIS installer
+        run: |
+          $staging = "C:\maolan-staging\daw"
+          New-Item -ItemType Directory -Force $staging | Out-Null
+          Copy-Item target\release\maolan.exe $staging -Force
+          Copy-Item target\release\maolan-cli.exe $staging -Force
+          Copy-Item target\release\maolan-plugin-host.exe $staging -Force
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "$staging\vc_redist.x64.exe"
+
+          $pkgVersion = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $versionMatch = [regex]::Match($pkgVersion, '^(\d+)\.(\d+)\.(\d+)')
+          if ($versionMatch.Success) {
+              $productVersion = "$($versionMatch.Groups[1].Value).$($versionMatch.Groups[2].Value).$($versionMatch.Groups[3].Value).0"
+          } else {
+              $productVersion = "0.0.0.0"
+          }
+
+          $nsiTemp = Join-Path $env:RUNNER_TEMP "maolan-installer"
+          New-Item -ItemType Directory -Force $nsiTemp | Out-Null
+          Copy-Item scripts\installer.nsi "$nsiTemp\installer.nsi" -Force
+          Copy-Item LICENSE "$nsiTemp\LICENSE" -Force
+          $iconPath = "$nsiTemp\maolan-icon.ico"
+          Copy-Item assets\images\maolan-icon.ico $iconPath -Force
+          Push-Location $nsiTemp
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "/INPUTCHARSET" "UTF8" "/DMAOLAN_VERSION=$pkgVersion" "/DMAOLAN_PRODUCT_VERSION=$productVersion" "/DMAOLAN_ICON=$iconPath" "$nsiTemp\installer.nsi"
+          Pop-Location
 
       - name: Package Windows binaries
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/wix/*.msi dist/
+          Copy-Item (Join-Path $env:RUNNER_TEMP "maolan-installer\maolan-setup.exe") "dist/${{ env.ASSET_BASENAME }}.exe"
           $stage = Join-Path $env:RUNNER_TEMP "maolan-pkg"
           New-Item -ItemType Directory -Force "$stage/${{ env.ASSET_BASENAME }}" | Out-Null
           Copy-Item target/release/maolan.exe "$stage/${{ env.ASSET_BASENAME }}/"
@@ -254,7 +280,7 @@ jobs:
           TAG_NAME: ${{ inputs.release_tag }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          mapfile -t artifacts < <(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.msi' \) | sort)
+          mapfile -t artifacts < <(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) | sort)
 
           if [ "${#artifacts[@]}" -eq 0 ]; then
             echo "No release artifacts found in dist/"
