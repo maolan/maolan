@@ -6,6 +6,16 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_call:
+    inputs:
+      release_build:
+        description: "Run the release packaging jobs instead of lint-and-test"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag to name and publish assets under"
+        type: string
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
