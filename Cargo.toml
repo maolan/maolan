@@ -16,6 +16,11 @@ categories = ["multimedia::audio"]
 [package.metadata.wix]
 eula = false
 
+[package.metadata.generate-rpm.requires]
+"(jack-audio-connection-kit or pipewire-jack-audio-connection-kit)" = "*"
+"alsa-lib" = "*"
+"libX11" = "*"
+
 [workspace]
 members = [".", "plugin-host"]
 
@@ -32,7 +37,7 @@ hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", 
 i24 = "2.3.3"
 maolan-generate = "0.0.17"
 maolan-editor = { version = "0.0.11", default-features = false }
-maolan-engine = { version = "0.3.17", features = ["mixosc"] }
+maolan-engine = { version = "0.3.18", features = ["mixosc"] }
 maolan-pitch = "0.0.1"
 maolan-plugin-host = { version = "0.0.8", path = "plugin-host" }
 maolan-widgets = "0.0.39"
@@ -65,3 +70,39 @@ windows = { version = "0.62.2", features = ["Win32_Devices_Properties", "Win32_M
 
 [build-dependencies]
 winresource = "0.1"
+
+[package.metadata.deb]
+name = "maolan"
+maintainer = "Maolan Team <maolan@github.io>"
+section = "sound"
+priority = "optional"
+copyright = "2026, Maolan Team <maolan@github.io>"
+# Alternatives cover both classic JACK and the PipeWire JACK replacement,
+# and Ubuntu's t64 ALSA transition vs. Debian's plain libasound2.
+depends = "jackd2 | pipewire-jack, libasound2t64 | libasound2, libx11-6"
+assets = [
+  ["target/release/maolan", "usr/bin/", "755"],
+  ["target/release/maolan-cli", "usr/bin/", "755"],
+  ["target/release/maolan-osc", "usr/bin/", "755"],
+  ["target/release/maolan-plugin-host", "usr/bin/", "755"],
+  ["assets/desktop/maolan.desktop", "usr/share/applications/", "644"],
+  ["assets/images/maolan-icon.svg", "usr/share/icons/hicolor/scalable/apps/maolan.svg", "644"],
+  ["README.md", "usr/share/doc/maolan/", "644"],
+  ["LICENSE", "usr/share/doc/maolan/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "maolan"
+summary = "Rust Digital Audio Workstation"
+license = "BSD-2-Clause"
+url = "https://github.com/maolan/maolan"
+assets = [
+  { source = "target/release/maolan", dest = "/usr/bin/maolan", mode = "755" },
+  { source = "target/release/maolan-cli", dest = "/usr/bin/maolan-cli", mode = "755" },
+  { source = "target/release/maolan-osc", dest = "/usr/bin/maolan-osc", mode = "755" },
+  { source = "target/release/maolan-plugin-host", dest = "/usr/bin/maolan-plugin-host", mode = "755" },
+  { source = "assets/desktop/maolan.desktop", dest = "/usr/share/applications/maolan.desktop", mode = "644" },
+  { source = "assets/images/maolan-icon.svg", dest = "/usr/share/icons/hicolor/scalable/apps/maolan.svg", mode = "644" },
+  { source = "README.md", dest = "/usr/share/doc/maolan/README.md", mode = "644" },
+  { source = "LICENSE", dest = "/usr/share/doc/maolan/LICENSE", mode = "644" },
+]

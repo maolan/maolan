@@ -777,64 +777,60 @@ impl Maolan {
                         return self.update(Message::RemoveSelectedTracks);
                     }
                     crate::state::View::TrackPlugins => {
-                        #[cfg(unix)]
-                        {
-                            let (selected_plugins, selected_indices) = {
-                                let state = self.state.read().expect("state lock poisoned");
-                                (
-                                    state.plugin_graph_selected_plugins.clone(),
-                                    state.plugin_graph_selected_connections.clone(),
-                                )
-                            };
-                            let clip_target = self
-                                .state
-                                .read()
-                                .expect("state lock poisoned")
-                                .plugin_graph_clip
-                                .clone();
-                            if clip_target.is_some() {
-                                let mut state = self.state.write().expect("state lock poisoned");
-                                if let Some(&instance_id) = selected_plugins.iter().next() {
-                                    let Some(selected_node) = state
-                                        .plugin_graph_plugins
-                                        .iter()
-                                        .find(|p| p.instance_id == instance_id)
-                                        .map(|p| p.node.clone())
-                                    else {
-                                        return Task::none();
-                                    };
-                                    state
-                                        .plugin_graph_plugins
-                                        .retain(|plugin| plugin.instance_id != instance_id);
-                                    state.plugin_graph_connections.retain(|connection| {
-                                        connection.from_node != selected_node
-                                            && connection.to_node != selected_node
-                                    });
-                                    state.plugin_graph_selected_plugins.clear();
-                                    state.plugin_graph_selected_connections.clear();
-                                    state.plugin_graph_selected_connectable_connections.clear();
-                                    let sync = Self::save_open_clip_plugin_graph(&mut state);
-                                    return sync
-                                        .map_or_else(Task::none, |action| self.send(action));
-                                }
-                                let selected = selected_indices.clone();
-                                let existing = state.plugin_graph_connections.clone();
-                                state.plugin_graph_connections = existing
-                                    .into_iter()
-                                    .enumerate()
-                                    .filter_map(|(idx, connection)| {
-                                        (!selected.contains(&idx)).then_some(connection)
-                                    })
-                                    .collect();
-                                state.plugin_graph_selected_connections.clear();
+                        let (selected_plugins, selected_indices) = {
+                            let state = self.state.read().expect("state lock poisoned");
+                            (
+                                state.plugin_graph_selected_plugins.clone(),
+                                state.plugin_graph_selected_connections.clone(),
+                            )
+                        };
+                        let clip_target = self
+                            .state
+                            .read()
+                            .expect("state lock poisoned")
+                            .plugin_graph_clip
+                            .clone();
+                        if clip_target.is_some() {
+                            let mut state = self.state.write().expect("state lock poisoned");
+                            if let Some(&instance_id) = selected_plugins.iter().next() {
+                                let Some(selected_node) = state
+                                    .plugin_graph_plugins
+                                    .iter()
+                                    .find(|p| p.instance_id == instance_id)
+                                    .map(|p| p.node.clone())
+                                else {
+                                    return Task::none();
+                                };
+                                state
+                                    .plugin_graph_plugins
+                                    .retain(|plugin| plugin.instance_id != instance_id);
+                                state.plugin_graph_connections.retain(|connection| {
+                                    connection.from_node != selected_node
+                                        && connection.to_node != selected_node
+                                });
                                 state.plugin_graph_selected_plugins.clear();
+                                state.plugin_graph_selected_connections.clear();
                                 state.plugin_graph_selected_connectable_connections.clear();
                                 let sync = Self::save_open_clip_plugin_graph(&mut state);
                                 return sync.map_or_else(Task::none, |action| self.send(action));
                             }
-                            if let Some(task) = self.remove_selected_track_plugin_graph_items() {
-                                return task;
-                            }
+                            let selected = selected_indices.clone();
+                            let existing = state.plugin_graph_connections.clone();
+                            state.plugin_graph_connections = existing
+                                .into_iter()
+                                .enumerate()
+                                .filter_map(|(idx, connection)| {
+                                    (!selected.contains(&idx)).then_some(connection)
+                                })
+                                .collect();
+                            state.plugin_graph_selected_connections.clear();
+                            state.plugin_graph_selected_plugins.clear();
+                            state.plugin_graph_selected_connectable_connections.clear();
+                            let sync = Self::save_open_clip_plugin_graph(&mut state);
+                            return sync.map_or_else(Task::none, |action| self.send(action));
+                        }
+                        if let Some(task) = self.remove_selected_track_plugin_graph_items() {
+                            return task;
                         }
                     }
                     crate::state::View::Piano => {

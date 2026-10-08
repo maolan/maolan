@@ -17,7 +17,11 @@ permissions:
 jobs:
   lint-and-test:
     if: ${{ !inputs.release_build }}
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
 
@@ -30,6 +34,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Cache apt packages
+        if: contains(matrix.os, 'ubuntu')
         uses: actions/cache@v4
         with:
           path: ~/apt-cache
@@ -38,11 +43,13 @@ jobs:
             ${{ runner.os }}-apt-
 
       - name: Restore apt cache
+        if: contains(matrix.os, 'ubuntu')
         run: |
           sudo mkdir -p /var/cache/apt/archives
           sudo cp -r ~/apt-cache/. /var/cache/apt/archives/ 2>/dev/null || true
 
       - name: Install system packages
+        if: contains(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y software-properties-common
@@ -56,6 +63,7 @@ jobs:
             libx11-dev
 
       - name: Save apt cache
+        if: contains(matrix.os, 'ubuntu')
         run: |
           mkdir -p ~/apt-cache
           cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
@@ -115,30 +123,112 @@ jobs:
           cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --workspace
+
+      - name: Install packaging tools
+        run: cargo install --locked cargo-deb cargo-generate-rpm
+
+      - name: Build .deb and .rpm packages
+        run: |
+          cargo deb --no-build
+          cargo generate-rpm
 
       - name: Package Linux binary
         run: |
           mkdir -p dist
-          mkdir -p "dist/${ASSET_BASENAME}"
-          cp target/release/maolan "dist/${ASSET_BASENAME}/maolan"
-          cp target/release/maolan-cli "dist/${ASSET_BASENAME}/maolan-cli"
-          cp target/release/maolan-osc "dist/${ASSET_BASENAME}/maolan-osc"
-          cp assets/images/maolan-icon.svg "dist/${ASSET_BASENAME}/maolan.svg"
-          cp assets/desktop/maolan.desktop "dist/${ASSET_BASENAME}/maolan.desktop"
-          tar -C dist -czf "dist/${ASSET_BASENAME}.tar.gz" "${ASSET_BASENAME}"
+          mkdir -p "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}"
+          cp target/release/maolan "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan"
+          cp target/release/maolan-cli "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan-cli"
+          cp target/release/maolan-osc "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan-osc"
+          cp target/release/maolan-plugin-host "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan-plugin-host"
+          cp assets/images/maolan-icon.svg "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan.svg"
+          cp assets/desktop/maolan.desktop "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan.desktop"
+          tar -C "$RUNNER_TEMP/maolan-pkg" -czf "dist/${ASSET_BASENAME}.tar.gz" "${ASSET_BASENAME}"
+          mv target/debian/*.deb dist/
+          mv target/generate-rpm/*.rpm dist/
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ASSET_BASENAME }}
-          path: dist/${{ env.ASSET_BASENAME }}.tar.gz
+          path: dist/
+
+  build-release-macos:
+    if: ${{ inputs.release_build }}
+    runs-on: macos-latest
+    env:
+      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-macos-arm64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # The script runs `cargo build --release --workspace`, assembles and
+      # ad-hoc signs Maolan.app, and produces dist/maolan-<version>-macos.<arch>.dmg
+      - name: Build .app bundle and .dmg
+        run: bash scripts/build-mac.sh
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET_BASENAME }}
+          path: dist/
+
+  build-release-windows:
+    if: ${{ inputs.release_build }}
+    runs-on: windows-latest
+    env:
+      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-windows-x86_64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --workspace
+
+      - name: Install cargo-wix
+        run: cargo install --locked cargo-wix
+
+      # WiX Toolset is preinstalled on GitHub's windows runners.
+      - name: Build .msi installer
+        run: cargo wix --nocapture
+
+      - name: Package Windows binaries
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/wix/*.msi dist/
+          $stage = Join-Path $env:RUNNER_TEMP "maolan-pkg"
+          New-Item -ItemType Directory -Force "$stage/${{ env.ASSET_BASENAME }}" | Out-Null
+          Copy-Item target/release/maolan.exe "$stage/${{ env.ASSET_BASENAME }}/"
+          Copy-Item target/release/maolan-cli.exe "$stage/${{ env.ASSET_BASENAME }}/"
+          Copy-Item target/release/maolan-osc.exe "$stage/${{ env.ASSET_BASENAME }}/"
+          Copy-Item target/release/maolan-plugin-host.exe "$stage/${{ env.ASSET_BASENAME }}/"
+          Copy-Item assets/images/maolan-icon.svg "$stage/${{ env.ASSET_BASENAME }}/maolan.svg"
+          Copy-Item assets/desktop/maolan.desktop "$stage/${{ env.ASSET_BASENAME }}/maolan.desktop"
+          Compress-Archive -Path "$stage/${{ env.ASSET_BASENAME }}" -DestinationPath "dist/${{ env.ASSET_BASENAME }}.zip"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET_BASENAME }}
+          path: dist/
 
   publish-release-assets:
     if: ${{ inputs.release_build }}
     runs-on: ubuntu-latest
     needs:
       - build-release
+      - build-release-macos
+      - build-release-windows
     steps:
       - uses: actions/checkout@v6
 
@@ -154,7 +244,7 @@ jobs:
           TAG_NAME: ${{ inputs.release_tag }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          mapfile -t artifacts < <(find dist -maxdepth 1 -type f -name '*.tar.gz' | sort)
+          mapfile -t artifacts < <(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.msi' \) | sort)
 
           if [ "${#artifacts[@]}" -eq 0 ]; then
             echo "No release artifacts found in dist/"
