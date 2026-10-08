@@ -1,11 +1,21 @@
 name: Release
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to attach the built assets to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   build:
     uses: ./.github/workflows/rust.yml
     with:
       release_build: true
-      release_tag: ${{ github.event.release.tag_name }}
+      release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
