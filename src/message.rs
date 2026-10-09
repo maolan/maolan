@@ -294,6 +294,11 @@ pub enum TrackAutomationTarget {
         instance_id: usize,
         param_id: u32,
     },
+    #[cfg(target_os = "macos")]
+    AuParameter {
+        instance_id: usize,
+        param_index: u32,
+    },
     ClapParameter {
         instance_id: usize,
         param_id: u32,
@@ -367,6 +372,11 @@ impl fmt::Display for TrackAutomationTarget {
                 instance_id,
                 param_id,
             } => write!(f, "VST3 {}:{}", instance_id, param_id),
+            #[cfg(target_os = "macos")]
+            Self::AuParameter {
+                instance_id,
+                param_index,
+            } => write!(f, "AU {}:{}", instance_id, param_index),
             Self::ClapParameter {
                 instance_id,
                 param_id,
@@ -388,6 +398,8 @@ impl TrackAutomationTarget {
             Self::Balance => (-1.0, 1.0),
             Self::MidiCc { .. } => (0.0, 127.0),
             Self::Vst3Parameter { .. } => (0.0, 1.0),
+            #[cfg(target_os = "macos")]
+            Self::AuParameter { .. } => (0.0, 1.0),
             Self::ClapParameter { min, max, .. } => (*min as f32, *max as f32),
             Self::Lv2Parameter { min, max, .. } => (*min, *max),
             Self::MixOsc { .. } => (0.0, 1.0),
@@ -414,6 +426,17 @@ impl TrackAutomationTarget {
                 Self::Vst3Parameter {
                     instance_id: c,
                     param_id: d,
+                },
+            ) => a == c && b == d,
+            #[cfg(target_os = "macos")]
+            (
+                Self::AuParameter {
+                    instance_id: a,
+                    param_index: b,
+                },
+                Self::AuParameter {
+                    instance_id: c,
+                    param_index: d,
                 },
             ) => a == c && b == d,
             (
@@ -1563,6 +1586,17 @@ pub enum Message {
     },
     RefreshVst3Plugins,
     SelectVst3Plugin(String),
+    #[cfg(target_os = "macos")]
+    RefreshAuPlugins,
+    #[cfg(target_os = "macos")]
+    SelectAuPlugin(String),
+    #[cfg(target_os = "macos")]
+    OpenAuPluginUi {
+        track_name: String,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        plugin_id: String,
+    },
     RefreshClapPlugins,
     SelectClapPlugin(String),
     FilterPluginList(String),

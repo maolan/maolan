@@ -310,29 +310,29 @@ MIDI editing:
   midi step_record <device> <channel> <pitch> <velocity>
 
 Plugins:
-  plugin load <track> <clap|vst3|lv2> <id>
+  plugin load <track> <clap|vst3|lv2|au> <id>
   plugin unload <track> <format> <id>
   plugin unload_instance <track> <format> <instance>
   plugin bypass <track> <format> <instance> <0|1>
   plugin show_gui <track> <format> <instance>
-  plugin snapshot_state <track> <clap|vst3|lv2> <instance>
+  plugin snapshot_state <track> <clap|vst3|lv2|au> <instance>
   plugin snapshot_all_states <track>
-  plugin restore_state <track> <clap|vst3|lv2> <instance> <json>
+  plugin restore_state <track> <clap|vst3|lv2|au> <instance> <json>
   plugin set_param_at <track> clap <instance> <param_id> <value> <frame>
   plugin begin_param_edit <track> clap <instance> <param_id> <frame>
   plugin end_param_edit <track> clap <instance> <param_id> <frame>
   plugin set_resource_dir <track> <format> <instance> <dir> [shared 0|1]
-  plugin collect_resources <track> <clap|lv2|vst3> <instance>
+  plugin collect_resources <track> <clap|lv2|vst3|au> <instance>
   plugin connect_audio <track> <from_node> <from_port> <to_node> <to_port>
   plugin disconnect_audio <track> <from_node> <from_port> <to_node> <to_port>
   plugin connect_midi <track> <from_node> <from_port> <to_node> <to_port>
   plugin disconnect_midi <track> <from_node> <from_port> <to_node> <to_port>
-  plugin set_param <track> <clap|vst3|lv2> <instance> <param_id> <value>
-  clip_plugin set_param <track> <clap|lv2> <clip_idx> <instance> <param_id> <value>
-  clip_plugin snapshot_state <track> <clap|vst3|lv2> <clip_idx> <instance>
-  clip_plugin restore_state <track> <clap|lv2|vst3> <clip_idx> <instance> <json>
+  plugin set_param <track> <clap|vst3|lv2|au> <instance> <param_id> <value>
+  clip_plugin set_param <track> <clap|lv2|au> <clip_idx> <instance> <param_id> <value>
+  clip_plugin snapshot_state <track> <clap|vst3|lv2|au> <clip_idx> <instance>
+  clip_plugin restore_state <track> <clap|lv2|vst3|au> <clip_idx> <instance> <json>
   clip_plugin set_resource_dir <track> <format> <clip_idx> <instance> <dir> [shared 0|1]
-  clip_plugin collect_resources <track> <clap|lv2|vst3> <clip_idx> <instance>
+  clip_plugin collect_resources <track> <clap|lv2|vst3|au> <clip_idx> <instance>
 
 VST3 graph:
   vst3 connect_audio <track> <from_node> <from_port> <to_node> <to_port>
@@ -377,8 +377,8 @@ Queries:
   query transport
   query meters
   query plugins <track>
-  query plugin_parameters <track> <clap|vst3|lv2> <instance>
-  query clip_plugin_parameters <track> <lv2> <clip_idx> <instance>
+  query plugin_parameters <track> <clap|vst3|lv2|au> <instance>
+  query clip_plugin_parameters <track> <lv2|au> <clip_idx> <instance>
   query clap_plugins
   query clap_plugins_with_capabilities
   query vst3_plugins

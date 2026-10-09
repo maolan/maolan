@@ -42,6 +42,33 @@ impl Maolan {
                 self.update_visible_controller_value(track_name, *instance_id, *param_id, actual);
                 true
             }
+            #[cfg(target_os = "macos")]
+            Action::TrackSetAuParameter {
+                track_name,
+                instance_id,
+                param_index,
+                value,
+            } => {
+                let normalized = (*value).clamp(0.0, 1.0);
+                let (min, max) = {
+                    let state = self.state.read().expect("state lock poisoned");
+                    state
+                        .plugin_parameters_by_track
+                        .get(track_name)
+                        .and_then(|p| p.get(instance_id))
+                        .and_then(|params| params.iter().find(|p| p.param_id == *param_index))
+                        .map(|p| (p.min as f32, p.max as f32))
+                        .unwrap_or((0.0, 1.0))
+                };
+                let actual = min + normalized * (max - min);
+                self.update_visible_controller_value(
+                    track_name,
+                    *instance_id,
+                    *param_index,
+                    actual,
+                );
+                true
+            }
             Action::TrackSetClapParameter {
                 track_name,
                 instance_id,

@@ -87,6 +87,16 @@ fn automation_target_set_message(
             *param_id,
             value,
         )),
+        #[cfg(target_os = "macos")]
+        TrackAutomationTarget::AuParameter {
+            instance_id,
+            param_index,
+        } => Some(view_api::track_set_au_parameter(
+            track_name,
+            *instance_id,
+            *param_index,
+            value,
+        )),
         #[cfg(unix)]
         TrackAutomationTarget::Lv2Parameter {
             instance_id, index, ..
@@ -638,10 +648,22 @@ pub(super) fn track_context_menu_overlay(
                                     min: param.min,
                                     max: param.max,
                                 }
-                            } else {
+                            } else if plugin.format.eq_ignore_ascii_case("VST3") {
                                 TrackAutomationTarget::Vst3Parameter {
                                     instance_id: plugin.instance_id,
                                     param_id: param.param_id,
+                                }
+                            } else {
+                                #[cfg(target_os = "macos")]
+                                {
+                                    TrackAutomationTarget::AuParameter {
+                                        instance_id: plugin.instance_id,
+                                        param_index: param.param_id,
+                                    }
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    continue;
                                 }
                             };
                             plugin_submenu_items
@@ -836,6 +858,14 @@ impl Tracks {
                 } => {
                     instance_id.hash(&mut hasher);
                     param_id.hash(&mut hasher);
+                }
+                #[cfg(target_os = "macos")]
+                TrackAutomationTarget::AuParameter {
+                    instance_id,
+                    param_index,
+                } => {
+                    instance_id.hash(&mut hasher);
+                    param_index.hash(&mut hasher);
                 }
                 TrackAutomationTarget::ClapParameter {
                     instance_id,

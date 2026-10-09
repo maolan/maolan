@@ -91,6 +91,9 @@ impl HW {
         let state = self.state.read().expect("state lock poisoned");
         let core_plugins_loaded = (state.vst3_plugins_loaded || state.vst3_plugins_unavailable)
             && (state.clap_plugins_loaded || state.clap_plugins_unavailable);
+        #[cfg(target_os = "macos")]
+        let core_plugins_loaded =
+            core_plugins_loaded && (state.au_plugins_loaded || state.au_plugins_unavailable);
         #[cfg(unix)]
         {
             core_plugins_loaded && (state.lv2_plugins_loaded || state.lv2_plugins_unavailable)

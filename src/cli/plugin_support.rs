@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use maolan_engine::au::{AuPluginInfo, AuPluginState};
 use maolan_engine::{
     clap::{ClapPluginInfo, ClapPluginState},
     kind::Kind,
@@ -13,7 +15,11 @@ pub fn load_session_graph_restore_actions(
     valid_track_names: &BTreeSet<String>,
     clap_plugins: &[ClapPluginInfo],
     vst3_plugins: &[Vst3PluginInfo],
+    #[cfg(target_os = "macos")] au_plugins: &[AuPluginInfo],
+    #[cfg(not(target_os = "macos"))] _au_plugins: &[()],
 ) -> Result<Vec<Action>, String> {
+    #[cfg(not(target_os = "macos"))]
+    let au_plugins = _au_plugins;
     let mut actions = Vec::new();
     let graphs = merged_session_graphs(session);
     push_track_plugin_graph_restore_actions(
@@ -22,6 +28,7 @@ pub fn load_session_graph_restore_actions(
         valid_track_names,
         clap_plugins,
         vst3_plugins,
+        au_plugins,
     )?;
     Ok(actions)
 }
@@ -99,6 +106,8 @@ fn push_track_plugin_graph_restore_actions(
     valid_track_names: &BTreeSet<String>,
     clap_plugins: &[ClapPluginInfo],
     vst3_plugins: &[Vst3PluginInfo],
+    #[cfg(target_os = "macos")] au_plugins: &[AuPluginInfo],
+    #[cfg(not(target_os = "macos"))] _au_plugins: &[()],
 ) -> Result<(), String> {
     use maolan_engine::message::PluginGraphNode;
 
@@ -179,6 +188,26 @@ fn push_track_plugin_graph_restore_actions(
                             });
                             if let Some(state) = vst3_state_from_json(&plugin["state"]) {
                                 actions.push(Action::TrackVst3RestoreState {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    state,
+                                });
+                            }
+                        }
+                    }
+                    #[cfg(target_os = "macos")]
+                    Some("AU") => {
+                        let instance_id = next_instance_id;
+                        next_instance_id += 1;
+                        runtime_nodes.push(PluginGraphNode::AuPluginInstance(instance_id));
+                        if let Some(plugin_id) = resolve_au_plugin_id(uri, au_plugins) {
+                            actions.push(Action::TrackLoadAuPlugin {
+                                track_name: track_name.clone(),
+                                plugin_id,
+                                instance_id: Some(instance_id),
+                            });
+                            if let Some(state) = au_state_from_json(&plugin["state"]) {
+                                actions.push(Action::TrackAuRestoreState {
                                     track_name: track_name.clone(),
                                     instance_id,
                                     state,
@@ -267,6 +296,11 @@ fn parse_plugin_node_with_runtime_nodes(
             .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
             .filter(|node| matches!(node, PluginGraphNode::Vst3PluginInstance(_)))
             .cloned(),
+        #[cfg(target_os = "macos")]
+        "au_plugin" => runtime_nodes
+            .get(value.get("plugin_index").and_then(Value::as_u64)? as usize)
+            .filter(|node| matches!(node, PluginGraphNode::AuPluginInstance(_)))
+            .cloned(),
         _ => None,
     }
 }
@@ -349,6 +383,32 @@ fn vst3_state_from_json(value: &Value) -> Option<Vst3PluginState> {
     serde_json::from_value(value.clone()).ok()
 }
 
+#[cfg(target_os = "macos")]
+fn resolve_au_plugin_id(stored: &str, au_plugins: &[AuPluginInfo]) -> Option<String> {
+    au_plugins
+        .iter()
+        .find(|info| info.id == stored)
+        .map(|info| info.id.clone())
+}
+
+#[cfg(target_os = "macos")]
+fn au_state_from_json(value: &Value) -> Option<AuPluginState> {
+    if value.is_null() {
+        return None;
+    }
+    if let Some(arr) = value.as_array() {
+        let bytes: Vec<u8> = arr
+            .iter()
+            .filter_map(|item| item.as_u64().map(|n| n as u8))
+            .collect();
+        if bytes.is_empty() {
+            return None;
+        }
+        return Some(AuPluginState { bytes });
+    }
+    serde_json::from_value(value.clone()).ok()
+}
+
 fn parse_kind(value: Option<&Value>) -> Option<Kind> {
     match value.and_then(Value::as_str) {
         Some("audio") | Some("Audio") => Some(Kind::Audio),
@@ -389,7 +449,7 @@ mod tests {
         });
 
         let actions =
-            load_session_graph_restore_actions(&session, &valid_tracks(&["Synth"]), &[], &[])
+            load_session_graph_restore_actions(&session, &valid_tracks(&["Synth"]), &[], &[], &[])
                 .unwrap();
 
         assert!(matches!(
@@ -422,7 +482,7 @@ mod tests {
         });
 
         let actions =
-            load_session_graph_restore_actions(&session, &valid_tracks(&["Synth"]), &[], &[])
+            load_session_graph_restore_actions(&session, &valid_tracks(&["Synth"]), &[], &[], &[])
                 .unwrap();
 
         assert!(actions.is_empty());

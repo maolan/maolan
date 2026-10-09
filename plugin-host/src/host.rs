@@ -399,6 +399,7 @@ impl HostRuntime {
                 GuiParentApi::Wayland => &["wayland", "x11"],
                 GuiParentApi::X11 => &["x11"],
                 GuiParentApi::None => &["x11", "wayland"],
+                GuiParentApi::Cocoa => &[],
             };
 
             if let Some((ref preferred, true)) = plugin.gui_preferred_api()

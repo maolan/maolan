@@ -550,6 +550,13 @@ impl Maolan {
                                         instance_id: plugin.instance_id,
                                     }));
                                 }
+                                #[cfg(target_os = "macos")]
+                                if plugin.format.eq_ignore_ascii_case("AU") {
+                                    tasks.push(self.send(Action::TrackGetAuParameters {
+                                        track_name: track_name.clone(),
+                                        instance_id: plugin.instance_id,
+                                    }));
+                                }
                             }
                         }
                         _ => {}

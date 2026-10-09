@@ -6,7 +6,7 @@ fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  maolan-plugin-host <format> <plugin-id-or-path> <shm> <instance-id> [args]");
     eprintln!("  maolan-plugin-host --scan --format <format> [--path <path>] [--output <file>]");
-    eprintln!("Formats: clap, vst3, lv2, null");
+    eprintln!("Formats: clap, vst3, lv2, au, null");
     eprintln!(
         "The plugin argument may be a plugin ID (e.g. rs.maolan.stereo) or a filesystem path."
     );
@@ -185,6 +185,8 @@ fn resolve_plugin_spec(format: &str, identifier: &str) -> Result<String, String>
                 .map(|p| p.path)
                 .ok_or_else(|| format!("VST3 plugin ID not found: {identifier}"))
         }
+        // AU identifiers are already full specs (`au:<type>:<subtype>:<man>`).
+        "au" => Ok(identifier.to_string()),
         _ => Err(format!(
             "plugin ID resolution not supported for format: {format}"
         )),
@@ -251,7 +253,7 @@ fn main() {
 
     let expected_args = match format.as_str() {
         "clap" | "null" | "__test__" => 7,
-        "vst3" | "lv2" => 11,
+        "vst3" | "lv2" | "au" => 11,
         _ => {
             print_usage();
             std::process::exit(4);
@@ -485,6 +487,38 @@ fn main() {
         }
         #[cfg(not(unix))]
         "lv2" => {
+            std::process::exit(4);
+        }
+        #[cfg(target_os = "macos")]
+        "au" => {
+            if d2h_fd < 0 || h2d_fd < 0 {
+                std::process::exit(3);
+            }
+            let events =
+                unsafe { maolan_plugin_protocol::events::EventPair::from_fds(d2h_fd, h2d_fd) };
+            let mapping = match maolan_plugin_protocol::shm::ShmMapping::open_existing(
+                &shm_name,
+                maolan_plugin_protocol::protocol::SHM_SIZE,
+            ) {
+                Ok(m) => m,
+                Err(_e) => {
+                    std::process::exit(2);
+                }
+            };
+            maolan_plugin_host::au::run_au(maolan_plugin_host::au::AuRunArgs {
+                spec: plugin_spec.clone(),
+                mapping,
+                events,
+                instance_id: instance_id.clone(),
+                sample_rate,
+                buffer_size,
+                num_inputs,
+                num_outputs,
+            });
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
+        "au" => {
             std::process::exit(4);
         }
         _ => {}

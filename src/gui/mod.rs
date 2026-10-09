@@ -439,6 +439,14 @@ fn build_offline_automation_lanes(
                 instance_id: *instance_id,
                 param_id: *param_id,
             },
+            #[cfg(target_os = "macos")]
+            TrackAutomationTarget::AuParameter {
+                instance_id,
+                param_index,
+            } => OfflineAutomationTarget::AuParameter {
+                instance_id: *instance_id,
+                param_index: *param_index,
+            },
             TrackAutomationTarget::ClapParameter {
                 instance_id,
                 param_id,
@@ -549,10 +557,27 @@ pub(super) static AUDIO_PEAK_UPDATES: LazyLock<Mutex<Vec<AudioPeakChunkUpdate>>>
 pub(crate) enum AutomationWriteKey {
     Volume,
     Balance,
-    MidiCc { channel: u8, cc: u8 },
-    Lv2 { instance_id: usize, index: u32 },
-    Vst3 { instance_id: usize, param_id: u32 },
-    Clap { instance_id: usize, param_id: u32 },
+    MidiCc {
+        channel: u8,
+        cc: u8,
+    },
+    Lv2 {
+        instance_id: usize,
+        index: u32,
+    },
+    Vst3 {
+        instance_id: usize,
+        param_id: u32,
+    },
+    #[cfg(target_os = "macos")]
+    Au {
+        instance_id: usize,
+        param_index: u32,
+    },
+    Clap {
+        instance_id: usize,
+        param_id: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -575,6 +600,8 @@ pub(crate) struct TrackAutomationRuntime {
     #[cfg(unix)]
     lv2_params: HashMap<(usize, u32), f32>,
     vst3_params: HashMap<(usize, u32), f32>,
+    #[cfg(target_os = "macos")]
+    au_params: HashMap<(usize, u32), f32>,
     clap_params: HashMap<(usize, u32), f64>,
 }
 
@@ -4954,6 +4981,11 @@ impl Maolan {
                 .get(id)
                 .copied()
                 .map(|idx| json!({"type":"vst3_plugin","plugin_index":idx})),
+            #[cfg(target_os = "macos")]
+            PluginGraphNode::AuPluginInstance(id) => id_to_index
+                .get(id)
+                .copied()
+                .map(|idx| json!({"type":"au_plugin","plugin_index":idx})),
             PluginGraphNode::ClapPluginInstance(id) => id_to_index
                 .get(id)
                 .copied()
@@ -4992,6 +5024,12 @@ impl Maolan {
                 .and_then(|node| {
                     matches!(node, PluginGraphNode::Vst3PluginInstance(_)).then(|| node.clone())
                 }),
+            #[cfg(target_os = "macos")]
+            "au_plugin" => runtime_nodes
+                .get(v["plugin_index"].as_u64()? as usize)
+                .and_then(|node| {
+                    matches!(node, PluginGraphNode::AuPluginInstance(_)).then(|| node.clone())
+                }),
             "clap_plugin" => runtime_nodes
                 .get(v["plugin_index"].as_u64()? as usize)
                 .and_then(|node| {
@@ -5018,6 +5056,13 @@ impl Maolan {
             ConnectableRef::Vst3Plugin(id) => id_to_index.get(id).copied().map(|idx| {
                 json!({
                     "type": "vst3_plugin",
+                    "plugin_index": idx,
+                })
+            }),
+            #[cfg(target_os = "macos")]
+            ConnectableRef::AuPlugin(id) => id_to_index.get(id).copied().map(|idx| {
+                json!({
+                    "type": "au_plugin",
                     "plugin_index": idx,
                 })
             }),
@@ -5053,6 +5098,11 @@ impl Maolan {
                     .get(&idx)
                     .copied()
                     .map(ConnectableRef::Vst3Plugin)
+            }
+            #[cfg(target_os = "macos")]
+            "au_plugin" => {
+                let idx = v["plugin_index"].as_u64()? as usize;
+                index_to_id.get(&idx).copied().map(ConnectableRef::AuPlugin)
             }
             #[cfg(unix)]
             "lv2_plugin" => {
@@ -5119,6 +5169,10 @@ impl Maolan {
                 conn.to,
                 ConnectableRef::ClapPlugin(_) | ConnectableRef::Vst3Plugin(_)
             );
+            #[cfg(target_os = "macos")]
+            let plugin = plugin
+                || matches!(conn.from, ConnectableRef::AuPlugin(_))
+                || matches!(conn.to, ConnectableRef::AuPlugin(_));
             #[cfg(unix)]
             {
                 plugin
@@ -5242,6 +5296,8 @@ impl Maolan {
         lv2_plugins: &[maolan_engine::lv2::Lv2PluginInfo],
         vst3_plugins: &[maolan_engine::vst3::Vst3PluginInfo],
         clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
+        #[cfg(target_os = "macos")] au_plugins: &[maolan_engine::au::AuPluginInfo],
+        #[cfg(not(target_os = "macos"))] _au_plugins: &[()],
     ) -> Option<maolan_engine::message::PluginGraphPlugin> {
         use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
 
@@ -5330,6 +5386,31 @@ impl Maolan {
                     audio_outputs: caps.map(|caps| caps.audio_outputs).unwrap_or(0),
                     midi_inputs: caps.map(|caps| caps.midi_inputs).unwrap_or(0),
                     midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
+                    state: plugin.get("state").cloned(),
+                    bypassed: plugin
+                        .get("bypassed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                })
+            }
+            #[cfg(target_os = "macos")]
+            Some(format) if format.eq_ignore_ascii_case("AU") => {
+                let info = au_plugins.iter().find(|info| info.id == uri);
+                Some(PluginGraphPlugin {
+                    node: PluginGraphNode::AuPluginInstance(instance_id),
+                    instance_id,
+                    format: "AU".to_string(),
+                    uri: uri.clone(),
+                    plugin_id: info.map(|info| info.id.clone()).unwrap_or_default(),
+                    name: info
+                        .map(|info| info.name.clone())
+                        .unwrap_or_else(|| uri.clone()),
+                    main_audio_inputs: info.map(|info| info.audio_inputs).unwrap_or(0),
+                    main_audio_outputs: info.map(|info| info.audio_outputs).unwrap_or(0),
+                    audio_inputs: info.map(|info| info.audio_inputs).unwrap_or(0),
+                    audio_outputs: info.map(|info| info.audio_outputs).unwrap_or(0),
+                    midi_inputs: 0,
+                    midi_outputs: 0,
                     state: plugin.get("state").cloned(),
                     bypassed: plugin
                         .get("bypassed")
@@ -5431,7 +5512,11 @@ impl Maolan {
         lv2_plugins: &[maolan_engine::lv2::Lv2PluginInfo],
         vst3_plugins: &[maolan_engine::vst3::Vst3PluginInfo],
         clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
+        #[cfg(target_os = "macos")] au_plugins: &[maolan_engine::au::AuPluginInfo],
+        #[cfg(not(target_os = "macos"))] _au_plugins: &[()],
     ) -> maolan_engine::message::PluginGraphSnapshot {
+        #[cfg(not(target_os = "macos"))]
+        let au_plugins = _au_plugins;
         let Some(graph) = graph else {
             return (Vec::new(), Vec::new());
         };
@@ -5445,6 +5530,7 @@ impl Maolan {
                     lv2_plugins,
                     vst3_plugins,
                     clap_plugins,
+                    au_plugins,
                 ) else {
                     continue;
                 };
@@ -5575,6 +5661,14 @@ impl Maolan {
     }
 
     fn clap_state_from_json(v: &Value) -> Option<maolan_engine::clap::ClapPluginState> {
+        serde_json::from_value(v.clone()).ok()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn au_state_from_json(v: &Value) -> Option<maolan_engine::au::AuPluginState> {
+        if v.is_null() {
+            return None;
+        }
         serde_json::from_value(v.clone()).ok()
     }
 
@@ -7344,7 +7438,7 @@ mod tests {
         }];
 
         let (plugins, connections) =
-            Maolan::plugin_graph_snapshot_from_json(Some(&graph), &[], &[], &clap_plugins);
+            Maolan::plugin_graph_snapshot_from_json(Some(&graph), &[], &[], &clap_plugins, &[]);
 
         assert_eq!(plugins.len(), 1);
         assert_eq!(

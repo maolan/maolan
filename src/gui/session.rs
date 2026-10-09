@@ -196,7 +196,7 @@ impl Maolan {
 
     fn plugin_save_uri(p: &maolan_engine::message::PluginGraphPlugin) -> String {
         match p.format.as_str() {
-            "CLAP" | "VST3" => {
+            "CLAP" | "VST3" | "AU" => {
                 if p.plugin_id.is_empty() {
                     p.uri.clone()
                 } else {
@@ -446,6 +446,18 @@ impl Maolan {
                 .or_else(|| Some(stored.to_string()));
         }
         vst3_plugins
+            .iter()
+            .find(|info| info.id == stored)
+            .map(|info| info.id.clone())
+            .or_else(|| Some(stored.to_string()))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn resolve_au_plugin_id(
+        stored: &str,
+        au_plugins: &[maolan_engine::au::AuPluginInfo],
+    ) -> Option<String> {
+        au_plugins
             .iter()
             .find(|info| info.id == stored)
             .map(|info| info.id.clone())
@@ -809,6 +821,11 @@ impl Maolan {
     fn build_track_template_actions(&self, track_name: &str, json: &Value) -> Vec<Action> {
         let mut restore_actions = vec![];
 
+        #[cfg(target_os = "macos")]
+        let au_plugins = {
+            let state = self.state.read().expect("state lock poisoned");
+            state.au_plugins.clone()
+        };
         let (vst3_plugins, clap_plugins) = {
             let state = self.state.read().expect("state lock poisoned");
             (state.vst3_plugins.clone(), state.clap_plugins.clone())
@@ -861,6 +878,33 @@ impl Maolan {
                                         plugin_id,
                                         instance_id: Some(instance_id),
                                     });
+                                }
+                            }
+                            #[cfg(target_os = "macos")]
+                            Some("AU") => {
+                                let instance_id = next_instance_id;
+                                next_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::AuPluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                if let Some(plugin_id) =
+                                    Self::resolve_au_plugin_id(uri, &au_plugins)
+                                {
+                                    restore_actions.push(Action::TrackLoadAuPlugin {
+                                        track_name: track_name.to_string(),
+                                        plugin_id,
+                                        instance_id: Some(instance_id),
+                                    });
+                                    if let Some(state) = Self::au_state_from_json(&plugin["state"])
+                                    {
+                                        restore_actions.push(Action::TrackAuRestoreState {
+                                            track_name: track_name.to_string(),
+                                            instance_id,
+                                            state,
+                                        });
+                                    }
                                 }
                             }
                             Some("CLAP") => {
@@ -945,6 +989,10 @@ impl Maolan {
                         | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
                             Some((idx, *id))
                         }
+                        #[cfg(target_os = "macos")]
+                        maolan_engine::message::PluginGraphNode::AuPluginInstance(id) => {
+                            Some((idx, *id))
+                        }
                         #[cfg(unix)]
                         maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
                             Some((idx, *id))
@@ -979,6 +1027,10 @@ impl Maolan {
                         | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
                             Some((idx, *id))
                         }
+                        #[cfg(target_os = "macos")]
+                        maolan_engine::message::PluginGraphNode::AuPluginInstance(id) => {
+                            Some((idx, *id))
+                        }
                         #[cfg(unix)]
                         maolan_engine::message::PluginGraphNode::Lv2PluginInstance(id) => {
                             Some((idx, *id))
@@ -1008,6 +1060,10 @@ impl Maolan {
                     .filter_map(|(idx, node)| match node {
                         maolan_engine::message::PluginGraphNode::ClapPluginInstance(id)
                         | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(id) => {
+                            Some((idx, *id))
+                        }
+                        #[cfg(target_os = "macos")]
+                        maolan_engine::message::PluginGraphNode::AuPluginInstance(id) => {
                             Some((idx, *id))
                         }
                         #[cfg(unix)]
@@ -2005,6 +2061,8 @@ impl Maolan {
             state.clap_plugins_by_track.clear();
             state.clap_states_by_track.clear();
             state.vst3_states_by_track.clear();
+            #[cfg(target_os = "macos")]
+            state.au_states_by_track.clear();
             state.global_midi_learn_play_pause = None;
             state.global_midi_learn_stop = None;
             state.global_midi_learn_record_toggle = None;
@@ -2099,6 +2157,15 @@ impl Maolan {
                     state.clap_plugins.clone(),
                 )
             };
+            #[cfg(target_os = "macos")]
+            let au_plugins = self
+                .state
+                .read()
+                .expect("state lock poisoned")
+                .au_plugins
+                .clone();
+            #[cfg(not(target_os = "macos"))]
+            let au_plugins = [];
             let snapshots = graphs
                 .iter()
                 .filter_map(|(track_name, graph)| {
@@ -2107,6 +2174,7 @@ impl Maolan {
                         &lv2_plugins,
                         &vst3_plugins,
                         &clap_plugins,
+                        &au_plugins,
                     );
                     (!snapshot.0.is_empty() || !snapshot.1.is_empty())
                         .then(|| (track_name.clone(), snapshot))
@@ -2124,6 +2192,7 @@ impl Maolan {
                     &lv2_plugins,
                     &vst3_plugins,
                     &clap_plugins,
+                    &au_plugins,
                 );
                 let id_to_index: std::collections::HashMap<usize, usize> = snapshot
                     .0
@@ -3566,6 +3635,11 @@ impl Maolan {
             }
         }
         {
+            #[cfg(target_os = "macos")]
+            let au_plugins = {
+                let state = self.state.read().expect("state lock poisoned");
+                state.au_plugins.clone()
+            };
             let (vst3_plugins, clap_plugins) = {
                 let state = self.state.read().expect("state lock poisoned");
                 (state.vst3_plugins.clone(), state.clap_plugins.clone())
@@ -3648,6 +3722,37 @@ impl Maolan {
                                 } else {
                                     warnings.push(format!(
                                         "VST3 plugin '{}' not found in registry (track '{}')",
+                                        uri, track_name
+                                    ));
+                                }
+                            }
+                            #[cfg(target_os = "macos")]
+                            Some("AU") => {
+                                let instance_id = next_instance_id;
+                                next_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::AuPluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                if let Some(plugin_id) =
+                                    Self::resolve_au_plugin_id(uri, &au_plugins)
+                                {
+                                    restore_actions.push(Action::TrackLoadAuPlugin {
+                                        track_name: track_name.clone(),
+                                        plugin_id,
+                                        instance_id: Some(instance_id),
+                                    });
+                                    if let Some(state) = Self::au_state_from_json(&p["state"]) {
+                                        restore_actions.push(Action::TrackAuRestoreState {
+                                            track_name: track_name.clone(),
+                                            instance_id,
+                                            state,
+                                        });
+                                    }
+                                } else {
+                                    warnings.push(format!(
+                                        "AU plugin '{}' not found in registry (track '{}')",
                                         uri, track_name
                                     ));
                                 }
@@ -3745,6 +3850,10 @@ impl Maolan {
                                     | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
                                         id,
                                     ) => Some((idx, *id)),
+                                    #[cfg(target_os = "macos")]
+                                    maolan_engine::message::PluginGraphNode::AuPluginInstance(
+                                        id,
+                                    ) => Some((idx, *id)),
                                     #[cfg(unix)]
                                     maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
                                         id,
@@ -3780,6 +3889,10 @@ impl Maolan {
                                         id,
                                     )
                                     | maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
+                                        id,
+                                    ) => Some((idx, *id)),
+                                    #[cfg(target_os = "macos")]
+                                    maolan_engine::message::PluginGraphNode::AuPluginInstance(
                                         id,
                                     ) => Some((idx, *id)),
                                     #[cfg(unix)]

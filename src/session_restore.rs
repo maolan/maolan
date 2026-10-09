@@ -124,11 +124,16 @@ fn load_session_restore_actions_from_value(
     let vst3_plugins = scan_plugins::<Vst3PluginInfo>("vst3").unwrap_or_default();
     #[cfg(miri)]
     let vst3_plugins = Vec::new();
+    #[cfg(all(not(miri), target_os = "macos"))]
+    let au_plugins = scan_plugins::<maolan_engine::au::AuPluginInfo>("au").unwrap_or_default();
+    #[cfg(any(miri, not(target_os = "macos")))]
+    let au_plugins = Vec::new();
     let graph_actions = crate::session_restore::plugin_support::load_session_graph_restore_actions(
         session,
         &valid_track_names,
         &clap_plugins,
         &vst3_plugins,
+        &au_plugins,
     )?;
     actions.extend(graph_actions);
     let enabled = session["iodelay"]["enabled"].as_bool().unwrap_or(false);

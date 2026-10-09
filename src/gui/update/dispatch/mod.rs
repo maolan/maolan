@@ -45,6 +45,8 @@ fn native_ui_error_matches(format: &str, error: &str) -> bool {
             || error.contains("editor view")
             || error.contains("No GUI view")
             || error.contains("Platform type")
+    } else if format.eq_ignore_ascii_case("AU") {
+        error.contains("AU GUI") || error.contains("AUv2") || error.contains("No GUI view")
     } else if format.eq_ignore_ascii_case("LV2") {
         error.contains("LV2 GUI")
             || error.contains("LV2 UI")
@@ -533,6 +535,13 @@ impl Maolan {
                         }
                         PluginGraphNode::Vst3PluginInstance(_) => {
                             self.send(Action::TrackUnloadVst3PluginInstance {
+                                track_name: track_name.clone(),
+                                instance_id,
+                            })
+                        }
+                        #[cfg(target_os = "macos")]
+                        PluginGraphNode::AuPluginInstance(_) => {
+                            self.send(Action::TrackUnloadAuPluginInstance {
                                 track_name: track_name.clone(),
                                 instance_id,
                             })

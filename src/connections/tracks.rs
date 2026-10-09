@@ -402,6 +402,15 @@ impl Graph {
                     value,
                 }))
             }
+            #[cfg(target_os = "macos")]
+            PluginGraphNode::AuPluginInstance(_) => {
+                Some(Message::Request(EngineAction::TrackSetAuParameter {
+                    track_name: track_name.to_string(),
+                    instance_id,
+                    param_index: param_id,
+                    value,
+                }))
+            }
             _ => None,
         }
     }
@@ -483,6 +492,11 @@ impl Graph {
             PluginGraphNode::Vst3PluginInstance(_) => Some(TrackAutomationTarget::Vst3Parameter {
                 instance_id,
                 param_id,
+            }),
+            #[cfg(target_os = "macos")]
+            PluginGraphNode::AuPluginInstance(_) => Some(TrackAutomationTarget::AuParameter {
+                instance_id,
+                param_index: param_id,
             }),
             _ => None,
         }
@@ -904,6 +918,8 @@ impl Graph {
             ConnectableRef::TrackOutput => Some(PluginGraphNode::TrackOutput),
             ConnectableRef::ClapPlugin(id) => Some(PluginGraphNode::ClapPluginInstance(*id)),
             ConnectableRef::Vst3Plugin(id) => Some(PluginGraphNode::Vst3PluginInstance(*id)),
+            #[cfg(target_os = "macos")]
+            ConnectableRef::AuPlugin(id) => Some(PluginGraphNode::AuPluginInstance(*id)),
             #[cfg(unix)]
             ConnectableRef::Lv2Plugin(id) => Some(PluginGraphNode::Lv2PluginInstance(*id)),
             ConnectableRef::ChildTrack(_) => None,
@@ -1225,6 +1241,8 @@ impl Graph {
             PluginGraphNode::TrackOutput => Some(ConnectableRef::TrackOutput),
             PluginGraphNode::ClapPluginInstance(id) => Some(ConnectableRef::ClapPlugin(*id)),
             PluginGraphNode::Vst3PluginInstance(id) => Some(ConnectableRef::Vst3Plugin(*id)),
+            #[cfg(target_os = "macos")]
+            PluginGraphNode::AuPluginInstance(id) => Some(ConnectableRef::AuPlugin(*id)),
             #[cfg(unix)]
             PluginGraphNode::Lv2PluginInstance(id) => Some(ConnectableRef::Lv2Plugin(*id)),
         }
@@ -1277,6 +1295,25 @@ impl Graph {
                         track.midi.outs
                     } else {
                         track.midi.ins
+                    }
+                })
+                .unwrap_or(0),
+            #[cfg(target_os = "macos")]
+            ConnectableRef::AuPlugin(id) => data
+                .plugin_graph_plugins
+                .iter()
+                .find(|p| p.instance_id == *id)
+                .map(|plugin| {
+                    if kind == Kind::Audio {
+                        if is_output {
+                            plugin.main_audio_outputs
+                        } else {
+                            plugin.main_audio_inputs
+                        }
+                    } else if is_output {
+                        plugin.midi_outputs
+                    } else {
+                        plugin.midi_inputs
                     }
                 })
                 .unwrap_or(0),
@@ -2224,6 +2261,15 @@ impl canvas::Program<Message> for Graph {
                                         }
                                         PluginGraphNode::Vst3PluginInstance(_) => {
                                             Some(Action::publish(Message::OpenVst3PluginUi {
+                                                track_name,
+                                                clip_idx,
+                                                instance_id,
+                                                plugin_id: plugin_id.clone(),
+                                            }))
+                                        }
+                                        #[cfg(target_os = "macos")]
+                                        PluginGraphNode::AuPluginInstance(_) => {
+                                            Some(Action::publish(Message::OpenAuPluginUi {
                                                 track_name,
                                                 clip_idx,
                                                 instance_id,

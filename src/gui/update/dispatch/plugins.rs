@@ -25,6 +25,19 @@ impl Maolan {
                         .iter()
                         .find(|plugin| plugin.id == plugin_id)
                         .map(|plugin| plugin.name.clone())
+                } else if format.eq_ignore_ascii_case("AU") {
+                    #[cfg(target_os = "macos")]
+                    {
+                        state
+                            .au_plugins
+                            .iter()
+                            .find(|plugin| plugin.id == plugin_id)
+                            .map(|plugin| plugin.name.clone())
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        None
+                    }
                 } else if format.eq_ignore_ascii_case("LV2") {
                     #[cfg(unix)]
                     {
@@ -97,6 +110,14 @@ impl Maolan {
                     instance_id,
                 })
             }
+            #[cfg(target_os = "macos")]
+            (format, Some(clip_idx)) if format.eq_ignore_ascii_case("AU") => {
+                self.send(Action::ClipGetAuParameters {
+                    track_name,
+                    clip_idx,
+                    instance_id,
+                })
+            }
             #[cfg(unix)]
             (format, Some(clip_idx)) if format.eq_ignore_ascii_case("LV2") => {
                 self.send(Action::ClipGetLv2PluginControls {
@@ -117,6 +138,13 @@ impl Maolan {
                     instance_id,
                 })
             }
+            #[cfg(target_os = "macos")]
+            (format, None) if format.eq_ignore_ascii_case("AU") => {
+                self.send(Action::TrackGetAuParameters {
+                    track_name,
+                    instance_id,
+                })
+            }
             #[cfg(unix)]
             (format, None) if format.eq_ignore_ascii_case("LV2") => {
                 self.send(Action::TrackGetLv2PluginControls {
@@ -133,6 +161,8 @@ impl Maolan {
             #[cfg(unix)]
             Message::RefreshLv2Plugins => Some(self.send(Action::ListLv2Plugins)),
             Message::RefreshVst3Plugins => Some(self.send(Action::ListVst3Plugins)),
+            #[cfg(target_os = "macos")]
+            Message::RefreshAuPlugins => Some(self.send(Action::ListAuPlugins)),
             Message::RefreshClapPlugins => Some(self.send(Action::ListClapPlugins)),
             Message::FilterPluginList(ref query) => {
                 self.plugin_scan.plugin_list_filter = query.clone();
@@ -155,6 +185,17 @@ impl Maolan {
                 } else {
                     self.plugin_scan
                         .selected_vst3_plugins
+                        .insert(plugin_id.clone());
+                }
+                None
+            }
+            #[cfg(target_os = "macos")]
+            Message::SelectAuPlugin(ref plugin_id) => {
+                if self.plugin_scan.selected_au_plugins.contains(plugin_id) {
+                    self.plugin_scan.selected_au_plugins.remove(plugin_id);
+                } else {
+                    self.plugin_scan
+                        .selected_au_plugins
                         .insert(plugin_id.clone());
                 }
                 None
@@ -202,10 +243,19 @@ impl Maolan {
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>();
+                    #[cfg(target_os = "macos")]
+                    let au_selected = self
+                        .plugin_scan
+                        .selected_au_plugins
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>();
                     #[cfg(unix)]
                     self.plugin_scan.selected_lv2_plugins.clear();
                     self.plugin_scan.selected_clap_plugins.clear();
                     self.plugin_scan.selected_vst3_plugins.clear();
+                    #[cfg(target_os = "macos")]
+                    self.plugin_scan.selected_au_plugins.clear();
                     self.modal = None;
 
                     let mut state = self.state.write().expect("state lock poisoned");
@@ -307,6 +357,37 @@ impl Maolan {
                             next_id = next_id.saturating_add(1);
                         }
                     }
+                    #[cfg(target_os = "macos")]
+                    {
+                        let plugin_infos = state.au_plugins.clone();
+                        for plugin_id in au_selected {
+                            if let Some(info) =
+                                plugin_infos.iter().find(|info| info.id == plugin_id)
+                            {
+                                state
+                                    .plugin_graph_plugins
+                                    .push(maolan_engine::message::PluginGraphPlugin {
+                                    node: maolan_engine::message::PluginGraphNode::AuPluginInstance(
+                                        next_id,
+                                    ),
+                                    instance_id: next_id,
+                                    format: "AU".to_string(),
+                                    uri: info.id.clone(),
+                                    plugin_id: info.id.clone(),
+                                    name: info.name.clone(),
+                                    main_audio_inputs: info.audio_inputs,
+                                    main_audio_outputs: info.audio_outputs,
+                                    audio_inputs: info.audio_inputs,
+                                    audio_outputs: info.audio_outputs,
+                                    midi_inputs: 0,
+                                    midi_outputs: 0,
+                                    state: None,
+                                    bypassed: false,
+                                });
+                                next_id = next_id.saturating_add(1);
+                            }
+                        }
+                    }
                     let sync = Self::save_open_clip_plugin_graph(&mut state);
                     return Some(sync.map_or_else(Task::none, |action| self.send(action)));
                 }
@@ -344,8 +425,20 @@ impl Maolan {
                             })
                         },
                     ));
+                    #[cfg(target_os = "macos")]
+                    tasks.extend(self.plugin_scan.selected_au_plugins.iter().cloned().map(
+                        |plugin_id| {
+                            self.send(Action::TrackLoadAuPlugin {
+                                track_name: track_name.clone(),
+                                plugin_id,
+                                instance_id: None,
+                            })
+                        },
+                    ));
                     self.plugin_scan.selected_clap_plugins.clear();
                     self.plugin_scan.selected_vst3_plugins.clear();
+                    #[cfg(target_os = "macos")]
+                    self.plugin_scan.selected_au_plugins.clear();
                     self.modal = None;
                     return Some(Task::batch(tasks));
                 }
@@ -545,6 +638,43 @@ impl Maolan {
                     }))
                 }
             }
+            #[cfg(target_os = "macos")]
+            Message::OpenAuPluginUi {
+                ref track_name,
+                clip_idx,
+                instance_id,
+                ref plugin_id,
+            } => {
+                if self.session_ops.session_restore_in_progress {
+                    self.state.write().expect("state lock poisoned").message =
+                        "Plugin UI will be available after session restore finishes".to_string();
+                    return Some(self.open_track_plugins_followup(track_name.clone()));
+                }
+                self.pending.pending_native_ui_fallback =
+                    Some(crate::gui::PendingNativeUiFallback {
+                        track_name: track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                        format: "AU".to_string(),
+                        plugin_id: plugin_id.clone(),
+                    });
+                self.info(format!(
+                    "Requesting AU UI for track '{}' instance {}",
+                    track_name, instance_id
+                ));
+                if let Some(clip_idx) = clip_idx {
+                    Some(self.send(Action::ClipShowAuGui {
+                        track_name: track_name.clone(),
+                        clip_idx,
+                        instance_id,
+                    }))
+                } else {
+                    Some(self.send(Action::TrackShowAuGui {
+                        track_name: track_name.clone(),
+                        instance_id,
+                    }))
+                }
+            }
             Message::OpenGenericPluginUi {
                 ref track_name,
                 clip_idx,
@@ -588,6 +718,16 @@ impl Maolan {
                             value: value as f32,
                         }))
                     }
+                    #[cfg(target_os = "macos")]
+                    (format, Some(clip_idx)) if format.eq_ignore_ascii_case("AU") => {
+                        Some(self.send(Action::ClipSetAuParameter {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            param_index: param_id,
+                            value: value as f32,
+                        }))
+                    }
                     (format, None) if format.eq_ignore_ascii_case("CLAP") => {
                         Some(self.send(Action::TrackSetClapParameter {
                             track_name: track_name.clone(),
@@ -601,6 +741,15 @@ impl Maolan {
                             track_name: track_name.clone(),
                             instance_id,
                             param_id,
+                            value: value as f32,
+                        }))
+                    }
+                    #[cfg(target_os = "macos")]
+                    (format, None) if format.eq_ignore_ascii_case("AU") => {
+                        Some(self.send(Action::TrackSetAuParameter {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            param_index: param_id,
                             value: value as f32,
                         }))
                     }
@@ -680,6 +829,13 @@ impl Maolan {
                                 });
                             } else if plugin.format.eq_ignore_ascii_case("VST3") {
                                 return self.send(Action::TrackGetVst3Parameters {
+                                    track_name,
+                                    instance_id,
+                                });
+                            }
+                            #[cfg(target_os = "macos")]
+                            if plugin.format.eq_ignore_ascii_case("AU") {
+                                return self.send(Action::TrackGetAuParameters {
                                     track_name,
                                     instance_id,
                                 });

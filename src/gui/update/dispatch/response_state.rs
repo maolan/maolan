@@ -437,6 +437,8 @@ fn connectable_label(connectable: &ConnectableRef) -> String {
         ConnectableRef::ChildTrack(name) => format!("child '{name}'"),
         ConnectableRef::ClapPlugin(id) => format!("CLAP plugin {id}"),
         ConnectableRef::Vst3Plugin(id) => format!("VST3 plugin {id}"),
+        #[cfg(target_os = "macos")]
+        ConnectableRef::AuPlugin(id) => format!("AU plugin {id}"),
         #[cfg(unix)]
         ConnectableRef::Lv2Plugin(id) => format!("LV2 plugin {id}"),
     }
@@ -448,6 +450,8 @@ fn plugin_node_label(node: &PluginGraphNode) -> String {
         PluginGraphNode::TrackOutput => "track output".to_string(),
         PluginGraphNode::ClapPluginInstance(id) => format!("CLAP plugin {id}"),
         PluginGraphNode::Vst3PluginInstance(id) => format!("VST3 plugin {id}"),
+        #[cfg(target_os = "macos")]
+        PluginGraphNode::AuPluginInstance(id) => format!("AU plugin {id}"),
         #[cfg(unix)]
         PluginGraphNode::Lv2PluginInstance(id) => format!("LV2 plugin {id}"),
     }

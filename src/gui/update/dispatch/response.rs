@@ -22,6 +22,10 @@ impl Maolan {
                     | Action::ClipShowLv2Gui { .. } => {
                         self.pending.pending_native_ui_fallback = None;
                     }
+                    #[cfg(target_os = "macos")]
+                    Action::TrackShowAuGui { .. } | Action::ClipShowAuGui { .. } => {
+                        self.pending.pending_native_ui_fallback = None;
+                    }
                     _ if !self.session_ops.session_restore_in_progress
                         && history::should_record(a) =>
                     {
@@ -311,6 +315,8 @@ impl Maolan {
                                 state.clap_plugins_by_track.remove(name);
                                 state.clap_states_by_track.remove(name);
                                 state.vst3_states_by_track.remove(name);
+                                #[cfg(target_os = "macos")]
+                                state.au_states_by_track.remove(name);
                                 state.session.slots.remove(name);
                                 state.selected_slots.retain(|(n, _)| *n != *name);
                                 state
@@ -1438,6 +1444,15 @@ impl Maolan {
                                 return task;
                             }
                         }
+                        #[cfg(target_os = "macos")]
+                        Action::TrackLoadAuPlugin { track_name, .. }
+                        | Action::TrackUnloadAuPluginInstance { track_name, .. } => {
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
+                                return task;
+                            }
+                        }
                         Action::TrackConnectAudio { track_name, .. }
                         | Action::TrackDisconnectAudio { track_name, .. }
                         | Action::TrackConnectMidi { track_name, .. }
@@ -1515,6 +1530,12 @@ impl Maolan {
                                 old_name,
                                 new_name,
                             );
+                            #[cfg(target_os = "macos")]
+                            Self::rename_track_map_entry(
+                                &mut state.au_states_by_track,
+                                old_name,
+                                new_name,
+                            );
                             Self::rename_track_map_entry(
                                 &mut state.session.slots,
                                 old_name,
@@ -1574,6 +1595,18 @@ impl Maolan {
                                 f64::from(*value),
                             );
                         }
+                        #[cfg(target_os = "macos")]
+                        Action::TrackSetAuParameter {
+                            track_name,
+                            instance_id,
+                            param_index,
+                            value,
+                        } => {
+                            self.plugin_params.generic_plugin_param_values.insert(
+                                (track_name.clone(), None, *instance_id, *param_index),
+                                f64::from(*value),
+                            );
+                        }
                         Action::ClipSetClapParameter {
                             track_name,
                             clip_idx,
@@ -1598,6 +1631,24 @@ impl Maolan {
                         } => {
                             self.plugin_params.generic_plugin_param_values.insert(
                                 (track_name.clone(), Some(*clip_idx), *instance_id, *param_id),
+                                f64::from(*value),
+                            );
+                        }
+                        #[cfg(target_os = "macos")]
+                        Action::ClipSetAuParameter {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            param_index,
+                            value,
+                        } => {
+                            self.plugin_params.generic_plugin_param_values.insert(
+                                (
+                                    track_name.clone(),
+                                    Some(*clip_idx),
+                                    *instance_id,
+                                    *param_index,
+                                ),
                                 f64::from(*value),
                             );
                         }

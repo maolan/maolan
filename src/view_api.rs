@@ -78,6 +78,21 @@ pub(crate) fn track_set_vst3_parameter(
     })
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn track_set_au_parameter(
+    track_name: String,
+    instance_id: usize,
+    param_index: u32,
+    value: f32,
+) -> Message {
+    Message::Request(Action::TrackSetAuParameter {
+        track_name,
+        instance_id,
+        param_index,
+        value,
+    })
+}
+
 #[cfg(unix)]
 pub(crate) fn track_set_lv2_control_value(
     track_name: String,

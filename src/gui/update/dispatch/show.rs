@@ -99,6 +99,8 @@ impl Maolan {
                 #[cfg(unix)]
                 self.plugin_scan.selected_lv2_plugins.clear();
                 self.plugin_scan.selected_vst3_plugins.clear();
+                #[cfg(target_os = "macos")]
+                self.plugin_scan.selected_au_plugins.clear();
                 self.plugin_scan.selected_clap_plugins.clear();
                 Task::none()
             }
