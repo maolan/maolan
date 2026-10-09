@@ -1,9 +1,12 @@
-//! AudioUnit (AUv2) plugin hosting. The `AuUnit` trait is the seam where a
-//! future AUv3 backend (`au/v3.rs` over `AUAudioUnit`) will plug in; the SHM
-//! run loop below is written against the trait only.
+//! AudioUnit (AUv2 + AUv3) plugin hosting. The `AuUnit` trait abstracts the
+//! two registry APIs — `au::v2` (pure C AudioUnit) and `au::v3`
+//! (`AUAudioUnit`, Objective-C) — behind one SHM run loop written against
+//! the trait only.
 
 pub mod gui_cocoa;
+pub(crate) mod objc;
 pub mod v2;
+pub mod v3;
 
 use maolan_plugin_protocol::events::EventPair;
 use maolan_plugin_protocol::protocol::*;
@@ -456,11 +459,22 @@ fn run_au_loop(args: AuRunArgs) {
         }
     };
 
-    let mut unit = match v2::V2Unit::open(&parsed.desc) {
-        Ok(u) => u,
-        Err(e) => {
-            tracing::error!(%e, "AU host: failed to open component");
-            return;
+    let is_v3 = v3::component_is_v3(&parsed.desc);
+    let mut unit: Box<dyn AuUnit> = if is_v3 {
+        match v3::V3Unit::open(&parsed.desc) {
+            Ok(u) => Box::new(u),
+            Err(e) => {
+                tracing::error!(%e, "AU host: failed to open AUv3 component");
+                return;
+            }
+        }
+    } else {
+        match v2::V2Unit::open(&parsed.desc) {
+            Ok(u) => Box::new(u),
+            Err(e) => {
+                tracing::error!(%e, "AU host: failed to open component");
+                return;
+            }
         }
     };
 
@@ -550,12 +564,21 @@ fn run_au_loop(args: AuRunArgs) {
                                 std::ptr::null_mut()
                             }
                         };
-                        g.window = Some(gui_cocoa::CocoaWindow::create(
-                            &g.thread,
-                            unit.name(),
-                            &unit as &dyn AuUnit,
-                            parent,
-                        )?);
+                        g.window = if is_v3 {
+                            Some(gui_cocoa::CocoaWindow::create_v3(
+                                &g.thread,
+                                unit.name(),
+                                unit.raw_unit(),
+                                parent,
+                            )?)
+                        } else {
+                            Some(gui_cocoa::CocoaWindow::create(
+                                &g.thread,
+                                unit.name(),
+                                &*unit,
+                                parent,
+                            )?)
+                        };
                     }
                     if let Some(w) = g.window.as_ref() {
                         w.show();
@@ -625,7 +648,7 @@ fn run_au_loop(args: AuRunArgs) {
             continue;
         }
 
-        apply_au_param_ring(&mut unit, ptr);
+        apply_au_param_ring(&mut *unit, ptr);
 
         let transport = read_au_transport(ptr);
 
@@ -658,7 +681,7 @@ fn run_au_loop(args: AuRunArgs) {
             latency_samples_atomic(ptr).store(unit.latency_samples(), Ordering::Release);
         }
 
-        write_au_echo_ring(&mut unit, ptr, &mut au_param_cache);
+        write_au_echo_ring(&mut *unit, ptr, &mut au_param_cache);
 
         for ch in 0..num_out {
             let dst = unsafe { audio_channel_ptr(ptr, ch, 1) };
