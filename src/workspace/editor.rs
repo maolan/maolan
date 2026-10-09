@@ -500,6 +500,10 @@ fn automation_point_color(target: &crate::message::TrackAutomationTarget) -> Col
         crate::message::TrackAutomationTarget::Vst3Parameter { .. } => {
             Color::from_rgba(0.28, 0.82, 0.78, 0.95)
         }
+        #[cfg(target_os = "macos")]
+        crate::message::TrackAutomationTarget::AuParameter { .. } => {
+            Color::from_rgba(0.82, 0.28, 0.58, 0.95)
+        }
         crate::message::TrackAutomationTarget::ClapParameter { .. } => {
             Color::from_rgba(0.4, 0.72, 0.98, 0.95)
         }

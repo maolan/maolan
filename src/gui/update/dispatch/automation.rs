@@ -103,6 +103,12 @@ impl Maolan {
                             .pending_add_vst3_automation_paths
                             .insert((track_name.clone(), plugin_id.clone()));
                     }
+                    #[cfg(target_os = "macos")]
+                    "AU" => {
+                        self.pending
+                            .pending_add_au_automation_paths
+                            .insert((track_name.clone(), plugin_id.clone()));
+                    }
                     #[cfg(unix)]
                     "LV2" => {
                         self.pending

@@ -310,6 +310,14 @@ impl Maolan {
                             instance_id: *instance_id,
                             param_id: *param_id,
                         },
+                        #[cfg(target_os = "macos")]
+                        crate::message::TrackAutomationTarget::AuParameter {
+                            instance_id,
+                            param_index,
+                        } => OfflineAutomationTarget::AuParameter {
+                            instance_id: *instance_id,
+                            param_index: *param_index,
+                        },
                         crate::message::TrackAutomationTarget::ClapParameter {
                             instance_id,
                             param_id,
@@ -455,6 +463,14 @@ impl Maolan {
                         } => OfflineAutomationTarget::Vst3Parameter {
                             instance_id: *instance_id,
                             param_id: *param_id,
+                        },
+                        #[cfg(target_os = "macos")]
+                        crate::message::TrackAutomationTarget::AuParameter {
+                            instance_id,
+                            param_index,
+                        } => OfflineAutomationTarget::AuParameter {
+                            instance_id: *instance_id,
+                            param_index: *param_index,
                         },
                         crate::message::TrackAutomationTarget::ClapParameter {
                             instance_id,

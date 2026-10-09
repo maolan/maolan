@@ -1776,6 +1776,7 @@ fn create_lv2_x11_gui(
                 }
                 GuiParentApi::Wayland => root,
                 GuiParentApi::None => root,
+                GuiParentApi::Cocoa => root,
             }
         }
     };
@@ -1938,6 +1939,7 @@ fn try_lv2_external_gui_by_backend(
                 GuiParentApi::Wayland => lv2_ui_has_wayland_class(ui),
                 GuiParentApi::X11 => lv2_ui_has_x11_class(ui),
                 GuiParentApi::None => false,
+                GuiParentApi::Cocoa => false,
             }
     }) {
         match create_lv2_external_gui(processor, plugin_uri, ui) {
@@ -2010,6 +2012,7 @@ fn create_lv2_gui(
             }
         }
         GuiParentApi::None => {}
+        GuiParentApi::Cocoa => {}
     }
 
     let Some(ui) = ui_infos.iter().find(|ui| lv2_ui_has_x11_class(ui)) else {

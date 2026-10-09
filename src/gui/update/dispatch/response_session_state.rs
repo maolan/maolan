@@ -94,6 +94,33 @@ impl Maolan {
                 state.message = format!("VST3 plugin scan unavailable: {error}");
                 Some(Task::none())
             }
+            #[cfg(target_os = "macos")]
+            QueryReply::AuPlugins(plugins) => {
+                let blocklist = crate::plugin_blocklist::Blocklist::load();
+                let (filtered, blocked): (Vec<_>, Vec<_>) = plugins
+                    .iter()
+                    .cloned()
+                    .partition(|p| !blocklist.is_blocked(&p.id));
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.au_plugins = filtered;
+                state.au_plugins_loaded = true;
+                state.au_plugins_unavailable = false;
+                state.message = format!(
+                    "Loaded {} AU plugins ({} blocklisted)",
+                    state.au_plugins.len(),
+                    blocked.len()
+                );
+                Some(Task::none())
+            }
+            #[cfg(target_os = "macos")]
+            QueryReply::AuPluginsUnavailable { error } => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.au_plugins = vec![];
+                state.au_plugins_loaded = true;
+                state.au_plugins_unavailable = true;
+                state.message = format!("AU plugin scan unavailable: {error}");
+                Some(Task::none())
+            }
             QueryReply::ClapPlugins(plugins) => {
                 let blocklist = crate::plugin_blocklist::Blocklist::load();
                 let (filtered, blocked): (Vec<_>, Vec<_>) = plugins

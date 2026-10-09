@@ -956,11 +956,21 @@ impl Maolan {
                 .expect("state lock poisoned")
                 .lv2_plugins
                 .clone();
+            #[cfg(target_os = "macos")]
+            let au_plugins = self
+                .state
+                .read()
+                .expect("state lock poisoned")
+                .au_plugins
+                .clone();
+            #[cfg(not(target_os = "macos"))]
+            let au_plugins = [];
             Self::plugin_graph_snapshot_from_json(
                 graph_json.as_ref(),
                 &lv2_plugins,
                 &vst3_plugins,
                 &clap_plugins,
+                &au_plugins,
             )
         };
         #[cfg(not(unix))]
@@ -1043,6 +1053,37 @@ impl Maolan {
                     track_name: pending_track,
                     instance_id,
                 }));
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let pending_au_paths: Vec<(String, String)> = self
+                .pending
+                .pending_add_au_automation_paths
+                .iter()
+                .filter(|(name, _)| name == track_name)
+                .cloned()
+                .collect();
+            for (pending_track, pending_path) in pending_au_paths {
+                if let Some(instance_id) = plugins
+                    .iter()
+                    .find(|plugin| {
+                        plugin.format.eq_ignore_ascii_case("AU")
+                            && (plugin.uri == pending_path || plugin.plugin_id == pending_path)
+                    })
+                    .map(|plugin| plugin.instance_id)
+                {
+                    self.pending
+                        .pending_add_au_automation_paths
+                        .remove(&(pending_track.clone(), pending_path));
+                    self.pending
+                        .pending_add_au_automation_instances
+                        .insert((pending_track.clone(), instance_id));
+                    pending_queries.push(self.send(Action::TrackGetAuParameters {
+                        track_name: pending_track,
+                        instance_id,
+                    }));
+                }
             }
         }
         let pending_paths: Vec<(String, String)> = self
@@ -1451,6 +1492,14 @@ impl Maolan {
             } => Some(AutomationWriteKey::Vst3 {
                 instance_id: *instance_id,
                 param_id: *param_id,
+            }),
+            #[cfg(target_os = "macos")]
+            TrackAutomationTarget::AuParameter {
+                instance_id,
+                param_index,
+            } => Some(AutomationWriteKey::Au {
+                instance_id: *instance_id,
+                param_index: *param_index,
             }),
             TrackAutomationTarget::ClapParameter {
                 instance_id,
@@ -1868,6 +1917,52 @@ impl Maolan {
                     TrackAutomationTarget::Vst3Parameter {
                         instance_id: *instance_id,
                         param_id: *param_id,
+                    },
+                    normalized,
+                );
+            }
+            #[cfg(target_os = "macos")]
+            Action::TrackSetAuParameter {
+                track_name,
+                instance_id,
+                param_index,
+                value,
+            } => {
+                if self.is_track_frozen(track_name) {
+                    return;
+                }
+                let normalized = (*value).clamp(0.0, 1.0);
+                let (min, max) = {
+                    let state = self.state.read().expect("state lock poisoned");
+                    state
+                        .plugin_parameters_by_track
+                        .get(track_name)
+                        .and_then(|p| p.get(instance_id))
+                        .and_then(|params| params.iter().find(|p| p.param_id == *param_index))
+                        .map(|p| (p.min as f32, p.max as f32))
+                        .unwrap_or((0.0, 1.0))
+                };
+                let actual = min + normalized * (max - min);
+                self.update_visible_controller_value(
+                    track_name,
+                    *instance_id,
+                    *param_index,
+                    actual,
+                );
+                self.transport.record_automation_point(
+                    &self.state,
+                    track_name,
+                    TrackAutomationTarget::AuParameter {
+                        instance_id: *instance_id,
+                        param_index: *param_index,
+                    },
+                    normalized,
+                );
+                self.record_manual_override(
+                    track_name,
+                    TrackAutomationTarget::AuParameter {
+                        instance_id: *instance_id,
+                        param_index: *param_index,
                     },
                     normalized,
                 );

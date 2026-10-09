@@ -87,6 +87,8 @@ impl Graph {
             PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
                 Some(*id)
             }
+            #[cfg(target_os = "macos")]
+            PluginGraphNode::AuPluginInstance(id) => Some(*id),
             PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => None,
         }
     }
@@ -646,6 +648,18 @@ impl canvas::Program<Message> for Graph {
                                     }
                                     PluginGraphNode::Vst3PluginInstance(_) => {
                                         Some(Action::publish(Message::OpenVst3PluginUi {
+                                            track_name,
+                                            clip_idx: data
+                                                .plugin_graph_clip
+                                                .as_ref()
+                                                .map(|target| target.clip_idx),
+                                            instance_id,
+                                            plugin_id: plugin.plugin_id.clone(),
+                                        }))
+                                    }
+                                    #[cfg(target_os = "macos")]
+                                    PluginGraphNode::AuPluginInstance(_) => {
+                                        Some(Action::publish(Message::OpenAuPluginUi {
                                             track_name,
                                             clip_idx: data
                                                 .plugin_graph_clip

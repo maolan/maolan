@@ -86,6 +86,24 @@ pub struct ClapPluginCapabilities {
     pub midi_outputs: usize,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuScanRecord {
+    /// `au:<type>:<subtype>:<manufacturer>` spec, also used as the plugin ID.
+    pub id: String,
+    pub name: String,
+    pub manufacturer: String,
+    /// Derived from the component type fourcc: effect, music effect,
+    /// music device.
+    pub category: String,
+    /// Dotted version string from AudioComponentGetVersion.
+    pub version: String,
+    /// True for Apple-built components (manufacturer 'appl').
+    pub is_apple: bool,
+    pub audio_inputs: u32,
+    pub audio_outputs: u32,
+}
+
 unsafe extern "C" fn dummy_get_extension(_: *const ClapHost, _: *const c_char) -> *const c_void {
     ptr::null()
 }
@@ -834,6 +852,127 @@ pub fn scan_vst3_plugins() -> Vec<crate::vst3::Vst3PluginInfo> {
     crate::vst3::host::Vst3Host::new().list_plugins()
 }
 
+#[cfg(target_os = "macos")]
+pub fn scan_au_plugins() -> Vec<AuScanRecord> {
+    use crate::au::v2::ffi as au_ffi;
+
+    fn cf_string_to_string(s: *mut c_void) -> String {
+        if s.is_null() {
+            return String::new();
+        }
+        unsafe {
+            let len = au_ffi::CFStringGetLength(s);
+            let cap =
+                au_ffi::CFStringGetMaximumSizeForEncoding(len, au_ffi::K_CF_STRING_ENCODING_UTF8)
+                    + 1;
+            let mut buf = vec![0u8; cap.max(1) as usize];
+            let ok = au_ffi::CFStringGetCString(
+                s,
+                buf.as_mut_ptr().cast(),
+                buf.len() as isize,
+                au_ffi::K_CF_STRING_ENCODING_UTF8,
+            );
+            au_ffi::CFRelease(s.cast());
+            if ok {
+                let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                buf.truncate(end);
+                String::from_utf8_lossy(&buf).into_owned()
+            } else {
+                String::new()
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut roots = Vec::new();
+    crate::paths::push_macos_audio_plugin_roots(&mut roots, "Components");
+    let roots_exist = roots.iter().any(|p| p.exists());
+
+    for comp_type in [
+        au_ffi::COMP_TYPE_EFFECT,
+        au_ffi::COMP_TYPE_MUSIC_EFFECT,
+        au_ffi::COMP_TYPE_MUSIC_DEVICE,
+    ] {
+        let desc = au_ffi::AudioComponentDescription {
+            component_type: comp_type,
+            component_subtype: 0,
+            component_manufacturer: 0,
+            component_flags: 0,
+            component_flags_mask: 0,
+        };
+        let category = match comp_type {
+            au_ffi::COMP_TYPE_MUSIC_DEVICE => "music device",
+            au_ffi::COMP_TYPE_MUSIC_EFFECT => "music effect",
+            _ => "effect",
+        };
+        let mut component: au_ffi::AudioComponent = std::ptr::null_mut();
+        loop {
+            component = unsafe { au_ffi::AudioComponentFindNext(component, &desc) };
+            if component.is_null() {
+                break;
+            }
+            let mut name_ref: au_ffi::CFStringRef = std::ptr::null_mut();
+            let name = unsafe {
+                if au_ffi::AudioComponentCopyName(component, &mut name_ref) == au_ffi::NO_ERR
+                    && !name_ref.is_null()
+                {
+                    cf_string_to_string(name_ref.cast())
+                } else {
+                    String::new()
+                }
+            };
+            let mut version = 0u32;
+            let version_string = unsafe {
+                if au_ffi::AudioComponentGetVersion(component, &mut version) == au_ffi::NO_ERR {
+                    format!(
+                        "{}.{}.{}",
+                        (version >> 16) & 0xFFFF,
+                        (version >> 8) & 0xFF,
+                        version & 0xFF
+                    )
+                } else {
+                    String::new()
+                }
+            };
+            let mut full_desc = au_ffi::AudioComponentDescription {
+                component_type: comp_type,
+                component_subtype: 0,
+                component_manufacturer: 0,
+                component_flags: 0,
+                component_flags_mask: 0,
+            };
+            let spec = if unsafe { au_ffi::AudioComponentGetDescription(component, &mut full_desc) }
+                == au_ffi::NO_ERR
+            {
+                crate::au::au_spec_string(&crate::au::AuComponentDesc {
+                    comp_type: full_desc.component_type,
+                    subtype: full_desc.component_subtype,
+                    manufacturer: full_desc.component_manufacturer,
+                })
+            } else {
+                continue;
+            };
+            let manufacturer =
+                String::from_utf8_lossy(&full_desc.component_manufacturer.to_be_bytes())
+                    .into_owned();
+            out.push(AuScanRecord {
+                id: spec,
+                name,
+                manufacturer,
+                category: category.to_string(),
+                version: version_string,
+                is_apple: full_desc.component_manufacturer == au_ffi::MANUFACTURER_APPLE,
+                audio_inputs: 0,
+                audio_outputs: 0,
+            });
+        }
+    }
+    if !roots_exist {
+        tracing::debug!("no macOS Audio Components directories exist; registry scan only");
+    }
+    out
+}
+
 #[cfg(unix)]
 pub fn scan_lv2_plugins() -> Vec<crate::lv2::Lv2PluginInfo> {
     let blocklist = crate::blocklist::Blocklist::load();
@@ -1097,6 +1236,23 @@ pub fn run_scan(format: &str, plugin_path: &str, output_path: Option<&str>) -> i
                     return 1;
                 }
             }
+        }
+        #[cfg(target_os = "macos")]
+        "au" => {
+            if plugin_path != "--system" {
+                return 1;
+            }
+            let (data, stderr) = capture_stderr_during(scan_au_plugins);
+            match serialize_scan_output(data, &stderr) {
+                Ok(j) => j,
+                Err(_e) => {
+                    return 1;
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        "au" => {
+            return 1;
         }
         _ => {
             return 1;

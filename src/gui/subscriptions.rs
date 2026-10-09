@@ -60,6 +60,8 @@ impl Maolan {
                     Message::RefreshLv2Plugins,
                     Message::RefreshVst3Plugins,
                     Message::RefreshClapPlugins,
+                    #[cfg(target_os = "macos")]
+                    Message::RefreshAuPlugins,
                 ];
                 #[cfg(not(unix))]
                 let initial_messages =

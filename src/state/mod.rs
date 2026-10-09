@@ -19,6 +19,8 @@ use crate::message::{
 
 pub use clip::{AudioClip, ClipPeaks, MIDIClip, generate_clip_id};
 pub use connection::Connection;
+#[cfg(target_os = "macos")]
+use maolan_engine::au::{AuPluginInfo, AuPluginState};
 pub use maolan_engine::kind::Kind;
 #[cfg(unix)]
 use maolan_engine::lv2::Lv2PluginInfo;
@@ -622,6 +624,22 @@ impl From<maolan_engine::modulator::ModulatorTarget> for ModulatorTarget {
                 min,
                 max,
             ),
+            #[cfg(target_os = "macos")]
+            maolan_engine::modulator::ModulatorTarget::AuParameter {
+                track_name,
+                instance_id,
+                param_index,
+                min,
+                max,
+            } => (
+                track_name,
+                TrackAutomationTarget::AuParameter {
+                    instance_id,
+                    param_index,
+                },
+                min,
+                max,
+            ),
             maolan_engine::modulator::ModulatorTarget::MidiCc {
                 track_name,
                 channel,
@@ -714,6 +732,17 @@ impl TryFrom<ModulatorTarget> for maolan_engine::modulator::ModulatorTarget {
                 track_name: t.track_name,
                 instance_id,
                 param_id,
+                min: t.min,
+                max: t.max,
+            }),
+            #[cfg(target_os = "macos")]
+            TrackAutomationTarget::AuParameter {
+                instance_id,
+                param_index,
+            } => Ok(Self::AuParameter {
+                track_name: t.track_name,
+                instance_id,
+                param_index,
                 min: t.min,
                 max: t.max,
             }),
@@ -1564,12 +1593,20 @@ pub struct StateData {
     pub vst3_plugins: Vec<Vst3PluginInfo>,
     pub vst3_plugins_loaded: bool,
     pub vst3_plugins_unavailable: bool,
+    #[cfg(target_os = "macos")]
+    pub au_plugins: Vec<AuPluginInfo>,
+    #[cfg(target_os = "macos")]
+    pub au_plugins_loaded: bool,
+    #[cfg(target_os = "macos")]
+    pub au_plugins_unavailable: bool,
     pub clap_plugins: Vec<ClapPluginInfo>,
     pub clap_plugins_loaded: bool,
     pub clap_plugins_unavailable: bool,
     pub clap_plugins_by_track: HashMap<String, Vec<String>>,
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub vst3_states_by_track: HashMap<String, HashMap<usize, Vst3PluginState>>,
+    #[cfg(target_os = "macos")]
+    pub au_states_by_track: HashMap<String, HashMap<usize, AuPluginState>>,
     pub plugin_graph_track: Option<String>,
     pub plugin_graph_clip: Option<PluginGraphClipTarget>,
     pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
@@ -1807,12 +1844,20 @@ impl Default for StateData {
             vst3_plugins: vec![],
             vst3_plugins_loaded: false,
             vst3_plugins_unavailable: false,
+            #[cfg(target_os = "macos")]
+            au_plugins: vec![],
+            #[cfg(target_os = "macos")]
+            au_plugins_loaded: false,
+            #[cfg(target_os = "macos")]
+            au_plugins_unavailable: false,
             clap_plugins: vec![],
             clap_plugins_loaded: false,
             clap_plugins_unavailable: false,
             clap_plugins_by_track: HashMap::new(),
             clap_states_by_track: HashMap::new(),
             vst3_states_by_track: HashMap::new(),
+            #[cfg(target_os = "macos")]
+            au_states_by_track: HashMap::new(),
             plugin_graph_track: None,
             plugin_graph_clip: None,
             plugin_graph_plugins: vec![],

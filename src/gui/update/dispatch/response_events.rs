@@ -332,7 +332,43 @@ impl Maolan {
                     .or_default()
                     .insert(*instance_id, (**state).clone());
             }
+            #[cfg(target_os = "macos")]
+            Event::TrackAuStateSnapshot {
+                track_name,
+                instance_id,
+                state,
+            } => {
+                let mut gui_state = self.state.write().expect("state lock poisoned");
+                gui_state
+                    .au_states_by_track
+                    .entry(track_name.clone())
+                    .or_default()
+                    .insert(*instance_id, (**state).clone());
+            }
             Event::ClipVst3StateSnapshot {
+                track_name,
+                clip_idx,
+                instance_id,
+                state,
+            } => {
+                let state_json = serde_json::to_value(state).unwrap_or(serde_json::Value::Null);
+                let mut gui_state = self.state.write().expect("state lock poisoned");
+                if let Some(track) = gui_state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == *track_name)
+                    && let Some(clip) = track.audio.clips.get_mut(*clip_idx)
+                    && let Some(graph_json) = Self::plugin_graph_json_with_saved_plugin_state(
+                        clip.plugin_graph_json.as_ref(),
+                        *instance_id,
+                        state_json,
+                    )
+                {
+                    clip.plugin_graph_json = Some(graph_json);
+                }
+            }
+            #[cfg(target_os = "macos")]
+            Event::ClipAuStateSnapshot {
                 track_name,
                 clip_idx,
                 instance_id,
@@ -614,6 +650,97 @@ impl Maolan {
                             min: 0.0,
                             max: 1.0,
                             default_value: p.default_value,
+                        })
+                        .collect(),
+                );
+            }
+            #[cfg(target_os = "macos")]
+            QueryReply::TrackAuParameters {
+                track_name,
+                instance_id,
+                parameters,
+            } => {
+                let pending = self
+                    .pending
+                    .pending_add_au_automation_instances
+                    .remove(&(track_name.clone(), *instance_id));
+                {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    let cached = state
+                        .plugin_parameters_by_track
+                        .entry(track_name.clone())
+                        .or_default();
+                    cached.insert(
+                        *instance_id,
+                        parameters
+                            .iter()
+                            .map(|p| crate::state::PluginParameterInfo {
+                                param_id: p.index,
+                                name: p.name.clone(),
+                                min: p.min,
+                                max: p.max,
+                                default_value: p.default,
+                            })
+                            .collect(),
+                    );
+                    if pending
+                        && let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    {
+                        for param in parameters {
+                            let target = TrackAutomationTarget::AuParameter {
+                                instance_id: *instance_id,
+                                param_index: param.index,
+                            };
+                            if let Some(existing) = track
+                                .automation_lanes
+                                .iter_mut()
+                                .find(|lane| lane.target == target)
+                            {
+                                existing.visible = true;
+                            } else {
+                                track
+                                    .automation_lanes
+                                    .push(crate::state::TrackAutomationLane {
+                                        target,
+                                        visible: true,
+                                        points: vec![],
+                                    });
+                            }
+                        }
+                        track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+                        state.message = format!(
+                            "Added {} AU automation lanes on '{}'",
+                            parameters.len(),
+                            track_name
+                        );
+                    }
+                }
+                if pending && let Some(action) = self.track_automation_lanes_action(track_name) {
+                    self.try_send_engine(EngineMessage::Request(action));
+                }
+            }
+            #[cfg(target_os = "macos")]
+            QueryReply::ClipAuParameters {
+                track_name,
+                clip_idx,
+                instance_id,
+                parameters,
+            } => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                let cached = state
+                    .plugin_parameters_by_clip
+                    .entry((track_name.clone(), *clip_idx))
+                    .or_default();
+                cached.insert(
+                    *instance_id,
+                    parameters
+                        .iter()
+                        .map(|p| crate::state::PluginParameterInfo {
+                            param_id: p.index,
+                            name: p.name.clone(),
+                            min: p.min,
+                            max: p.max,
+                            default_value: p.default,
                         })
                         .collect(),
                 );

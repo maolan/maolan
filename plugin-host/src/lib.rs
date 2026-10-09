@@ -10,6 +10,8 @@ pub mod scan;
 pub mod util;
 pub mod vst3_lv2_host;
 
+#[cfg(target_os = "macos")]
+pub mod au;
 #[cfg(unix)]
 pub mod lv2;
 pub mod vst3;

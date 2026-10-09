@@ -106,6 +106,10 @@ pub struct PendingOpsState {
     pub pending_add_lv2_automation_instances: HashSet<(String, usize)>,
     pub pending_add_vst3_automation_paths: HashSet<(String, String)>,
     pub pending_add_vst3_automation_instances: HashSet<(String, usize)>,
+    #[cfg(target_os = "macos")]
+    pub pending_add_au_automation_paths: HashSet<(String, String)>,
+    #[cfg(target_os = "macos")]
+    pub pending_add_au_automation_instances: HashSet<(String, usize)>,
     pub pending_add_clap_automation_paths: HashSet<(String, String)>,
     pub pending_add_clap_automation_instances: HashSet<(String, usize)>,
     pub pending_midi_clip_previews: HashSet<(String, usize, String)>,
@@ -132,6 +136,8 @@ pub struct PluginScanState {
     #[cfg(unix)]
     pub selected_lv2_plugins: BTreeSet<String>,
     pub selected_vst3_plugins: BTreeSet<String>,
+    #[cfg(target_os = "macos")]
+    pub selected_au_plugins: BTreeSet<String>,
     pub selected_clap_plugins: BTreeSet<String>,
     pub plugin_list_filter: String,
 }
@@ -919,6 +925,32 @@ impl AutomationRuntimeState {
                             }
                         }
                     }
+                    #[cfg(target_os = "macos")]
+                    TrackAutomationTarget::AuParameter {
+                        instance_id,
+                        param_index,
+                    } => {
+                        if track.frozen {
+                            continue;
+                        }
+                        if let Some(v) = value {
+                            let param_value = v.clamp(0.0, 1.0);
+                            let key = (*instance_id, *param_index);
+                            if runtime
+                                .au_params
+                                .get(&key)
+                                .is_none_or(|current| (current - param_value).abs() >= 0.0005)
+                            {
+                                runtime.au_params.insert(key, param_value);
+                                actions.push(Action::TrackSetAuParameter {
+                                    track_name: track.name.to_string(),
+                                    instance_id: *instance_id,
+                                    param_index: *param_index,
+                                    value: param_value,
+                                });
+                            }
+                        }
+                    }
                     TrackAutomationTarget::ClapParameter {
                         instance_id,
                         param_id,
@@ -1252,6 +1284,43 @@ impl PluginScanState {
         }
         let vst3_list = column(vst3_items);
 
+        #[cfg(target_os = "macos")]
+        let mut au_items = Vec::new();
+        #[cfg(target_os = "macos")]
+        {
+            let au_filter = filter.clone();
+            for plugin in &state.au_plugins {
+                if !au_filter.is_empty() {
+                    let name = plugin.name.to_lowercase();
+                    let id = plugin.id.to_lowercase();
+                    if !name.contains(&au_filter) && !id.contains(&au_filter) {
+                        continue;
+                    }
+                }
+                let is_selected = self.selected_au_plugins.contains(&plugin.id);
+                let row_content: maolan_widgets::iced::Element<'_, Message> = row![
+                    text(if is_selected { "[x]" } else { "[ ]" }),
+                    text(plugin.name.clone()).width(Length::Fill),
+                ]
+                .spacing(8)
+                .width(Length::Fill)
+                .into();
+                let row_button = if is_selected {
+                    button(row_content).style(button::primary)
+                } else {
+                    button(row_content).style(button::text)
+                };
+                au_items.push(
+                    row_button
+                        .width(Length::Fill)
+                        .on_press(Message::SelectAuPlugin(plugin.id.clone()))
+                        .into(),
+                );
+            }
+        }
+        #[cfg(target_os = "macos")]
+        let au_list = column(au_items);
+
         let lv2_column: maolan_widgets::iced::Element<'_, Message> =
             if state.lv2_plugins_unavailable {
                 column![
@@ -1309,9 +1378,39 @@ impl PluginScanState {
                 .into()
             };
 
+        #[cfg(target_os = "macos")]
+        let au_column: maolan_widgets::iced::Element<'_, Message> = if state.au_plugins_unavailable
+        {
+            column![
+                text("AU").size(14),
+                text("AU plugin scan is unavailable.").size(12),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        } else {
+            column![
+                text("AU").size(14),
+                scrollable(au_list).height(Length::Fill),
+            ]
+            .spacing(10)
+            .width(Length::FillPortion(1))
+            .into()
+        };
+
         let selected_count = self.selected_lv2_plugins.len()
             + self.selected_clap_plugins.len()
-            + self.selected_vst3_plugins.len();
+            + self.selected_vst3_plugins.len()
+            + {
+                #[cfg(target_os = "macos")]
+                {
+                    self.selected_au_plugins.len()
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    0
+                }
+            };
         let load = if selected_count == 0 {
             button("Load")
         } else {
@@ -1319,6 +1418,12 @@ impl PluginScanState {
                 .on_press(Message::LoadSelectedPlugins)
         };
 
+        #[cfg(target_os = "macos")]
+        let plugin_columns = row![lv2_column, clap_column, vst3_column, au_column]
+            .spacing(10)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        #[cfg(not(target_os = "macos"))]
         let plugin_columns = row![lv2_column, clap_column, vst3_column]
             .spacing(10)
             .width(Length::Fill)
