@@ -20,6 +20,10 @@ pub mod ffi {
 
     pub const NO_ERR: OSStatus = 0;
 
+    /// `kAudioComponentFlag_IsV3AudioUnit` (AudioComponent.h): the registry
+    /// component is an AUv3 extension rather than an in-process AUv2.
+    pub const COMPONENT_FLAG_IS_V3: u32 = 4;
+
     // Fourccs.
     pub const COMP_TYPE_EFFECT: u32 = u32::from_be_bytes(*b"aufx");
     pub const COMP_TYPE_MUSIC_EFFECT: u32 = u32::from_be_bytes(*b"aumf");

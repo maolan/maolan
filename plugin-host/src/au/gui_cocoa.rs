@@ -318,6 +318,41 @@ impl CocoaWindow {
         Ok(window)
     }
 
+    /// Create a window hosting an AUv3 unit's view controller, obtained via
+    /// `requestViewControllerWithCompletionHandler:`. `au_unit` is the raw
+    /// `AUAudioUnit *`. Unlike `create`, a unit without a view controller is
+    /// an error here (callers treat it like a missing Cocoa UI).
+    pub fn create_v3(
+        thread: &GuiThread,
+        title: &str,
+        au_unit: *mut c_void,
+        parent: *mut c_void,
+    ) -> Result<CocoaWindow, String> {
+        let title = title.to_string();
+        let au_unit = au_unit as usize;
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(usize, usize), String>>();
+        thread.dispatch(move || {
+            let result = create_v3_view_on_gui_thread(&title, au_unit as Id);
+            let _ = tx.send(result.map(|(w, v)| (w as usize, v as usize)));
+        })?;
+        let (window, view) = rx
+            .recv()
+            .map_err(|e| format!("GUI thread response lost: {e}"))??;
+        let window = CocoaWindow {
+            thread: GuiThread::start()?,
+            window: window as Id,
+            view: view as Id,
+        };
+        if !parent.is_null() {
+            let parent = parent as usize;
+            let view = window.view as usize;
+            window.thread.dispatch(move || {
+                msg1!(parent as Id, sel("addSubview:"), view);
+            })?;
+        }
+        Ok(window)
+    }
+
     pub fn show(&self) {
         let window = self.window as usize;
         let _ = self.thread.dispatch(move || {
@@ -445,5 +480,55 @@ fn create_view_on_gui_thread(
     let title_ns = ns_string(title);
     msg1!(window, sel("setTitle:"), title_ns as usize);
     msg1!(view, sel("setAutoresizingMask:"), 18usize); // width+height sizable
+    Ok((window, view))
+}
+
+/// Window construction shared with `create_view_on_gui_thread`; the caller
+/// supplies the content view.
+fn build_window(title: &str, view: Id) -> Result<Id, String> {
+    if view.is_null() {
+        return Err("AUv3 view controller returned a nil view".to_string());
+    }
+    // Plain init gives a zero-rect window; style and size are set below so
+    // no NSRect argument (32-byte struct) ever crosses the FFI boundary.
+    let window = {
+        let alloc = msg0!(class("NSWindow"), sel("alloc"));
+        msg0!(alloc, sel("init"))
+    };
+    if window.is_null() {
+        return Err("failed to create NSWindow".to_string());
+    }
+    // NSWindowStyleMask titled|closable|miniaturizable|resizable = 15.
+    msg1!(window, sel("setStyleMask:"), 15usize);
+    {
+        let f: unsafe extern "C" fn(Id, Sel, NSSize) =
+            unsafe { std::mem::transmute(msg_send_addr()) };
+        unsafe {
+            f(
+                window,
+                sel("setContentSize:"),
+                NSSize {
+                    width: 800.0,
+                    height: 600.0,
+                },
+            )
+        };
+    }
+    msg1!(window, sel("setContentView:"), view as usize);
+    let title_ns = ns_string(title);
+    msg1!(window, sel("setTitle:"), title_ns as usize);
+    msg1!(view, sel("setAutoresizingMask:"), 18usize); // width+height sizable
+    Ok(window)
+}
+
+fn create_v3_view_on_gui_thread(title: &str, au_unit: *mut c_void) -> Result<(Id, Id), String> {
+    // Runs on the GUI thread; the request itself may complete on an
+    // arbitrary queue, so the helper blocks until the handler fires.
+    let vc = unsafe { super::v3::request_view_controller(au_unit) }?;
+    if vc.is_null() {
+        return Err("AUv3 unit has no view controller".to_string());
+    }
+    let view = msg0!(vc, sel("view"));
+    let window = build_window(title, view)?;
     Ok((window, view))
 }

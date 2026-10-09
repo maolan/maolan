@@ -100,6 +100,10 @@ pub struct AuScanRecord {
     pub version: String,
     /// True for Apple-built components (manufacturer 'appl').
     pub is_apple: bool,
+    /// True for AUv3 app-extension components
+    /// (`kAudioComponentFlag_IsV3AudioUnit`).
+    #[serde(default)]
+    pub is_v3: bool,
     pub audio_inputs: u32,
     pub audio_outputs: u32,
 }
@@ -962,6 +966,7 @@ pub fn scan_au_plugins() -> Vec<AuScanRecord> {
                 category: category.to_string(),
                 version: version_string,
                 is_apple: full_desc.component_manufacturer == au_ffi::MANUFACTURER_APPLE,
+                is_v3: (full_desc.component_flags & au_ffi::COMPONENT_FLAG_IS_V3) != 0,
                 audio_inputs: 0,
                 audio_outputs: 0,
             });
