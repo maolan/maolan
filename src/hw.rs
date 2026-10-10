@@ -147,8 +147,21 @@ impl HW {
     ) -> Action {
         let device = Self::selected_device_id(selected_is_jack, selected_hw);
         let bits = Self::selected_bits(selected_is_jack, selection.chosen_bits);
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "freebsd", target_os = "windows"))]
         let io_latency_calibration = {
+            // WASAPI negotiates the period after the request is sent; records
+            // are keyed by the negotiated period (see maolan-calibrate), so
+            // predict it the same way the engine does.
+            #[cfg(target_os = "freebsd")]
+            let period_key = selection.period_frames.max(1).next_power_of_two();
+            #[cfg(target_os = "windows")]
+            let period_key = maolan_engine::audio_devices::effective_period_frames(
+                &device,
+                selection.period_frames,
+                selection.chosen_sample_rate_hz as u32,
+                selection.exclusive,
+            )
+            .unwrap_or(usize::MAX);
             let cfg = crate::config::Config::load().unwrap_or_default();
             cfg.oss_calibrations
                 .iter()
@@ -160,12 +173,12 @@ impl HW {
                         && c.exclusive == selection.exclusive
                         && c.output_device_id == device
                         && c.input_device_id == selection.input_device.as_deref().unwrap_or(&device)
-                        && c.period_frames == selection.period_frames.max(1).next_power_of_two()
+                        && c.period_frames == period_key
                         && c.sample_rate_hz == selection.chosen_sample_rate_hz as usize
                 })
                 .map(|c| (c.input_latency_frames, c.output_latency_frames))
         };
-        #[cfg(not(target_os = "freebsd"))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "windows")))]
         let io_latency_calibration = None;
 
         Action::OpenAudioDevice {

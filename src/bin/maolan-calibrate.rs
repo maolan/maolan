@@ -10,15 +10,16 @@
 //! the GUI for two seconds per selected device period. Saves each successful
 //! calibration before proceeding to the next period.
 
-#[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "linux"))]
 mod calibrator {
 
     use maolan_engine::{
         kind::Kind,
         message::{Action, Event, Message},
     };
+    #[cfg(unix)]
     use nix::sys::signal::{SigHandler, Signal, signal};
     use std::sync::Arc;
+    #[cfg(unix)]
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::{
@@ -27,14 +28,363 @@ mod calibrator {
     };
 
     /// Bridge between the C signal handler and the options' stop flag.
+    #[cfg(unix)]
     static STOP: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
+    #[cfg(unix)]
     extern "C" fn handle_signal(_sig: i32) {
         if let Some(flag) = STOP.get() {
             flag.store(true, Ordering::Relaxed);
         }
     }
 
+    /// WASAPI device enumeration and period-range probing. Mirrors the engine's
+    /// `hw/wasapi.rs` format negotiation so the periods offered here are the
+    /// periods the engine can actually open.
+    #[cfg(target_os = "windows")]
+    mod wasapi_probe {
+        use windows::Win32::Devices::Properties::DEVPKEY_Device_FriendlyName;
+        use windows::Win32::Media::Audio::{
+            AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_SHAREMODE_SHARED, DEVICE_STATE_ACTIVE, EDataFlow,
+            IAudioClient, IAudioClient3, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
+            WAVEFORMATEX, WAVEFORMATEXTENSIBLE, eConsole, eRender,
+        };
+        use windows::Win32::Media::Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+        use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
+        use windows::Win32::System::Com::{
+            CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+            CoUninitialize, STGM_READ,
+        };
+        use windows::Win32::System::Variant::VT_LPWSTR;
+        use windows::core::{Interface, PWSTR};
+
+        const REFTIME_PER_SEC: i64 = 10_000_000;
+        const WAVE_FORMAT_EXTENSIBLE_TAG: u16 = 0xFFFE;
+
+        /// Only true when this call actually initialized COM (S_OK); S_FALSE
+        /// and RPC_E_CHANGED_MODE mean the thread already had an apartment.
+        pub struct ComApartment {
+            initialized: bool,
+        }
+
+        impl ComApartment {
+            pub fn new() -> Option<Self> {
+                let code = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.0;
+                if code == 0 {
+                    Some(Self { initialized: true })
+                } else if code == 1 || code == -2_147_417_850 {
+                    Some(Self { initialized: false })
+                } else {
+                    None
+                }
+            }
+        }
+
+        impl Drop for ComApartment {
+            fn drop(&mut self) {
+                if self.initialized {
+                    unsafe {
+                        CoUninitialize();
+                    }
+                }
+            }
+        }
+
+        pub struct ListedDevice {
+            pub id: String,
+            pub channels: usize,
+            pub mix_rate: u32,
+        }
+
+        fn create_enumerator() -> Result<IMMDeviceEnumerator, String> {
+            unsafe {
+                CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                    .map_err(|e| format!("Failed to create WASAPI device enumerator: {e}"))
+            }
+        }
+
+        fn friendly_name(device: &IMMDevice) -> Option<String> {
+            // SAFETY: `device` is a live COM reference; the property store and
+            // the returned PROPVARIANT are released/cleared before returning.
+            let store = unsafe { device.OpenPropertyStore(STGM_READ) }.ok()?;
+            let mut value =
+                unsafe { store.GetValue(&DEVPKEY_Device_FriendlyName as *const _ as *const _) }
+                    .ok()?;
+            let variant = unsafe { &value.Anonymous.Anonymous };
+            if variant.vt != VT_LPWSTR {
+                unsafe {
+                    let _ = PropVariantClear(&mut value);
+                }
+                return None;
+            }
+            // SAFETY: the variant type was checked to be VT_LPWSTR.
+            let text = unsafe { pwstr_to_string(variant.Anonymous.pwszVal) };
+            unsafe {
+                let _ = PropVariantClear(&mut value);
+            }
+            Some(text)
+        }
+
+        fn pwstr_to_string(value: PWSTR) -> String {
+            if value.is_null() {
+                return String::new();
+            }
+            let mut len = 0usize;
+            // SAFETY: `value` points at a NUL-terminated wide string we only read.
+            unsafe {
+                while *value.0.add(len) != 0 {
+                    len += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(value.0, len))
+            }
+        }
+
+        /// Lists active endpoints for `flow` as `wasapi:<friendly name>` ids
+        /// with the channel count of the device's current mix format.
+        pub fn list_devices(flow: EDataFlow) -> Result<Vec<ListedDevice>, String> {
+            let enumerator = create_enumerator()?;
+            let collection = unsafe { enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE) }
+                .map_err(|e| format!("Failed to enumerate WASAPI endpoints: {e}"))?;
+            let count = unsafe { collection.GetCount() }
+                .map_err(|e| format!("Failed to count WASAPI endpoints: {e}"))?;
+            let mut out = Vec::new();
+            for idx in 0..count {
+                let Ok(device) = (unsafe { collection.Item(idx) }) else {
+                    continue;
+                };
+                let Some(name) = friendly_name(&device) else {
+                    continue;
+                };
+                let (channels, mix_rate) = device
+                    .activate_client()
+                    .and_then(|client| mix_format(&client))
+                    .unwrap_or((0, 0));
+                out.push(ListedDevice {
+                    id: format!("wasapi:{name}"),
+                    channels: channels as usize,
+                    mix_rate,
+                });
+            }
+            out.sort_by(|a, b| a.id.cmp(&b.id));
+            out.dedup_by(|a, b| a.id == b.id);
+            Ok(out)
+        }
+
+        trait DeviceExt {
+            fn activate_client(&self) -> Result<IAudioClient, String>;
+        }
+
+        impl DeviceExt for IMMDevice {
+            fn activate_client(&self) -> Result<IAudioClient, String> {
+                unsafe {
+                    self.Activate::<IAudioClient>(CLSCTX_ALL, None)
+                        .map_err(|e| format!("Failed to activate WASAPI client: {e}"))
+                }
+            }
+        }
+
+        /// Finds an endpoint by calibrate-style device id (`wasapi:<name>`,
+        /// plain friendly name, or `default`). Matches the engine's
+        /// exact-then-substring resolution in `hw/wasapi.rs`.
+        fn find_device(
+            enumerator: &IMMDeviceEnumerator,
+            flow: EDataFlow,
+            device_id: &str,
+        ) -> Result<IMMDevice, String> {
+            let requested = device_id.strip_prefix("wasapi:").unwrap_or(device_id);
+            if requested.is_empty() || requested == "default" {
+                return unsafe { enumerator.GetDefaultAudioEndpoint(flow, eConsole) }
+                    .map_err(|e| format!("No default WASAPI endpoint: {e}"));
+            }
+            let collection = unsafe { enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE) }
+                .map_err(|e| format!("Failed to enumerate WASAPI endpoints: {e}"))?;
+            let count = unsafe { collection.GetCount() }.unwrap_or(0);
+            let mut substring_match = None;
+            for idx in 0..count {
+                let Ok(device) = (unsafe { collection.Item(idx) }) else {
+                    continue;
+                };
+                let Some(name) = friendly_name(&device) else {
+                    continue;
+                };
+                if name == requested {
+                    return Ok(device);
+                }
+                if substring_match.is_none() && name.contains(requested) {
+                    substring_match = Some(device);
+                }
+            }
+            substring_match.ok_or_else(|| {
+                format!("WASAPI endpoint {device_id:?} not found (see --list-devices)")
+            })
+        }
+
+        /// (channels, sample rate) of the device's current mix format — the
+        /// channel count the engine will stream with.
+        fn mix_format(client: &IAudioClient) -> Result<(u16, u32), String> {
+            // SAFETY: `client` is a live COM reference; GetMixFormat returns a
+            // CoTaskMem-allocated WAVEFORMATEX which we free below.
+            let ptr = unsafe { client.GetMixFormat() }
+                .map_err(|e| format!("Failed to query WASAPI mix format: {e}"))?;
+            if ptr.is_null() {
+                return Err("WASAPI returned a null mix format".to_string());
+            }
+            // SAFETY: non-null pointer owned by us until freed.
+            let mix = unsafe { *ptr };
+            // SAFETY: `ptr` came from GetMixFormat and is freed exactly once here.
+            unsafe {
+                CoTaskMemFree(Some(ptr.cast()));
+            }
+            Ok((mix.nChannels.max(1), mix.nSamplesPerSec))
+        }
+
+        /// The engine's stream format: float32 WAVEFORMATEXTENSIBLE at
+        /// `rate` with the mix format's channel count.
+        fn float_mix_format(channels: u16, rate: u32) -> WAVEFORMATEXTENSIBLE {
+            let channels = u32::from(channels).max(1);
+            let block_align = channels.saturating_mul(4) as u16;
+            let mut format = WAVEFORMATEXTENSIBLE::default();
+            format.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE_TAG;
+            format.Format.nChannels = channels as u16;
+            format.Format.nSamplesPerSec = rate;
+            format.Format.nAvgBytesPerSec = rate.saturating_mul(u32::from(block_align));
+            format.Format.nBlockAlign = block_align;
+            format.Format.wBitsPerSample = 32;
+            format.Format.cbSize = (std::mem::size_of::<WAVEFORMATEXTENSIBLE>()
+                - std::mem::size_of::<WAVEFORMATEX>()) as u16;
+            format.Samples.wValidBitsPerSample = 32;
+            format.dwChannelMask = if channels <= 32 {
+                (1_u32 << channels) - 1
+            } else {
+                0
+            };
+            format.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+            format
+        }
+
+        fn is_format_supported(client: &IAudioClient, format: &WAVEFORMATEXTENSIBLE) -> bool {
+            let mut closest: *mut WAVEFORMATEX = std::ptr::null_mut();
+            // SAFETY: `format` is a plain stack struct valid for the call;
+            // `closest` receives an optional CoTaskMem allocation freed below.
+            let supported = unsafe {
+                client.IsFormatSupported(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    &format.Format,
+                    Some(&mut closest as *mut *mut WAVEFORMATEX),
+                )
+            };
+            if !closest.is_null() {
+                // SAFETY: non-null `closest` was allocated by IsFormatSupported.
+                unsafe {
+                    CoTaskMemFree(Some(closest.cast()));
+                }
+            }
+            supported.is_ok()
+        }
+
+        /// (default, fundamental, min, max) engine periods in frames for the
+        /// float32 format at `rate`, via `IAudioClient3`. Falls back to the
+        /// shared-mode device period (both in frames).
+        pub fn period_range(
+            client: &IAudioClient,
+            format: &WAVEFORMATEXTENSIBLE,
+            rate: u32,
+        ) -> Result<(u32, u32, u32, u32), String> {
+            let client3 = client
+                .cast::<IAudioClient3>()
+                .map_err(|_| "WASAPI shared low-latency mode requires IAudioClient3".to_string())?;
+            let (mut default, mut fundamental, mut min, mut max) = (0, 0, 0, 0);
+            unsafe {
+                client3
+                    .GetSharedModeEnginePeriod(
+                        &format.Format,
+                        &mut default,
+                        &mut fundamental,
+                        &mut min,
+                        &mut max,
+                    )
+                    .map_err(|e| format!("Failed to query WASAPI engine periods: {e}"))?;
+            }
+            if min == 0 || max < min {
+                // Very old stacks lack IAudioClient3 period granularity; use
+                // the shared device period as [min, max].
+                let (mut default_hns, mut min_hns) = (0_i64, 0_i64);
+                unsafe {
+                    client
+                        .GetDevicePeriod(Some(&mut default_hns), Some(&mut min_hns))
+                        .map_err(|e| format!("Failed to query WASAPI device period: {e}"))?;
+                }
+                let default = hns_to_frames(default_hns, rate).max(1);
+                let min = hns_to_frames(min_hns, rate).max(1);
+                return Ok((default, 0, min, default.max(min)));
+            }
+            Ok((default, fundamental, min, max))
+        }
+
+        fn hns_to_frames(hns: i64, rate: u32) -> u32 {
+            ((hns * i64::from(rate) + REFTIME_PER_SEC - 1) / REFTIME_PER_SEC) as u32
+        }
+
+        pub struct ProbedDevice {
+            pub channels: usize,
+            pub default_period: u32,
+            pub fundamental_period: u32,
+            pub min_period: u32,
+            pub max_period: u32,
+        }
+
+        /// Resolves `device_id` on `flow` and probes the period range the
+        /// engine would negotiate for it at `rate`.
+        pub fn probe_device(
+            device_id: &str,
+            flow: EDataFlow,
+            rate: u32,
+        ) -> Result<ProbedDevice, String> {
+            let enumerator = create_enumerator()?;
+            let device = find_device(&enumerator, flow, device_id)?;
+            let client = device.activate_client()?;
+            let (channels, _mix_rate) = mix_format(&client)?;
+            let format = float_mix_format(channels, rate);
+            if !is_format_supported(&client, &format) {
+                return Err(format!(
+                    "WASAPI endpoint {device_id:?} does not support 32-bit float at {rate} Hz"
+                ));
+            }
+            let (default_period, fundamental_period, min_period, max_period) =
+                period_range(&client, &format, rate)?;
+            Ok(ProbedDevice {
+                channels: u32::from(channels) as usize,
+                default_period,
+                fundamental_period,
+                min_period,
+                max_period,
+            })
+        }
+
+        fn exclusive_is_supported(client: &IAudioClient, format: &WAVEFORMATEXTENSIBLE) -> bool {
+            // Exclusive IsFormatSupported takes no "closest" output pointer.
+            unsafe { client.IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &format.Format, None) }
+                .is_ok()
+        }
+
+        /// Whether the endpoint accepts the engine's float32 stream in
+        /// exclusive mode, trying the positional channel mask first and
+        /// DIRECTOUT second (mirrors the engine's `build_float_mix_format`).
+        pub fn exclusive_format_supported(device_id: &str, rate: u32) -> Result<bool, String> {
+            let enumerator = create_enumerator()?;
+            let device = find_device(&enumerator, eRender, device_id)?;
+            let client = device.activate_client()?;
+            let (channels, _) = mix_format(&client)?;
+            let mut format = float_mix_format(channels, rate);
+            if exclusive_is_supported(&client, &format) {
+                return Ok(true);
+            }
+            format.dwChannelMask = 0;
+            Ok(exclusive_is_supported(&client, &format))
+        }
+    }
+
+    #[derive(Clone)]
     struct Args {
         input_device: String,
         input_channel: usize,
@@ -60,7 +410,9 @@ mod calibrator {
         let mut nperiods = 2;
         let mut periods = None;
         let mut sync_mode = false;
-        let mut exclusive = false;
+        // Exclusive mode is the default: it keeps other applications out of
+        // the device so the measurement reflects only the hardware path.
+        let mut exclusive = true;
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
             let mut value =
@@ -89,6 +441,7 @@ mod calibrator {
                 "--periods" => periods = Some(parse_periods(&value("--periods")?)?),
                 "--sync-mode" => sync_mode = true,
                 "--exclusive" => exclusive = true,
+                "--shared" => exclusive = false,
                 "--rate" => {
                     rate = value("--rate")?
                         .parse()
@@ -104,7 +457,9 @@ mod calibrator {
                         "usage: maolan-calibrate --input-device <id> --input-channel <n> \
                      --output-device <path> --output-channel <n> [--rate <hz>] \
                      [--gain <f>] [--bits <8|16|24|32>] [--nperiods <n>] \
-                     [--periods <n>[,<n>...]] [--sync-mode] [--exclusive]\n\
+                     [--periods <n>[,<n>...]] [--sync-mode] [--exclusive|--shared]\n\
+                     (exclusive mode is the default; --shared allows other\n\
+                     applications to use the device during calibration)\n\
                      maolan-calibrate --list-devices"
                     );
                     std::process::exit(0);
@@ -367,7 +722,7 @@ mod calibrator {
         args: &Args,
         period: usize,
         stop: &AtomicBool,
-    ) -> Result<(usize, usize), String> {
+    ) -> Result<(usize, usize, usize), String> {
         request(
             client,
             rx,
@@ -402,6 +757,7 @@ mod calibrator {
             },
         )
         .await?;
+        let mut negotiated_period = period;
         if let Action::OpenAudioDevice {
             input_channels,
             output_channels,
@@ -421,10 +777,19 @@ mod calibrator {
                     "channel out of range: device has {input_channels} inputs and {output_channels} outputs"
                 ));
             }
+            negotiated_period = actual_period_frames;
             if actual_period_frames != period {
+                // WASAPI clamps and aligns the request to the device's engine
+                // period range; the record is keyed by the negotiated size so
+                // it matches whatever period the DAW requests later.
+                #[cfg(not(target_os = "windows"))]
                 return Err(format!(
                     "device negotiated {actual_period_frames} frames for requested period {period}; skipping to avoid saving a calibration under the wrong size"
                 ));
+                #[cfg(target_os = "windows")]
+                println!(
+                    "  note: device negotiated {actual_period_frames} frames for requested period {period}"
+                );
             }
             println!(
                 "Measuring period {period} (actual {actual_period_frames}) frames: output {} -> input {}",
@@ -505,7 +870,7 @@ mod calibrator {
             match rx.recv().await {
                 Some(Message::Event(Event::IoDelayCalibrated { measurement_id: 1, frames, playback_lead, record_back })) => {
                     println!("  {frames} frames roundtrip: play ahead {playback_lead}, record back {record_back}");
-                    return Ok((record_back, playback_lead));
+                    return Ok((negotiated_period, record_back, playback_lead));
                 }
                 Some(Message::Response(Err(error))) => {
                     let report = last_report.map_or_else(
@@ -517,7 +882,7 @@ mod calibrator {
                     );
                     let xruns = xrun_count.map_or_else(
                         || "xrun count unavailable".to_string(),
-                        |count| format!("{count} ALSA xruns"),
+                        |count| format!("{count} xruns"),
                     );
                     return Err(format!("{error} ({report}; {xruns})"));
                 }
@@ -820,6 +1185,105 @@ mod calibrator {
         Ok(periods)
     }
 
+    #[cfg(target_os = "windows")]
+    fn list_devices() {
+        use windows::Win32::Media::Audio::{eCapture, eRender};
+        let Some(_com) = wasapi_probe::ComApartment::new() else {
+            eprintln!("maolan-calibrate: cannot initialize COM");
+            return;
+        };
+        println!("Output devices:");
+        match wasapi_probe::list_devices(eRender) {
+            Ok(devices) => {
+                for device in devices {
+                    println!(
+                        "  {}  channels={} mix_rate={}",
+                        device.id, device.channels, device.mix_rate
+                    );
+                }
+            }
+            Err(error) => eprintln!("maolan-calibrate: {error}"),
+        }
+        println!("Input devices:");
+        match wasapi_probe::list_devices(eCapture) {
+            Ok(devices) => {
+                for device in devices {
+                    println!(
+                        "  {}  channels={} mix_rate={}",
+                        device.id, device.channels, device.mix_rate
+                    );
+                }
+            }
+            Err(error) => eprintln!("maolan-calibrate: {error}"),
+        }
+        println!(
+            "Pass the id (or a substring of it) to --input-device / --output-device.\n\
+             The channel count is the device's current Windows format; loopback inputs\n\
+             on higher-numbered channels require setting that format to enough channels."
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    fn supported_periods(args: &Args) -> Result<Vec<usize>, String> {
+        use windows::Win32::Media::Audio::{eCapture, eRender};
+
+        let _com = wasapi_probe::ComApartment::new().ok_or("cannot initialize COM")?;
+        for (flow, device_id, direction) in [
+            (eRender, args.output_device.as_str(), "output"),
+            (eCapture, args.input_device.as_str(), "input"),
+        ] {
+            let probed = wasapi_probe::probe_device(device_id, flow, args.rate as u32)?;
+            if probed.channels < args.input_channel.max(args.output_channel) {
+                return Err(format!(
+                    "{direction} device {device_id:?} exposes {} channels, but channel {} was requested; \
+                     raise the channel count in the device's Windows format",
+                    probed.channels,
+                    args.input_channel.max(args.output_channel)
+                ));
+            }
+            println!(
+                "WASAPI {direction} {device_id:?}: {} channels, engine periods {}..{} frames \
+                 (default {}, fundamental {})",
+                probed.channels,
+                probed.min_period,
+                probed.max_period,
+                probed.default_period,
+                probed.fundamental_period
+            );
+        }
+        // Candidate requests are powers of two; the engine negotiates each to
+        // an effective period (round up, clamp to the engine range, align to
+        // the fundamental), and records are saved under the negotiated size.
+        // Keep the smallest request per distinct effective period.
+        let mut by_effective: Vec<(usize, usize)> = Vec::new();
+        let mut request = 64_usize;
+        loop {
+            if let Ok(effective) = maolan_engine::audio_devices::effective_period_frames(
+                &args.output_device,
+                request,
+                args.rate as u32,
+                args.exclusive,
+            ) {
+                match by_effective.iter_mut().find(|(eff, _)| *eff == effective) {
+                    Some((_, best)) => *best = (*best).min(request),
+                    None => by_effective.push((effective, request)),
+                }
+            }
+            if request >= 8192 {
+                break;
+            }
+            request *= 2;
+        }
+        if by_effective.is_empty() {
+            return Err("no measurable engine periods for this device".into());
+        }
+        by_effective.sort_unstable();
+        Ok(by_effective
+            .into_iter()
+            .map(|(_, request)| request)
+            .collect())
+    }
+
     async fn calibrate_in_child(
         args: &Args,
         period: usize,
@@ -850,8 +1314,12 @@ mod calibrator {
         if args.sync_mode {
             command.arg("--sync-mode");
         }
+        // Children re-parse their arguments, so the mode must be passed
+        // explicitly in both directions to survive the new exclusive default.
         if args.exclusive {
             command.arg("--exclusive");
+        } else {
+            command.arg("--shared");
         }
         let mut child = command
             .kill_on_drop(true)
@@ -867,12 +1335,15 @@ mod calibrator {
                         // SIGTERM also covers a signal delivered only to the
                         // parent. The child handles it through its normal stop
                         // flag, finishing device shutdown before we continue.
+                        #[cfg(unix)]
                         if let Some(pid) = child.id() {
                             let _ = nix::sys::signal::kill(
                                 nix::unistd::Pid::from_raw(pid as i32),
                                 Signal::SIGTERM,
                             );
                         }
+                        #[cfg(not(unix))]
+                        let _ = child.kill().await;
                         stopping = true;
                     }
                 }
@@ -882,6 +1353,57 @@ mod calibrator {
     }
 
     async fn calibrate(args: &Args, stop: &AtomicBool) -> Result<(), String> {
+        // Probe once up front so a device that rejects exclusive streams
+        // (common for multichannel USB interfaces) doesn't waste a whole
+        // sweep discovering it one period at a time.
+        #[cfg(target_os = "windows")]
+        let args = {
+            let mut args = args.clone();
+            if args.exclusive {
+                // A failed COM init must not be mistaken for "exclusive
+                // unsupported"; default to keeping exclusive and let the
+                // sweep's fallback handle it.
+                let probe = wasapi_probe::ComApartment::new()
+                    .map(|_com| {
+                        wasapi_probe::exclusive_format_supported(
+                            &args.output_device,
+                            args.rate as u32,
+                        )
+                    })
+                    .unwrap_or(Ok(true));
+                if matches!(probe, Ok(false)) {
+                    eprintln!(
+                        "maolan-calibrate: {} rejected exclusive mode; using shared mode",
+                        args.output_device
+                    );
+                    args.exclusive = false;
+                }
+            }
+            args
+        };
+        #[cfg(target_os = "windows")]
+        let args = &args;
+        match calibrate_sweep(args, stop).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // Multichannel USB interfaces commonly reject WASAPI/OSS
+                // exclusive streams outright; rather than leaving the user
+                // with nothing, retry the whole sweep in shared mode.
+                if !args.exclusive || stop.load(Ordering::Relaxed) {
+                    return Err(error);
+                }
+                eprintln!("maolan-calibrate: {error}");
+                eprintln!(
+                    "maolan-calibrate: the device rejected exclusive mode; retrying in shared mode"
+                );
+                let mut shared_args = args.clone();
+                shared_args.exclusive = false;
+                calibrate_sweep(&shared_args, stop).await
+            }
+        }
+    }
+
+    async fn calibrate_sweep(args: &Args, stop: &AtomicBool) -> Result<(), String> {
         let periods = match &args.periods {
             Some(periods) => periods.clone(),
             None => supported_periods(args)?,
@@ -912,13 +1434,13 @@ mod calibrator {
             let result = measure_period(&client, &mut rx, args, period, stop).await;
             shutdown_engine(&client, &mut rx, handle).await?;
             match result {
-                Ok((input, output)) => {
-                    if let Err(error) = save_calibration(args, period, input, output) {
+                Ok((negotiated, input, output)) => {
+                    if let Err(error) = save_calibration(args, negotiated, input, output) {
                         failure = Some(error);
                         break;
                     }
                     saved += 1;
-                    println!("  calibration for {period} frames saved");
+                    println!("  calibration for {negotiated} frames saved");
                 }
                 Err(error) => eprintln!("maolan-calibrate: period {period}: {error}"),
             }
@@ -947,11 +1469,27 @@ mod calibrator {
             }
         };
         let stop = Arc::new(AtomicBool::new(false));
-        let _ = STOP.set(stop.clone());
-        for sig in [Signal::SIGINT, Signal::SIGTERM] {
-            if let Err(error) = unsafe { signal(sig, SigHandler::Handler(handle_signal)) } {
-                eprintln!("maolan-calibrate: cannot install {sig} handler: {error}");
+        #[cfg(unix)]
+        {
+            let _ = STOP.set(stop.clone());
+            for sig in [Signal::SIGINT, Signal::SIGTERM] {
+                if let Err(error) = unsafe { signal(sig, SigHandler::Handler(handle_signal)) } {
+                    eprintln!("maolan-calibrate: cannot install {sig} handler: {error}");
+                }
             }
+        }
+        #[cfg(not(unix))]
+        {
+            let ctrl_c_stop = stop.clone();
+            tokio::spawn(async move {
+                let _ = tokio::signal::ctrl_c().await;
+                ctrl_c_stop.store(true, Ordering::Relaxed);
+            });
+        }
+        #[cfg(target_os = "windows")]
+        if args.bits != 32 {
+            eprintln!("maolan-calibrate: WASAPI always streams 32-bit float; --bits must be 32");
+            std::process::exit(2);
         }
         if let Err(error) = calibrate(&args, &stop).await {
             eprintln!("maolan-calibrate: {error}");
@@ -1029,14 +1567,7 @@ output_latency_frames = 280
     }
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "linux"))]
 #[tokio::main]
 async fn main() {
     calibrator::run().await;
-}
-
-#[cfg(not(any(target_os = "freebsd", target_os = "macos", target_os = "linux")))]
-fn main() {
-    eprintln!("maolan-calibrate is available only on Linux, FreeBSD, and macOS");
-    std::process::exit(1);
 }
