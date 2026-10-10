@@ -9720,6 +9720,19 @@ mod tests {
     }
 
     #[test]
+    fn escape_pressed_closes_audio_editor() {
+        let mut app = Maolan::default();
+        app.state.write().expect("state lock poisoned").view = crate::state::View::AudioEditor;
+
+        let _ = app.update(Message::EscapePressed);
+
+        assert!(matches!(
+            app.state.read().expect("state lock poisoned").view,
+            crate::state::View::Workspace
+        ));
+    }
+
+    #[test]
     fn add_track_submit_rejects_duplicate_name() {
         let mut app = Maolan::default();
         app.state
