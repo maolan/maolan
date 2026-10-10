@@ -23,6 +23,14 @@ impl Maolan {
                         .write()
                         .expect("state lock poisoned")
                         .session_slot_context_menu = None;
+                } else if matches!(
+                    self.state.read().expect("state lock poisoned").view,
+                    crate::state::View::AudioEditor
+                ) && !maolan_editor::app::has_open_dialog(&self.audio_editor)
+                {
+                    return self.handle_audio_editor_message(Message::AudioEditor(
+                        maolan_editor::app::Message::Close,
+                    ));
                 }
             }
             Message::Cancel => {

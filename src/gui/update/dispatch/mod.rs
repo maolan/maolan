@@ -1460,7 +1460,10 @@ impl Maolan {
             | Message::AudioEditor(maolan_editor::app::Message::TogglePlayback)
             | Message::AudioEditor(maolan_editor::app::Message::Stop)
             | Message::AudioEditor(_)
-            | Message::OpenAudioEditor { .. } => return self.handle_audio_editor_message(message),
+            | Message::OpenAudioEditor { .. }
+            | Message::AudioEditorBufferLoaded { .. } => {
+                return self.handle_audio_editor_message(message);
+            }
             Message::ModulatorAdd
             | Message::ModulatorRemove(_)
             | Message::ModulatorSelect(_)
