@@ -1674,23 +1674,47 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
     } else {
         options.bits
     };
-    #[cfg(target_os = "freebsd")]
-    let io_latency_calibration = config
-        .oss_calibrations
-        .iter()
-        .find(|c| {
-            c.measurement_path == "engine_io_delay_v1"
-                && c.bits == bits
-                && c.nperiods == options.nperiods
-                && c.sync_mode == options.sync_mode
-                && c.exclusive == options.exclusive
-                && c.output_device_id == device
-                && c.input_device_id == input_device.as_deref().unwrap_or(&device)
-                && c.period_frames == options.period_frames.max(1).next_power_of_two()
-                && c.sample_rate_hz == options.sample_rate_hz as usize
-        })
-        .map(|c| (c.input_latency_frames, c.output_latency_frames));
-    #[cfg(not(target_os = "freebsd"))]
+    #[cfg(any(target_os = "freebsd", target_os = "windows"))]
+    let io_latency_calibration = {
+        // WASAPI negotiates the period after the request is sent; records are
+        // keyed by the negotiated period (see maolan-calibrate), so predict it
+        // the same way the engine does.
+        #[cfg(target_os = "freebsd")]
+        let period_key = options.period_frames.max(1).next_power_of_two();
+        #[cfg(target_os = "windows")]
+        let period_key = maolan_engine::audio_devices::effective_period_frames(
+            &device,
+            options.period_frames,
+            options.sample_rate_hz as u32,
+            options.exclusive,
+        )
+        .unwrap_or(usize::MAX);
+        let calibration = config
+            .oss_calibrations
+            .iter()
+            .find(|c| {
+                c.measurement_path == "engine_io_delay_v1"
+                    && c.bits == bits
+                    && c.nperiods == options.nperiods
+                    && c.sync_mode == options.sync_mode
+                    && c.exclusive == options.exclusive
+                    && c.output_device_id == device
+                    && c.input_device_id == input_device.as_deref().unwrap_or(&device)
+                    && c.period_frames == period_key
+                    && c.sample_rate_hz == options.sample_rate_hz as usize
+            })
+            .map(|c| (c.input_latency_frames, c.output_latency_frames));
+        if let Some((input, output)) = calibration {
+            tracing::info!(
+                input_latency_frames = input,
+                output_latency_frames = output,
+                period_frames = period_key,
+                "using saved IO latency calibration"
+            );
+        }
+        calibration
+    };
+    #[cfg(not(any(target_os = "freebsd", target_os = "windows")))]
     let io_latency_calibration = None;
     Ok(Action::OpenAudioDevice {
         device,
