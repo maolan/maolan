@@ -5313,7 +5313,7 @@ dependencies = [
 
 [[package]]
 name = "maolan"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "alsa",
  "chrono",
@@ -5322,11 +5322,13 @@ dependencies = [
  "ebur128",
  "hf-hub",
  "i24",
+ "libc",
  "maolan-editor",
  "maolan-engine",
  "maolan-generate",
  "maolan-pitch",
  "maolan-plugin-host",
+ "maolan-plugin-protocol",
  "maolan-widgets 0.0.39",
  "midly",
  "mixosc 0.0.16",
@@ -5479,7 +5481,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-host"
-version = "0.0.9"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f88a02772867cb4862eb95b9b9a946084b7031cd765e8ea63de34cf6661e0202"
 dependencies = [
  "arc-swap",
  "crossbeam-channel",
