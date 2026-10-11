@@ -5329,7 +5329,7 @@ dependencies = [
  "maolan-plugin-host",
  "maolan-widgets 0.0.39",
  "midly",
- "mixosc 0.0.16",
+ "mixosc",
  "nix 0.31.3",
  "pitch-detection",
  "ratatui",
@@ -5367,9 +5367,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.3.24"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1220f175c1366044a52b02575709450d0a8baf050033f71be7af8ddf87bfcc0"
+checksum = "4d0917448e03f47265125898d1972815f8fc16c28783635f024b7c7581275839"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5382,11 +5382,11 @@ dependencies = [
  "libc",
  "maolan-plugin-protocol",
  "midly",
- "mixosc 0.0.15",
+ "mixosc",
  "nix 0.31.3",
  "num_cpus",
  "nvtree",
- "oxideav-basic",
+ "oxideav-basic 0.0.11",
  "oxideav-core",
  "oxideav-flac",
  "oxideav-mp3",
@@ -5420,7 +5420,7 @@ dependencies = [
  "hf-hub",
  "maolan-llama",
  "midly",
- "oxideav-basic",
+ "oxideav-basic 0.0.10",
  "oxideav-core",
  "rand 0.10.3",
  "rayon",
@@ -5682,16 +5682,6 @@ dependencies = [
  "log",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "mixosc"
-version = "0.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d947a4f2da930e588258b3174f8b023cd3d843a502ce9df17782bce898241fa3"
-dependencies = [
- "maolan-widgets 0.0.36",
- "tokio",
 ]
 
 [[package]]
@@ -6692,6 +6682,15 @@ name = "oxideav-basic"
 version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abf7822b44ec266120e4b8e6e08945cf2cbd3a0d290a1402d4b4ebd156ed2a17"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-basic"
+version = "0.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7969c668656223b44c2950e4d736fd870d70d3880bab6e5d27c92c3226fcbdc"
 dependencies = [
  "oxideav-core",
 ]
