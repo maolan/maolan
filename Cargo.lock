@@ -5352,10 +5352,11 @@ dependencies = [
 
 [[package]]
 name = "maolan-editor"
-version = "0.0.12"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c030bb91a7d4a3d7b1f3be41157db274507195423a87e91258f03e6347bbd46"
+checksum = "bcaa195b869780586f557aed8378bf0e5b388d3b7ae6f7df67e483eaaec6fd85"
 dependencies = [
+ "maolan-engine",
  "maolan-widgets 0.0.39",
  "rfd",
  "rubato",
