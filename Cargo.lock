@@ -3172,6 +3172,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fearless_simd"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3296eb97d869113eaf148a6bdf01884e90b3828ad7ae2340b0f93362fc158611"
+
+[[package]]
+name = "fearless_simd_macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e91d94c6885390b81782d7ee60fd6583b33907333a8b340de25ccf468353315"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.7",
+]
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5352,9 +5369,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-editor"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcaa195b869780586f557aed8378bf0e5b388d3b7ae6f7df67e483eaaec6fd85"
+checksum = "758d1053b134d287ebec8ef1ea06551bf5a965b5ca5e106e85daa553c9caf6ea"
 dependencies = [
  "maolan-engine",
  "maolan-widgets 0.0.39",
@@ -5368,9 +5385,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d0917448e03f47265125898d1972815f8fc16c28783635f024b7c7581275839"
+checksum = "25893c718bf4869c77ab52684bb5d2918b8cbef74c34f7b0838370094f057db8"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5379,6 +5396,8 @@ dependencies = [
  "basedrop",
  "block",
  "byteorder",
+ "fearless_simd",
+ "fearless_simd_macros",
  "jack",
  "libc",
  "maolan-plugin-protocol",
@@ -5402,7 +5421,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "wide",
  "windows 0.62.2",
 ]
 
