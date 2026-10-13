@@ -1,5 +1,67 @@
 use super::*;
 
+fn next_connection_track_position(data: &crate::state::StateData, canvas_width: f32) -> Point {
+    const NODE_SIZE: f32 = 140.0;
+    const GAP: f32 = 40.0;
+    const MARGIN: f32 = 80.0;
+
+    let columns = ((canvas_width - MARGIN * 2.0) / (NODE_SIZE + GAP))
+        .floor()
+        .max(1.0) as usize;
+    for index in 0.. {
+        let candidate = Point::new(
+            MARGIN + (index % columns) as f32 * (NODE_SIZE + GAP),
+            MARGIN + (index / columns) as f32 * (NODE_SIZE + GAP),
+        );
+        let overlaps_track = data.tracks.iter().any(|track| {
+            let dx = (track.position.x - candidate.x).abs();
+            let dy = (track.position.y - candidate.y).abs();
+            dx < NODE_SIZE + GAP && dy < NODE_SIZE + GAP
+        });
+        let overlaps_midi_hardware = data
+            .opened_midi_in_hw
+            .iter()
+            .enumerate()
+            .map(|(index, device)| (index, device, true))
+            .chain(
+                data.opened_midi_out_hw
+                    .iter()
+                    .enumerate()
+                    .map(|(index, device)| (index, device, false)),
+            )
+            .any(|(index, device, is_input)| {
+                let label = data
+                    .midi_hw_labels
+                    .get(device)
+                    .map(String::as_str)
+                    .unwrap_or_else(|| device.rsplit('/').next().unwrap_or(device));
+                let width = (label.chars().count() as f32 * 7.2 + 13.0).clamp(90.0, 360.0);
+                let height = 24.0;
+                let gap = 6.0;
+                let custom_position = if is_input {
+                    data.midi_hw_in_positions.get(device).copied()
+                } else {
+                    data.midi_hw_out_positions.get(device).copied()
+                };
+                let default_x = if is_input {
+                    80.0
+                } else {
+                    canvas_width - 70.0 - 10.0 - width
+                };
+                let default_y = 10.0 + index as f32 * (height + gap);
+                let pos = custom_position.unwrap_or(Point::new(default_x, default_y));
+                candidate.x < pos.x + width + GAP
+                    && candidate.x + NODE_SIZE + GAP > pos.x
+                    && candidate.y < pos.y + height + GAP
+                    && candidate.y + NODE_SIZE + GAP > pos.y
+            });
+        if !overlaps_track && !overlaps_midi_hardware {
+            return candidate;
+        }
+    }
+    unreachable!("an unoccupied track node position is always available")
+}
+
 impl Maolan {
     pub(super) fn handle_response_message(&mut self, message: Message) -> Task<Message> {
         match message {
@@ -156,6 +218,8 @@ impl Maolan {
                             mixosc_addr,
                         } => {
                             let mut state = self.state.write().expect("state lock poisoned");
+                            let is_new_track =
+                                !state.tracks.iter().any(|track| track.name == *name);
                             let mut track = Track::new(
                                 name.clone(),
                                 0.0,
@@ -166,6 +230,10 @@ impl Maolan {
                             );
                             track.is_folder = *folder;
                             track.mixosc_addr = mixosc_addr.clone();
+                            if is_new_track {
+                                track.position =
+                                    next_connection_track_position(&state, self.size.width);
+                            }
                             if let Some((lanes, mode)) = state.pending_track_automation.remove(name)
                             {
                                 track.automation_lanes = lanes;
