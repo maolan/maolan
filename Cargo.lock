@@ -5385,9 +5385,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25893c718bf4869c77ab52684bb5d2918b8cbef74c34f7b0838370094f057db8"
+checksum = "a6a8d1147691163723636b167ef744b2246feef1144076882e0e33017f393338"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5498,9 +5498,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-host"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb0c0dc63114237a24af44c0b1454aa99445e0821a0307ba52f52b40c51fd968"
+checksum = "957e02bb56436010f38889e2b155742fc9a83a46de898030b25961625ad0631c"
 dependencies = [
  "arc-swap",
  "crossbeam-channel",

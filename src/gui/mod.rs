@@ -2903,38 +2903,13 @@ impl Maolan {
 
         let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
 
-        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-        unsafe {
-            if channels == 2 && std::arch::is_x86_feature_detected!("sse") {
-                channel_buffers[0].resize(frames, 0.0);
-                channel_buffers[1].resize(frames, 0.0);
-                let n = frames / 4;
-                for i in 0..n {
-                    let src = std::arch::x86_64::_mm_loadu_ps(samples.as_ptr().add(i * 8));
-                    let src2 = std::arch::x86_64::_mm_loadu_ps(samples.as_ptr().add(i * 8 + 4));
-                    let left = std::arch::x86_64::_mm_shuffle_ps(src, src2, 0b10_00_10_00);
-                    let right = std::arch::x86_64::_mm_shuffle_ps(src, src2, 0b11_01_11_01);
-                    std::arch::x86_64::_mm_storeu_ps(
-                        channel_buffers[0].as_mut_ptr().add(i * 4),
-                        left,
-                    );
-                    std::arch::x86_64::_mm_storeu_ps(
-                        channel_buffers[1].as_mut_ptr().add(i * 4),
-                        right,
-                    );
-                }
-                for i in n * 4..frames {
-                    channel_buffers[0][i] = samples[i * 2];
-                    channel_buffers[1][i] = samples[i * 2 + 1];
-                }
-            } else {
-                for (i, &sample) in samples.iter().enumerate() {
-                    channel_buffers[i % channels].push(sample);
-                }
-            }
-        }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-        {
+        if channels == 2 {
+            channel_buffers[0].resize(frames, 0.0);
+            channel_buffers[1].resize(frames, 0.0);
+            let (first, rest) = channel_buffers.split_at_mut(1);
+            let (second, _) = rest.split_at_mut(1);
+            maolan_engine::simd::deinterleave_stereo(&mut first[0], &mut second[0], samples);
+        } else {
             for (i, &sample) in samples.iter().enumerate() {
                 channel_buffers[i % channels].push(sample);
             }
@@ -4400,8 +4375,16 @@ impl Maolan {
                         && valid_ports[0] == (0, 1)
                         && valid_ports[1] == (1, 0);
                     if is_stereo_swap {
+                        // Hand-rolled SSE rather than `fearless_simd`: the
+                        // adjacent-pair lane shuffle (`0xB1`) has no portable
+                        // equivalent in fearless_simd 1.x, and expressing it
+                        // through deinterleave/interleave would need scratch
+                        // buffers in this accumulation hot path.
                         #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
                         unsafe {
+                            #[cfg(target_arch = "x86")]
+                            use std::arch::x86::*;
+                            #[cfg(target_arch = "x86_64")]
                             use std::arch::x86_64::*;
                             let mut frame = 0;
                             let end = total_length.saturating_sub(3);
