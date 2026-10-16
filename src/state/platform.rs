@@ -100,6 +100,10 @@ fn discover_windows_devices(direction: WindowsDeviceDirection) -> Vec<String> {
             out.push(format!("wasapi:{name}"));
         }
     }
+    // ASIO drivers are full duplex; list them for both directions.
+    for device in maolan_engine::audio_devices::discover_asio_audio_devices() {
+        out.push(device.id);
+    }
     out.sort();
     out.dedup();
     out
