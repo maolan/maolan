@@ -5368,6 +5368,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "maolan-asio"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c08352937a4a2392be4e664f583ec8841a469d24408bfaecbf98442613ea11"
+dependencies = [
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "maolan-editor"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5385,9 +5394,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6a8d1147691163723636b167ef744b2246feef1144076882e0e33017f393338"
+checksum = "288ce8a872629947f071c560772552ca63c79bd7b00e3b7327ec6693a605a59b"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5400,6 +5409,7 @@ dependencies = [
  "fearless_simd_macros",
  "jack",
  "libc",
+ "maolan-asio",
  "maolan-plugin-protocol",
  "midly",
  "mixosc",

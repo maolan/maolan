@@ -1221,10 +1221,40 @@ mod calibrator {
              The channel count is the device's current Windows format; loopback inputs\n\
              on higher-numbered channels require setting that format to enough channels."
         );
+        println!("ASIO drivers:");
+        for device in maolan_engine::audio_devices::discover_asio_audio_devices() {
+            println!("  {}  {}", device.id, device.label);
+        }
+        println!(
+            "Pass an ASIO id (or a substring after the `asio:` prefix) to both\n\
+             --input-device and --output-device; ASIO is full duplex on one driver."
+        );
     }
 
     #[cfg(target_os = "windows")]
     fn supported_periods(args: &Args) -> Result<Vec<usize>, String> {
+        if args.output_device.starts_with("asio:") || args.input_device.starts_with("asio:") {
+            // ASIO is a single full-duplex driver; both ids must resolve to
+            // it for a loopback measurement.
+            if !(args.output_device.starts_with("asio:") && args.input_device.starts_with("asio:"))
+            {
+                return Err(
+                    "ASIO is full duplex: pass the same `asio:<driver>` id to both --input-device and --output-device"
+                        .into(),
+                );
+            }
+            // The driver negotiates the power-of-two request against its
+            // buffer-size constraints at open; candidates that negotiate a
+            // different size are skipped after opening, so offer the
+            // conventional range.
+            let mut periods = Vec::new();
+            let mut request = 64_usize;
+            while request <= 8192 {
+                periods.push(request);
+                request *= 2;
+            }
+            return Ok(periods);
+        }
         use windows::Win32::Media::Audio::{eCapture, eRender};
 
         let _com = wasapi_probe::ComApartment::new().ok_or("cannot initialize COM")?;
@@ -1359,7 +1389,9 @@ mod calibrator {
         #[cfg(target_os = "windows")]
         let args = {
             let mut args = args.clone();
-            if args.exclusive {
+            // ASIO has no exclusive/shared distinction (the flag is ignored
+            // by the backend), so the WASAPI exclusive probe does not apply.
+            if args.exclusive && !args.output_device.starts_with("asio:") {
                 // A failed COM init must not be mistaken for "exclusive
                 // unsupported"; default to keeping exclusive and let the
                 // sweep's fallback handle it.
@@ -1388,8 +1420,13 @@ mod calibrator {
             Err(error) => {
                 // Multichannel USB interfaces commonly reject WASAPI/OSS
                 // exclusive streams outright; rather than leaving the user
-                // with nothing, retry the whole sweep in shared mode.
-                if !args.exclusive || stop.load(Ordering::Relaxed) {
+                // with nothing, retry the whole sweep in shared mode. ASIO
+                // has no shared mode (the exclusive flag is ignored), so
+                // surface the error as-is.
+                if !args.exclusive
+                    || stop.load(Ordering::Relaxed)
+                    || args.output_device.starts_with("asio:")
+                {
                     return Err(error);
                 }
                 eprintln!("maolan-calibrate: {error}");
