@@ -5846,7 +5846,13 @@ impl Maolan {
     }
 
     fn send(&self, action: Action) -> Task<Message> {
-        let action = self.action_with_clip_identity_fork(action);
+        self.send_engine_action(self.action_with_clip_identity_fork(action))
+    }
+
+    /// Send an action that was already passed through the clip-identity
+    /// fork, without forking again. Used for grouped gestures whose inner
+    /// actions were forked individually before wrapping.
+    fn send_engine_action(&self, action: Action) -> Task<Message> {
         tracing::info!("GUI sending request: {:?}", std::mem::discriminant(&action));
         Task::perform(
             async move { CLIENT.send(EngineMessage::Request(action)).await },
@@ -9223,6 +9229,113 @@ mod tests {
         assert!(
             app.transport.record_armed,
             "stop without playback does not cancel an upcoming recording"
+        );
+    }
+
+    fn group_resize_app(shift: bool) -> (Maolan, usize, usize, usize) {
+        let mut app = Maolan {
+            size: maolan_widgets::iced::Size::new(1200.0, 800.0),
+            ..Maolan::default()
+        };
+        app.ui.zoom_visible_bars = 1.0;
+        app.timing.snap_mode = crate::message::SnapMode::NoSnap;
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            state.shift = shift;
+            let mut a = crate::state::Track::new("a".to_string(), 0.0, 2, 2, 0, 0);
+            a.audio.clips.push(crate::state::AudioClip {
+                name: "a.wav".to_string(),
+                start: 1000,
+                length: 4800,
+                offset: 0,
+                max_length_samples: 48_000,
+                ..Default::default()
+            });
+            let mut b = crate::state::Track::new("b".to_string(), 0.0, 2, 2, 0, 0);
+            b.audio.clips.push(crate::state::AudioClip {
+                name: "b.wav".to_string(),
+                start: 2000,
+                length: 9600,
+                offset: 0,
+                max_length_samples: 48_000,
+                ..Default::default()
+            });
+            state.tracks.push(a);
+            state.tracks.push(b);
+            for track in ["a", "b"] {
+                state.selected_clips.insert(crate::state::ClipId {
+                    track_idx: track.to_string(),
+                    clip_idx: 0,
+                    kind: maolan_engine::kind::Kind::Audio,
+                });
+            }
+        }
+        let pps = app.pixels_per_sample().max(1.0e-6);
+        // The resize handler truncates the pixel delta to whole samples.
+        let delta_samples = (100.0 / pps) as usize;
+        (app, delta_samples, 4800, 9600)
+    }
+
+    #[test]
+    fn group_clip_resize_applies_to_all_selected_clips() {
+        let (mut app, delta, initial_a, initial_b) = group_resize_app(false);
+
+        let _ = app.update(Message::ClipResizeStart(
+            maolan_engine::kind::Kind::Audio,
+            "a".to_string(),
+            0,
+            true,
+        ));
+        let _ = app.update(Message::MouseMoved(
+            maolan_widgets::iced::mouse::Event::CursorMoved {
+                position: maolan_widgets::iced::Point::new(100.0, 0.0),
+            },
+        ));
+        let _ = app.update(Message::MouseReleased);
+
+        let state = app.state.read().expect("state lock poisoned");
+        let a = &state.tracks[0].audio.clips[0];
+        let b = &state.tracks[1].audio.clips[0];
+        assert_eq!(a.start, 1000, "right-side resize keeps starts");
+        assert_eq!(b.start, 2000);
+        assert_eq!(
+            a.length,
+            (initial_a + delta).min(48_000),
+            "dragged clip resized by the mouse delta"
+        );
+        assert_eq!(
+            b.length,
+            (initial_b + delta).min(48_000),
+            "the other selected clip resized by the same delta"
+        );
+    }
+
+    #[test]
+    fn group_clip_stretch_scales_all_selected_clips() {
+        let (mut app, delta, initial_a, initial_b) = group_resize_app(true);
+
+        let _ = app.update(Message::ClipResizeStart(
+            maolan_engine::kind::Kind::Audio,
+            "a".to_string(),
+            0,
+            true,
+        ));
+        let _ = app.update(Message::MouseMoved(
+            maolan_widgets::iced::mouse::Event::CursorMoved {
+                position: maolan_widgets::iced::Point::new(100.0, 0.0),
+            },
+        ));
+        let _ = app.update(Message::MouseReleased);
+
+        let state = app.state.read().expect("state lock poisoned");
+        let a = &state.tracks[0].audio.clips[0];
+        let b = &state.tracks[1].audio.clips[0];
+        let ratio = (initial_a + delta) as f32 / initial_a as f32;
+        assert_eq!(a.length, initial_a + delta);
+        assert_eq!(
+            b.length,
+            (initial_b as f32 * ratio).round() as usize,
+            "the other selected clip stretched by the same ratio"
         );
     }
 
