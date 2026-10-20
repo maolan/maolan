@@ -633,6 +633,7 @@ impl Maolan {
                             } else {
                                 clip_start
                             };
+                            let group = clip_resize_group(&state, *kind, track_name, clip_index);
                             state.resizing = Some(Resizing::Clip {
                                 kind: *kind,
                                 track_name: track_name.clone(),
@@ -644,6 +645,7 @@ impl Maolan {
                                 initial_length: clip_length as f32,
                                 initial_start: clip_start,
                                 initial_offset: clip_offset,
+                                group: group.clone(),
                             });
                             if stretch_mode {
                                 return self.send(Action::SyncClipBounds {
@@ -668,6 +670,7 @@ impl Maolan {
                             } else {
                                 clip.start
                             };
+                            let group = clip_resize_group(&state, *kind, track_name, clip_index);
                             state.resizing = Some(Resizing::Clip {
                                 kind: *kind,
                                 track_name: track_name.clone(),
@@ -679,6 +682,7 @@ impl Maolan {
                                 initial_length: clip.length as f32,
                                 initial_start: clip.start,
                                 initial_offset: clip.offset,
+                                group,
                             });
                         }
                     }
@@ -792,6 +796,7 @@ impl Maolan {
                         initial_length,
                         initial_start,
                         initial_offset,
+                        ref group,
                     }) => {
                         let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
                         let samples_per_beat = self.transport.samples_per_beat(&self.state);
@@ -975,6 +980,147 @@ impl Maolan {
                                         } else {
                                             clip.offset =
                                                 clip.offset.saturating_sub((-start_delta) as usize);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Apply the same gesture to the other selected clips:
+                        // the dragged clip's effective start/length delta (its
+                        // own clamps applied) is replayed on each member with
+                        // per-clip bounds; stretch mode replays the ratio.
+                        if !group.is_empty() {
+                            let dragged = state
+                                .tracks
+                                .iter()
+                                .find(|t| t.name == *track_name)
+                                .and_then(|t| match kind {
+                                    Kind::Audio => t
+                                        .audio
+                                        .clips
+                                        .get(index)
+                                        .map(|clip| (clip.start, clip.length)),
+                                    Kind::MIDI => t
+                                        .midi
+                                        .clips
+                                        .get(index)
+                                        .map(|clip| (clip.start, clip.length)),
+                                });
+                            if let Some((dragged_start, dragged_length)) = dragged {
+                                let applied_start_delta =
+                                    dragged_start as isize - initial_start as isize;
+                                let applied_length_delta =
+                                    dragged_length as isize - initial_length as isize;
+                                let stretch_ratio = dragged_length as f32 / initial_length.max(1.0);
+                                for member in group {
+                                    if member.clip.track_idx == *track_name
+                                        && member.clip.clip_idx == index
+                                    {
+                                        continue;
+                                    }
+                                    let Some(member_track) = state
+                                        .tracks
+                                        .iter_mut()
+                                        .find(|t| t.name == member.clip.track_idx)
+                                    else {
+                                        continue;
+                                    };
+                                    // The audio/MIDI clip types share the
+                                    // resized fields, so the same body serves
+                                    // both arms.
+                                    macro_rules! resize_member {
+                                        ($clip:expr) => {{
+                                            let clip = $clip;
+                                            if is_right_side {
+                                                let new_length = if stretch_mode {
+                                                    (member.initial_length as f32 * stretch_ratio)
+                                                        .round() as isize
+                                                } else {
+                                                    member.initial_length as isize
+                                                        + applied_length_delta
+                                                };
+                                                let max_length = match kind {
+                                                    Kind::Audio => clip
+                                                        .max_length_samples
+                                                        .max(member.initial_length)
+                                                        as isize,
+                                                    Kind::MIDI => isize::MAX,
+                                                };
+                                                let min_length = min_length_samples as isize;
+                                                clip.length = new_length
+                                                    .clamp(min_length, max_length.max(min_length))
+                                                    as usize;
+                                            } else {
+                                                let right_edge =
+                                                    member.initial_start + member.initial_length;
+                                                let max_start = right_edge
+                                                    .saturating_sub(min_length_samples as usize);
+                                                let new_start = (member.initial_start as isize
+                                                    + applied_start_delta)
+                                                    .clamp(0, max_start as isize)
+                                                    as usize;
+                                                let new_length = (right_edge - new_start)
+                                                    .max(min_length_samples as usize);
+                                                let start_delta =
+                                                    new_start as isize - clip.start as isize;
+                                                clip.start = new_start;
+                                                clip.length = new_length;
+                                                if stretch_mode {
+                                                    clip.offset = member.initial_offset;
+                                                } else {
+                                                    match kind {
+                                                        Kind::Audio => {
+                                                            if start_delta >= 0 {
+                                                                clip.offset = (clip.offset
+                                                                    + start_delta as usize)
+                                                                    .min(
+                                                                        clip.max_length_samples
+                                                                            .saturating_sub(
+                                                                                clip.length,
+                                                                            ),
+                                                                    );
+                                                            } else {
+                                                                clip.offset =
+                                                                    clip.offset.saturating_sub(
+                                                                        (-start_delta) as usize,
+                                                                    );
+                                                            }
+                                                        }
+                                                        Kind::MIDI => {
+                                                            if start_delta >= 0 {
+                                                                clip.offset = (clip.offset
+                                                                    + start_delta as usize)
+                                                                    .min(clip.max_length_samples);
+                                                            } else {
+                                                                clip.offset =
+                                                                    clip.offset.saturating_sub(
+                                                                        (-start_delta) as usize,
+                                                                    );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }};
+                                    }
+                                    match kind {
+                                        Kind::Audio => {
+                                            if let Some(clip) = member_track
+                                                .audio
+                                                .clips
+                                                .get_mut(member.clip.clip_idx)
+                                            {
+                                                resize_member!(clip);
+                                            }
+                                        }
+                                        Kind::MIDI => {
+                                            if let Some(clip) = member_track
+                                                .midi
+                                                .clips
+                                                .get_mut(member.clip.clip_idx)
+                                            {
+                                                resize_member!(clip);
+                                            }
                                         }
                                     }
                                 }
@@ -1254,75 +1400,143 @@ impl Maolan {
                     stretch_mode,
                     initial_start,
                     initial_length,
-                    initial_offset,
+                    ref group,
                     ..
                 }) = resizing
                 {
-                    let state = self.state.read().expect("state lock poisoned");
-                    if let Some(track) = state.tracks.iter().find(|t| t.name == track_name) {
-                        let (start, length, offset) = match kind {
-                            Kind::Audio => {
-                                if let Some(clip) = track.audio.clips.get(index) {
-                                    (clip.start, clip.length, clip.offset)
-                                } else {
-                                    return Task::none();
-                                }
-                            }
-                            Kind::MIDI => {
-                                if let Some(clip) = track.midi.clips.get(index) {
-                                    (clip.start, clip.length, clip.offset)
-                                } else {
-                                    return Task::none();
-                                }
-                            }
+                    // Final bounds of the dragged clip and every group
+                    // member: (track, clip, start, length, offset,
+                    // initial_start, initial_length).
+                    let mut bounds: Vec<(String, usize, usize, usize, usize, usize, usize)> =
+                        Vec::new();
+                    {
+                        let state = self.state.read().expect("state lock poisoned");
+                        let read_bounds = |track_name: &str,
+                                           clip_index: usize,
+                                           initial_start: usize,
+                                           initial_length: usize|
+                         -> Option<(
+                            String,
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                            usize,
+                        )> {
+                            let track = state.tracks.iter().find(|t| t.name == track_name)?;
+                            let found = match kind {
+                                Kind::Audio => track
+                                    .audio
+                                    .clips
+                                    .get(clip_index)
+                                    .map(|clip| (clip.start, clip.length, clip.offset)),
+                                Kind::MIDI => track
+                                    .midi
+                                    .clips
+                                    .get(clip_index)
+                                    .map(|clip| (clip.start, clip.length, clip.offset)),
+                            }?;
+                            let (start, length, offset) = found;
+                            Some((
+                                track_name.to_string(),
+                                clip_index,
+                                start,
+                                length,
+                                offset,
+                                initial_start,
+                                initial_length,
+                            ))
                         };
-                        drop(state);
-                        if stretch_mode && kind == Kind::Audio {
-                            let stretch_ratio = length as f32 / initial_length.max(1.0);
+                        let Some(dragged) = read_bounds(
+                            &track_name,
+                            index,
+                            initial_start,
+                            initial_length.max(1.0) as usize,
+                        ) else {
+                            return Task::none();
+                        };
+                        bounds.push(dragged);
+                        for member in group {
+                            if member.clip.track_idx == track_name && member.clip.clip_idx == index
+                            {
+                                continue;
+                            }
+                            if let Some(bound) = read_bounds(
+                                &member.clip.track_idx,
+                                member.clip.clip_idx,
+                                member.initial_start,
+                                member.initial_length,
+                            ) {
+                                bounds.push(bound);
+                            }
+                        }
+                    }
+                    if stretch_mode && kind == Kind::Audio {
+                        let mut tasks = Vec::new();
+                        for (
+                            track_name,
+                            clip_index,
+                            start,
+                            _length,
+                            offset,
+                            original_start,
+                            initial_length,
+                        ) in bounds
+                        {
+                            let initial_length = initial_length.max(1);
                             let stretch_request = {
                                 let state = self.state.read().expect("state lock poisoned");
                                 state
                                     .tracks
                                     .iter()
                                     .find(|t| t.name == track_name)
-                                    .and_then(|track| track.audio.clips.get(index))
+                                    .and_then(|track| track.audio.clips.get(clip_index))
                                     .map(|clip| crate::message::ClipStretchRequest {
                                         track_idx: track_name.clone(),
-                                        clip_idx: index,
+                                        clip_idx: clip_index,
                                         clip_name: clip.name.clone(),
                                         start,
-                                        original_start: initial_start,
-                                        length: initial_length.max(1.0) as usize,
-                                        offset: initial_offset,
+                                        original_start,
+                                        length: initial_length,
+                                        offset,
                                         input_channel: clip.input_channel,
                                         muted: clip.muted,
                                         fade_enabled: clip.fade_enabled,
                                         fade_in_samples: clip.fade_in_samples,
                                         fade_out_samples: clip.fade_out_samples,
-                                        stretch_ratio,
+                                        stretch_ratio: clip.length as f32 / initial_length as f32,
                                     })
                             };
                             if let Some(request) = stretch_request {
-                                return self.start_clip_stretch_request(request);
+                                tasks.push(self.start_clip_stretch_request(request));
                             }
-                            return Task::none();
                         }
+                        return Task::batch(tasks);
+                    }
+                    let mut actions = Vec::new();
+                    for (track_name, clip_index, start, length, offset, _, initial_length) in bounds
+                    {
                         let action = Action::SetClipBounds {
                             track_name,
-                            clip_index: index,
+                            clip_index,
                             kind,
                             start,
                             length,
                             offset,
                         };
-                        let initial_length = initial_length.max(1.0) as usize;
-                        if length != initial_length {
-                            return self
-                                .send(self.action_with_confirmed_clip_length_change(action));
+                        if length != initial_length.max(1) {
+                            actions.push(self.action_with_confirmed_clip_length_change(action));
+                        } else {
+                            actions.push(action);
                         }
-                        return self.send(action);
                     }
-                    return Task::none();
+                    if actions.len() == 1 {
+                        return self.send(actions.into_iter().next().expect("one action"));
+                    }
+                    // One history entry for the whole group: undo restores
+                    // every resized clip in a single step.
+                    return self.send_engine_action(Action::ApplyGroupedActions(actions));
                 }
                 if let Some(Resizing::Fade {
                     kind,
@@ -1578,11 +1792,9 @@ impl Maolan {
                             let Some(moves) = moves else {
                                 return Task::none();
                             };
-                            let tasks = moves
-                                .into_iter()
-                                .map(|action| self.send(action))
-                                .collect::<Vec<_>>();
-                            return Task::batch(tasks);
+                            // One history entry for the whole group: undo
+                            // restores every moved clip in a single step.
+                            return self.send_engine_action(Action::ApplyGroupedActions(moves));
                         }
                         match clip_kind {
                             Kind::Audio => {

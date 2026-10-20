@@ -142,6 +142,59 @@ pub(crate) fn group_drag_target<'a>(
     compatible.then_some(target.name.as_str())
 }
 
+/// Initial geometry of every selected clip of `kind` when the dragged clip
+/// is part of the selection, so a resize/stretch gesture applies to the
+/// whole selection. Empty when the drag is not a group resize.
+pub(crate) fn clip_resize_group(
+    state: &crate::state::StateData,
+    kind: Kind,
+    track_name: &str,
+    clip_index: usize,
+) -> Vec<crate::state::ClipResizeGroupMember> {
+    let dragged = crate::state::ClipId {
+        track_idx: track_name.to_string(),
+        clip_idx: clip_index,
+        kind,
+    };
+    if !state.selected_clips.contains(&dragged) {
+        return Vec::new();
+    }
+    let members = state
+        .selected_clips
+        .iter()
+        .filter(|id| id.kind == kind)
+        .filter_map(|id| {
+            let track = state.tracks.iter().find(|t| t.name == id.track_idx)?;
+            let (locked, start, length, offset) = match kind {
+                Kind::Audio => track
+                    .audio
+                    .clips
+                    .get(id.clip_idx)
+                    .map(|c| (c.take_lane_locked, c.start, c.length, c.offset)),
+                Kind::MIDI => track
+                    .midi
+                    .clips
+                    .get(id.clip_idx)
+                    .map(|c| (c.take_lane_locked, c.start, c.length, c.offset)),
+            }?;
+            if locked {
+                return None;
+            }
+            Some(crate::state::ClipResizeGroupMember {
+                clip: id.clone(),
+                initial_start: start,
+                initial_length: length,
+                initial_offset: offset,
+            })
+        })
+        .collect::<Vec<_>>();
+    if members.len() > 1 {
+        members
+    } else {
+        Vec::new()
+    }
+}
+
 impl Maolan {
     fn start_audio_editor_engine_preview(&self) -> Task<Message> {
         let Some(preview) = maolan_editor::app::host_preview(&self.audio_editor) else {
@@ -1888,6 +1941,53 @@ mod tests {
             )
             .is_none(),
             "dragging an unselected clip is not a group drag"
+        );
+    }
+
+    #[test]
+    fn clip_resize_group_requires_multi_selection_of_dragged_clip() {
+        // Dragging an unselected clip is a single-clip resize even when
+        // other clips are selected.
+        let mut unselected = crate::state::StateData::default();
+        unselected.tracks.push(audio_track("a", &[1000]));
+        unselected.tracks.push(audio_track("b", &[2000, 3000]));
+        select(&mut unselected, "b", 0, Kind::Audio);
+        select(&mut unselected, "b", 1, Kind::Audio);
+        assert!(clip_resize_group(&unselected, Kind::Audio, "a", 0).is_empty());
+
+        // A lone selected clip is a single-clip resize.
+        let mut single = crate::state::StateData::default();
+        single.tracks.push(audio_track("a", &[1000]));
+        single.tracks.push(audio_track("b", &[2000]));
+        select(&mut single, "a", 0, Kind::Audio);
+        assert!(clip_resize_group(&single, Kind::Audio, "a", 0).is_empty());
+
+        // Multi-selection across tracks resizes together.
+        let mut multi = crate::state::StateData::default();
+        multi.tracks.push(audio_track("a", &[1000]));
+        multi.tracks.push(audio_track("b", &[2000]));
+        select(&mut multi, "a", 0, Kind::Audio);
+        select(&mut multi, "b", 0, Kind::Audio);
+        let mut group = clip_resize_group(&multi, Kind::Audio, "a", 0);
+        group.sort_by(|x, y| x.clip.track_idx.cmp(&y.clip.track_idx));
+        assert_eq!(group.len(), 2);
+        assert_eq!(group[0].clip.track_idx, "a");
+        assert_eq!(group[0].initial_start, 1000);
+        assert_eq!(group[1].clip.track_idx, "b");
+        assert_eq!(group[1].initial_start, 2000);
+
+        // Clips of the other kind and locked clips stay out of the group.
+        let mut mixed = crate::state::StateData::default();
+        mixed.tracks.push(audio_track("a", &[1000]));
+        let mut locked_track = audio_track("b", &[2000]);
+        locked_track.audio.clips[0].take_lane_locked = true;
+        mixed.tracks.push(locked_track);
+        select(&mut mixed, "a", 0, Kind::Audio);
+        select(&mut mixed, "b", 0, Kind::Audio);
+        let group = clip_resize_group(&mixed, Kind::Audio, "a", 0);
+        assert!(
+            group.is_empty(),
+            "the only other selected clip is locked, so this is a single resize"
         );
     }
 

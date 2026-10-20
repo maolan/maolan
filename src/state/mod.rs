@@ -1062,6 +1062,14 @@ pub struct DraggedSessionClip {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClipResizeGroupMember {
+    pub clip: ClipId,
+    pub initial_start: usize,
+    pub initial_length: usize,
+    pub initial_offset: usize,
+}
+
+#[derive(Debug, Clone)]
 pub enum Resizing {
     Clip {
         kind: Kind,
@@ -1074,6 +1082,9 @@ pub enum Resizing {
         initial_length: f32,
         initial_start: usize,
         initial_offset: usize,
+        /// The other selected clips that resize together with the dragged
+        /// clip; empty for a single-clip resize.
+        group: Vec<ClipResizeGroupMember>,
     },
     Fade {
         kind: Kind,
