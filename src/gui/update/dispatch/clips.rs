@@ -1531,70 +1531,61 @@ impl Maolan {
                         }
                         let local_y = (clip.end.y - to_track_rect.y).max(0.0);
                         let target_input_channel = to_track.lane_index_at_y(clip.kind, local_y);
-                        let mut selected_group: Vec<usize> = state
+                        let selected_group: Vec<crate::state::ClipId> = state
                             .selected_clips
                             .iter()
-                            .filter(|id| id.kind == clip.kind && id.track_idx == from_track.name)
-                            .map(|id| id.clip_idx)
+                            .filter(|id| id.kind == clip.kind)
+                            .cloned()
                             .collect();
-                        selected_group.sort_unstable();
-                        selected_group.dedup();
-                        let group_drag_active =
-                            selected_group.len() > 1 && selected_group.contains(&clip.index);
+                        let group_drag_active = selected_group.len() > 1
+                            && selected_group.iter().any(|id| {
+                                id.track_idx == from_track.name && id.clip_idx == clip.index
+                            });
 
                         let clip_index = clip.index;
-                        match clip.kind {
+                        let clip_kind = clip.kind;
+                        let clip_copy_drag = clip.copy;
+                        let offset =
+                            (clip.end.x - clip.start.x) / self.pixels_per_sample().max(1.0e-6);
+                        let (snap_adjust, _snap_target, snap_targets) = self
+                            .move_clip_snap_adjust_and_target(MoveClipSnapArgs {
+                                kind: clip_kind,
+                                from_track_name: &from_track.name,
+                                clip_index,
+                                offset,
+                                group_drag_active,
+                                selected_group: &selected_group,
+                                copy: clip_copy_drag,
+                            });
+                        self.drag.clip_snap_targets = snap_targets;
+                        if group_drag_active {
+                            let moves = Self::selected_group_clip_moves(
+                                &state,
+                                clip_kind,
+                                &from_track.name,
+                                clip_index,
+                                &to_track.name,
+                                offset,
+                                snap_adjust,
+                                target_input_channel,
+                                clip_copy_drag,
+                            );
+                            self.drag.clip = None;
+                            self.drag.clip_preview_target_track = None;
+                            self.drag.clip_preview_target_valid = false;
+                            self.drag.clip_preview_snap_adjust_samples = 0.0;
+                            self.drag.clip_snap_targets.clear();
+                            let Some(moves) = moves else {
+                                return Task::none();
+                            };
+                            let tasks = moves
+                                .into_iter()
+                                .map(|action| self.send(action))
+                                .collect::<Vec<_>>();
+                            return Task::batch(tasks);
+                        }
+                        match clip_kind {
                             Kind::Audio => {
-                                let offset = (clip.end.x - clip.start.x)
-                                    / self.pixels_per_sample().max(1.0e-6);
-                                let (snap_adjust, _snap_target, snap_targets) = self
-                                    .move_clip_snap_adjust_and_target(MoveClipSnapArgs {
-                                        kind: clip.kind,
-                                        from_track_name: &from_track.name,
-                                        clip_index: clip.index,
-                                        offset,
-                                        group_drag_active,
-                                        selected_group: &selected_group,
-                                        copy: clip.copy,
-                                    });
-                                self.drag.clip_snap_targets = snap_targets;
-                                if group_drag_active {
-                                    let mut indices = selected_group.clone();
-                                    if !clip.copy {
-                                        indices.sort_unstable_by(|a, b| b.cmp(a));
-                                    }
-                                    let mut tasks = Vec::new();
-                                    for idx in indices {
-                                        if idx >= from_track.audio.clips.len() {
-                                            continue;
-                                        }
-                                        let source = &from_track.audio.clips[idx];
-                                        let sample_offset =
-                                            (source.start as f32 + offset + snap_adjust)
-                                                .max(0.0)
-                                                .round()
-                                                as usize;
-                                        tasks.push(self.send(Action::ClipMove {
-                                            kind: clip.kind,
-                                            from: ClipMoveFrom {
-                                                track_name: from_track.name.clone(),
-                                                clip_index: idx,
-                                            },
-                                            to: ClipMoveTo {
-                                                track_name: to_track.name.clone(),
-                                                sample_offset,
-                                                input_channel: target_input_channel,
-                                            },
-                                            copy: clip.copy,
-                                        }));
-                                    }
-                                    self.drag.clip = None;
-                                    self.drag.clip_preview_target_track = None;
-                                    self.drag.clip_preview_target_valid = false;
-                                    self.drag.clip_preview_snap_adjust_samples = 0.0;
-                                    self.drag.clip_snap_targets.clear();
-                                    return Task::batch(tasks);
-                                }
                                 if clip_index >= from_track.audio.clips.len() {
                                     self.drag.clip = None;
                                     self.drag.clip_preview_target_valid = false;
@@ -1610,17 +1601,17 @@ impl Maolan {
                                     .round()
                                     as usize;
                                 let task = self.send(Action::ClipMove {
-                                    kind: clip.kind,
+                                    kind: clip_kind,
                                     from: ClipMoveFrom {
                                         track_name: from_track.name.clone(),
-                                        clip_index: clip.index,
+                                        clip_index,
                                     },
                                     to: ClipMoveTo {
                                         track_name: to_track.name.clone(),
                                         sample_offset: clip_copy.start,
                                         input_channel: target_input_channel,
                                     },
-                                    copy: clip.copy,
+                                    copy: clip_copy_drag,
                                 });
                                 self.drag.clip = None;
                                 self.drag.clip_preview_target_track = None;
@@ -1630,56 +1621,6 @@ impl Maolan {
                                 return task;
                             }
                             Kind::MIDI => {
-                                let offset = (clip.end.x - clip.start.x)
-                                    / self.pixels_per_sample().max(1.0e-6);
-                                let (snap_adjust, _snap_target, snap_targets) = self
-                                    .move_clip_snap_adjust_and_target(MoveClipSnapArgs {
-                                        kind: clip.kind,
-                                        from_track_name: &from_track.name,
-                                        clip_index: clip.index,
-                                        offset,
-                                        group_drag_active,
-                                        selected_group: &selected_group,
-                                        copy: clip.copy,
-                                    });
-                                self.drag.clip_snap_targets = snap_targets;
-                                if group_drag_active {
-                                    let mut indices = selected_group.clone();
-                                    if !clip.copy {
-                                        indices.sort_unstable_by(|a, b| b.cmp(a));
-                                    }
-                                    let mut tasks = Vec::new();
-                                    for idx in indices {
-                                        if idx >= from_track.midi.clips.len() {
-                                            continue;
-                                        }
-                                        let source = &from_track.midi.clips[idx];
-                                        let sample_offset =
-                                            (source.start as f32 + offset + snap_adjust)
-                                                .max(0.0)
-                                                .round()
-                                                as usize;
-                                        tasks.push(self.send(Action::ClipMove {
-                                            kind: clip.kind,
-                                            from: ClipMoveFrom {
-                                                track_name: from_track.name.clone(),
-                                                clip_index: idx,
-                                            },
-                                            to: ClipMoveTo {
-                                                track_name: to_track.name.clone(),
-                                                sample_offset,
-                                                input_channel: target_input_channel,
-                                            },
-                                            copy: clip.copy,
-                                        }));
-                                    }
-                                    self.drag.clip = None;
-                                    self.drag.clip_preview_target_track = None;
-                                    self.drag.clip_preview_target_valid = false;
-                                    self.drag.clip_preview_snap_adjust_samples = 0.0;
-                                    self.drag.clip_snap_targets.clear();
-                                    return Task::batch(tasks);
-                                }
                                 if clip_index >= from_track.midi.clips.len() {
                                     self.drag.clip = None;
                                     self.drag.clip_preview_target_valid = false;
@@ -1695,17 +1636,17 @@ impl Maolan {
                                     .round()
                                     as usize;
                                 let task = self.send(Action::ClipMove {
-                                    kind: clip.kind,
+                                    kind: clip_kind,
                                     from: ClipMoveFrom {
                                         track_name: from_track.name.clone(),
-                                        clip_index: clip.index,
+                                        clip_index,
                                     },
                                     to: ClipMoveTo {
                                         track_name: to_track.name.clone(),
                                         sample_offset: clip_copy.start,
                                         input_channel: target_input_channel,
                                     },
-                                    copy: clip.copy,
+                                    copy: clip_copy_drag,
                                 });
                                 self.drag.clip = None;
                                 self.drag.clip_preview_target_track = None;
@@ -1766,18 +1707,16 @@ impl Maolan {
                         if kind_matches {
                             self.drag.clip_preview_target_track = Some(to_track.name.clone());
                             self.drag.clip_preview_target_valid = true;
-                            let mut selected_group: Vec<usize> = state
+                            let selected_group: Vec<crate::state::ClipId> = state
                                 .selected_clips
                                 .iter()
-                                .filter(|id| {
-                                    id.kind == clip.kind && id.track_idx == clip.track_index
-                                })
-                                .map(|id| id.clip_idx)
+                                .filter(|id| id.kind == clip.kind)
+                                .cloned()
                                 .collect();
-                            selected_group.sort_unstable();
-                            selected_group.dedup();
-                            let group_drag_active =
-                                selected_group.len() > 1 && selected_group.contains(&clip.index);
+                            let group_drag_active = selected_group.len() > 1
+                                && selected_group.iter().any(|id| {
+                                    id.track_idx == clip.track_index && id.clip_idx == clip.index
+                                });
                             let offset =
                                 (clip.end.x - clip.start.x) / self.pixels_per_sample().max(1.0e-6);
                             let (snap_adjust, _snap_target, snap_targets) = self

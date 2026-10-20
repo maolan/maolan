@@ -95,8 +95,51 @@ struct MoveClipSnapArgs<'a> {
     clip_index: usize,
     offset: f32,
     group_drag_active: bool,
-    selected_group: &'a [usize],
+    selected_group: &'a [crate::state::ClipId],
     copy: bool,
+}
+
+/// Vertical track delta of a clip group drag: the drop target's position
+/// minus the dragged clip's source track position.
+pub(crate) fn group_drag_delta(
+    state: &crate::state::StateData,
+    from_track_name: &str,
+    to_track_name: &str,
+) -> Option<isize> {
+    let from = state
+        .tracks
+        .iter()
+        .position(|t| t.name == from_track_name)?;
+    let to = state.tracks.iter().position(|t| t.name == to_track_name)?;
+    Some(to as isize - from as isize)
+}
+
+/// Target track for one member of a clip group drag: the member's own
+/// track shifted by the group delta. Returns `None` when the shifted
+/// position is out of range or the track cannot accept the clip kind.
+pub(crate) fn group_drag_target<'a>(
+    state: &'a crate::state::StateData,
+    kind: Kind,
+    delta: isize,
+    member_track_name: &str,
+) -> Option<&'a str> {
+    let member_pos = state
+        .tracks
+        .iter()
+        .position(|t| t.name == member_track_name)?;
+    let target_pos = member_pos as isize + delta;
+    if target_pos < 0 || target_pos as usize >= state.tracks.len() {
+        return None;
+    }
+    let source = &state.tracks[member_pos];
+    let target = &state.tracks[target_pos as usize];
+    let compatible = match kind {
+        Kind::Audio => {
+            !target.is_folder && target.audio.ins > 0 && target.audio.ins == source.audio.ins
+        }
+        Kind::MIDI => !target.is_folder && target.midi.ins > 0,
+    };
+    compatible.then_some(target.name.as_str())
 }
 
 impl Maolan {
@@ -869,14 +912,7 @@ impl Maolan {
 
         let excluded_clips = if !copy {
             if group_drag_active {
-                selected_group
-                    .iter()
-                    .map(|clip_idx| crate::state::ClipId {
-                        track_idx: from_track_name.to_string(),
-                        clip_idx: *clip_idx,
-                        kind,
-                    })
-                    .collect::<Vec<_>>()
+                selected_group.to_vec()
             } else {
                 vec![crate::state::ClipId {
                     track_idx: from_track_name.to_string(),
@@ -935,6 +971,81 @@ impl Maolan {
             resolved_start
         };
         (resolved_start - raw_start, snap_target, snap_targets)
+    }
+
+    /// Compute the `ClipMove` actions for dropping a drag of the selected
+    /// clips. Returns `None` when the drag is not a group drag (fewer than
+    /// two selected clips of this kind, or the dragged clip is not part of
+    /// the selection); the caller then moves only the dragged clip.
+    ///
+    /// Every selected clip of the dragged kind moves by the same sample
+    /// offset and the same vertical track delta as the dragged clip; clips
+    /// whose computed target track is missing or incompatible stay in place.
+    pub(super) fn selected_group_clip_moves(
+        state: &crate::state::StateData,
+        kind: Kind,
+        from_track_name: &str,
+        dragged_clip_index: usize,
+        to_track_name: &str,
+        offset_samples: f32,
+        snap_adjust_samples: f32,
+        input_channel: usize,
+        copy: bool,
+    ) -> Option<Vec<Action>> {
+        let mut selected: Vec<crate::state::ClipId> = state
+            .selected_clips
+            .iter()
+            .filter(|id| id.kind == kind)
+            .cloned()
+            .collect();
+        let dragged_selected = selected
+            .iter()
+            .any(|id| id.track_idx == from_track_name && id.clip_idx == dragged_clip_index);
+        if selected.len() < 2 || !dragged_selected {
+            return None;
+        }
+        let delta = group_drag_delta(state, from_track_name, to_track_name)?;
+        // Removing clips from a track shifts the indices of the clips that
+        // follow them, so move each track's clips from the back; copying
+        // leaves the source indices intact, so keep the ascending order.
+        selected.sort_unstable_by(|a, b| match a.track_idx.cmp(&b.track_idx) {
+            std::cmp::Ordering::Equal if copy => a.clip_idx.cmp(&b.clip_idx),
+            std::cmp::Ordering::Equal => b.clip_idx.cmp(&a.clip_idx),
+            other => other,
+        });
+        let mut moves = Vec::with_capacity(selected.len());
+        for id in selected {
+            let Some(target_name) = group_drag_target(state, kind, delta, &id.track_idx) else {
+                continue;
+            };
+            let Some(source) = state.tracks.iter().find(|t| t.name == id.track_idx) else {
+                continue;
+            };
+            let clip_start = match kind {
+                Kind::Audio => source.audio.clips.get(id.clip_idx).map(|clip| clip.start),
+                Kind::MIDI => source.midi.clips.get(id.clip_idx).map(|clip| clip.start),
+            };
+            let Some(start) = clip_start else {
+                continue;
+            };
+            let sample_offset = (start as f32 + offset_samples + snap_adjust_samples)
+                .max(0.0)
+                .round() as usize;
+            moves.push(Action::ClipMove {
+                kind,
+                from: ClipMoveFrom {
+                    track_name: id.track_idx.clone(),
+                    clip_index: id.clip_idx,
+                },
+                to: ClipMoveTo {
+                    track_name: target_name.to_string(),
+                    sample_offset,
+                    input_channel,
+                },
+                copy,
+            });
+        }
+        Some(moves)
     }
 
     pub(super) fn request_quit(&self) -> Task<Message> {
@@ -1542,6 +1653,280 @@ mod tests {
     use super::*;
     use maolan_widgets::iced::Point;
     use serde_json::json;
+
+    fn audio_track(name: &str, clip_starts: &[usize]) -> crate::state::Track {
+        let mut track = crate::state::Track::new(name.to_string(), 0.0, 2, 2, 0, 0);
+        for &start in clip_starts {
+            track.audio.clips.push(crate::state::AudioClip {
+                name: format!("{name}.wav"),
+                start,
+                length: 100,
+                offset: 0,
+                ..Default::default()
+            });
+        }
+        track
+    }
+
+    fn select(state: &mut crate::state::StateData, track: &str, clip: usize, kind: Kind) {
+        state.selected_clips.insert(crate::state::ClipId {
+            track_idx: track.to_string(),
+            clip_idx: clip,
+            kind,
+        });
+    }
+
+    fn move_target(m: &Action) -> (&str, &str, usize) {
+        let Action::ClipMove { from, to, .. } = m else {
+            panic!("expected ClipMove");
+        };
+        (&from.track_name, &to.track_name, to.sample_offset)
+    }
+
+    #[test]
+    fn group_drag_horizontal_moves_all_selected_tracks() {
+        let mut state = crate::state::StateData::default();
+        state.tracks.push(audio_track("a", &[1000]));
+        state.tracks.push(audio_track("b", &[2000]));
+        state.tracks.push(audio_track("c", &[3000]));
+        select(&mut state, "a", 0, Kind::Audio);
+        select(&mut state, "c", 0, Kind::Audio);
+
+        let moves = Maolan::selected_group_clip_moves(
+            &state,
+            Kind::Audio,
+            "a",
+            0,
+            "a",
+            480.0,
+            0.0,
+            0,
+            false,
+        )
+        .expect("multi-track selection is a group drag");
+
+        assert_eq!(moves.len(), 2);
+        let mut targets = moves.iter().map(move_target).collect::<Vec<_>>();
+        targets.sort();
+        assert_eq!(
+            targets,
+            vec![("a", "a", 1480), ("c", "c", 3480)],
+            "each clip moves by the same offset within its own track"
+        );
+    }
+
+    #[test]
+    fn group_drag_shifts_members_by_track_delta() {
+        let mut state = crate::state::StateData::default();
+        state.tracks.push(audio_track("a", &[1000]));
+        state.tracks.push(audio_track("b", &[2000]));
+        state.tracks.push(audio_track("c", &[3000]));
+        select(&mut state, "a", 0, Kind::Audio);
+        select(&mut state, "c", 0, Kind::Audio);
+
+        // Drop the dragged clip one track down; the member on "c" would land
+        // past the last track and must stay in place.
+        let moves =
+            Maolan::selected_group_clip_moves(&state, Kind::Audio, "a", 0, "b", 0.0, 0.0, 0, false)
+                .expect("multi-track selection is a group drag");
+
+        assert_eq!(moves.len(), 1);
+        assert_eq!(move_target(&moves[0]), ("a", "b", 1000));
+    }
+
+    #[test]
+    fn group_drag_skips_incompatible_target_tracks() {
+        let mut state = crate::state::StateData::default();
+        state.tracks.push(audio_track("a", &[1000]));
+        // "b" has a different audio channel count and cannot accept the clips.
+        let mut mismatched = crate::state::Track::new("b".to_string(), 0.0, 1, 1, 0, 0);
+        mismatched.audio.clips.push(crate::state::AudioClip {
+            name: "b.wav".to_string(),
+            start: 2000,
+            length: 100,
+            offset: 0,
+            ..Default::default()
+        });
+        state.tracks.push(mismatched);
+        state.tracks.push(audio_track("c", &[3000]));
+        select(&mut state, "a", 0, Kind::Audio);
+        select(&mut state, "c", 0, Kind::Audio);
+
+        // Drag down one track: "a" -> "b" is incompatible (skipped), while
+        // "c" -> "d" does not exist (out of range, skipped).
+        let moves =
+            Maolan::selected_group_clip_moves(&state, Kind::Audio, "a", 0, "b", 0.0, 0.0, 0, false)
+                .expect("multi-track selection is a group drag");
+        assert!(
+            moves.is_empty(),
+            "no clip has a compatible target, all stay in place"
+        );
+    }
+
+    #[test]
+    fn group_drag_removes_clips_back_to_front_per_track() {
+        let mut state = crate::state::StateData::default();
+        state.tracks.push(audio_track("a", &[1000, 5000]));
+        state.tracks.push(audio_track("b", &[2000]));
+        select(&mut state, "a", 0, Kind::Audio);
+        select(&mut state, "a", 1, Kind::Audio);
+        select(&mut state, "b", 0, Kind::Audio);
+
+        let moves = Maolan::selected_group_clip_moves(
+            &state,
+            Kind::Audio,
+            "a",
+            0,
+            "a",
+            480.0,
+            0.0,
+            0,
+            false,
+        )
+        .expect("same-track multi-selection is a group drag");
+
+        // Without copying, each track's clips must move in descending index
+        // order so the removals do not shift the later indices.
+        let order = moves
+            .iter()
+            .map(|m| match m {
+                Action::ClipMove { from, .. } => (from.track_name.as_str(), from.clip_index),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(order, vec![("a", 1), ("a", 0), ("b", 0)]);
+        assert!(
+            moves
+                .iter()
+                .all(|m| !matches!(m, Action::ClipMove { copy: true, .. }))
+        );
+    }
+
+    #[test]
+    fn group_drag_copy_keeps_ascending_order() {
+        let mut state = crate::state::StateData::default();
+        state.tracks.push(audio_track("a", &[1000, 5000]));
+        select(&mut state, "a", 0, Kind::Audio);
+        select(&mut state, "a", 1, Kind::Audio);
+
+        let moves = Maolan::selected_group_clip_moves(
+            &state,
+            Kind::Audio,
+            "a",
+            0,
+            "a",
+            480.0,
+            0.0,
+            0,
+            true,
+        )
+        .expect("same-track multi-selection is a group drag");
+
+        let order = moves
+            .iter()
+            .map(|m| match m {
+                Action::ClipMove { from, .. } => from.clip_index,
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(order, vec![0, 1]);
+        assert!(
+            moves
+                .iter()
+                .all(|m| matches!(m, Action::ClipMove { copy: true, .. }))
+        );
+    }
+
+    #[test]
+    fn single_selection_and_unselected_drag_are_not_group_drags() {
+        let mut state = crate::state::StateData::default();
+        state.tracks.push(audio_track("a", &[1000]));
+        state.tracks.push(audio_track("b", &[2000]));
+        select(&mut state, "a", 0, Kind::Audio);
+        select(&mut state, "b", 0, Kind::Audio);
+
+        // Only one selected clip of this kind.
+        let mut single = crate::state::StateData::default();
+        single.tracks.push(audio_track("a", &[1000]));
+        single.tracks.push(audio_track("b", &[2000]));
+        select(&mut single, "a", 0, Kind::Audio);
+        assert!(
+            Maolan::selected_group_clip_moves(
+                &single,
+                Kind::Audio,
+                "a",
+                0,
+                "b",
+                0.0,
+                0.0,
+                0,
+                false
+            )
+            .is_none()
+        );
+
+        // Dragging a clip that is not part of the selection.
+        assert!(
+            Maolan::selected_group_clip_moves(&state, Kind::Audio, "a", 0, "b", 0.0, 0.0, 0, false)
+                .is_some()
+        );
+        let mut unselected = crate::state::StateData::default();
+        unselected.tracks.push(audio_track("a", &[1000]));
+        unselected.tracks.push(audio_track("b", &[2000]));
+        select(&mut unselected, "b", 0, Kind::Audio);
+        assert!(
+            Maolan::selected_group_clip_moves(
+                &unselected,
+                Kind::Audio,
+                "a",
+                0,
+                "b",
+                0.0,
+                0.0,
+                0,
+                false
+            )
+            .is_none(),
+            "dragging an unselected clip is not a group drag"
+        );
+    }
+
+    #[test]
+    fn midi_group_drag_uses_midi_clips() {
+        let mut state = crate::state::StateData::default();
+        let midi_track = |name: &str, start: usize| {
+            let mut track = crate::state::Track::new(name.to_string(), 0.0, 0, 0, 1, 1);
+            track.midi.clips.push(crate::state::MIDIClip {
+                name: format!("{name}.midi"),
+                start,
+                length: 100,
+                offset: 0,
+                ..Default::default()
+            });
+            track
+        };
+        state.tracks.push(midi_track("m1", 1000));
+        state.tracks.push(midi_track("m2", 2000));
+        select(&mut state, "m1", 0, Kind::MIDI);
+        select(&mut state, "m2", 0, Kind::MIDI);
+
+        let moves = Maolan::selected_group_clip_moves(
+            &state,
+            Kind::MIDI,
+            "m1",
+            0,
+            "m1",
+            480.0,
+            0.0,
+            0,
+            false,
+        )
+        .expect("multi-track midi selection is a group drag");
+
+        let mut targets = moves.iter().map(move_target).collect::<Vec<_>>();
+        targets.sort();
+        assert_eq!(targets, vec![("m1", "m1", 1480), ("m2", "m2", 2480)]);
+    }
 
     #[test]
     fn plugin_graph_refresh_preserves_cached_plugin_state() {

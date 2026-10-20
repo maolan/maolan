@@ -25,19 +25,10 @@ impl Maolan {
                     } else {
                         Task::none()
                     };
-                    self.toolbar.update(message);
-                    self.transport.playing = false;
-                    self.transport.paused = false;
-                    self.transport.last_playback_tick = None;
-                    self.automation.track_automation_runtime.clear();
-                    self.automation.touch_automation_overrides.clear();
-                    self.automation.touch_active_keys.clear();
-                    self.automation.latch_automation_overrides.clear();
-                    self.rec.stop_recording_preview();
-                    return Some(stop_live.chain(Task::batch(vec![
-                        self.send(Action::SetClipPlaybackEnabled(true)),
-                        self.send(Action::Stop),
-                    ])));
+                    // Stop after a recording disarms the record toggle, just
+                    // like the stop button (both paths share
+                    // `stop_workspace_playback`).
+                    return Some(stop_live.chain(self.stop_workspace_playback(false)));
                 }
                 // Toggling editor playback on while the live session is
                 // playing hands over: live playback stops first.
