@@ -2,9 +2,26 @@ use super::*;
 use crate::state::SlotPlayState;
 
 impl Maolan {
+    /// Disarm the record toggle and notify the engine. Shared by the record
+    /// toggle itself and by stopping the transport after a recording.
+    pub(super) fn disarm_recording(&mut self) -> Task<Message> {
+        self.transport.record_armed = false;
+        self.transport.pending_record_after_save = false;
+        self.drag.session_slot_record_target = None;
+        self.transport.live_session_record_start_sample = None;
+        self.transport.recorded_live_session_clip_passes.clear();
+        self.rec.stop_recording_preview();
+        self.send(Action::SetRecordEnabled(false))
+    }
+
     pub(super) fn stop_workspace_playback(&mut self, session_mode: bool) -> Task<Message> {
         tracing::info!("stop_workspace_playback session_mode={}", session_mode);
         self.toolbar.update(&Message::TransportStop);
+        // Stopping after a recording (armed while the transport was running)
+        // disarms the record toggle; an armed-but-idle transport keeps its
+        // arm so a stop press without playback does not cancel an intended
+        // upcoming recording.
+        let was_recording = self.transport.record_armed && self.transport.playing;
         self.transport.playing = false;
         self.transport.paused = false;
         if !session_mode {
@@ -19,12 +36,17 @@ impl Maolan {
         self.rec.stop_recording_preview();
 
         let first = self.send(Action::SetClipPlaybackEnabled(true));
-        if session_mode {
+        let stop = if session_mode {
             first
                 .chain(self.send(Action::Stop))
                 .chain(self.send(Action::SessionPlay))
         } else {
             first.chain(self.send(Action::Stop))
+        };
+        if was_recording {
+            stop.chain(self.disarm_recording())
+        } else {
+            stop
         }
     }
 
@@ -418,13 +440,7 @@ impl Maolan {
             Message::TransportRecordToggle => {
                 self.toolbar.update(&message);
                 if self.transport.record_armed {
-                    self.transport.record_armed = false;
-                    self.transport.pending_record_after_save = false;
-                    self.drag.session_slot_record_target = None;
-                    self.transport.live_session_record_start_sample = None;
-                    self.transport.recorded_live_session_clip_passes.clear();
-                    self.rec.stop_recording_preview();
-                    return self.send(Action::SetRecordEnabled(false));
+                    return self.disarm_recording();
                 }
                 if self.session_dir.is_none() {
                     self.transport.pending_record_after_save = true;

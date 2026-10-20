@@ -377,6 +377,19 @@ impl Maolan {
         disabled
     }
 
+    /// A graph without plugin payload can still carry routing that must be
+    /// replayed on load: folder inner connections (connectable connections
+    /// between the folder's children, inputs, outputs, and plugins) and
+    /// disabled default child connections.
+    fn graph_has_connectable_restore_payload(graph_v: &Value) -> bool {
+        graph_v["connectable_connections"]
+            .as_array()
+            .is_some_and(|connections| !connections.is_empty())
+            || graph_v["disabled_default_connections"]
+                .as_array()
+                .is_some_and(|disabled| !disabled.is_empty())
+    }
+
     fn apply_disabled_default_connections(
         track_name: &str,
         graph_v: &Value,
@@ -624,6 +637,7 @@ impl Maolan {
                 "loop_enabled": self.transport.loop_enabled,
                 "punch_range_samples": self.transport.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.transport.punch_enabled,
+                "metronome_enabled": self.transport.metronome_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
                 "hw_out_level": state.hw_out_level,
@@ -1931,6 +1945,7 @@ impl Maolan {
                 "loop_enabled": self.transport.loop_enabled,
                 "punch_range_samples": self.transport.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.transport.punch_enabled,
+                "metronome_enabled": self.transport.metronome_enabled,
                 "sample_rate_hz": state.hw_sample_rate_hz,
                 "period_frames": state.oss_period_frames,
                 "hw_out_level": state.hw_out_level,
@@ -2590,6 +2605,12 @@ impl Maolan {
         let loaded_loop_enabled = parse_enabled("loop_enabled")?;
         let loaded_punch_range = parse_range("punch_range_samples")?;
         let loaded_punch_enabled = parse_enabled("punch_enabled")?;
+        // Sessions saved before the metronome toggle existed in the transport
+        // section have no such key; default to off.
+        let loaded_metronome_enabled = transport
+            .get("metronome_enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let loaded_sample_rate_hz = transport
             .get("sample_rate_hz")
             .and_then(Value::as_i64)
@@ -2604,6 +2625,7 @@ impl Maolan {
         self.transport.loop_enabled = loaded_loop_enabled;
         self.transport.punch_range_samples = loaded_punch_range;
         self.transport.punch_enabled = loaded_punch_enabled;
+        self.transport.metronome_enabled = loaded_metronome_enabled;
         if let Some(v) = loaded_period_frames {
             self.state
                 .write()
@@ -2627,6 +2649,7 @@ impl Maolan {
         restore_actions.push(Action::SetLoopEnabled(loaded_loop_enabled));
         restore_actions.push(Action::SetPunchRange(loaded_punch_range));
         restore_actions.push(Action::SetPunchEnabled(loaded_punch_enabled));
+        restore_actions.push(Action::SetMetronomeEnabled(loaded_metronome_enabled));
         restore_actions.push(Action::TrackLevel(
             "hw:out".to_string(),
             loaded_hw_out_level,
@@ -3663,12 +3686,20 @@ impl Maolan {
                         );
                         continue;
                     }
-                    if !crate::session_restore::plugin_support::graph_has_restore_payload(graph_v) {
+                    let has_plugin_payload =
+                        crate::session_restore::plugin_support::graph_has_restore_payload(graph_v);
+                    if !has_plugin_payload && !Self::graph_has_connectable_restore_payload(graph_v)
+                    {
                         continue;
                     }
-                    restore_actions.push(Action::TrackClearDefaultPassthrough {
-                        track_name: track_name.clone(),
-                    });
+                    // Only a plugin payload replaces the track-level default
+                    // passthrough; connectable-only graphs (folder inner
+                    // connections, disabled defaults) replay on top of it.
+                    if has_plugin_payload {
+                        restore_actions.push(Action::TrackClearDefaultPassthrough {
+                            track_name: track_name.clone(),
+                        });
+                    }
                     let Some(plugins_arr) = graph_v["plugins"].as_array() else {
                         continue;
                     };
@@ -4703,6 +4734,40 @@ mod tests {
                 && from_port == 1
                 && to == &ConnectableRef::TrackOutput
                 && to_port == 3
+        ));
+    }
+
+    #[test]
+    fn connectable_only_graph_has_restore_payload() {
+        // A folder whose only saved routing is inner connections (and
+        // disabled defaults) must still be restored; graphs like this were
+        // previously skipped because they have no plugin payload.
+        let folder_graph = json!({
+            "plugins": [],
+            "connections": [],
+            "connectable_connections": [
+                {
+                    "from": {"type": "child_track", "name": "left 1"},
+                    "from_port": 0,
+                    "to": {"type": "track_output"},
+                    "to_port": 0,
+                    "kind": "audio"
+                }
+            ],
+            "disabled_default_connections": [
+                {"child": "right 1", "from_port": 0, "to_port": 0, "kind": "audio"}
+            ]
+        });
+        assert!(Maolan::graph_has_connectable_restore_payload(&folder_graph));
+
+        let empty_folder_graph = json!({
+            "plugins": [],
+            "connections": [],
+            "connectable_connections": [],
+            "disabled_default_connections": []
+        });
+        assert!(!Maolan::graph_has_connectable_restore_payload(
+            &empty_folder_graph
         ));
     }
 }

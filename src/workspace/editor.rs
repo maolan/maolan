@@ -833,6 +833,64 @@ fn drum_clip_notes_overlay(
     .into()
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ClipDragPreview {
+    dragged_to_other_track: bool,
+    show_preview_in_this_track: bool,
+    dragged_start: f32,
+}
+
+/// Per-clip drag preview for one rendered clip: whether the original widget
+/// is hidden because the clip will land on another track, whether a preview
+/// ghost is drawn in this track at the drop position, and where the original
+/// widget is drawn (its start, following the mouse while dragging).
+///
+/// For a group drag, `member` is true and the clip's drop target is its own
+/// track shifted by the group delta; a member whose computed target is
+/// incompatible stays in place.
+#[allow(clippy::too_many_arguments)]
+fn clip_drag_preview(
+    state: &crate::state::StateData,
+    clip_start: f32,
+    drag_for_clip: Option<&DraggedClip>,
+    member: bool,
+    active_target_track: Option<&str>,
+    active_target_valid: bool,
+    track_name: &str,
+    pixels_per_sample: f32,
+    snap_adjust_samples: f32,
+) -> ClipDragPreview {
+    let member_target: Option<String> = drag_for_clip.and_then(|d| {
+        if member {
+            let target = active_target_track?;
+            let delta =
+                crate::gui::update::dispatch::group_drag_delta(state, &d.track_index, target)?;
+            crate::gui::update::dispatch::group_drag_target(state, d.kind, delta, track_name)
+                .map(str::to_string)
+        } else {
+            active_target_track.map(str::to_string)
+        }
+    });
+    let member_stays = member && active_target_track.is_some() && member_target.is_none();
+    let target_is_other = member_target.as_deref().is_some_and(|t| t != track_name);
+    let target_is_here = member_target.as_deref() == Some(track_name);
+    let dragged_to_other_track =
+        drag_for_clip.is_some_and(|d| !d.copy) && active_target_valid && target_is_other;
+    let show_preview_in_this_track = drag_for_clip.is_some() && target_is_here;
+    let dragged_start = drag_for_clip
+        .filter(|d| !d.copy && !show_preview_in_this_track && !member_stays)
+        .map(|d| {
+            let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
+            clip_start + delta_samples + snap_adjust_samples
+        })
+        .unwrap_or(clip_start);
+    ClipDragPreview {
+        dragged_to_other_track,
+        show_preview_in_this_track,
+        dragged_start,
+    }
+}
+
 fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Message> {
     let TrackElementViewArgs {
         state,
@@ -891,8 +949,28 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             }
         }
     }
-    let selected_audio_count = selected_audio_indices.len();
-    let selected_midi_count = selected_midi_indices.len();
+    let dragged_clip_selected = |kind: Kind| {
+        active_clip_drag.is_some_and(|d| {
+            d.kind == kind
+                && state.selected_clips.contains(&crate::state::ClipId {
+                    track_idx: d.track_index.clone(),
+                    clip_idx: d.index,
+                    kind,
+                })
+        })
+    };
+    let selected_audio_total = state
+        .selected_clips
+        .iter()
+        .filter(|id| id.kind == Kind::Audio)
+        .count();
+    let selected_midi_total = state
+        .selected_clips
+        .iter()
+        .filter(|id| id.kind == Kind::MIDI)
+        .count();
+    let dragged_audio_selected = dragged_clip_selected(Kind::Audio);
+    let dragged_midi_selected = dragged_clip_selected(Kind::MIDI);
 
     clips.push(
         pin(track_lane_background_overlay(
@@ -982,30 +1060,27 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let active_drag = active_clip_drag.filter(|d| {
                 d.kind == Kind::Audio && d.track_index == track_name_cloned && d.index == index
             });
-            let group_drag = active_clip_drag.filter(|d| {
-                d.kind == Kind::Audio
-                    && d.track_index == track_name_cloned
-                    && selected_audio_indices.contains(&d.index)
-                    && selected_audio_count > 1
-                    && is_selected
-            });
-            let drag_for_clip = group_drag.or(active_drag);
-            let dragged_to_other_track = drag_for_clip.is_some_and(|d| {
-                !d.copy
-                    && active_target_valid
-                    && active_target_track
-                        .is_some_and(|target| target != track_name_cloned.as_str())
-            });
-            let show_preview_in_this_track = drag_for_clip.is_some_and(|_| {
-                active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
-            });
-            let dragged_start = drag_for_clip
-                .filter(|d| !d.copy && !show_preview_in_this_track)
-                .map(|d| {
-                    let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                    clip.start as f32 + delta_samples + active_clip_snap_adjust_samples
-                })
-                .unwrap_or(clip.start as f32);
+            let group_drag_active =
+                dragged_audio_selected && selected_audio_total > 1 && is_selected;
+            let drag_for_clip = if group_drag_active {
+                active_clip_drag
+            } else {
+                active_drag
+            };
+            let preview = clip_drag_preview(
+                state,
+                clip.start as f32,
+                drag_for_clip,
+                group_drag_active,
+                active_target_track,
+                active_target_valid,
+                &track_name_cloned,
+                pixels_per_sample,
+                active_clip_snap_adjust_samples,
+            );
+            let dragged_to_other_track = preview.dragged_to_other_track;
+            let show_preview_in_this_track = preview.show_preview_in_this_track;
+            let dragged_start = preview.dragged_start;
 
             let lane = 0;
             let lane_top = track.lane_top(Kind::Audio, lane) + 1.0;
@@ -1210,30 +1285,26 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let active_drag = active_clip_drag.filter(|d| {
                 d.kind == Kind::MIDI && d.track_index == track_name_cloned && d.index == index
             });
-            let group_drag = active_clip_drag.filter(|d| {
-                d.kind == Kind::MIDI
-                    && d.track_index == track_name_cloned
-                    && selected_midi_indices.contains(&d.index)
-                    && selected_midi_count > 1
-                    && is_selected
-            });
-            let drag_for_clip = group_drag.or(active_drag);
-            let dragged_to_other_track = drag_for_clip.is_some_and(|d| {
-                !d.copy
-                    && active_target_valid
-                    && active_target_track
-                        .is_some_and(|target| target != track_name_cloned.as_str())
-            });
-            let show_preview_in_this_track = drag_for_clip.is_some_and(|_| {
-                active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
-            });
-            let dragged_start = drag_for_clip
-                .filter(|d| !d.copy && !show_preview_in_this_track)
-                .map(|d| {
-                    let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                    clip.start as f32 + delta_samples + active_clip_snap_adjust_samples
-                })
-                .unwrap_or(clip.start as f32);
+            let group_drag_active = dragged_midi_selected && selected_midi_total > 1 && is_selected;
+            let drag_for_clip = if group_drag_active {
+                active_clip_drag
+            } else {
+                active_drag
+            };
+            let preview = clip_drag_preview(
+                state,
+                clip.start as f32,
+                drag_for_clip,
+                group_drag_active,
+                active_target_track,
+                active_target_valid,
+                &track_name_cloned,
+                pixels_per_sample,
+                active_clip_snap_adjust_samples,
+            );
+            let dragged_to_other_track = preview.dragged_to_other_track;
+            let show_preview_in_this_track = preview.show_preview_in_this_track;
+            let dragged_start = preview.dragged_start;
             let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
             let lane_top = track.lane_top(Kind::MIDI, lane) + 1.0;
             let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
@@ -1441,184 +1512,105 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         && let Some(drag) = active_clip_drag
         && let Some(target) = active_target_track
         && target == track_name_cloned.as_str()
-        && drag.track_index != track_name_cloned
     {
         let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-        if let Some(source_track) = state.tracks.iter().find(|t| t.name == drag.track_index) {
-            match drag.kind {
-                Kind::Audio => {
-                    let mut preview_indices: Vec<usize> = state
-                        .selected_clips
-                        .iter()
-                        .filter(|id| {
-                            id.kind == Kind::Audio
-                                && id.track_idx == drag.track_index
-                                && id.clip_idx < source_track.audio.clips.len()
-                        })
-                        .map(|id| id.clip_idx)
-                        .collect();
-                    preview_indices.sort_unstable();
-                    preview_indices.dedup();
-                    if preview_indices.len() <= 1 || !preview_indices.contains(&drag.index) {
-                        preview_indices = vec![drag.index];
-                    }
-                    for clip_index in preview_indices {
-                        let Some(source_clip) = source_track.audio.clips.get(clip_index) else {
-                            continue;
-                        };
-                        let preview_fill = if active_target_valid {
-                            AudioClipWidget::<Message>::two_edge_gradient(
-                                AUDIO_CLIP_SELECTED_BASE,
-                                0.7,
-                                0.7,
-                                true,
-                            )
-                        } else {
-                            AudioClipWidget::<Message>::two_edge_gradient(
-                                Color {
-                                    r: 0.72,
-                                    g: 0.18,
-                                    b: 0.18,
-                                    a: 1.0,
-                                },
-                                0.72,
-                                0.72,
-                                true,
-                            )
-                        };
-                        let preview_border = if active_target_valid {
-                            Color {
-                                r: 0.98,
-                                g: 0.98,
-                                b: 0.98,
-                                a: 0.9,
-                            }
-                        } else {
-                            Color {
-                                r: 1.0,
-                                g: 0.45,
-                                b: 0.45,
-                                a: 0.95,
-                            }
-                        };
-                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let clip_height = (layout.lane_height_for(Kind::Audio, 0) - 2.0).max(8.0);
-                        let lane_top = track.lane_top(Kind::Audio, 0) + 1.0;
-                        let preview_start = source_clip.start as f32
-                            + delta_samples
-                            + active_clip_snap_adjust_samples;
-                        let display_clip_label = AudioClipWidget::<Message>::label_for_width(
-                            &AudioClipWidget::<Message>::clean_name(&source_clip.name),
-                            clip_width,
-                        );
-                        clips.push(
-                            pin(
-                                AudioClipWidget::new(widget_audio_clip_data(source_clip, 1.0))
-                                    .with_session_root(session_root)
-                                    .with_size(clip_width, clip_height)
-                                    .with_label(display_clip_label)
-                                    .preview(
-                                        if active_target_valid {
-                                            preview_fill
-                                        } else {
-                                            Background::Color(Color::TRANSPARENT)
-                                        },
-                                        preview_border,
-                                    )
-                                    .into_element(),
-                            )
-                            .position(Point::new(preview_start * pixels_per_sample, lane_top))
-                            .into(),
-                        );
-                    }
+        // Ghost a group drag for every selected clip of the dragged kind
+        // whose group target is this track; a plain drag ghosts only the
+        // dragged clip itself.
+        let group_active = state.selected_clips.contains(&crate::state::ClipId {
+            track_idx: drag.track_index.clone(),
+            clip_idx: drag.index,
+            kind: drag.kind,
+        }) && state
+            .selected_clips
+            .iter()
+            .filter(|id| id.kind == drag.kind)
+            .count()
+            > 1;
+        let mut preview_clips: Vec<(&str, usize)> = Vec::new();
+        if group_active
+            && let Some(delta) =
+                crate::gui::update::dispatch::group_drag_delta(state, &drag.track_index, target)
+        {
+            for id in &state.selected_clips {
+                if id.kind != drag.kind || id.track_idx == track_name_cloned {
+                    continue;
                 }
-                Kind::MIDI => {
-                    let mut preview_indices: Vec<usize> = state
-                        .selected_clips
-                        .iter()
-                        .filter(|id| {
-                            id.kind == Kind::MIDI
-                                && id.track_idx == drag.track_index
-                                && id.clip_idx < source_track.midi.clips.len()
-                        })
-                        .map(|id| id.clip_idx)
-                        .collect();
-                    preview_indices.sort_unstable();
-                    preview_indices.dedup();
-                    if preview_indices.len() <= 1 || !preview_indices.contains(&drag.index) {
-                        preview_indices = vec![drag.index];
-                    }
-                    for clip_index in preview_indices {
-                        let Some(source_clip) = source_track.midi.clips.get(clip_index) else {
-                            continue;
-                        };
-                        let preview_fill = if active_target_valid {
-                            MIDIClipWidget::<Message>::two_edge_gradient(
-                                MIDI_CLIP_SELECTED_BASE,
-                                0.7,
-                                0.7,
-                                false,
-                            )
-                        } else {
-                            MIDIClipWidget::<Message>::two_edge_gradient(
-                                Color {
-                                    r: 0.72,
-                                    g: 0.18,
-                                    b: 0.18,
-                                    a: 1.0,
-                                },
-                                0.72,
-                                0.72,
-                                false,
-                            )
-                        };
-                        let preview_border = if active_target_valid {
+                if crate::gui::update::dispatch::group_drag_target(
+                    state,
+                    id.kind,
+                    delta,
+                    &id.track_idx,
+                )
+                .is_some_and(|member_target| member_target == track_name_cloned.as_str())
+                {
+                    preview_clips.push((id.track_idx.as_str(), id.clip_idx));
+                }
+            }
+        }
+        if preview_clips.is_empty() && drag.track_index != track_name_cloned {
+            preview_clips.push((drag.track_index.as_str(), drag.index));
+        }
+        match drag.kind {
+            Kind::Audio => {
+                for (source_name, clip_index) in preview_clips {
+                    let Some(source_track) = state.tracks.iter().find(|t| t.name == source_name)
+                    else {
+                        continue;
+                    };
+                    let Some(source_clip) = source_track.audio.clips.get(clip_index) else {
+                        continue;
+                    };
+                    let preview_fill = if active_target_valid {
+                        AudioClipWidget::<Message>::two_edge_gradient(
+                            AUDIO_CLIP_SELECTED_BASE,
+                            0.7,
+                            0.7,
+                            true,
+                        )
+                    } else {
+                        AudioClipWidget::<Message>::two_edge_gradient(
                             Color {
-                                r: 0.98,
-                                g: 0.98,
-                                b: 0.98,
-                                a: 0.9,
-                            }
-                        } else {
-                            Color {
-                                r: 1.0,
-                                g: 0.45,
-                                b: 0.45,
-                                a: 0.95,
-                            }
-                        };
-                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let lane = source_clip
-                            .input_channel
-                            .min(track.midi.ins.saturating_sub(1));
-                        let lane_top = track.lane_top(Kind::MIDI, lane) + 1.0;
-                        let preview_start = source_clip.start as f32
-                            + delta_samples
-                            + active_clip_snap_adjust_samples;
-                        let display_clip_label = MIDIClipWidget::<Message>::label_for_width(
-                            &MIDIClipWidget::<Message>::clean_name(&source_clip.name),
-                            clip_width,
-                        );
-                        let midi_notes_for_clip = midi_clip_previews
-                            .and_then(|map| map.get(&(source_track.name.clone(), clip_index)))
-                            .cloned();
-                        let drum_clip_notes = matches!(
-                            track.midi.editor_view_mode,
-                            crate::message::MidiEditorViewMode::DrumGrid
-                        );
-                        let widget_midi_notes = if drum_clip_notes {
-                            None
-                        } else {
-                            midi_notes_for_clip.clone()
-                        };
-                        clips.push(
-                            pin(MIDIClipWidget::new(widget_midi_clip_data(source_clip))
-                                .with_size(
-                                    clip_width,
-                                    (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0),
-                                )
+                                r: 0.72,
+                                g: 0.18,
+                                b: 0.18,
+                                a: 1.0,
+                            },
+                            0.72,
+                            0.72,
+                            true,
+                        )
+                    };
+                    let preview_border = if active_target_valid {
+                        Color {
+                            r: 0.98,
+                            g: 0.98,
+                            b: 0.98,
+                            a: 0.9,
+                        }
+                    } else {
+                        Color {
+                            r: 1.0,
+                            g: 0.45,
+                            b: 0.45,
+                            a: 0.95,
+                        }
+                    };
+                    let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                    let clip_height = (layout.lane_height_for(Kind::Audio, 0) - 2.0).max(8.0);
+                    let lane_top = track.lane_top(Kind::Audio, 0) + 1.0;
+                    let preview_start =
+                        source_clip.start as f32 + delta_samples + active_clip_snap_adjust_samples;
+                    let display_clip_label = AudioClipWidget::<Message>::label_for_width(
+                        &AudioClipWidget::<Message>::clean_name(&source_clip.name),
+                        clip_width,
+                    );
+                    clips.push(
+                        pin(
+                            AudioClipWidget::new(widget_audio_clip_data(source_clip, 1.0))
+                                .with_session_root(session_root)
+                                .with_size(clip_width, clip_height)
                                 .with_label(display_clip_label)
-                                .with_notes(widget_midi_notes)
                                 .preview(
                                     if active_target_valid {
                                         preview_fill
@@ -1626,25 +1618,114 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                         Background::Color(Color::TRANSPARENT)
                                     },
                                     preview_border,
-                                    8.0,
                                 )
-                                .into_element())
+                                .into_element(),
+                        )
+                        .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                        .into(),
+                    );
+                }
+            }
+            Kind::MIDI => {
+                for (source_name, clip_index) in preview_clips {
+                    let Some(source_track) = state.tracks.iter().find(|t| t.name == source_name)
+                    else {
+                        continue;
+                    };
+                    let Some(source_clip) = source_track.midi.clips.get(clip_index) else {
+                        continue;
+                    };
+                    let preview_fill = if active_target_valid {
+                        MIDIClipWidget::<Message>::two_edge_gradient(
+                            MIDI_CLIP_SELECTED_BASE,
+                            0.7,
+                            0.7,
+                            false,
+                        )
+                    } else {
+                        MIDIClipWidget::<Message>::two_edge_gradient(
+                            Color {
+                                r: 0.72,
+                                g: 0.18,
+                                b: 0.18,
+                                a: 1.0,
+                            },
+                            0.72,
+                            0.72,
+                            false,
+                        )
+                    };
+                    let preview_border = if active_target_valid {
+                        Color {
+                            r: 0.98,
+                            g: 0.98,
+                            b: 0.98,
+                            a: 0.9,
+                        }
+                    } else {
+                        Color {
+                            r: 1.0,
+                            g: 0.45,
+                            b: 0.45,
+                            a: 0.95,
+                        }
+                    };
+                    let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                    let lane = source_clip
+                        .input_channel
+                        .min(track.midi.ins.saturating_sub(1));
+                    let lane_top = track.lane_top(Kind::MIDI, lane) + 1.0;
+                    let preview_start =
+                        source_clip.start as f32 + delta_samples + active_clip_snap_adjust_samples;
+                    let display_clip_label = MIDIClipWidget::<Message>::label_for_width(
+                        &MIDIClipWidget::<Message>::clean_name(&source_clip.name),
+                        clip_width,
+                    );
+                    let midi_notes_for_clip = midi_clip_previews
+                        .and_then(|map| map.get(&(source_track.name.clone(), clip_index)))
+                        .cloned();
+                    let drum_clip_notes = matches!(
+                        track.midi.editor_view_mode,
+                        crate::message::MidiEditorViewMode::DrumGrid
+                    );
+                    let widget_midi_notes = if drum_clip_notes {
+                        None
+                    } else {
+                        midi_notes_for_clip.clone()
+                    };
+                    clips.push(
+                        pin(MIDIClipWidget::new(widget_midi_clip_data(source_clip))
+                            .with_size(
+                                clip_width,
+                                (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0),
+                            )
+                            .with_label(display_clip_label)
+                            .with_notes(widget_midi_notes)
+                            .preview(
+                                if active_target_valid {
+                                    preview_fill
+                                } else {
+                                    Background::Color(Color::TRANSPARENT)
+                                },
+                                preview_border,
+                                8.0,
+                            )
+                            .into_element())
+                        .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                        .into(),
+                    );
+                    if drum_clip_notes && let Some(notes) = midi_notes_for_clip {
+                        clips.push(
+                            pin(drum_clip_notes_overlay(
+                                notes,
+                                source_clip.offset,
+                                source_clip.length.max(1),
+                                clip_width,
+                                (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0),
+                            ))
                             .position(Point::new(preview_start * pixels_per_sample, lane_top))
                             .into(),
                         );
-                        if drum_clip_notes && let Some(notes) = midi_notes_for_clip {
-                            clips.push(
-                                pin(drum_clip_notes_overlay(
-                                    notes,
-                                    source_clip.offset,
-                                    source_clip.length.max(1),
-                                    clip_width,
-                                    (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0),
-                                ))
-                                .position(Point::new(preview_start * pixels_per_sample, lane_top))
-                                .into(),
-                            );
-                        }
                     }
                 }
             }

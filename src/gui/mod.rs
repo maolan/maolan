@@ -2,7 +2,7 @@ pub(crate) mod field_groups;
 mod platform;
 mod session;
 mod subscriptions;
-mod update;
+pub(crate) mod update;
 mod view;
 
 use crate::{
@@ -9020,6 +9020,27 @@ mod tests {
     }
 
     #[test]
+    fn toggle_transport_stop_after_recording_disarms_record_toggle() {
+        let mut app = Maolan {
+            transport: TransportUiState {
+                record_armed: true,
+                playing: true,
+                ..Default::default()
+            },
+            ..Maolan::default()
+        };
+        app.state.write().expect("state lock poisoned").hw_loaded = true;
+
+        let _ = app.update(Message::ToggleTransport);
+
+        assert!(!app.transport.playing);
+        assert!(
+            !app.transport.record_armed,
+            "the Space play/stop toggle disarms after a recording, like the stop button"
+        );
+    }
+
+    #[test]
     fn core_toggle_transport_starts_preview_when_record_armed() {
         let mut app = Maolan {
             transport: TransportUiState {
@@ -9174,6 +9195,35 @@ mod tests {
 
         assert!(app.transport.loop_enabled);
         assert!(app.transport.punch_enabled);
+    }
+
+    #[test]
+    fn stop_after_recording_disarms_record_toggle() {
+        let mut app = Maolan::default();
+        app.transport.record_armed = true;
+        app.transport.playing = true;
+
+        let _ = app.update(Message::TransportStop);
+
+        assert!(!app.transport.playing);
+        assert!(
+            !app.transport.record_armed,
+            "stopping the transport after a recording turns the arm toggle off"
+        );
+    }
+
+    #[test]
+    fn stop_while_armed_but_idle_keeps_record_toggle() {
+        let mut app = Maolan::default();
+        app.transport.record_armed = true;
+        app.transport.playing = false;
+
+        let _ = app.update(Message::TransportStop);
+
+        assert!(
+            app.transport.record_armed,
+            "stop without playback does not cancel an upcoming recording"
+        );
     }
 
     #[test]

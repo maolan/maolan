@@ -3,7 +3,7 @@ use super::{
     TouchAutomationOverride, platform,
 };
 mod autosave;
-mod dispatch;
+pub(crate) mod dispatch;
 mod hw;
 mod types;
 pub(crate) use self::types::AutomationTrackView;
