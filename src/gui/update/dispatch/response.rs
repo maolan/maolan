@@ -427,10 +427,12 @@ impl Maolan {
 
                                 let mut clip_to_move: Option<crate::state::AudioClip> = None;
                                 let mut midi_clip_to_move: Option<crate::state::MIDIClip> = None;
+                                let mut clip_exists = false;
 
                                 match kind {
                                     Kind::Audio => {
                                         if from.clip_index < from_track.audio.clips.len() {
+                                            clip_exists = true;
                                             if !copy {
                                                 clip_to_move = Some(
                                                     from_track.audio.clips.remove(from.clip_index),
@@ -444,6 +446,7 @@ impl Maolan {
                                     }
                                     Kind::MIDI => {
                                         if from.clip_index < from_track.midi.clips.len() {
+                                            clip_exists = true;
                                             if !copy {
                                                 midi_clip_to_move = Some(
                                                     from_track.midi.clips.remove(from.clip_index),
@@ -457,6 +460,45 @@ impl Maolan {
                                     }
                                 }
 
+                                // Keep the selection in sync with the index
+                                // shifts: a removal moves every selected clip
+                                // above the removed index down by one, and the
+                                // moved clip re-anchors to its destination
+                                // index (appended at the end of the track).
+                                let moved_was_selected = if clip_exists {
+                                    let from_id = crate::state::ClipId {
+                                        track_idx: from.track_name.clone(),
+                                        clip_idx: from.clip_index,
+                                        kind: *kind,
+                                    };
+                                    if *copy {
+                                        state.selected_clips.contains(&from_id)
+                                    } else {
+                                        state.selected_clips.remove(&from_id)
+                                    }
+                                } else {
+                                    false
+                                };
+                                if clip_exists && !*copy {
+                                    let from_name = from.track_name.clone();
+                                    let removed_idx = from.clip_index;
+                                    let kind = *kind;
+                                    state.selected_clips = state
+                                        .selected_clips
+                                        .drain()
+                                        .map(|mut selected| {
+                                            if selected.track_idx == from_name
+                                                && selected.kind == kind
+                                                && selected.clip_idx > removed_idx
+                                            {
+                                                selected.clip_idx -= 1;
+                                            }
+                                            selected
+                                        })
+                                        .collect();
+                                }
+
+                                let mut moved_index: Option<usize> = None;
                                 if let Some(to_track) = state
                                     .tracks
                                     .iter_mut()
@@ -470,11 +512,22 @@ impl Maolan {
                                             &mut clip_data,
                                         );
                                         to_track.audio.clips.push(clip_data);
+                                        moved_index =
+                                            Some(to_track.audio.clips.len().saturating_sub(1));
                                     } else if let Some(mut midi_clip_data) = midi_clip_to_move {
                                         midi_clip_data.start = to.sample_offset;
                                         midi_clip_data.input_channel = to.input_channel;
                                         to_track.midi.clips.push(midi_clip_data);
+                                        moved_index =
+                                            Some(to_track.midi.clips.len().saturating_sub(1));
                                     }
+                                }
+                                if moved_was_selected && let Some(clip_idx) = moved_index {
+                                    state.selected_clips.insert(crate::state::ClipId {
+                                        track_idx: to.track_name.clone(),
+                                        clip_idx,
+                                        kind: *kind,
+                                    });
                                 }
                             }
                             if *kind == Kind::MIDI {
