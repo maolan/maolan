@@ -10186,6 +10186,228 @@ mod tests {
         );
     }
 
+    #[test]
+    fn clip_resize_handle_hover_clears_on_exit() {
+        use maolan_engine::kind::Kind;
+        let mut app = Maolan::default();
+        let hover = |hovered: bool, track: &str, clip: usize| Message::ClipResizeHandleHover {
+            kind: Kind::Audio,
+            track_idx: track.to_string(),
+            clip_idx: clip,
+            is_right_side: false,
+            hovered,
+        };
+
+        let _ = app.update(hover(true, "a", 0));
+        assert!(
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .hovered_clip_resize_handle
+                .is_some(),
+            "hovering a resize edge flags the handle"
+        );
+
+        // Leaving the edge zone clears the flag, so the pointer shape can no
+        // longer promise a resize when the press would move the clip.
+        let _ = app.update(hover(false, "a", 0));
+        assert!(
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .hovered_clip_resize_handle
+                .is_none(),
+            "leaving the edge zone clears the flag"
+        );
+
+        // Exiting a different clip's handle must not clear the active hover.
+        let _ = app.update(hover(true, "a", 1));
+        let _ = app.update(Message::ClipResizeHandleHover {
+            kind: Kind::Audio,
+            track_idx: "b".to_string(),
+            clip_idx: 3,
+            is_right_side: true,
+            hovered: false,
+        });
+        let flagged = app
+            .state
+            .read()
+            .expect("state lock poisoned")
+            .hovered_clip_resize_handle
+            .clone();
+        assert_eq!(
+            flagged,
+            Some(("a".to_string(), 1, Kind::Audio, false)),
+            "a foreign hover-exit keeps the current flag"
+        );
+    }
+
+    #[test]
+    fn resize_cursor_zone_matches_widget_press_zone() {
+        let mut app = Maolan {
+            size: maolan_widgets::iced::Size::new(1200.0, 800.0),
+            ..Maolan::default()
+        };
+        app.ui.zoom_visible_bars = 1.0;
+        // Read zoom-derived values before taking the write guard:
+        // `pixels_per_sample` locks the state itself and the lock is not
+        // reentrant.
+        let pps = app.pixels_per_sample();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            let mut a = crate::state::Track::new("a".to_string(), 0.0, 2, 2, 0, 0);
+            a.audio.clips.push(crate::state::AudioClip {
+                id: "wide".to_string(),
+                name: "wide.wav".to_string(),
+                start: 48_000,
+                length: 96_000,
+                offset: 0,
+                ..Default::default()
+            });
+            // Drawn ~20 px wide: 8 px zones at each edge leave a middle
+            // strip for moving.
+            a.audio.clips.push(crate::state::AudioClip {
+                id: "narrow".to_string(),
+                name: "narrow.wav".to_string(),
+                start: 480_000,
+                length: (20.0 / pps) as usize,
+                offset: 0,
+                ..Default::default()
+            });
+            state.tracks.push(a);
+        }
+        let (y, wide_left, narrow_left) = {
+            let state = app.state.read().expect("state lock poisoned");
+            let track = &state.tracks[0];
+            (
+                track.lane_top(maolan_engine::kind::Kind::Audio, 0) + 2.0,
+                48_000.0 * pps,
+                480_000.0 * pps,
+            )
+        };
+        let hover_at = |app: &mut Maolan, x: f32| {
+            let _ = app.update(Message::EditorMouseMoved(maolan_widgets::iced::Point::new(
+                x, y,
+            )));
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .hovered_clip_resize_handle
+                .clone()
+        };
+        let audio = maolan_engine::kind::Kind::Audio;
+
+        // 7 px inside the edge: inside the shared 8 px zone. The widget's
+        // press zone used to be 5 px, so this exact spot showed the resize
+        // cursor but moved the clip.
+        assert_eq!(
+            hover_at(&mut app, wide_left + 7.0),
+            Some(("a".to_string(), 0, audio, false))
+        );
+        assert_eq!(
+            hover_at(&mut app, wide_left + 9.0),
+            None,
+            "outside the 8 px zone the cursor must not promise a resize"
+        );
+        // Narrow clip: the zones clamp so the middle stays grabbable for
+        // moving and both edges still resize.
+        assert_eq!(
+            hover_at(&mut app, narrow_left + 7.0),
+            Some(("a".to_string(), 1, audio, false))
+        );
+        assert_eq!(
+            hover_at(&mut app, narrow_left + 10.0),
+            None,
+            "the middle strip of a narrow clip promises a move"
+        );
+        assert_eq!(
+            hover_at(&mut app, narrow_left + 13.0),
+            Some(("a".to_string(), 1, audio, true))
+        );
+        // The zone is half-open like the widget's mouse areas: the pixel at
+        // exactly `edge + 8` must not promise a resize the press won't
+        // capture.
+        assert_eq!(
+            hover_at(&mut app, wide_left + 8.0),
+            None,
+            "the boundary pixel belongs to the move zone"
+        );
+    }
+
+    #[test]
+    fn overlap_hover_follows_topmost_clip() {
+        let mut app = Maolan {
+            size: maolan_widgets::iced::Size::new(1200.0, 800.0),
+            ..Maolan::default()
+        };
+        app.ui.zoom_visible_bars = 1.0;
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            let mut a = crate::state::Track::new("a".to_string(), 0.0, 2, 2, 0, 0);
+            a.audio.clips.push(crate::state::AudioClip {
+                id: "bottom".to_string(),
+                name: "bottom.wav".to_string(),
+                start: 48_000,
+                length: 96_000,
+                offset: 0,
+                ..Default::default()
+            });
+            // Drawn on top of (and fully covering) the first clip.
+            a.audio.clips.push(crate::state::AudioClip {
+                id: "top".to_string(),
+                name: "top.wav".to_string(),
+                start: 48_000,
+                length: 500_000,
+                offset: 0,
+                ..Default::default()
+            });
+            state.tracks.push(a);
+        }
+        let pps = app.pixels_per_sample();
+        let (lane_top, lane_h, left, hidden_right) = {
+            let state = app.state.read().expect("state lock poisoned");
+            let track = &state.tracks[0];
+            (
+                track.lane_top(maolan_engine::kind::Kind::Audio, 0),
+                track
+                    .lane_layout()
+                    .lane_height_for(maolan_engine::kind::Kind::Audio, 0),
+                48_000.0 * pps,
+                144_000.0 * pps,
+            )
+        };
+        let audio = maolan_engine::kind::Kind::Audio;
+        // iced routes the press to the topmost widget; the hover answer must
+        // be identical in both halves of the lane, otherwise the cursor can
+        // promise a resize that actually moves the clip.
+        for y in [lane_top + 2.0, lane_top + lane_h - 2.0] {
+            let _ = app.update(Message::EditorMouseMoved(maolan_widgets::iced::Point::new(
+                hidden_right - 7.0,
+                y,
+            )));
+            assert_eq!(
+                app.state
+                    .read()
+                    .expect("state lock poisoned")
+                    .hovered_clip_resize_handle,
+                None,
+                "inside the top clip's body the cursor must not promise a resize"
+            );
+            let _ = app.update(Message::EditorMouseMoved(maolan_widgets::iced::Point::new(
+                left + 7.0,
+                y,
+            )));
+            assert_eq!(
+                app.state
+                    .read()
+                    .expect("state lock poisoned")
+                    .hovered_clip_resize_handle,
+                Some(("a".to_string(), 1, audio, false)),
+                "a shared edge resizes the topmost clip"
+            );
+        }
+    }
+
     fn clip_move_echo_app() -> Maolan {
         let app = Maolan::default();
         let mut state = app.state.write().expect("state lock poisoned");
