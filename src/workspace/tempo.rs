@@ -122,8 +122,8 @@ struct TempoCanvas {
     session_range_samples: Option<(usize, usize)>,
     clip_snap_edges: Vec<ClipSnapEdge>,
     snap_mode: SnapMode,
-    samples_per_beat: f64,
-    samples_per_bar: f64,
+    samples_per_beat: f32,
+    samples_per_bar: f32,
     shift_pressed: bool,
     tempo_points: Vec<(usize, f32)>,
     time_signature_points: Vec<(usize, u8, u8)>,
@@ -146,8 +146,8 @@ pub struct TempoViewArgs {
     pub session_range_samples: Option<(usize, usize)>,
     pub clip_snap_edges: Vec<ClipSnapEdge>,
     pub snap_mode: SnapMode,
-    pub samples_per_beat: f64,
-    pub samples_per_bar: f64,
+    pub samples_per_beat: f32,
+    pub samples_per_bar: f32,
     pub content_width: f32,
     pub shift_pressed: bool,
     pub tempo_points: Vec<(usize, f32)>,
@@ -296,7 +296,7 @@ impl canvas::Program<Message> for TempoCanvas {
                 (sample, Vec::new())
             } else {
                 (
-                    ((sample as f64 / interval).round() * interval).max(0.0) as usize,
+                    ((sample as f32 / interval).round() * interval).max(0.0) as usize,
                     Vec::new(),
                 )
             }
@@ -1092,7 +1092,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
                     SnapMode::NoSnap | SnapMode::Clips => unreachable!(),
                 };
-                ((sample as f64 / interval).round() * interval).max(0.0) as usize
+                ((sample as f32 / interval).round() * interval).max(0.0) as usize
             }
         };
         let cursor_hash = cursor

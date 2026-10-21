@@ -195,7 +195,7 @@ impl fmt::Display for SnapMode {
 }
 
 impl SnapMode {
-    pub fn interval_samples(self, samples_per_beat: f64, samples_per_bar: f64) -> f64 {
+    pub fn interval_samples(self, samples_per_beat: f32, samples_per_bar: f32) -> f32 {
         match self {
             SnapMode::NoSnap => 1.0,
             SnapMode::Clips => 1.0,
@@ -209,7 +209,7 @@ impl SnapMode {
         }
     }
 
-    pub fn snap_sample(self, sample: f64, samples_per_beat: f64, samples_per_bar: f64) -> f64 {
+    pub fn snap_sample(self, sample: f32, samples_per_beat: f32, samples_per_bar: f32) -> f32 {
         if matches!(self, SnapMode::NoSnap | SnapMode::Clips) {
             return sample.max(0.0);
         }
@@ -219,11 +219,11 @@ impl SnapMode {
 
     pub fn snap_sample_drag(
         self,
-        sample: f64,
-        delta_samples: f64,
-        samples_per_beat: f64,
-        samples_per_bar: f64,
-    ) -> f64 {
+        sample: f32,
+        delta_samples: f32,
+        samples_per_beat: f32,
+        samples_per_bar: f32,
+    ) -> f32 {
         if matches!(self, SnapMode::NoSnap | SnapMode::Clips) {
             return sample.max(0.0);
         }
@@ -1132,6 +1132,11 @@ pub enum Message {
     MouseMoved(mouse::Event),
     EditorMouseMoved(Point),
     EditorScrollXChanged(f32),
+    /// Absolute horizontal content offset in pixels, reported by the synced
+    /// timeline scrollables (editor, ruler, tempo). Converted to the shared
+    /// scroll origin via `timeline_scroll_origin_samples`, so every
+    /// scrollable scrolls to the same content position.
+    EditorScrollXPixels(f32),
     EditorScrollYChanged(f32),
     MixerScrollXChanged(f32),
     MousePressed(mouse::Button),

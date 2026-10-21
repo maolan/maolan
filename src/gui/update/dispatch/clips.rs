@@ -805,14 +805,14 @@ impl Maolan {
                             .timing
                             .snap_mode
                             .interval_samples(samples_per_beat, samples_per_bar)
-                            .max(1.0) as f32;
+                            .max(1.0);
                         let snap_sample_drag = |sample: f32, delta_samples: f32| {
                             self.timing.snap_mode.snap_sample_drag(
-                                sample as f64,
-                                delta_samples as f64,
+                                sample,
+                                delta_samples,
                                 samples_per_beat,
                                 samples_per_bar,
-                            ) as f32
+                            )
                         };
                         let min_length_samples = (MIN_CLIP_WIDTH_PX / pixels_per_sample)
                             .ceil()

@@ -1,4 +1,5 @@
 use super::VisibleTrackWindow;
+use super::{timeline_sample_to_x, timeline_sample_to_x_f32};
 use crate::state::Kind;
 use crate::{
     consts::{
@@ -1209,7 +1210,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             })
                             .into_element(),
                     )
-                    .position(Point::new(dragged_start * pixels_per_sample, lane_top))
+                    .position(Point::new(
+                        timeline_sample_to_x_f32(dragged_start, pixels_per_sample, 0.0),
+                        lane_top,
+                    ))
                     .into(),
                 );
             }
@@ -1255,7 +1259,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .with_label(display_clip_label.clone())
                         .preview(preview_fill, preview_border)
                         .into_element())
-                    .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                    .position(Point::new(
+                        timeline_sample_to_x_f32(preview_start, pixels_per_sample, 0.0),
+                        lane_top,
+                    ))
                     .into(),
                 );
             }
@@ -1266,7 +1273,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             }) {
                 clips.push(
                     pin(clip_snap_outline(clip_width, clip_height, 8.0))
-                        .position(Point::new(clip.start as f32 * pixels_per_sample, lane_top))
+                        .position(Point::new(
+                            timeline_sample_to_x(clip.start, pixels_per_sample, 0.0),
+                            lane_top,
+                        ))
                         .into(),
                 );
             }
@@ -1413,7 +1423,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             },
                         })
                         .into_element())
-                    .position(Point::new(dragged_start * pixels_per_sample, lane_top))
+                    .position(Point::new(
+                        timeline_sample_to_x_f32(dragged_start, pixels_per_sample, 0.0),
+                        lane_top,
+                    ))
                     .into(),
                 );
                 if drum_clip_notes && let Some(notes) = midi_notes_for_clip.clone() {
@@ -1425,7 +1438,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             clip_width,
                             clip_height,
                         ))
-                        .position(Point::new(dragged_start * pixels_per_sample, lane_top))
+                        .position(Point::new(
+                            timeline_sample_to_x_f32(dragged_start, pixels_per_sample, 0.0),
+                            lane_top,
+                        ))
                         .into(),
                     );
                 }
@@ -1477,7 +1493,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .with_notes(widget_midi_notes.clone())
                         .preview(preview_fill, preview_border, 8.0)
                         .into_element())
-                    .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                    .position(Point::new(
+                        timeline_sample_to_x_f32(preview_start, pixels_per_sample, 0.0),
+                        lane_top,
+                    ))
                     .into(),
                 );
                 if drum_clip_notes && let Some(notes) = midi_notes_for_clip.clone() {
@@ -1489,7 +1508,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             clip_width,
                             clip_height,
                         ))
-                        .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                        .position(Point::new(
+                            timeline_sample_to_x_f32(preview_start, pixels_per_sample, 0.0),
+                            lane_top,
+                        ))
                         .into(),
                     );
                 }
@@ -1501,7 +1523,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             }) {
                 clips.push(
                     pin(clip_snap_outline(clip_width, clip_height, 8.0))
-                        .position(Point::new(clip.start as f32 * pixels_per_sample, lane_top))
+                        .position(Point::new(
+                            timeline_sample_to_x(clip.start, pixels_per_sample, 0.0),
+                            lane_top,
+                        ))
                         .into(),
                 );
             }
@@ -1621,7 +1646,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 )
                                 .into_element(),
                         )
-                        .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                        .position(Point::new(
+                            timeline_sample_to_x_f32(preview_start, pixels_per_sample, 0.0),
+                            lane_top,
+                        ))
                         .into(),
                     );
                 }
@@ -1711,7 +1739,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 8.0,
                             )
                             .into_element())
-                        .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                        .position(Point::new(
+                            timeline_sample_to_x_f32(preview_start, pixels_per_sample, 0.0),
+                            lane_top,
+                        ))
                         .into(),
                     );
                     if drum_clip_notes && let Some(notes) = midi_notes_for_clip {
@@ -1723,7 +1754,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 clip_width,
                                 (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0),
                             ))
-                            .position(Point::new(preview_start * pixels_per_sample, lane_top))
+                            .position(Point::new(
+                                timeline_sample_to_x_f32(preview_start, pixels_per_sample, 0.0),
+                                lane_top,
+                            ))
                             .into(),
                         );
                     }
@@ -1800,7 +1834,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         clips.push(
             pin(preview_clip)
                 .position(Point::new(
-                    preview_start as f32 * pixels_per_sample,
+                    timeline_sample_to_x(preview_start, pixels_per_sample, 0.0),
                     preview_top,
                 ))
                 .into(),
@@ -2097,7 +2131,7 @@ pub struct EditorViewArgs<'a> {
     pub pixels_per_sample: f32,
     pub samples_per_bar: f32,
     pub snap_mode: SnapMode,
-    pub samples_per_beat: f64,
+    pub samples_per_beat: f32,
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_target_track: Option<&'a str>,
     pub active_target_valid: bool,

@@ -206,8 +206,24 @@ impl Maolan {
                 let x = value.clamp(0.0, 1.0);
                 if (self.ui.editor_scroll_x - x).abs() > 0.0005 {
                     self.ui.editor_scroll_x = x;
-                    self.ui.editor_scroll_origin_samples =
-                        self.editor_max_scroll_samples() * x as f64;
+                    self.ui.editor_scroll_origin_samples = self.editor_max_scroll_samples() * x;
+                    return self.sync_editor_scrollbars();
+                }
+            }
+            Message::EditorScrollXPixels(offset_px) => {
+                // Absolute content pixels: the same conversion serves every
+                // synced scrollable (editor, ruler, tempo), so they all land
+                // on the same content position regardless of viewport width.
+                let origin = crate::workspace::timeline_scroll_origin_samples(
+                    offset_px,
+                    self.pixels_per_sample(),
+                )
+                .clamp(0.0, self.editor_max_scroll_samples());
+                let delta_px = (origin - self.ui.editor_scroll_origin_samples).abs()
+                    * self.pixels_per_sample();
+                if delta_px > 0.5 {
+                    self.ui.editor_scroll_origin_samples = origin;
+                    self.ui.editor_scroll_x = self.editor_scroll_relative_x();
                     return self.sync_editor_scrollbars();
                 }
             }

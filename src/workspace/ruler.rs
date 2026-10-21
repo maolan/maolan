@@ -1,5 +1,6 @@
 use super::{
-    ClipSnapEdge, snap_range_samples, tempo::TimelineZoomTarget, timeline_x_to_sample_f32,
+    ClipSnapEdge, snap_range_samples, tempo::TimelineZoomTarget, timeline_sample_to_x_f32,
+    timeline_x_to_sample_f32,
 };
 use crate::consts::workspace::{
     BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
@@ -61,8 +62,8 @@ struct RulerCanvas {
     loop_range_samples: Option<(usize, usize)>,
     clip_snap_edges: Vec<ClipSnapEdge>,
     snap_mode: SnapMode,
-    samples_per_beat: f64,
-    samples_per_bar: f64,
+    samples_per_beat: f32,
+    samples_per_bar: f32,
     timeline_left_inset_px: f32,
     clip_start_samples: usize,
     zoom_target: TimelineZoomTarget,
@@ -75,8 +76,8 @@ pub struct RulerViewArgs {
     pub loop_range_samples: Option<(usize, usize)>,
     pub clip_snap_edges: Vec<ClipSnapEdge>,
     pub snap_mode: SnapMode,
-    pub samples_per_beat: f64,
-    pub samples_per_bar: f64,
+    pub samples_per_beat: f32,
+    pub samples_per_bar: f32,
     pub content_width: f32,
     pub timeline_left_inset_px: f32,
     pub clip_start_samples: usize,
@@ -225,7 +226,7 @@ impl canvas::Program<Message> for RulerCanvas {
                 (sample, Vec::new())
             } else {
                 (
-                    ((sample as f64 / interval).round() * interval).max(0.0) as usize,
+                    ((sample as f32 / interval).round() * interval).max(0.0) as usize,
                     Vec::new(),
                 )
             }
@@ -253,8 +254,16 @@ impl canvas::Program<Message> for RulerCanvas {
                     && loop_end > loop_start
                 {
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
-                    let start_x = loop_start as f32 * self.pixels_per_sample;
-                    let end_x = loop_end as f32 * self.pixels_per_sample;
+                    let start_x = timeline_sample_to_x_f32(
+                        loop_start as f32,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
+                    let end_x = timeline_sample_to_x_f32(
+                        loop_end as f32,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     let start_hit = (x - start_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
                     let end_hit = (x - end_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
                     if start_hit || end_hit {
@@ -446,10 +455,14 @@ impl canvas::Program<Message> for RulerCanvas {
                         SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
                         SnapMode::NoSnap | SnapMode::Clips => unreachable!(),
                     };
-                    ((sample as f64 / interval).round() * interval).max(0.0) as usize
+                    ((sample as f32 / interval).round() * interval).max(0.0) as usize
                 }
             };
-            snapped_sample as f32 * self.pixels_per_sample
+            timeline_sample_to_x_f32(
+                snapped_sample as f32,
+                self.pixels_per_sample,
+                self.timeline_left_inset_px,
+            )
         };
         let mut hasher = DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
@@ -491,8 +504,16 @@ impl canvas::Program<Message> for RulerCanvas {
                     && self.pixels_per_sample > 1.0e-9
                     && loop_end > loop_start
                 {
-                    let start_x = loop_start as f32 * self.pixels_per_sample;
-                    let end_x = loop_end as f32 * self.pixels_per_sample;
+                    let start_x = timeline_sample_to_x_f32(
+                        loop_start as f32,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
+                    let end_x = timeline_sample_to_x_f32(
+                        loop_end as f32,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     frame.fill(
                         &Path::rectangle(
                             Point::new(start_x.max(0.0), 0.0),
@@ -526,9 +547,11 @@ impl canvas::Program<Message> for RulerCanvas {
                 if state.dragging {
                     let (start_x, end_x) = if state.drag_move_loop_range {
                         let delta_x = state.last_x - state.drag_start_x;
-                        let raw_start_x = (state.loop_move_original_start as f32
-                            * self.pixels_per_sample
-                            + delta_x)
+                        let raw_start_x = (timeline_sample_to_x_f32(
+                            state.loop_move_original_start as f32,
+                            self.pixels_per_sample,
+                            self.timeline_left_inset_px,
+                        ) + delta_x)
                             .max(0.0);
                         let start_x = snap_preview_x(raw_start_x);
                         let end_x = start_x
@@ -539,16 +562,20 @@ impl canvas::Program<Message> for RulerCanvas {
                     } else if state.drag_adjust_loop_edge {
                         if let Some((loop_start, loop_end)) = self.loop_range_samples {
                             let moved_x = snap_preview_x(state.last_x).max(0.0);
+                            let loop_start_x = timeline_sample_to_x_f32(
+                                loop_start as f32,
+                                self.pixels_per_sample,
+                                self.timeline_left_inset_px,
+                            );
+                            let loop_end_x = timeline_sample_to_x_f32(
+                                loop_end as f32,
+                                self.pixels_per_sample,
+                                self.timeline_left_inset_px,
+                            );
                             if state.adjust_loop_start {
-                                (
-                                    moved_x.min(loop_end as f32 * self.pixels_per_sample),
-                                    loop_end as f32 * self.pixels_per_sample,
-                                )
+                                (moved_x.min(loop_end_x), loop_end_x)
                             } else {
-                                (
-                                    loop_start as f32 * self.pixels_per_sample,
-                                    moved_x.max(loop_start as f32 * self.pixels_per_sample),
-                                )
+                                (loop_start_x, moved_x.max(loop_start_x))
                             }
                         } else {
                             (
@@ -598,7 +625,13 @@ impl canvas::Program<Message> for RulerCanvas {
                     (total_beats as f32 / BEATS_PER_BAR as f32).ceil().max(0.0) as usize;
 
                 for beat_idx in (0..=total_beats).step_by(tick_step_beats) {
-                    let x = self.timeline_left_inset_px + beat_idx as f32 * self.beat_pixels;
+                    // Position every tick through the same sample→x mapping
+                    // the editor uses for clips, so the grid cannot drift.
+                    let x = timeline_sample_to_x_f32(
+                        beat_idx as f32 * self.samples_per_beat,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     let is_bar = beat_idx % BEATS_PER_BAR == 0;
                     let is_numbered_bar =
                         is_bar && ((beat_idx / BEATS_PER_BAR).is_multiple_of(label_step_bars));
@@ -616,12 +649,15 @@ impl canvas::Program<Message> for RulerCanvas {
                     );
                 }
 
-                let clip_start_bar = (self.clip_start_samples as f64
-                    / (self.samples_per_beat * BEATS_PER_BAR as f64))
+                let clip_start_bar = (self.clip_start_samples as f32
+                    / (self.samples_per_beat * BEATS_PER_BAR as f32))
                     .floor() as usize;
                 for bar in (0..=total_bars).step_by(label_step_bars) {
-                    let x = self.timeline_left_inset_px
-                        + bar as f32 * BEATS_PER_BAR as f32 * self.beat_pixels;
+                    let x = timeline_sample_to_x_f32(
+                        bar as f32 * BEATS_PER_BAR as f32 * self.samples_per_beat,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     frame.fill_text(Text {
                         content: (bar + clip_start_bar).to_string(),
                         position: Point::new(x + 4.0, 2.0),
