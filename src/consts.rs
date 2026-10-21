@@ -47,9 +47,41 @@ pub mod ui_timing {
     use super::Duration;
 
     pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);
-    pub const PLAYHEAD_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
+    /// Lower bound for the playback tick: the display cannot show playhead
+    /// movement faster than the frame rate, so redrawing more often only
+    /// burns CPU.
+    pub const PLAYHEAD_MIN_UPDATE_INTERVAL: Duration = Duration::from_millis(16);
+    /// Upper bound for the playhead-driven playback tick. At extreme zoom-out
+    /// one pixel spans a second or more; the tick (and with it the transport
+    /// clock) only needs to fire once per pixel step.
+    pub const PLAYHEAD_MAX_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+    /// Fixed playback tick for views without a timeline playhead (session
+    /// view), where the tick is what keeps slot play-positions animating.
+    pub const PLAYBACK_UI_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
+    /// Meter polling while transport runs. Engine meter events and the
+    /// playback tick already force redraws, so a slower poll adds no visible
+    /// latency while avoiding extra whole-window redraws on top.
+    pub const METER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
+    /// Meter polling when idle: the poll is the only redraw source, so keep
+    /// meter decay and falloff animation smooth.
+    pub const METER_IDLE_UPDATE_INTERVAL: Duration = Duration::from_millis(40);
     pub const RECORDING_PREVIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
     pub const RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+
+    /// Wall-clock time in which the playhead moves by one screen pixel.
+    ///
+    /// `pixels_per_sample` and `playback_rate_hz` define the on-screen
+    /// playhead speed in px/s; the tick is scheduled slightly ahead of the
+    /// exact pixel time so rounding never makes the playhead appear to
+    /// stall on a pixel. The result is clamped to
+    /// [`PLAYHEAD_MIN_UPDATE_INTERVAL`], [`PLAYHEAD_MAX_UPDATE_INTERVAL`].
+    pub fn playhead_update_interval(pixels_per_sample: f64, playback_rate_hz: f64) -> Duration {
+        let pps = pixels_per_sample.max(1.0e-9);
+        let rate = playback_rate_hz.max(1.0);
+        let seconds_per_pixel = 1.0 / (pps * rate);
+        Duration::from_secs_f64(seconds_per_pixel * 0.9)
+            .clamp(PLAYHEAD_MIN_UPDATE_INTERVAL, PLAYHEAD_MAX_UPDATE_INTERVAL)
+    }
 }
 
 pub mod platform_caps {
@@ -299,8 +331,27 @@ mod tests {
     #[test]
     fn ui_timing_constants_are_expected_values() {
         assert_eq!(ui_timing::DOUBLE_CLICK.as_millis(), 350);
-        assert_eq!(ui_timing::PLAYHEAD_UPDATE_INTERVAL.as_millis(), 50);
+        assert_eq!(ui_timing::PLAYHEAD_MIN_UPDATE_INTERVAL.as_millis(), 16);
+        assert_eq!(ui_timing::PLAYHEAD_MAX_UPDATE_INTERVAL.as_secs(), 1);
+        assert_eq!(ui_timing::PLAYBACK_UI_UPDATE_INTERVAL.as_millis(), 50);
+        assert_eq!(ui_timing::METER_UPDATE_INTERVAL.as_millis(), 100);
+        assert_eq!(ui_timing::METER_IDLE_UPDATE_INTERVAL.as_millis(), 40);
         assert_eq!(ui_timing::RECORDING_PREVIEW_UPDATE_INTERVAL.as_secs(), 1);
+    }
+
+    #[test]
+    fn playhead_update_interval_tracks_zoom() {
+        // Zoomed in: one pixel is a fraction of a frame; clamp to the minimum.
+        let zoomed_in = ui_timing::playhead_update_interval(0.1, 48_000.0);
+        assert_eq!(zoomed_in, ui_timing::PLAYHEAD_MIN_UPDATE_INTERVAL);
+        // Zoomed out: one pixel spans more than a second; clamp to the
+        // maximum.
+        let zoomed_out = ui_timing::playhead_update_interval(1.0e-5, 48_000.0);
+        assert_eq!(zoomed_out, ui_timing::PLAYHEAD_MAX_UPDATE_INTERVAL);
+        // 50 px per second of audio: one pixel every 20 ms, scheduled 10%
+        // early → 18 ms.
+        let mid = ui_timing::playhead_update_interval(50.0 / 48_000.0, 48_000.0);
+        assert_eq!(mid, Duration::from_millis(18));
     }
 
     #[test]

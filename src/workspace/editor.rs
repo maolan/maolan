@@ -34,6 +34,8 @@ use std::{
     sync::Arc,
 };
 
+const PREVIEW_HASH_CHECKPOINTS: usize = 16;
+
 fn widget_audio_clip_data(
     clip: &crate::state::AudioClip,
     stretch_ratio: f32,
@@ -573,14 +575,18 @@ impl canvas::Program<Message> for TrackBarGridCanvas {
                 let step = self.bar_pixels.max(1.0)
                     * Self::step_for_spacing(self.bar_pixels, MIN_TICK_SPACING_PX) as f32;
                 let color = Color::from_rgba(0.86, 0.96, 0.74, 0.14);
-                let mut x = 0.0_f32;
-                while x <= bounds.width + 1.0 {
-                    frame.stroke(
-                        &Path::line(Point::new(x, 0.0), Point::new(x, bounds.height)),
-                        canvas::Stroke::default().with_color(color).with_width(1.0),
-                    );
-                    x += step;
-                }
+                let path = Path::new(|builder: &mut canvas::path::Builder| {
+                    let mut x = 0.0_f32;
+                    while x <= bounds.width + 1.0 {
+                        builder.move_to(Point::new(x, 0.0));
+                        builder.line_to(Point::new(x, bounds.height));
+                        x += step;
+                    }
+                });
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default().with_color(color).with_width(1.0),
+                );
             });
         vec![geom]
     }
@@ -2316,7 +2322,17 @@ impl Editor {
                     preview.peaks.len().hash(&mut hasher);
                     for channel in preview.peaks.iter() {
                         channel.len().hash(&mut hasher);
-                        for pair in channel {
+                        let len = channel.len();
+                        if len == 0 {
+                            continue;
+                        }
+                        channel[0][0].to_bits().hash(&mut hasher);
+                        channel[0][1].to_bits().hash(&mut hasher);
+                        channel[len - 1][0].to_bits().hash(&mut hasher);
+                        channel[len - 1][1].to_bits().hash(&mut hasher);
+                        for i in 0..PREVIEW_HASH_CHECKPOINTS {
+                            let idx = (i * len) / PREVIEW_HASH_CHECKPOINTS;
+                            let pair = &channel[idx.min(len - 1)];
                             pair[0].to_bits().hash(&mut hasher);
                             pair[1].to_bits().hash(&mut hasher);
                         }

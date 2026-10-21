@@ -522,105 +522,6 @@ impl Workspace {
             let state = self.state.read().expect("state lock poisoned");
             editor::clip_context_menu_overlay(&state, transport_active)
         };
-        let playhead_x_timeline = playhead_samples.map(|sample| {
-            timeline_sample_to_x_f32(sample as f32, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
-        });
-        let clip_snap_edges = self.collect_clip_snap_edges();
-
-        let editor_render_hash = self.editor.render_hash(&EditorViewArgs {
-            session_root,
-            pixels_per_sample,
-            samples_per_bar,
-            snap_mode,
-            samples_per_beat,
-            active_clip_drag,
-            active_target_track: active_clip_target_track,
-            active_target_valid: active_clip_target_valid,
-            active_clip_snap_adjust_samples,
-            active_clip_snap_targets,
-            recording_preview_bounds,
-            recording_preview_peaks,
-            midi_clip_previews,
-            visible_track_window,
-        });
-        let editor = self.editor.clone();
-        let editor_args_owned = OwnedEditorViewArgs {
-            session_root: session_root.cloned(),
-            pixels_per_sample,
-            samples_per_bar,
-            active_clip_drag: active_clip_drag.cloned(),
-            active_target_track: active_clip_target_track.map(str::to_string),
-            active_target_valid: active_clip_target_valid,
-            active_clip_snap_adjust_samples,
-            active_clip_snap_targets: active_clip_snap_targets.to_vec(),
-            recording_preview_bounds,
-            recording_preview_peaks: recording_preview_peaks.cloned(),
-            midi_clip_previews: midi_clip_previews.cloned(),
-            visible_track_window,
-        };
-        let editor_body: Element<'_, Message> = lazy(editor_render_hash, move |_| {
-            editor.clone().into_view_owned(editor_args_owned.clone())
-        })
-        .into();
-        let editor_with_playhead = if let Some(x) = playhead_x_timeline {
-            Stack::from_vec(vec![
-                editor_body,
-                pin(Self::playhead_line())
-                    .position(Point::new(x.max(0.0), 0.0))
-                    .into(),
-            ])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else {
-            editor_body
-        };
-
-        let editor_timeline_scrolled = scrollable(
-            container(editor_with_playhead)
-                .width(Length::Fixed(editor_content_width))
-                .height(Length::Fixed(tracks_total_height)),
-        )
-        .id(Id::new(EDITOR_TIMELINE_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::hidden(),
-        ))
-        .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
-        .width(Length::Fill)
-        .height(Length::Fixed(tracks_total_height));
-
-        let right_lanes_scrolled = scrollable(editor_timeline_scrolled)
-            .id(Id::new(EDITOR_SCROLL_ID))
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::hidden(),
-            ))
-            .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
-            .width(Length::Fill)
-            .height(Length::Fill);
-        let right_lanes_with_scrollbar: Element<'_, Message> = row![
-            right_lanes_scrolled,
-            VerticalScrollbar::new(
-                tracks_total_height,
-                editor_scroll_y,
-                Message::EditorScrollYChanged,
-            )
-            .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
-            .height(Length::Fill),
-        ]
-        .spacing(0)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into();
-
-        let h_scroll = HorizontalScrollbar::new(
-            editor_content_width,
-            editor_scroll_x,
-            Message::EditorScrollXChanged,
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(16.0));
-
-        let editor_with_zoom = right_lanes_with_scrollbar;
         let tracks_scrolled = scrollable(self.tracks.view(
             tracks_visible_window,
             selected_modulator,
@@ -634,119 +535,218 @@ impl Workspace {
         .width(tracks_width)
         .height(Length::Fill);
 
-        let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
-            bpm: tempo,
-            time_signature,
-            pixels_per_sample,
-            playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
-            punch_range_samples,
-            session_range_samples,
-            clip_snap_edges: clip_snap_edges.clone(),
-            snap_mode,
-            samples_per_beat,
-            samples_per_bar,
-            content_width: editor_content_width,
-            tempo_points,
-            time_signature_points,
-            shift_pressed,
-            selected_tempo_points,
-            selected_time_signature_points,
-            timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
-            clip_start_samples: 0,
-            sample_rate,
-            markers: markers.clone(),
-            zoom_target: TimelineZoomTarget::Workspace,
-        }))
-        .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::hidden(),
-        ))
-        .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
-        .height(Length::Fixed(self.tempo.height()))
-        .into();
-        let ruler_scrolled: Element<'_, Message> = scrollable(self.ruler.view(RulerViewArgs {
-            playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
-            beat_pixels,
-            pixels_per_sample,
-            loop_range_samples,
-            clip_snap_edges: clip_snap_edges.clone(),
-            snap_mode,
-            samples_per_beat,
-            samples_per_bar,
-            content_width: editor_content_width,
-            timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
-            clip_start_samples: 0,
-            zoom_target: TimelineZoomTarget::Workspace,
-        }))
-        .id(Id::new(WORKSPACE_RULER_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::hidden(),
-        ))
-        .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
-        .height(Length::Fixed(self.ruler.height()))
-        .into();
-
-        let editor_body: Element<'_, Message> = if let Some(ref track_name) = editor_connections {
-            let connections_view = connections::canvas_host::tracks(
-                self.state.clone(),
-                Some(track_name.clone()),
-                selected_modulator.cloned(),
-            );
-            let header = container(
-                row![
-                    text(format!("Connections: {}", track_name))
-                        .size(12)
-                        .color(Color::WHITE),
-                    Space::new().width(Length::Fill),
-                    button("Plugin List").on_press(Message::Show(Show::TrackPluginList)),
-                    button(text("×").size(12).color(Color::WHITE))
-                        .width(Length::Fixed(22.0))
-                        .height(Length::Fixed(22.0))
-                        .padding(0)
-                        .style(|theme: &Theme, _status| button::Style {
-                            background: None,
-                            text_color: theme.palette().text,
-                            ..button::Style::default()
-                        })
-                        .on_press(Message::EditorConnectionsClose),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .height(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::Fixed(32.0))
-            .padding([0, 8])
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb(0.12, 0.12, 0.14))),
-                ..Default::default()
+        let right_panel: Element<'_, Message> = if editor_visible {
+            let playhead_x_timeline = playhead_samples.map(|sample| {
+                timeline_sample_to_x_f32(sample as f32, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
             });
-            column![header, connections_view]
+            let clip_snap_edges = self.collect_clip_snap_edges();
+
+            let editor_render_hash = self.editor.render_hash(&EditorViewArgs {
+                session_root,
+                pixels_per_sample,
+                samples_per_bar,
+                snap_mode,
+                samples_per_beat,
+                active_clip_drag,
+                active_target_track: active_clip_target_track,
+                active_target_valid: active_clip_target_valid,
+                active_clip_snap_adjust_samples,
+                active_clip_snap_targets,
+                recording_preview_bounds,
+                recording_preview_peaks,
+                midi_clip_previews,
+                visible_track_window,
+            });
+            let editor = self.editor.clone();
+            let editor_args_owned = OwnedEditorViewArgs {
+                session_root: session_root.cloned(),
+                pixels_per_sample,
+                samples_per_bar,
+                active_clip_drag: active_clip_drag.cloned(),
+                active_target_track: active_clip_target_track.map(str::to_string),
+                active_target_valid: active_clip_target_valid,
+                active_clip_snap_adjust_samples,
+                active_clip_snap_targets: active_clip_snap_targets.to_vec(),
+                recording_preview_bounds,
+                recording_preview_peaks: recording_preview_peaks.cloned(),
+                midi_clip_previews: midi_clip_previews.cloned(),
+                visible_track_window,
+            };
+            let editor_body: Element<'_, Message> = lazy(editor_render_hash, move |_| {
+                editor.clone().into_view_owned(editor_args_owned.clone())
+            })
+            .into();
+            let editor_with_playhead = if let Some(x) = playhead_x_timeline {
+                Stack::from_vec(vec![
+                    editor_body,
+                    pin(Self::playhead_line())
+                        .position(Point::new(x.max(0.0), 0.0))
+                        .into(),
+                ])
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
-        } else {
-            editor_with_zoom
-        };
+            } else {
+                editor_body
+            };
 
-        let session_overview = self.editor.session_overview(
-            timeline_samples,
-            min_visible_samples as f32,
-            editor_scroll_x,
-            editor_scroll_y,
-            track_viewport_height,
-        );
-        let right_panel = column![
-            container(session_overview)
+            let editor_timeline_scrolled = scrollable(
+                container(editor_with_playhead)
+                    .width(Length::Fixed(editor_content_width))
+                    .height(Length::Fixed(tracks_total_height)),
+            )
+            .id(Id::new(EDITOR_TIMELINE_SCROLL_ID))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::hidden(),
+            ))
+            .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
+            .width(Length::Fill)
+            .height(Length::Fixed(tracks_total_height));
+
+            let right_lanes_scrolled = scrollable(editor_timeline_scrolled)
+                .id(Id::new(EDITOR_SCROLL_ID))
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::hidden(),
+                ))
+                .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
                 .width(Length::Fill)
-                .height(Length::Fixed(TRACK_SEARCH_HEIGHT))
-                .style(|_theme| crate::style::app_background()),
-            tempo_scrolled,
-            ruler_scrolled,
-            container(editor_body).height(Length::Fill),
-        ]
-        .width(Length::Fill);
+                .height(Length::Fill);
+            let right_lanes_with_scrollbar: Element<'_, Message> = row![
+                right_lanes_scrolled,
+                VerticalScrollbar::new(
+                    tracks_total_height,
+                    editor_scroll_y,
+                    Message::EditorScrollYChanged,
+                )
+                .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
+                .height(Length::Fill),
+            ]
+            .spacing(0)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+
+            let editor_with_zoom = right_lanes_with_scrollbar;
+
+            let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
+                bpm: tempo,
+                time_signature,
+                pixels_per_sample,
+                playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
+                punch_range_samples,
+                session_range_samples,
+                clip_snap_edges: clip_snap_edges.clone(),
+                snap_mode,
+                samples_per_beat,
+                samples_per_bar,
+                content_width: editor_content_width,
+                tempo_points,
+                time_signature_points,
+                shift_pressed,
+                selected_tempo_points,
+                selected_time_signature_points,
+                timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
+                clip_start_samples: 0,
+                sample_rate,
+                markers: markers.clone(),
+                zoom_target: TimelineZoomTarget::Workspace,
+            }))
+            .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::hidden(),
+            ))
+            .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
+            .height(Length::Fixed(self.tempo.height()))
+            .into();
+            let ruler_scrolled: Element<'_, Message> = scrollable(self.ruler.view(RulerViewArgs {
+                playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
+                beat_pixels,
+                pixels_per_sample,
+                loop_range_samples,
+                clip_snap_edges: clip_snap_edges.clone(),
+                snap_mode,
+                samples_per_beat,
+                samples_per_bar,
+                content_width: editor_content_width,
+                timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
+                clip_start_samples: 0,
+                zoom_target: TimelineZoomTarget::Workspace,
+            }))
+            .id(Id::new(WORKSPACE_RULER_SCROLL_ID))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::hidden(),
+            ))
+            .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
+            .height(Length::Fixed(self.ruler.height()))
+            .into();
+
+            let editor_body: Element<'_, Message> = if let Some(ref track_name) = editor_connections
+            {
+                let connections_view = connections::canvas_host::tracks(
+                    self.state.clone(),
+                    Some(track_name.clone()),
+                    selected_modulator.cloned(),
+                );
+                let header = container(
+                    row![
+                        text(format!("Connections: {}", track_name))
+                            .size(12)
+                            .color(Color::WHITE),
+                        Space::new().width(Length::Fill),
+                        button("Plugin List").on_press(Message::Show(Show::TrackPluginList)),
+                        button(text("×").size(12).color(Color::WHITE))
+                            .width(Length::Fixed(22.0))
+                            .height(Length::Fixed(22.0))
+                            .padding(0)
+                            .style(|theme: &Theme, _status| button::Style {
+                                background: None,
+                                text_color: theme.palette().text,
+                                ..button::Style::default()
+                            })
+                            .on_press(Message::EditorConnectionsClose),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(32.0))
+                .padding([0, 8])
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.12, 0.12, 0.14))),
+                    ..Default::default()
+                });
+                column![header, connections_view]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                editor_with_zoom
+            };
+
+            let session_overview = self.editor.session_overview(
+                timeline_samples,
+                min_visible_samples as f32,
+                editor_scroll_x,
+                editor_scroll_y,
+                track_viewport_height,
+            );
+            let right_panel = column![
+                container(session_overview)
+                    .width(Length::Fill)
+                    .height(Length::Fixed(TRACK_SEARCH_HEIGHT))
+                    .style(|_theme| crate::style::app_background()),
+                tempo_scrolled,
+                ruler_scrolled,
+                container(editor_body).height(Length::Fill),
+            ]
+            .width(Length::Fill);
+
+            right_panel.into()
+        } else {
+            Space::new().into()
+        };
 
         let left_panel = column![
             container("")
@@ -853,6 +853,14 @@ impl Workspace {
         };
 
         let editor_footer: Element<'_, Message> = if editor_visible {
+            let h_scroll = HorizontalScrollbar::new(
+                editor_content_width,
+                editor_scroll_x,
+                Message::EditorScrollXChanged,
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(16.0));
+
             container(
                 row![
                     Space::new().width(Length::Fixed(if tracks_visible {
