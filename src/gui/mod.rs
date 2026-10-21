@@ -10186,6 +10186,147 @@ mod tests {
         );
     }
 
+    fn clip_move_echo_app() -> Maolan {
+        let app = Maolan::default();
+        let mut state = app.state.write().expect("state lock poisoned");
+        let mut a = crate::state::Track::new("a".to_string(), 0.0, 2, 2, 0, 0);
+        for (id, start) in [("a0", 1000usize), ("a1", 2000), ("a2", 3000)] {
+            a.audio.clips.push(crate::state::AudioClip {
+                id: id.to_string(),
+                name: format!("{id}.wav"),
+                start,
+                length: 500,
+                offset: 0,
+                ..Default::default()
+            });
+        }
+        state.tracks.push(a);
+        state
+            .tracks
+            .push(crate::state::Track::new("b".to_string(), 0.0, 2, 2, 0, 0));
+        drop(state);
+        app
+    }
+
+    fn clip_move_echo(
+        app: &mut Maolan,
+        from_track: &str,
+        from_index: usize,
+        to_track: &str,
+        copy: bool,
+    ) {
+        use maolan_engine::message::{ClipMoveFrom, ClipMoveTo};
+        let _ = app.update(Message::Response(Ok(Action::ClipMove {
+            kind: maolan_engine::kind::Kind::Audio,
+            from: ClipMoveFrom {
+                track_name: from_track.to_string(),
+                clip_index: from_index,
+            },
+            to: ClipMoveTo {
+                track_name: to_track.to_string(),
+                sample_offset: 9000,
+                input_channel: 0,
+            },
+            copy,
+        })));
+    }
+
+    fn selected_pair(state: &crate::state::StateData) -> Vec<(String, usize)> {
+        let mut selected = state
+            .selected_clips
+            .iter()
+            .map(|id| (id.track_idx.clone(), id.clip_idx))
+            .collect::<Vec<_>>();
+        selected.sort();
+        selected
+    }
+
+    #[test]
+    fn clip_move_echo_shifts_selection_above_removed_index() {
+        let mut app = clip_move_echo_app();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            for idx in [0usize, 2] {
+                state.selected_clips.insert(crate::state::ClipId {
+                    track_idx: "a".to_string(),
+                    clip_idx: idx,
+                    kind: maolan_engine::kind::Kind::Audio,
+                });
+            }
+        }
+
+        // Move the unselected middle clip to another track.
+        clip_move_echo(&mut app, "a", 1, "b", false);
+
+        let state = app.state.read().expect("state lock poisoned");
+        assert_eq!(state.tracks[0].audio.clips.len(), 2);
+        assert_eq!(state.tracks[1].audio.clips.len(), 1);
+        assert_eq!(state.tracks[1].audio.clips[0].id, "a1");
+        assert_eq!(
+            selected_pair(&state),
+            vec![("a".to_string(), 0), ("a".to_string(), 1)],
+            "selection follows the index shift after the removal"
+        );
+    }
+
+    #[test]
+    fn clip_move_echo_reanchors_moved_selected_clip() {
+        let mut app = clip_move_echo_app();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            state.selected_clips.insert(crate::state::ClipId {
+                track_idx: "a".to_string(),
+                clip_idx: 1,
+                kind: maolan_engine::kind::Kind::Audio,
+            });
+        }
+
+        // Move the selected clip within its track.
+        clip_move_echo(&mut app, "a", 1, "a", false);
+
+        let state = app.state.read().expect("state lock poisoned");
+        assert_eq!(state.tracks[0].audio.clips.len(), 3);
+        assert_eq!(state.tracks[0].audio.clips[2].id, "a1");
+        assert_eq!(
+            selected_pair(&state),
+            vec![("a".to_string(), 2)],
+            "the moved clip stays selected at its new index"
+        );
+    }
+
+    #[test]
+    fn clip_move_echo_group_sequence_tracks_each_moved_clip() {
+        let mut app = clip_move_echo_app();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            for idx in [1usize, 2] {
+                state.selected_clips.insert(crate::state::ClipId {
+                    track_idx: "a".to_string(),
+                    clip_idx: idx,
+                    kind: maolan_engine::kind::Kind::Audio,
+                });
+            }
+        }
+
+        // The group drop moves clips back-to-front (descending index).
+        clip_move_echo(&mut app, "a", 2, "a", false);
+        clip_move_echo(&mut app, "a", 1, "a", false);
+
+        let state = app.state.read().expect("state lock poisoned");
+        let ids = state.tracks[0]
+            .audio
+            .clips
+            .iter()
+            .map(|clip| clip.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["a0", "a2", "a1"]);
+        assert_eq!(
+            selected_pair(&state),
+            vec![("a".to_string(), 1), ("a".to_string(), 2)],
+            "both moved clips stay selected after the sequence of echoes"
+        );
+    }
+
     #[test]
     fn piano_scroll_and_zoom_messages_update_state() {
         let mut app = Maolan::default();
