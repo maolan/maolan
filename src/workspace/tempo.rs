@@ -1095,16 +1095,12 @@ impl canvas::Program<Message> for TempoCanvas {
                 ((sample as f32 / interval).round() * interval).max(0.0) as usize
             }
         };
-        let cursor_hash = cursor
-            .position_in(bounds)
-            .map(|p| (p.x.to_bits(), p.y.to_bits()));
         let mut hasher = DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
         bounds.height.to_bits().hash(&mut hasher);
         self.bpm.to_bits().hash(&mut hasher);
         self.time_signature.hash(&mut hasher);
         self.pixels_per_sample.to_bits().hash(&mut hasher);
-        self.playhead_x.map(f32::to_bits).hash(&mut hasher);
         self.punch_range_samples.hash(&mut hasher);
         state.time_range_samples.hash(&mut hasher);
         self.session_range_samples.hash(&mut hasher);
@@ -1127,7 +1123,6 @@ impl canvas::Program<Message> for TempoCanvas {
             sample.hash(&mut hasher);
             name.hash(&mut hasher);
         }
-        cursor_hash.hash(&mut hasher);
         match &state.drag_mode {
             DragMode::None => {
                 0_u8.hash(&mut hasher);
@@ -1811,128 +1806,142 @@ impl canvas::Program<Message> for TempoCanvas {
                         });
                     }
                 }
-
-                if let Some(pos) = cursor.position_in(bounds)
-                    && pos.x > LEFT_HIT_WIDTH
-                {
-                    let tooltip = if pos.y <= TEMPO_HIT_HEIGHT {
-                        self.markers
-                            .iter()
-                            .min_by(|(sa, _), (sb, _)| {
-                                let ax = sample_to_x(*sa);
-                                let bx = sample_to_x(*sb);
-                                (ax - pos.x)
-                                    .abs()
-                                    .partial_cmp(&(bx - pos.x).abs())
-                                    .unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .and_then(|(sample, name)| {
-                                let x = sample_to_x(*sample);
-                                if (x - pos.x).abs() <= 6.0 {
-                                    let trimmed = name.trim();
-                                    if trimmed.is_empty() {
-                                        Some(format!("s:{}", sample))
-                                    } else {
-                                        Some(format!("s:{}  {}", sample, trimmed))
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                    } else if pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
-                        if self.sample_rate > 0.0 {
-                            let sample = timeline_x_to_sample_f32(
-                                pos.x,
-                                self.pixels_per_sample,
-                                self.timeline_left_inset_px,
-                            ) as usize;
-                            let seconds = sample as f64 / self.sample_rate;
-                            let mins = (seconds / 60.0).floor() as u64;
-                            let secs = (seconds % 60.0).floor() as u64;
-                            let millis = ((seconds % 1.0) * 1000.0).round() as u64;
-                            Some(format!("{:02}:{:02}.{:03}", mins, secs, millis))
-                        } else {
-                            None
-                        }
-                    } else if pos.y <= TEMPO_HIT_HEIGHT * 3.0 {
-                        self.tempo_points
-                            .iter()
-                            .filter(|(sample, _)| *sample > 0)
-                            .min_by(|(sa, _), (sb, _)| {
-                                let ax = sample_to_x(*sa);
-                                let bx = sample_to_x(*sb);
-                                (ax - pos.x)
-                                    .abs()
-                                    .partial_cmp(&(bx - pos.x).abs())
-                                    .unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .and_then(|(sample, bpm)| {
-                                let x = sample_to_x(*sample);
-                                if (x - pos.x).abs() <= 6.0 {
-                                    Some(format!("s:{}  {:.2} BPM", sample, bpm))
-                                } else {
-                                    None
-                                }
-                            })
-                    } else {
-                        self.time_signature_points
-                            .iter()
-                            .filter(|(sample, _, _)| *sample > 0)
-                            .min_by(|(sa, _, _), (sb, _, _)| {
-                                let ax = sample_to_x(*sa);
-                                let bx = sample_to_x(*sb);
-                                (ax - pos.x)
-                                    .abs()
-                                    .partial_cmp(&(bx - pos.x).abs())
-                                    .unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                            .and_then(|(sample, n, d)| {
-                                let x = sample_to_x(*sample);
-                                if (x - pos.x).abs() <= 6.0 {
-                                    Some(format!("s:{}  {}/{}", sample, n, d))
-                                } else {
-                                    None
-                                }
-                            })
-                    };
-                    if let Some(text) = tooltip {
-                        let tip_x = (pos.x + 8.0).min((bounds.width - 150.0).max(0.0));
-                        let tip_y = (pos.y + 2.0).min((bounds.height - 14.0).max(0.0));
-                        frame.fill(
-                            &Path::rectangle(
-                                Point::new(tip_x, tip_y),
-                                maolan_widgets::iced::Size::new(148.0, 12.0),
-                            ),
-                            Color::from_rgba(0.08, 0.08, 0.08, 0.9),
-                        );
-                        frame.fill_text(Text {
-                            content: text,
-                            position: Point::new(tip_x + 4.0, tip_y + 1.0),
-                            color: Color::from_rgba(0.96, 0.96, 0.96, 0.95),
-                            size: 9.0.into(),
-                            ..Default::default()
-                        });
-                    }
-                }
-
-                if let Some(x) = self.playhead_x {
-                    let path = Path::line(
-                        Point::new(x.max(0.0), 0.0),
-                        Point::new(x.max(0.0), bounds.height),
-                    );
-                    frame.stroke(
-                        &path,
-                        Stroke::default().with_width(1.5).with_color(Color {
-                            r: 0.95,
-                            g: 0.18,
-                            b: 0.14,
-                            a: 0.95,
-                        }),
-                    );
-                }
             });
 
-        vec![geom]
+        // Moving the playhead or the mouse cursor must not rebuild the
+        // static timeline geometry and labels. Draw only this small overlay
+        // on each playback update or pointer move.
+        let cursor_pos = cursor.position_in(bounds);
+        let mut geometry = vec![geom];
+        if self.playhead_x.is_some() || cursor_pos.is_some() {
+            let mut frame = Frame::new(renderer, bounds.size());
+            if let Some(x) = self.playhead_x {
+                let path = Path::line(
+                    Point::new(x.max(0.0), 0.0),
+                    Point::new(x.max(0.0), bounds.height),
+                );
+                frame.stroke(
+                    &path,
+                    Stroke::default().with_width(1.5).with_color(Color {
+                        r: 0.95,
+                        g: 0.18,
+                        b: 0.14,
+                        a: 0.95,
+                    }),
+                );
+            }
+            if let Some(pos) = cursor_pos
+                && pos.x > LEFT_HIT_WIDTH
+            {
+                let sample_to_x = |sample: usize| {
+                    timeline_sample_to_x(
+                        sample.saturating_sub(self.clip_start_samples),
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    )
+                };
+                let tooltip = if pos.y <= TEMPO_HIT_HEIGHT {
+                    self.markers
+                        .iter()
+                        .min_by(|(sa, _), (sb, _)| {
+                            let ax = sample_to_x(*sa);
+                            let bx = sample_to_x(*sb);
+                            (ax - pos.x)
+                                .abs()
+                                .partial_cmp(&(bx - pos.x).abs())
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .and_then(|(sample, name)| {
+                            let x = sample_to_x(*sample);
+                            if (x - pos.x).abs() <= 6.0 {
+                                let trimmed = name.trim();
+                                if trimmed.is_empty() {
+                                    Some(format!("s:{}", sample))
+                                } else {
+                                    Some(format!("s:{}  {}", sample, trimmed))
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                } else if pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                    if self.sample_rate > 0.0 {
+                        let sample = timeline_x_to_sample_f32(
+                            pos.x,
+                            self.pixels_per_sample,
+                            self.timeline_left_inset_px,
+                        ) as usize;
+                        let seconds = sample as f64 / self.sample_rate;
+                        let mins = (seconds / 60.0).floor() as u64;
+                        let secs = (seconds % 60.0).floor() as u64;
+                        let millis = ((seconds % 1.0) * 1000.0).round() as u64;
+                        Some(format!("{:02}:{:02}.{:03}", mins, secs, millis))
+                    } else {
+                        None
+                    }
+                } else if pos.y <= TEMPO_HIT_HEIGHT * 3.0 {
+                    self.tempo_points
+                        .iter()
+                        .filter(|(sample, _)| *sample > 0)
+                        .min_by(|(sa, _), (sb, _)| {
+                            let ax = sample_to_x(*sa);
+                            let bx = sample_to_x(*sb);
+                            (ax - pos.x)
+                                .abs()
+                                .partial_cmp(&(bx - pos.x).abs())
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .and_then(|(sample, bpm)| {
+                            let x = sample_to_x(*sample);
+                            if (x - pos.x).abs() <= 6.0 {
+                                Some(format!("s:{}  {:.2} BPM", sample, bpm))
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    self.time_signature_points
+                        .iter()
+                        .filter(|(sample, _, _)| *sample > 0)
+                        .min_by(|(sa, _, _), (sb, _, _)| {
+                            let ax = sample_to_x(*sa);
+                            let bx = sample_to_x(*sb);
+                            (ax - pos.x)
+                                .abs()
+                                .partial_cmp(&(bx - pos.x).abs())
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .and_then(|(sample, n, d)| {
+                            let x = sample_to_x(*sample);
+                            if (x - pos.x).abs() <= 6.0 {
+                                Some(format!("s:{}  {}/{}", sample, n, d))
+                            } else {
+                                None
+                            }
+                        })
+                };
+                if let Some(text) = tooltip {
+                    let tip_x = (pos.x + 8.0).min((bounds.width - 150.0).max(0.0));
+                    let tip_y = (pos.y + 2.0).min((bounds.height - 14.0).max(0.0));
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(tip_x, tip_y),
+                            maolan_widgets::iced::Size::new(148.0, 12.0),
+                        ),
+                        Color::from_rgba(0.08, 0.08, 0.08, 0.9),
+                    );
+                    frame.fill_text(Text {
+                        content: text,
+                        position: Point::new(tip_x + 4.0, tip_y + 1.0),
+                        color: Color::from_rgba(0.96, 0.96, 0.96, 0.95),
+                        size: 9.0.into(),
+                        ..Default::default()
+                    });
+                }
+            }
+            geometry.push(frame.into_geometry());
+        }
+        geometry
     }
 }
 

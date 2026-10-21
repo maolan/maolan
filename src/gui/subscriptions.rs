@@ -4,8 +4,9 @@ use crate::{
     keyboard_shortcuts::{ShortcutBinding, ShortcutBindings, action_for_binding},
     message::Message,
     ui_timing::{
-        PLAYHEAD_UPDATE_INTERVAL, RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL,
-        RECORDING_PREVIEW_UPDATE_INTERVAL,
+        METER_IDLE_UPDATE_INTERVAL, METER_UPDATE_INTERVAL, PLAYBACK_UI_UPDATE_INTERVAL,
+        PLAYHEAD_MAX_UPDATE_INTERVAL, RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL,
+        RECORDING_PREVIEW_UPDATE_INTERVAL, playhead_update_interval,
     },
 };
 use maolan_engine::message::Message as EngineMessage;
@@ -146,7 +147,7 @@ impl Maolan {
         shortcut_overrides.sort_by_key(|(action, _)| *action);
         let capturing_shortcut = self.ui.shortcut_capture_action.is_some();
         let keyboard_sub = keyboard::listen()
-            .with((current_view, shortcut_overrides, capturing_shortcut))
+            .with((current_view.clone(), shortcut_overrides, capturing_shortcut))
             .map(
                 |((current_view, shortcut_overrides, capturing_shortcut), event)| {
                     let shortcut_overrides = shortcut_overrides.into_iter().collect();
@@ -201,8 +202,41 @@ impl Maolan {
             && self.ui.should_drive_playback_ui(&self.state))
             || self.transport.live_session_playing
         {
-            maolan_widgets::iced::time::every(PLAYHEAD_UPDATE_INTERVAL)
-                .map(|_| Message::PlaybackTick)
+            // Redrawing is whole-window in iced, so the tick rate is the
+            // redraw rate: fire it only as often as the playhead actually
+            // moves a pixel, and barely at all when no playhead is visible.
+            let playback_tick_interval = {
+                let pps = self.pixels_per_sample().max(1.0e-6) as f64;
+                let rate = self.transport.playback_rate_hz.max(1.0);
+                match &current_view {
+                    crate::state::View::Workspace => {
+                        if !self.ui.tracks_visible && !self.ui.editor_visible {
+                            PLAYHEAD_MAX_UPDATE_INTERVAL
+                        } else if self.ui.editor_visible {
+                            let origin = self.ui.editor_scroll_origin_samples as f64;
+                            let visible = self.editor_visible_samples() as f64;
+                            let sample = self.transport.transport_samples;
+                            // A few pixels of slack so the playhead is not
+                            // considered visible only after it enters.
+                            let margin = 4.0 / pps;
+                            if sample >= origin - margin && sample <= origin + visible + margin {
+                                playhead_update_interval(pps, rate)
+                            } else {
+                                PLAYHEAD_MAX_UPDATE_INTERVAL
+                            }
+                        } else {
+                            playhead_update_interval(pps, rate)
+                        }
+                    }
+                    crate::state::View::Piano | crate::state::View::PitchCorrection => {
+                        let piano_zoom_x =
+                            self.state.read().expect("state lock poisoned").piano_zoom_x as f64;
+                        playhead_update_interval(pps * piano_zoom_x, rate)
+                    }
+                    _ => PLAYBACK_UI_UPDATE_INTERVAL,
+                }
+            };
+            maolan_widgets::iced::time::every(playback_tick_interval).map(|_| Message::PlaybackTick)
         } else {
             Subscription::none()
         };
@@ -224,8 +258,16 @@ impl Maolan {
             )
         };
         let meter_poll_sub = if should_poll_meters {
-            maolan_widgets::iced::time::every(Duration::from_millis(40))
-                .map(|_| Message::MeterPollTick)
+            // While transport runs, engine meter events and the playback tick
+            // already drive redraws, so polling more often only adds
+            // whole-window redraws on top; when idle the poll is the only
+            // redraw source, so keep it smooth for meter decay.
+            let meter_interval = if self.transport.playing || self.transport.live_session_playing {
+                METER_UPDATE_INTERVAL
+            } else {
+                METER_IDLE_UPDATE_INTERVAL
+            };
+            maolan_widgets::iced::time::every(meter_interval).map(|_| Message::MeterPollTick)
         } else {
             Subscription::none()
         };

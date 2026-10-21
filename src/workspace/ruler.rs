@@ -474,7 +474,6 @@ impl canvas::Program<Message> for RulerCanvas {
         self.loop_range_samples.hash(&mut hasher);
         self.clip_snap_edges.hash(&mut hasher);
         Ruler::snap_mode_key(self.snap_mode).hash(&mut hasher);
-        self.playhead_x.map(f32::to_bits).hash(&mut hasher);
         state.dragging.hash(&mut hasher);
         state.drag_with_right.hash(&mut hasher);
         state.drag_adjust_loop_edge.hash(&mut hasher);
@@ -666,25 +665,29 @@ impl canvas::Program<Message> for RulerCanvas {
                         ..Default::default()
                     });
                 }
-
-                if let Some(x) = self.playhead_x {
-                    let path = Path::line(
-                        Point::new(x.max(0.0), 0.0),
-                        Point::new(x.max(0.0), bounds.height),
-                    );
-                    frame.stroke(
-                        &path,
-                        Stroke::default().with_width(1.5).with_color(Color {
-                            r: 0.95,
-                            g: 0.18,
-                            b: 0.14,
-                            a: 0.95,
-                        }),
-                    );
-                }
             });
 
-        vec![geom]
+        // Moving the playhead must not rebuild the static timeline geometry
+        // and labels. Draw only this small overlay on each playback update.
+        let mut geometry = vec![geom];
+        if let Some(x) = self.playhead_x {
+            let mut frame = Frame::new(renderer, bounds.size());
+            let path = Path::line(
+                Point::new(x.max(0.0), 0.0),
+                Point::new(x.max(0.0), bounds.height),
+            );
+            frame.stroke(
+                &path,
+                Stroke::default().with_width(1.5).with_color(Color {
+                    r: 0.95,
+                    g: 0.18,
+                    b: 0.14,
+                    a: 0.95,
+                }),
+            );
+            geometry.push(frame.into_geometry());
+        }
+        geometry
     }
 }
 
