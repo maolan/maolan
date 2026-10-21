@@ -310,7 +310,7 @@ impl Default for GenerateState {
 #[derive(Debug)]
 pub struct UiState {
     pub zoom_visible_bars: f32,
-    pub editor_scroll_origin_samples: f64,
+    pub editor_scroll_origin_samples: f32,
     pub editor_scroll_x: f32,
     pub editor_scroll_y: f32,
     pub mixer_scroll_x: f32,
@@ -434,29 +434,29 @@ pub struct PluginParamState {
 }
 
 impl TransportUiState {
-    pub(crate) fn samples_per_beat(&self, state: &State) -> f64 {
+    pub(crate) fn samples_per_beat(&self, state: &State) -> f32 {
         let state = state.read().expect("state lock poisoned");
         self.samples_per_beat_from(&state)
     }
 
-    fn samples_per_beat_from(&self, state: &StateData) -> f64 {
-        let tempo = state.tempo.max(1.0) as f64;
-        let denom = state.time_signature_denom.max(1) as f64;
-        let quarter = self.playback_rate_hz * 60.0 / tempo;
+    fn samples_per_beat_from(&self, state: &StateData) -> f32 {
+        let tempo = state.tempo.max(1.0);
+        let denom = state.time_signature_denom.max(1) as f32;
+        let quarter = self.playback_rate_hz as f32 * 60.0 / tempo;
         quarter * (4.0 / denom)
     }
 
-    pub(crate) fn samples_per_bar(&self, state: &State) -> f64 {
+    pub(crate) fn samples_per_bar(&self, state: &State) -> f32 {
         let state = state.read().expect("state lock poisoned");
         self.samples_per_bar_from(&state)
     }
 
-    fn samples_per_bar_from(&self, state: &StateData) -> f64 {
-        let beats_per_bar = state.time_signature_num.max(1) as f64;
+    fn samples_per_bar_from(&self, state: &StateData) -> f32 {
+        let beats_per_bar = state.time_signature_num.max(1) as f32;
         self.samples_per_beat_from(state) * beats_per_bar
     }
 
-    pub(crate) fn editor_timeline_samples(&self, state: &State, visible_samples: f64) -> f64 {
+    pub(crate) fn editor_timeline_samples(&self, state: &State, visible_samples: f32) -> f32 {
         let state = state.read().expect("state lock poisoned");
         let max_end_samples = state
             .tracks
@@ -476,13 +476,13 @@ impl TransportUiState {
                 audio.chain(midi)
             })
             .max()
-            .unwrap_or(0) as f64;
+            .unwrap_or(0) as f32;
         let right_padding_samples = visible_samples * 0.5;
         let min_timeline_samples = (self.samples_per_bar_from(&state)
-            * crate::consts::workspace::MIN_TIMELINE_BARS as f64)
+            * crate::consts::workspace::MIN_TIMELINE_BARS)
             .max(1.0);
         max_end_samples
-            .max(self.transport_samples.max(0.0) + right_padding_samples)
+            .max(self.transport_samples.max(0.0) as f32 + right_padding_samples)
             .max(max_end_samples + right_padding_samples)
             .max(visible_samples)
             .max(min_timeline_samples)
@@ -589,32 +589,29 @@ impl TimingState {
     pub(crate) fn snap_sample_to_bar(
         &self,
         sample: f32,
-        samples_per_beat: f64,
-        samples_per_bar: f64,
+        samples_per_beat: f32,
+        samples_per_bar: f32,
     ) -> usize {
         self.snap_mode
-            .snap_sample(sample as f64, samples_per_beat, samples_per_bar) as usize
+            .snap_sample(sample, samples_per_beat, samples_per_bar) as usize
     }
 
     pub(crate) fn snap_sample_to_bar_drag(
         &self,
         sample: f32,
         delta_samples: f32,
-        samples_per_beat: f64,
-        samples_per_bar: f64,
+        samples_per_beat: f32,
+        samples_per_bar: f32,
     ) -> usize {
-        self.snap_mode.snap_sample_drag(
-            sample as f64,
-            delta_samples as f64,
-            samples_per_beat,
-            samples_per_bar,
-        ) as usize
+        self.snap_mode
+            .snap_sample_drag(sample, delta_samples, samples_per_beat, samples_per_bar)
+            as usize
     }
 
     pub(crate) fn snap_interval_samples(
         &self,
-        samples_per_beat: f64,
-        samples_per_bar: f64,
+        samples_per_beat: f32,
+        samples_per_bar: f32,
     ) -> usize {
         self.snap_mode
             .interval_samples(samples_per_beat, samples_per_bar) as usize

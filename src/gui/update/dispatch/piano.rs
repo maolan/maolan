@@ -254,21 +254,20 @@ impl Maolan {
                 if let Some(dragging) = state.piano_dragging_notes.take() {
                     let zoom_x = state.piano_zoom_x;
                     let zoom_y = state.piano_zoom_y;
-                    let tempo = state.tempo.max(1.0) as f64;
-                    let tsig_num = state.time_signature_num.max(1) as f64;
-                    let tsig_denom = state.time_signature_denom.max(1) as f64;
+                    let tempo = state.tempo.max(1.0);
+                    let tsig_num = state.time_signature_num.max(1) as f32;
+                    let tsig_denom = state.time_signature_denom.max(1) as f32;
                     let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
                     let tracks_width = match state.tracks_width {
                         Length::Fixed(v) => v,
                         _ => 200.0,
                     };
                     let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                    let samples_per_beat =
-                        (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_beat = (self.transport.playback_rate_hz as f32 * 60.0 / tempo)
+                        * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
-                    let total_samples =
-                        (samples_per_bar * self.ui.zoom_visible_bars as f64).max(1.0);
-                    let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+                    let total_samples = (samples_per_bar * self.ui.zoom_visible_bars).max(1.0);
+                    let pps = ((editor_width / total_samples) * zoom_x).max(1.0e-6);
 
                     let delta_x = dragging.current_point.x - dragging.start_point.x;
                     let delta_y = dragging.current_point.y - dragging.start_point.y;
@@ -276,7 +275,7 @@ impl Maolan {
                     let delta_samples = (delta_x / pps) as i64;
                     let delta_pitch = -(delta_y / row_h).round() as i8;
 
-                    let snap_sample = |sample: f64| -> usize {
+                    let snap_sample = |sample: f32| -> usize {
                         if matches!(
                             self.timing.midi_snap_mode,
                             crate::message::SnapMode::NoSnap | crate::message::SnapMode::Clips
@@ -287,7 +286,7 @@ impl Maolan {
                             .midi_snap_mode
                             .snap_sample_drag(
                                 sample,
-                                delta_samples as f64,
+                                delta_samples as f32,
                                 samples_per_beat,
                                 samples_per_bar,
                             )
@@ -305,7 +304,7 @@ impl Maolan {
                             .enumerate()
                             .map(|(offset, note)| {
                                 let new_start =
-                                    snap_sample(note.start_sample as f64 + delta_samples as f64);
+                                    snap_sample(note.start_sample as f32 + delta_samples as f32);
                                 let new_pitch =
                                     (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
                                 (
@@ -338,7 +337,7 @@ impl Maolan {
                         for &note_idx in &dragging.note_indices {
                             if let Some(note) = piano.notes.get_mut(note_idx) {
                                 let new_start =
-                                    snap_sample(note.start_sample as f64 + delta_samples as f64);
+                                    snap_sample(note.start_sample as f32 + delta_samples as f32);
                                 let new_pitch =
                                     (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
                                 note.start_sample = new_start;
@@ -733,25 +732,24 @@ impl Maolan {
                 let mut state = self.state.write().expect("state lock poisoned");
                 if let Some(resizing) = state.piano_resizing_note.take() {
                     let zoom_x = state.piano_zoom_x;
-                    let tempo = state.tempo.max(1.0) as f64;
-                    let tsig_num = state.time_signature_num.max(1) as f64;
-                    let tsig_denom = state.time_signature_denom.max(1) as f64;
+                    let tempo = state.tempo.max(1.0);
+                    let tsig_num = state.time_signature_num.max(1) as f32;
+                    let tsig_denom = state.time_signature_denom.max(1) as f32;
                     let tracks_width = match state.tracks_width {
                         Length::Fixed(v) => v,
                         _ => 200.0,
                     };
                     let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                    let samples_per_beat =
-                        (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_beat = (self.transport.playback_rate_hz as f32 * 60.0 / tempo)
+                        * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
-                    let total_samples =
-                        (samples_per_bar * self.ui.zoom_visible_bars as f64).max(1.0);
-                    let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+                    let total_samples = (samples_per_bar * self.ui.zoom_visible_bars).max(1.0);
+                    let pps = ((editor_width / total_samples) * zoom_x).max(1.0e-6);
 
                     let delta_x = resizing.current_point.x - resizing.start_point.x;
                     let delta_samples = (delta_x / pps) as i64;
 
-                    let snap_sample = |sample: f64| -> usize {
+                    let snap_sample = |sample: f32| -> usize {
                         if matches!(
                             self.timing.midi_snap_mode,
                             crate::message::SnapMode::NoSnap | crate::message::SnapMode::Clips
@@ -762,7 +760,7 @@ impl Maolan {
                             .midi_snap_mode
                             .snap_sample_drag(
                                 sample,
-                                delta_samples as f64,
+                                delta_samples as f32,
                                 samples_per_beat,
                                 samples_per_bar,
                             )
@@ -777,12 +775,12 @@ impl Maolan {
                     let (new_start, new_len) = if resizing.resize_start {
                         let max_start = original_end.saturating_sub(1) as i64;
                         let start =
-                            snap_sample(original.start_sample as f64 + delta_samples as f64)
+                            snap_sample(original.start_sample as f32 + delta_samples as f32)
                                 .min(max_start as usize);
                         (start, original_end.saturating_sub(start).max(1))
                     } else {
                         let min_end = original.start_sample.saturating_add(1) as i64;
-                        let end = snap_sample(original_end as f64 + delta_samples as f64)
+                        let end = snap_sample(original_end as f32 + delta_samples as f32)
                             .max(min_end as usize);
                         (
                             original.start_sample,
@@ -1259,21 +1257,20 @@ impl Maolan {
                         return Task::none();
                     };
 
-                    let tempo = state.tempo.max(1.0) as f64;
-                    let tsig_num = state.time_signature_num.max(1) as f64;
-                    let tsig_denom = state.time_signature_denom.max(1) as f64;
+                    let tempo = state.tempo.max(1.0);
+                    let tsig_num = state.time_signature_num.max(1) as f32;
+                    let tsig_denom = state.time_signature_denom.max(1) as f32;
                     let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
                     let tracks_width = match state.tracks_width {
                         Length::Fixed(v) => v,
                         _ => 200.0,
                     };
                     let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                    let samples_per_beat =
-                        (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_beat = (self.transport.playback_rate_hz as f32 * 60.0 / tempo)
+                        * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
-                    let total_samples =
-                        (samples_per_bar * self.ui.zoom_visible_bars as f64).max(1.0);
-                    let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+                    let total_samples = (samples_per_bar * self.ui.zoom_visible_bars).max(1.0);
+                    let pps = ((editor_width / total_samples) * zoom_x).max(1.0e-6);
 
                     let min_x = start.x.min(position.x);
                     let max_x = start.x.max(position.x);
@@ -1431,14 +1428,14 @@ impl Maolan {
                         .piano_painted_notes
                         .clear();
                     return self.insert_painted_midi_notes_between(
-                        start_sample as f64,
-                        end_sample as f64,
+                        start_sample as f32,
+                        end_sample as f32,
                         pitch,
                     );
                 }
                 return self.insert_stretched_midi_note_between(
-                    start_sample as f64,
-                    end_sample as f64,
+                    start_sample as f32,
+                    end_sample as f32,
                     pitch,
                 );
             }
@@ -1481,11 +1478,11 @@ impl Maolan {
                     let copy = state.ctrl;
                     let track_name = piano.track_idx.clone();
                     let clip_idx = piano.clip_index;
-                    let tempo = state.tempo.max(1.0) as f64;
-                    let tsig_num = state.time_signature_num.max(1) as f64;
-                    let tsig_denom = state.time_signature_denom.max(1) as f64;
-                    let samples_per_beat =
-                        (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let tempo = state.tempo.max(1.0);
+                    let tsig_num = state.time_signature_num.max(1) as f32;
+                    let tsig_denom = state.time_signature_denom.max(1) as f32;
+                    let samples_per_beat = (self.transport.playback_rate_hz as f32 * 60.0 / tempo)
+                        * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
                     let snapped_delta_samples = Self::midi_drag_delta_samples(
                         self.timing.midi_snap_mode,
@@ -1659,20 +1656,19 @@ impl Maolan {
                     };
 
                     let row_h = (24.0 * zoom_y).max(1.0);
-                    let tempo = state.tempo.max(1.0) as f64;
-                    let tsig_num = state.time_signature_num.max(1) as f64;
-                    let tsig_denom = state.time_signature_denom.max(1) as f64;
-                    let samples_per_beat =
-                        (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let tempo = state.tempo.max(1.0);
+                    let tsig_num = state.time_signature_num.max(1) as f32;
+                    let tsig_denom = state.time_signature_denom.max(1) as f32;
+                    let samples_per_beat = (self.transport.playback_rate_hz as f32 * 60.0 / tempo)
+                        * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
-                    let total_samples =
-                        (samples_per_bar * self.ui.zoom_visible_bars as f64).max(1.0);
+                    let total_samples = (samples_per_bar * self.ui.zoom_visible_bars).max(1.0);
                     let tracks_width = match state.tracks_width {
                         Length::Fixed(v) => v,
                         _ => 200.0,
                     };
                     let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                    let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+                    let pps = ((editor_width / total_samples) * zoom_x).max(1.0e-6);
 
                     let min_x = start.x.min(position.x);
                     let max_x = start.x.max(position.x);

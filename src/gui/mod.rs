@@ -1313,24 +1313,25 @@ impl Maolan {
     }
 
     fn pixels_per_sample(&self) -> f32 {
-        let total_samples =
-            self.transport.samples_per_bar(&self.state) * self.ui.zoom_visible_bars as f64;
+        let samples_per_bar = self.transport.samples_per_bar(&self.state);
+        let total_samples = samples_per_bar * self.ui.zoom_visible_bars;
         if total_samples <= 0.0 {
             return 1.0;
         }
-        (self.editor_width_px() as f64 / total_samples) as f32
+        self.editor_width_px() / total_samples
     }
 
-    fn editor_visible_samples(&self) -> f64 {
-        (self.transport.samples_per_bar(&self.state) * self.ui.zoom_visible_bars as f64).max(1.0)
+    fn editor_visible_samples(&self) -> f32 {
+        let samples_per_bar = self.transport.samples_per_bar(&self.state);
+        (samples_per_bar * self.ui.zoom_visible_bars).max(1.0)
     }
 
-    fn editor_timeline_samples(&self) -> f64 {
+    fn editor_timeline_samples(&self) -> f32 {
         self.transport
             .editor_timeline_samples(&self.state, self.editor_visible_samples())
     }
 
-    fn editor_max_scroll_samples(&self) -> f64 {
+    fn editor_max_scroll_samples(&self) -> f32 {
         (self.editor_timeline_samples() - self.editor_visible_samples()).max(0.0)
     }
 
@@ -1339,12 +1340,12 @@ impl Maolan {
         if max_scroll <= 0.0 {
             0.0
         } else {
-            (self.ui.editor_scroll_origin_samples / max_scroll).clamp(0.0, 1.0) as f32
+            (self.ui.editor_scroll_origin_samples / max_scroll).clamp(0.0, 1.0)
         }
     }
 
     fn beat_pixels(&self) -> f32 {
-        (self.transport.samples_per_beat(&self.state) as f32 * self.pixels_per_sample()).max(0.01)
+        (self.transport.samples_per_beat(&self.state) * self.pixels_per_sample()).max(0.01)
     }
 
     fn start_recording_preview(&mut self) {
@@ -10164,6 +10165,25 @@ mod tests {
 
         let _ = app.update(Message::MixerScrollXChanged(0.25));
         assert_eq!(app.ui.mixer_scroll_x, 0.25);
+    }
+
+    #[test]
+    fn editor_scroll_pixels_updates_scroll_origin() {
+        let mut app = Maolan::default();
+        let pps = app.pixels_per_sample();
+        let _ = app.update(Message::EditorScrollXPixels(1000.0));
+        let expected = (1000.0_f32 / pps).clamp(0.0, app.editor_max_scroll_samples());
+        assert!(
+            (app.ui.editor_scroll_origin_samples - expected).abs() < 1.0,
+            "absolute pixel offset converts to the shared sample origin"
+        );
+        assert!((app.ui.editor_scroll_x - app.editor_scroll_relative_x()).abs() < f32::EPSILON);
+
+        let _ = app.update(Message::EditorScrollXPixels(-20.0));
+        assert!(
+            app.ui.editor_scroll_origin_samples >= 0.0,
+            "negative offsets clamp to the session start"
+        );
     }
 
     #[test]

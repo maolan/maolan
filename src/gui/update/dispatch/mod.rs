@@ -346,9 +346,9 @@ impl Maolan {
 
     fn midi_paint_interval_samples(
         snap_mode: SnapMode,
-        samples_per_beat: f64,
-        samples_per_bar: f64,
-    ) -> f64 {
+        samples_per_beat: f32,
+        samples_per_bar: f32,
+    ) -> f32 {
         match snap_mode {
             SnapMode::NoSnap | SnapMode::Clips => (samples_per_beat / 4.0).max(1.0),
             _ => snap_mode.interval_samples(samples_per_beat, samples_per_bar),
@@ -358,8 +358,8 @@ impl Maolan {
     fn midi_drag_delta_samples(
         snap_mode: SnapMode,
         delta_samples: i64,
-        samples_per_beat: f64,
-        samples_per_bar: f64,
+        samples_per_beat: f32,
+        samples_per_bar: f32,
     ) -> i64 {
         if matches!(snap_mode, SnapMode::NoSnap | SnapMode::Clips) {
             return delta_samples;
@@ -367,13 +367,13 @@ impl Maolan {
         let interval = snap_mode
             .interval_samples(samples_per_beat, samples_per_bar)
             .max(1.0);
-        ((delta_samples as f64 / interval).round() * interval) as i64
+        ((delta_samples as f32 / interval).round() * interval) as i64
     }
 
     fn insert_painted_midi_notes_between(
         &mut self,
-        raw_start_sample: f64,
-        raw_end_sample: f64,
+        raw_start_sample: f32,
+        raw_end_sample: f32,
         pitch: u8,
     ) -> Task<Message> {
         let mut state = self.state.write().expect("state lock poisoned");
@@ -381,11 +381,11 @@ impl Maolan {
             return Task::none();
         };
 
-        let tempo = state.tempo.max(1.0) as f64;
-        let tsig_num = state.time_signature_num.max(1) as f64;
-        let tsig_denom = state.time_signature_denom.max(1) as f64;
+        let tempo = state.tempo.max(1.0);
+        let tsig_num = state.time_signature_num.max(1) as f32;
+        let tsig_denom = state.time_signature_denom.max(1) as f32;
         let samples_per_beat =
-            (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+            (self.transport.playback_rate_hz as f32 * 60.0 / tempo) * (4.0 / tsig_denom);
         let samples_per_bar = samples_per_beat * tsig_num;
         let length_samples = Self::midi_paint_interval_samples(
             self.timing.midi_snap_mode,
@@ -399,7 +399,7 @@ impl Maolan {
             self.timing.midi_snap_mode,
             SnapMode::NoSnap | SnapMode::Clips
         ) {
-            ((min_raw / interval as f64).floor() as usize).saturating_mul(interval)
+            ((min_raw / interval as f32).floor() as usize).saturating_mul(interval)
         } else {
             self.timing
                 .midi_snap_mode
@@ -410,7 +410,7 @@ impl Maolan {
             self.timing.midi_snap_mode,
             SnapMode::NoSnap | SnapMode::Clips
         ) {
-            ((max_raw / interval as f64).floor() as usize).saturating_mul(interval)
+            ((max_raw / interval as f32).floor() as usize).saturating_mul(interval)
         } else {
             self.timing
                 .midi_snap_mode
@@ -476,8 +476,8 @@ impl Maolan {
 
     fn insert_stretched_midi_note_between(
         &mut self,
-        raw_start_sample: f64,
-        raw_end_sample: f64,
+        raw_start_sample: f32,
+        raw_end_sample: f32,
         pitch: u8,
     ) -> Task<Message> {
         let state = self.state.read().expect("state lock poisoned");
@@ -485,11 +485,11 @@ impl Maolan {
             return Task::none();
         };
 
-        let tempo = state.tempo.max(1.0) as f64;
-        let tsig_num = state.time_signature_num.max(1) as f64;
-        let tsig_denom = state.time_signature_denom.max(1) as f64;
+        let tempo = state.tempo.max(1.0);
+        let tsig_num = state.time_signature_num.max(1) as f32;
+        let tsig_denom = state.time_signature_denom.max(1) as f32;
         let samples_per_beat =
-            (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+            (self.transport.playback_rate_hz as f32 * 60.0 / tempo) * (4.0 / tsig_denom);
         let samples_per_bar = samples_per_beat * tsig_num;
         let snap_interval = self
             .timing
@@ -541,7 +541,7 @@ impl Maolan {
         &self,
         state: &crate::state::StateData,
         position: Point,
-    ) -> (f64, u8) {
+    ) -> (f32, u8) {
         let zoom_x = state.piano_zoom_x;
         let zoom_y = state.piano_zoom_y;
         let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
@@ -550,16 +550,16 @@ impl Maolan {
             _ => 200.0,
         };
         let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-        let tempo = state.tempo.max(1.0) as f64;
-        let tsig_num = state.time_signature_num.max(1) as f64;
-        let tsig_denom = state.time_signature_denom.max(1) as f64;
+        let tempo = state.tempo.max(1.0);
+        let tsig_num = state.time_signature_num.max(1) as f32;
+        let tsig_denom = state.time_signature_denom.max(1) as f32;
         let samples_per_beat =
-            (self.transport.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+            (self.transport.playback_rate_hz as f32 * 60.0 / tempo) * (4.0 / tsig_denom);
         let samples_per_bar = samples_per_beat * tsig_num;
-        let total_samples = (samples_per_bar * self.ui.zoom_visible_bars as f64).max(1.0);
-        let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+        let total_samples = (samples_per_bar * self.ui.zoom_visible_bars).max(1.0);
+        let pps = ((editor_width / total_samples) * zoom_x).max(1.0e-6);
 
-        let raw_start_sample = (position.x.max(0.0) / pps).floor().max(0.0) as f64;
+        let raw_start_sample = (position.x.max(0.0) / pps).floor().max(0.0);
         let pitch_row = (position.y / row_h).floor();
         let pitch_row = pitch_row.clamp(0.0, f32::from(PITCH_MAX)) as usize;
         let pitch = PITCH_MAX.saturating_sub(pitch_row as u8);
@@ -1364,6 +1364,7 @@ impl Maolan {
             Message::ZoomSliderChanged(_)
             | Message::TimelineZoomByScroll(_)
             | Message::EditorScrollXChanged(_)
+            | Message::EditorScrollXPixels(_)
             | Message::EditorScrollYChanged(_)
             | Message::MixerScrollXChanged(_)
             | Message::TracksResizeHover(_)

@@ -43,12 +43,12 @@ pub use crate::consts::workspace_ids::{
     TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID, WORKSPACE_TEMPO_SCROLL_ID,
 };
 
-pub(crate) fn timeline_sample_to_x_f64(sample: f64, pixels_per_sample: f32, inset_px: f32) -> f32 {
-    inset_px + (sample as f32 * pixels_per_sample).max(0.0)
+pub(crate) fn timeline_sample_to_x_f32(sample: f32, pixels_per_sample: f32, inset_px: f32) -> f32 {
+    inset_px + (sample * pixels_per_sample).max(0.0)
 }
 
 pub(crate) fn timeline_sample_to_x(sample: usize, pixels_per_sample: f32, inset_px: f32) -> f32 {
-    timeline_sample_to_x_f64(sample as f64, pixels_per_sample, inset_px)
+    timeline_sample_to_x_f32(sample as f32, pixels_per_sample, inset_px)
 }
 
 pub(crate) fn timeline_x_to_sample_f32(x: f32, pixels_per_sample: f32, inset_px: f32) -> f32 {
@@ -56,6 +56,23 @@ pub(crate) fn timeline_x_to_sample_f32(x: f32, pixels_per_sample: f32, inset_px:
         0.0
     } else {
         ((x - inset_px).max(0.0) / pixels_per_sample).max(0.0)
+    }
+}
+
+/// Shared horizontal-scroll conversion between the app's scroll state
+/// (timeline samples) and the absolute content offset applied to every
+/// synced scrollable (editor timeline, ruler, tempo). All of them render
+/// the same content coordinates, so one conversion serves all; each
+/// scrollable clamps the offset to its own viewport.
+pub(crate) fn timeline_scroll_offset_px(origin_samples: f32, pixels_per_sample: f32) -> f32 {
+    (origin_samples.max(0.0) * pixels_per_sample.max(0.0)).max(0.0)
+}
+
+pub(crate) fn timeline_scroll_origin_samples(offset_px: f32, pixels_per_sample: f32) -> f32 {
+    if pixels_per_sample <= 1.0e-9 {
+        0.0
+    } else {
+        (offset_px.max(0.0) / pixels_per_sample).max(0.0)
     }
 }
 
@@ -71,8 +88,8 @@ pub(crate) fn snap_range_samples(
     pixels_per_sample: f32,
     timeline_left_inset_px: f32,
     snap_mode: SnapMode,
-    samples_per_beat: f64,
-    samples_per_bar: f64,
+    samples_per_beat: f32,
+    samples_per_bar: f32,
     clip_snap_edges: &[ClipSnapEdge],
 ) -> (usize, usize) {
     let snap_interval = match snap_mode {
@@ -108,13 +125,13 @@ pub(crate) fn snap_range_samples(
         } else if matches!(snap_mode, SnapMode::NoSnap) {
             (x / pixels_per_sample).max(0.0)
         } else {
-            ((x / pixels_per_sample) / snap_interval as f32).round() * snap_interval as f32
+            ((x / pixels_per_sample) / snap_interval).round() * snap_interval
         }
     };
     let start_sample = snap_x(range_start_x);
     let mut end_sample = snap_x(range_end_x);
     if end_sample <= start_sample {
-        end_sample = start_sample + snap_interval as f32;
+        end_sample = start_sample + snap_interval;
     }
     (start_sample as usize, end_sample as usize)
 }
@@ -201,7 +218,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub session_range_samples: Option<(usize, usize)>,
     pub punch_range_samples: Option<(usize, usize)>,
     pub snap_mode: SnapMode,
-    pub samples_per_beat: f64,
+    pub samples_per_beat: f32,
     pub zoom_visible_bars: f32,
     pub editor_scroll_x: f32,
     pub mixer_scroll_x: f32,
@@ -506,7 +523,7 @@ impl Workspace {
             editor::clip_context_menu_overlay(&state, transport_active)
         };
         let playhead_x_timeline = playhead_samples.map(|sample| {
-            timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
+            timeline_sample_to_x_f32(sample as f32, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
         });
         let clip_snap_edges = self.collect_clip_snap_edges();
 
@@ -568,7 +585,7 @@ impl Workspace {
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::hidden(),
         ))
-        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
         .width(Length::Fill)
         .height(Length::Fixed(tracks_total_height));
 
@@ -627,7 +644,7 @@ impl Workspace {
             clip_snap_edges: clip_snap_edges.clone(),
             snap_mode,
             samples_per_beat,
-            samples_per_bar: samples_per_bar as f64,
+            samples_per_bar,
             content_width: editor_content_width,
             tempo_points,
             time_signature_points,
@@ -644,7 +661,7 @@ impl Workspace {
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::hidden(),
         ))
-        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
         .height(Length::Fixed(self.tempo.height()))
         .into();
         let ruler_scrolled: Element<'_, Message> = scrollable(self.ruler.view(RulerViewArgs {
@@ -655,7 +672,7 @@ impl Workspace {
             clip_snap_edges: clip_snap_edges.clone(),
             snap_mode,
             samples_per_beat,
-            samples_per_bar: samples_per_bar as f64,
+            samples_per_bar,
             content_width: editor_content_width,
             timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
             clip_start_samples: 0,
@@ -665,7 +682,7 @@ impl Workspace {
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::hidden(),
         ))
-        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .on_scroll(|viewport| Message::EditorScrollXPixels(viewport.absolute_offset().x))
         .height(Length::Fixed(self.ruler.height()))
         .into();
 
@@ -1057,7 +1074,7 @@ impl Workspace {
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
-                        samples_per_bar: samples_per_bar as f64,
+                        samples_per_bar,
                         content_width: timeline_content_width,
                         tempo_points,
                         time_signature_points,
@@ -1100,7 +1117,7 @@ impl Workspace {
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
-                        samples_per_bar: samples_per_bar as f64,
+                        samples_per_bar,
                         content_width: timeline_content_width,
                         timeline_left_inset_px: 0.0,
                         clip_start_samples,
@@ -1216,7 +1233,7 @@ impl Workspace {
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
-                        samples_per_bar: samples_per_bar as f64,
+                        samples_per_bar,
                         content_width: timeline_content_width,
                         tempo_points,
                         time_signature_points,
@@ -1259,7 +1276,7 @@ impl Workspace {
                         clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
-                        samples_per_bar: samples_per_bar as f64,
+                        samples_per_bar,
                         content_width: timeline_content_width,
                         timeline_left_inset_px: 0.0,
                         clip_start_samples: 0,
@@ -1307,8 +1324,8 @@ mod tests {
     }
 
     #[test]
-    fn timeline_sample_to_x_f64_calculates_correctly() {
-        let x = timeline_sample_to_x_f64(100.0, 0.5, 10.0);
+    fn timeline_sample_to_x_f32_calculates_correctly() {
+        let x = timeline_sample_to_x_f32(100.0, 0.5, 10.0);
         assert!((x - 60.0).abs() < 0.01);
     }
 
@@ -1328,6 +1345,20 @@ mod tests {
     fn timeline_x_to_sample_f32_handles_zero_pixels_per_sample() {
         let sample = timeline_x_to_sample_f32(100.0, 0.0, 10.0);
         assert_eq!(sample, 0.0);
+    }
+
+    #[test]
+    fn timeline_scroll_offset_and_origin_roundtrip() {
+        // One bar at 120 BPM / 48 kHz, zoomed to 0.25 px per sample.
+        let pps = 0.25_f32;
+        let origin = 96_000.0_f32;
+        let px = timeline_scroll_offset_px(origin, pps);
+        assert!((px - 24_000.0).abs() < 1e-3);
+        let back = timeline_scroll_origin_samples(px, pps);
+        assert!((back - origin).abs() < 1.0);
+        // Degenerate zoom must not divide by zero.
+        assert_eq!(timeline_scroll_origin_samples(100.0, 0.0), 0.0);
+        assert_eq!(timeline_scroll_offset_px(-50.0, pps), 0.0);
     }
 
     #[test]

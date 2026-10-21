@@ -2219,8 +2219,15 @@ impl Maolan {
     }
 
     fn sync_editor_scrollbars(&self) -> Task<Message> {
-        let x = self.editor_scroll_relative_x();
         let y = self.ui.editor_scroll_y.clamp(0.0, 1.0);
+        // One absolute content offset for every synced horizontal
+        // scrollable; each clamps it to its own viewport, so differing
+        // viewport widths (e.g. the editor's scrollbar gutter) can no
+        // longer drift the ruler/tempo out of alignment.
+        let offset_px = crate::workspace::timeline_scroll_offset_px(
+            self.ui.editor_scroll_origin_samples,
+            self.pixels_per_sample(),
+        );
         Task::batch(vec![
             operation::snap_to(
                 Id::new(EDITOR_SCROLL_ID),
@@ -2229,24 +2236,24 @@ impl Maolan {
                     y: Some(y),
                 },
             ),
-            operation::snap_to(
+            operation::scroll_to(
                 Id::new(EDITOR_TIMELINE_SCROLL_ID),
-                operation::RelativeOffset {
-                    x: Some(x),
+                operation::AbsoluteOffset {
+                    x: Some(offset_px),
                     y: None,
                 },
             ),
-            operation::snap_to(
+            operation::scroll_to(
                 Id::new(WORKSPACE_TEMPO_SCROLL_ID),
-                operation::RelativeOffset {
-                    x: Some(x),
+                operation::AbsoluteOffset {
+                    x: Some(offset_px),
                     y: None,
                 },
             ),
-            operation::snap_to(
+            operation::scroll_to(
                 Id::new(WORKSPACE_RULER_SCROLL_ID),
-                operation::RelativeOffset {
-                    x: Some(x),
+                operation::AbsoluteOffset {
+                    x: Some(offset_px),
                     y: None,
                 },
             ),
