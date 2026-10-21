@@ -1208,65 +1208,6 @@ impl Maolan {
         }
     }
 
-    fn assign_take_lanes<T, FBase, FStart, FLen, FPreferred>(
-        clips: &[T],
-        base_lane: FBase,
-        start_sample: FStart,
-        length_samples: FLen,
-        preferred_take_lane: FPreferred,
-    ) -> (Vec<usize>, Vec<usize>)
-    where
-        FBase: Fn(&T) -> usize,
-        FStart: Fn(&T) -> usize,
-        FLen: Fn(&T) -> usize,
-        FPreferred: Fn(&T) -> Option<usize>,
-    {
-        let mut take_index_by_clip = vec![0_usize; clips.len()];
-        let mut max_takes_by_lane: HashMap<usize, usize> = HashMap::new();
-        let mut active_by_lane: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
-
-        let mut order: Vec<usize> = (0..clips.len()).collect();
-        order.sort_by_key(|idx| {
-            let clip = &clips[*idx];
-            (base_lane(clip), start_sample(clip), std::cmp::Reverse(*idx))
-        });
-
-        for idx in order {
-            let clip = &clips[idx];
-            let lane = base_lane(clip);
-            let start = start_sample(clip);
-            let end = start.saturating_add(length_samples(clip));
-            let active = active_by_lane.entry(lane).or_default();
-            active.retain(|(existing_end, _)| *existing_end > start);
-            let preferred = preferred_take_lane(clip);
-            let mut take_idx = preferred.unwrap_or(0);
-            if preferred.is_none() {
-                while active
-                    .iter()
-                    .any(|(_, existing_take)| *existing_take == take_idx)
-                {
-                    take_idx = take_idx.saturating_add(1);
-                }
-            }
-            active.push((end, take_idx));
-            take_index_by_clip[idx] = take_idx;
-            max_takes_by_lane
-                .entry(lane)
-                .and_modify(|max_take| *max_take = (*max_take).max(take_idx.saturating_add(1)))
-                .or_insert(take_idx.saturating_add(1));
-        }
-
-        let take_count_by_clip = clips
-            .iter()
-            .map(|clip| {
-                let lane = base_lane(clip);
-                max_takes_by_lane.get(&lane).copied().unwrap_or(1).max(1)
-            })
-            .collect::<Vec<_>>();
-
-        (take_index_by_clip, take_count_by_clip)
-    }
-
     fn timing_at_sample(state: &crate::state::StateData, sample: usize) -> (f32, u8, u8) {
         let bpm = state
             .tempo_points
@@ -2464,48 +2405,24 @@ impl Maolan {
                 let audio_top = track.lane_top(Kind::Audio, 0);
                 let audio_bottom = audio_top + audio_clip_h;
                 if local_y >= audio_top && local_y <= audio_bottom {
-                    let (take_idx, take_count) = Self::assign_take_lanes(
-                        &track.audio.clips,
-                        |_| 0,
-                        |clip| clip.start,
-                        |clip| clip.length,
-                        |clip| clip.take_lane_override,
-                    );
-                    let overlap = track
+                    // The widget stack draws later clips on top and iced
+                    // routes presses to the topmost widget under the cursor,
+                    // so hover must resolve to that same clip — otherwise
+                    // the cursor can promise a resize the press won't
+                    // deliver. Bounds are half-open to match
+                    // `Rectangle::contains`.
+                    return track
                         .audio
                         .clips
                         .iter()
                         .enumerate()
-                        .filter(|(_, clip)| {
+                        .rev()
+                        .find(|(_, clip)| {
                             let cx = clip.start as f32 * pps;
                             let cw = (clip.length as f32 * pps).max(MIN_CLIP_WIDTH_PX);
-                            local_x >= cx && local_x <= cx + cw
+                            local_x >= cx && local_x < cx + cw
                         })
-                        .map(|(idx, _)| idx)
-                        .collect::<Vec<_>>();
-                    if overlap.is_empty() {
-                        return None;
-                    }
-                    let max_takes = overlap
-                        .iter()
-                        .filter_map(|idx| take_count.get(*idx).copied())
-                        .max()
-                        .unwrap_or(1)
-                        .max(1);
-                    let rel_y = (local_y - audio_top).max(0.0);
-                    let slot_h = (audio_clip_h / max_takes as f32).max(1.0);
-                    let desired_take = (rel_y / slot_h).floor() as usize;
-                    if let Some(idx) = overlap
-                        .iter()
-                        .find(|idx| take_idx.get(**idx).copied().unwrap_or(0) == desired_take)
-                        .copied()
-                    {
-                        return Some((track.name.clone(), Kind::Audio, idx));
-                    }
-                    return overlap
-                        .iter()
-                        .find_map(|idx| take_idx.get(*idx).is_some().then_some(*idx))
-                        .map(|idx| (track.name.clone(), Kind::Audio, idx));
+                        .map(|(idx, _)| (track.name.clone(), Kind::Audio, idx));
                 }
             }
 
@@ -2517,52 +2434,26 @@ impl Maolan {
                 let midi_clip_h = layout.lane_height_for(Kind::MIDI, midi_lane).max(12.0);
                 let midi_bottom = midi_top + midi_clip_h;
                 if local_y >= midi_top && local_y <= midi_bottom {
-                    let (take_idx, take_count) = Self::assign_take_lanes(
-                        &track.midi.clips,
-                        |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
-                        |clip| clip.start,
-                        |clip| clip.length,
-                        |clip| clip.take_lane_override,
-                    );
-                    let overlap = track
+                    // Same topmost-wins rule as the audio branch: iced routes
+                    // the press to the visually topmost widget, so hover must
+                    // agree. Bounds are half-open to match
+                    // `Rectangle::contains`.
+                    return track
                         .midi
                         .clips
                         .iter()
                         .enumerate()
-                        .filter(|(_, clip)| {
+                        .rev()
+                        .find(|(_, clip)| {
                             let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
                             if lane != midi_lane {
                                 return false;
                             }
                             let cx = clip.start as f32 * pps;
                             let cw = (clip.length as f32 * pps).max(MIN_CLIP_WIDTH_PX);
-                            local_x >= cx && local_x <= cx + cw
+                            local_x >= cx && local_x < cx + cw
                         })
-                        .map(|(idx, _)| idx)
-                        .collect::<Vec<_>>();
-                    if overlap.is_empty() {
-                        return None;
-                    }
-                    let max_takes = overlap
-                        .iter()
-                        .filter_map(|idx| take_count.get(*idx).copied())
-                        .max()
-                        .unwrap_or(1)
-                        .max(1);
-                    let rel_y = (local_y - midi_top).max(0.0);
-                    let slot_h = (midi_clip_h / max_takes as f32).max(1.0);
-                    let desired_take = (rel_y / slot_h).floor() as usize;
-                    if let Some(idx) = overlap
-                        .iter()
-                        .find(|idx| take_idx.get(**idx).copied().unwrap_or(0) == desired_take)
-                        .copied()
-                    {
-                        return Some((track.name.clone(), Kind::MIDI, idx));
-                    }
-                    return overlap
-                        .iter()
-                        .find_map(|idx| take_idx.get(*idx).is_some().then_some(*idx))
-                        .map(|idx| (track.name.clone(), Kind::MIDI, idx));
+                        .map(|(idx, _)| (track.name.clone(), Kind::MIDI, idx));
                 }
             }
 
@@ -2575,7 +2466,8 @@ impl Maolan {
         &self,
         position: Point,
     ) -> Option<(String, usize, Kind, bool)> {
-        const HANDLE_WIDTH: f32 = 8.0;
+        // Use the same width and clamp as the clip widget's edge mouse areas.
+        let handle_width = maolan_widgets::clip::CLIP_RESIZE_HANDLE_WIDTH;
 
         let (track_name, kind, clip_index) = self.clip_at_position(position)?;
         let pps = self.pixels_per_sample().max(1.0e-6);
@@ -2596,11 +2488,17 @@ impl Maolan {
         }
 
         let left = start as f32 * pps;
-        let right = left + (length as f32 * pps).max(MIN_CLIP_WIDTH_PX);
-        let left_distance = (position.x - left).abs();
-        let right_distance = (position.x - right).abs();
-        let is_right_side = if left_distance <= HANDLE_WIDTH || right_distance <= HANDLE_WIDTH {
-            right_distance < left_distance
+        let width = (length as f32 * pps).max(MIN_CLIP_WIDTH_PX);
+        let right = left + width;
+        let threshold = handle_width.min(width / 2.0);
+        // Half-open intervals `[left, left + threshold)` and
+        // `[right - threshold, right)` — exactly the clip widget's edge
+        // mouse areas (`Rectangle::contains` excludes the right edge), so the
+        // cursor never promises a resize the press won't capture.
+        let is_right_side = if position.x >= left && position.x < left + threshold {
+            false
+        } else if position.x >= right - threshold && position.x < right {
+            true
         } else {
             return None;
         };

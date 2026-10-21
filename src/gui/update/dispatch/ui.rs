@@ -301,7 +301,30 @@ impl Maolan {
                     .hovered_clip_resize_handle =
                     Some((track_idx.clone(), clip_idx, kind, is_right_side));
             }
-            Message::ClipResizeHandleHover { hovered: false, .. } => {}
+            Message::ClipResizeHandleHover {
+                kind,
+                ref track_idx,
+                clip_idx,
+                is_right_side,
+                hovered: false,
+            } => {
+                // Clear only when the exited handle is the flagged one, so
+                // moving straight from one clip's handle to another does not
+                // erase the new hover. Without this the resize cursor stayed
+                // stuck after leaving the edge zone and clicks that showed
+                // the resize cursor moved the clip instead.
+                let mut state = self.state.write().expect("state lock poisoned");
+                let matches =
+                    state
+                        .hovered_clip_resize_handle
+                        .as_ref()
+                        .is_some_and(|(t, i, k, s)| {
+                            t == track_idx && *i == clip_idx && *k == kind && *s == is_right_side
+                        });
+                if matches {
+                    state.hovered_clip_resize_handle = None;
+                }
+            }
             Message::MixerLevelEditStart(ref track_name) => {
                 let level = {
                     let state = self.state.read().expect("state lock poisoned");
