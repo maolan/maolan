@@ -465,17 +465,17 @@ impl Maolan {
                                 // above the removed index down by one, and the
                                 // moved clip re-anchors to its destination
                                 // index (appended at the end of the track).
+                                // A copy leaves the source clip in place but
+                                // transfers the selection to the new clip, so
+                                // after a ctrl+drag only the copies stay
+                                // selected.
                                 let moved_was_selected = if clip_exists {
                                     let from_id = crate::state::ClipId {
                                         track_idx: from.track_name.clone(),
                                         clip_idx: from.clip_index,
                                         kind: *kind,
                                     };
-                                    if *copy {
-                                        state.selected_clips.contains(&from_id)
-                                    } else {
-                                        state.selected_clips.remove(&from_id)
-                                    }
+                                    state.selected_clips.remove(&from_id)
                                 } else {
                                     false
                                 };
