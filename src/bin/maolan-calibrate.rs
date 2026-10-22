@@ -7,8 +7,10 @@
 //! ```
 //!
 //! Runs the same engine, hardware routing, and IO Delay calibration action as
-//! the GUI for two seconds per selected device period. Saves each successful
-//! calibration before proceeding to the next period.
+//! the GUI for two seconds per selected device period. A single execution
+//! always covers all four combinations of exclusive/shared and sync/async
+//! device modes. Saves each successful calibration before proceeding to the
+//! next period or mode combination.
 
 mod calibrator {
 
@@ -399,6 +401,12 @@ mod calibrator {
         exclusive: bool,
     }
 
+    // Environment channel from a sweep to its per-period child process: the
+    // child is spawned with these set to "0"/"1" so it calibrates exactly one
+    // device-mode combination instead of the whole sweep.
+    const EXCLUSIVE_ENV: &str = "MAOLAN_CALIBRATE_EXCLUSIVE";
+    const SYNC_MODE_ENV: &str = "MAOLAN_CALIBRATE_SYNC_MODE";
+
     fn parse_args() -> Result<Args, String> {
         let mut input_device = None;
         let mut input_channel = None;
@@ -409,10 +417,6 @@ mod calibrator {
         let mut bits = 32;
         let mut nperiods = 2;
         let mut periods = None;
-        let mut sync_mode = false;
-        // Exclusive mode is the default: it keeps other applications out of
-        // the device so the measurement reflects only the hardware path.
-        let mut exclusive = true;
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
             let mut value =
@@ -439,9 +443,6 @@ mod calibrator {
                         .map_err(|_| "invalid period count")?
                 }
                 "--periods" => periods = Some(parse_periods(&value("--periods")?)?),
-                "--sync-mode" => sync_mode = true,
-                "--exclusive" => exclusive = true,
-                "--shared" => exclusive = false,
                 "--rate" => {
                     rate = value("--rate")?
                         .parse()
@@ -457,9 +458,11 @@ mod calibrator {
                         "usage: maolan-calibrate --input-device <id> --input-channel <n> \
                      --output-device <path> --output-channel <n> [--rate <hz>] \
                      [--gain <f>] [--bits <8|16|24|32>] [--nperiods <n>] \
-                     [--periods <n>[,<n>...]] [--sync-mode] [--exclusive|--shared]\n\
-                     (exclusive mode is the default; --shared allows other\n\
-                     applications to use the device during calibration)\n\
+                     [--periods <n>[,<n>...]]\n\
+                     (one execution always calibrates all combinations of\n\
+                     exclusive/shared and sync/async device modes; exclusive\n\
+                     mode keeps other applications out of the device during\n\
+                     calibration)\n\
                      maolan-calibrate --list-devices"
                     );
                     std::process::exit(0);
@@ -484,6 +487,15 @@ mod calibrator {
         {
             return Err("invalid rate, bit depth, or period count".into());
         }
+        // The mode env vars are the internal channel from a parent sweep to
+        // its per-period child; unset selects the historical defaults (a
+        // normal run overrides the fields per combination in `calibrate`).
+        let sync_mode = std::env::var(SYNC_MODE_ENV)
+            .map(|value| value == "1")
+            .unwrap_or(true);
+        let exclusive = std::env::var(EXCLUSIVE_ENV)
+            .map(|value| value == "1")
+            .unwrap_or(true);
         Ok(Args {
             input_device: input_device.ok_or_else(|| "--input-device is required".to_string())?,
             input_channel,
@@ -1341,16 +1353,13 @@ mod calibrator {
             "--periods".to_string(),
             period.to_string(),
         ]);
-        if args.sync_mode {
-            command.arg("--sync-mode");
-        }
-        // Children re-parse their arguments, so the mode must be passed
-        // explicitly in both directions to survive the new exclusive default.
-        if args.exclusive {
-            command.arg("--exclusive");
-        } else {
-            command.arg("--shared");
-        }
+        // The mode flags are gone from the CLI, so the single combination is
+        // passed to the per-period child out-of-band through the environment;
+        // the child resolves exactly these values and never recurses.
+        command.envs([
+            (EXCLUSIVE_ENV, if args.exclusive { "1" } else { "0" }),
+            (SYNC_MODE_ENV, if args.sync_mode { "1" } else { "0" }),
+        ]);
         let mut child = command
             .kill_on_drop(true)
             .spawn()
@@ -1383,18 +1392,27 @@ mod calibrator {
     }
 
     async fn calibrate(args: &Args, stop: &AtomicBool) -> Result<(), String> {
+        // The env vars pin one value per dimension for per-period children;
+        // a normal run sweeps both values on each dimension.
+        let exclusives = match std::env::var(EXCLUSIVE_ENV) {
+            Ok(value) => vec![value == "1"],
+            Err(_) => vec![true, false],
+        };
+        let sync_modes = match std::env::var(SYNC_MODE_ENV) {
+            Ok(value) => vec![value == "1"],
+            Err(_) => vec![true, false],
+        };
         // Probe once up front so a device that rejects exclusive streams
         // (common for multichannel USB interfaces) doesn't waste a whole
         // sweep discovering it one period at a time.
         #[cfg(target_os = "windows")]
-        let args = {
-            let mut args = args.clone();
+        let exclusive_supported = {
             // ASIO has no exclusive/shared distinction (the flag is ignored
             // by the backend), so the WASAPI exclusive probe does not apply.
-            if args.exclusive && !args.output_device.starts_with("asio:") {
+            if exclusives.contains(&true) && !args.output_device.starts_with("asio:") {
                 // A failed COM init must not be mistaken for "exclusive
-                // unsupported"; default to keeping exclusive and let the
-                // sweep's fallback handle it.
+                // unsupported"; default to keeping exclusive so those
+                // combinations still run and report their own errors.
                 let probe = wasapi_probe::ComApartment::new()
                     .map(|_com| {
                         wasapi_probe::exclusive_format_supported(
@@ -1403,44 +1421,68 @@ mod calibrator {
                         )
                     })
                     .unwrap_or(Ok(true));
-                if matches!(probe, Ok(false)) {
-                    eprintln!(
-                        "maolan-calibrate: {} rejected exclusive mode; using shared mode",
-                        args.output_device
-                    );
-                    args.exclusive = false;
-                }
+                !matches!(probe, Ok(false))
+            } else {
+                true
             }
-            args
         };
-        #[cfg(target_os = "windows")]
-        let args = &args;
-        match calibrate_sweep(args, stop).await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                // Multichannel USB interfaces commonly reject WASAPI/OSS
-                // exclusive streams outright; rather than leaving the user
-                // with nothing, retry the whole sweep in shared mode. ASIO
-                // has no shared mode (the exclusive flag is ignored), so
-                // surface the error as-is.
-                if !args.exclusive
-                    || stop.load(Ordering::Relaxed)
-                    || args.output_device.starts_with("asio:")
-                {
-                    return Err(error);
-                }
-                eprintln!("maolan-calibrate: {error}");
+        let combo_count = exclusives.len() * sync_modes.len();
+        let mut total_saved = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        for &exclusive in &exclusives {
+            #[cfg(target_os = "windows")]
+            if exclusive && !exclusive_supported {
                 eprintln!(
-                    "maolan-calibrate: the device rejected exclusive mode; retrying in shared mode"
+                    "maolan-calibrate: {} rejected exclusive mode; skipping exclusive sweeps",
+                    args.output_device
                 );
-                let mut shared_args = args.clone();
-                shared_args.exclusive = false;
-                calibrate_sweep(&shared_args, stop).await
+                continue;
+            }
+            for &sync_mode in &sync_modes {
+                let mut combo_args = args.clone();
+                combo_args.exclusive = exclusive;
+                combo_args.sync_mode = sync_mode;
+                let label = format!(
+                    "{}/{}",
+                    if exclusive { "exclusive" } else { "shared" },
+                    if sync_mode { "sync" } else { "async" }
+                );
+                if combo_count > 1 {
+                    println!("    == {label} ==");
+                }
+                match calibrate_sweep(&combo_args, stop).await {
+                    Ok(saved) => total_saved += saved,
+                    Err(error) => {
+                        eprintln!("maolan-calibrate: {label}: {error}");
+                        failures.push(format!("{label}: {error}"));
+                    }
+                }
+                // Blank line after every combination so the next header
+                // stands out in the output. Children (one combination)
+                // leave it out to keep per-period output compact.
+                if combo_count > 1 {
+                    println!();
+                }
             }
         }
+        if total_saved == 0 {
+            return Err(if failures.is_empty() {
+                "no period was calibrated".to_string()
+            } else {
+                failures.join("; ")
+            });
+        }
+        // The parent sweep reports the total; children would only repeat
+        // their single period here.
+        if combo_count > 1 {
+            println!("Saved {total_saved} calibrations to ~/.config/maolan/daw/config.toml");
+        }
+        Ok(())
     }
 
-    async fn calibrate_sweep(args: &Args, stop: &AtomicBool) -> Result<(), String> {
+    /// Sweeps the supported (or requested) periods once, returning the
+    /// number of saved calibrations.
+    async fn calibrate_sweep(args: &Args, stop: &AtomicBool) -> Result<usize, String> {
         let periods = match &args.periods {
             Some(periods) => periods.clone(),
             None => supported_periods(args)?,
@@ -1488,8 +1530,7 @@ mod calibrator {
         if saved == 0 {
             return Err("no period was calibrated".into());
         }
-        println!("Saved {saved} calibrations to ~/.config/maolan/daw/config.toml");
-        Ok(())
+        Ok(saved)
     }
 
     pub async fn run() {

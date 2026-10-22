@@ -1368,6 +1368,9 @@ fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOption
             "--sync-mode" => {
                 options.sync_mode = true;
             }
+            "--no-sync-mode" => {
+                options.sync_mode = false;
+            }
             "--play-seconds" => {
                 let value = args
                     .next()
@@ -1420,7 +1423,7 @@ fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOption
 
 fn help_text() -> String {
     format!(
-        "Usage: maolan-cli [session_dir] [options]\n\nOptions:\n  --device <id>           Output device id\n  --input-device <id>     Input device id\n  --sample-rate <hz>      Sample rate (default: {})\n  --bits <n>              Bit depth (default: {})\n  --period-frames <n>     Period size in frames (default: {})\n  --nperiods <n>          Number of periods (default: {})\n  --exclusive             Open device in exclusive mode\n  --sync-mode             Enable sync mode\n  --play-seconds <n>      Restore the session, play for n seconds, then exit\n  --record-seconds <n>    Restore the session, record for n seconds, then exit",
+        "Usage: maolan-cli [session_dir] [options]\n\nOptions:\n  --device <id>           Output device id\n  --input-device <id>     Input device id\n  --sample-rate <hz>      Sample rate (default: {})\n  --bits <n>              Bit depth (default: {})\n  --period-frames <n>     Period size in frames (default: {})\n  --nperiods <n>          Number of periods (default: {})\n  --exclusive             Open device in exclusive mode\n  --sync-mode             Enable sync mode (default)\n  --no-sync-mode          Disable sync mode\n  --play-seconds <n>      Restore the session, play for n seconds, then exit\n  --record-seconds <n>    Restore the session, record for n seconds, then exit",
         audio_defaults::SAMPLE_RATE_HZ,
         audio_defaults::BIT_DEPTH,
         audio_defaults::PERIOD_FRAMES,
