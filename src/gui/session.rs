@@ -2018,6 +2018,11 @@ impl Maolan {
     }
 
     pub(super) fn load(&mut self, path: String) -> std::io::Result<Task<Message>> {
+        let restore_actions = self.load_restore_actions(path)?;
+        Ok(Self::restore_actions_task(restore_actions))
+    }
+
+    fn load_restore_actions(&mut self, path: String) -> std::io::Result<Vec<Action>> {
         let load_start = Instant::now();
         let shared_restore_actions = crate::session_restore::load_session_restore_actions(
             &PathBuf::from(path.clone()),
@@ -2875,6 +2880,11 @@ impl Maolan {
             state.unused_audio_clips = unused_audio;
             state.unused_midi_clips = unused_midi;
         }
+        // Session files list tracks in display order, which can place folder
+        // children before their parent folder. TrackSetParent is rejected when
+        // the parent does not exist yet, so parenting actions are collected
+        // here and queued after every AddTrack below.
+        let mut deferred_parent_actions: Vec<Action> = Vec::new();
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {
                 let name = {
@@ -3076,7 +3086,7 @@ impl Maolan {
                         });
                     }
                     if let Some(ref parent) = parent_track {
-                        restore_actions.push(Action::TrackSetParent {
+                        deferred_parent_actions.push(Action::TrackSetParent {
                             track_name: name.clone(),
                             parent_name: Some(parent.clone()),
                         });
@@ -3587,6 +3597,7 @@ impl Maolan {
                 "'tracks' is not an array",
             ));
         }
+        restore_actions.append(&mut deferred_parent_actions);
 
         let iodelay_enabled = session["iodelay"]["enabled"].as_bool().unwrap_or(false);
         restore_actions.push(Action::IoDelayConfigure {
@@ -4045,7 +4056,7 @@ impl Maolan {
             actions = restore_actions.len(),
             "session load prepared restore actions"
         );
-        Ok(Self::restore_actions_task(restore_actions))
+        Ok(restore_actions)
     }
 
     pub(super) fn refresh_graphs_then_save_template(&mut self, path: String) -> Task<Message> {
@@ -4769,6 +4780,107 @@ mod tests {
         assert!(!Maolan::graph_has_connectable_restore_payload(
             &empty_folder_graph
         ));
+    }
+
+    #[test]
+    fn load_defers_track_set_parent_until_all_tracks_are_added() {
+        // Session files list tracks in display order, which can place folder
+        // children before their parent folder. The engine rejects TrackSetParent
+        // when the parent does not exist yet, so every AddTrack must be queued
+        // before any TrackSetParent, regardless of the saved track order.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_parent_order_{unique}"));
+
+        let app = Maolan::default();
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("main.json");
+        let mut session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        session["tracks"] = json!([
+            {
+                "name": "Child",
+                "armed": false,
+                "muted": false,
+                "soloed": false,
+                "audio": {"ins": 1, "outs": 1, "clips": []},
+                "midi": {"ins": 0, "outs": 0, "clips": []},
+                "primary_audio_ins": 1,
+                "primary_audio_outs": 1,
+                "is_folder": false,
+                "parent_track": "Folder",
+                "input_monitor": [],
+                "disk_monitor": [],
+                "midi_input_monitor": [],
+                "midi_disk_monitor": [],
+                "midi_lane_channels": [],
+                "automation_lanes": []
+            },
+            {
+                "name": "Folder",
+                "armed": false,
+                "muted": false,
+                "soloed": false,
+                "audio": {"ins": 0, "outs": 2, "clips": []},
+                "midi": {"ins": 0, "outs": 0, "clips": []},
+                "primary_audio_ins": 0,
+                "primary_audio_outs": 2,
+                "is_folder": true,
+                "parent_track": null,
+                "input_monitor": [],
+                "disk_monitor": [],
+                "midi_input_monitor": [],
+                "midi_disk_monitor": [],
+                "midi_lane_channels": [],
+                "automation_lanes": []
+            }
+        ]);
+        serde_json::to_writer(
+            File::create(&session_path).expect("create session file"),
+            &session,
+        )
+        .expect("write session file");
+
+        let mut restored = Maolan::default();
+        let actions = restored
+            .load_restore_actions(session_root.to_string_lossy().to_string())
+            .expect("load session");
+
+        let add_child = actions
+            .iter()
+            .position(|a| matches!(a, Action::AddTrack { name, .. } if name == "Child"));
+        let add_folder = actions
+            .iter()
+            .position(|a| matches!(a, Action::AddTrack { name, .. } if name == "Folder"));
+        let set_parent = actions.iter().position(|a| {
+            matches!(
+                a,
+                Action::TrackSetParent {
+                    track_name,
+                    parent_name: Some(parent),
+                } if track_name == "Child" && parent == "Folder"
+            )
+        });
+        let (Some(add_child), Some(add_folder), Some(set_parent)) =
+            (add_child, add_folder, set_parent)
+        else {
+            panic!("expected AddTrack and TrackSetParent restore actions");
+        };
+        assert!(
+            add_folder < set_parent,
+            "parent folder must be added before the child is parented"
+        );
+        assert!(
+            add_child < set_parent,
+            "child track must be added before it is parented"
+        );
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
 }
 

@@ -893,7 +893,7 @@ impl Maolan {
                 let mut plugins = plugins.clone();
                 drop(state);
 
-                let pending_queries =
+                let mut pending_queries =
                     self.queue_pending_graph_automation_queries(track_name, &plugins);
 
                 let mut state = self.state.write().expect("state lock poisoned");
@@ -929,16 +929,13 @@ impl Maolan {
                     .insert(track_name.clone(), (plugins, connections.clone()));
                 drop(state);
 
-                if !pending_queries.is_empty() {
-                    return Task::batch(pending_queries);
-                }
-
                 if self.pending.pending_save_path.is_some() {
                     self.pending.pending_save_tracks.remove(track_name);
                     if let Some(task) = self.complete_pending_save(track_name) {
-                        return task;
+                        pending_queries.push(task);
                     }
                 }
+                return Task::batch(pending_queries);
             }
             _ => {}
         }
