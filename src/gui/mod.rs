@@ -10550,6 +10550,38 @@ mod tests {
     }
 
     #[test]
+    fn clip_move_copy_echo_moves_selection_to_new_clips() {
+        let mut app = clip_move_echo_app();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            for idx in [0usize, 1] {
+                state.selected_clips.insert(crate::state::ClipId {
+                    track_idx: "a".to_string(),
+                    clip_idx: idx,
+                    kind: maolan_engine::kind::Kind::Audio,
+                });
+            }
+        }
+
+        // Ctrl+drag copies both selected clips to another track.
+        clip_move_echo(&mut app, "a", 0, "b", true);
+        clip_move_echo(&mut app, "a", 1, "b", true);
+
+        let state = app.state.read().expect("state lock poisoned");
+        assert_eq!(
+            state.tracks[0].audio.clips.len(),
+            3,
+            "sources stay in place"
+        );
+        assert_eq!(state.tracks[1].audio.clips.len(), 2);
+        assert_eq!(
+            selected_pair(&state),
+            vec![("b".to_string(), 0), ("b".to_string(), 1)],
+            "only the newly copied clips remain selected"
+        );
+    }
+
+    #[test]
     fn piano_scroll_and_zoom_messages_update_state() {
         let mut app = Maolan::default();
 
