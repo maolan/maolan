@@ -2130,13 +2130,10 @@ impl canvas::Program<Message> for Graph {
                                 && *last_track == track_name
                                 && now.duration_since(*last_time) <= DOUBLE_CLICK
                             {
-                                let is_folder = track.is_folder;
                                 data.connections_last_track_click = None;
-                                return Some(Action::publish(if is_folder {
-                                    Message::OpenFolderConnections(track_name.clone())
-                                } else {
-                                    Message::OpenTrackPlugins(track_name.clone())
-                                }));
+                                return Some(Action::publish(Message::SelectTrack(
+                                    track_name.clone(),
+                                )));
                             }
                             data.connections_last_track_click = Some((track_name.clone(), now));
 
