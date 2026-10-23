@@ -2131,7 +2131,7 @@ impl canvas::Program<Message> for Graph {
                                 && now.duration_since(*last_time) <= DOUBLE_CLICK
                             {
                                 data.connections_last_track_click = None;
-                                return Some(Action::publish(Message::SelectTrack(
+                                return Some(Action::publish(Message::EditorConnectionsOpen(
                                     track_name.clone(),
                                 )));
                             }

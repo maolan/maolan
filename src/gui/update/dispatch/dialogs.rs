@@ -4,7 +4,9 @@ impl Maolan {
     pub(super) fn handle_dialog_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::EscapePressed => {
-                if matches!(
+                if self.track_rename.is_open() {
+                    self.track_rename.close();
+                } else if matches!(
                     self.modal,
                     Some(Show::AddTrack | Show::AddFolder | Show::ApplyTemplate { .. })
                 ) {
@@ -31,6 +33,15 @@ impl Maolan {
                     return self.handle_audio_editor_message(Message::AudioEditor(
                         maolan_editor::app::Message::Close,
                     ));
+                } else {
+                    if self.timing.selected_tempo_points.is_empty() {
+                        let sample = self.transport.transport_samples.max(0.0) as usize;
+                        let state = self.state.read().expect("state lock poisoned");
+                        let (bpm, _, _) = Self::timing_at_sample(&state, sample);
+                        self.timing.tempo_input = format!("{bpm:.2}");
+                    } else {
+                        self.timing.sync_timing_inputs_from_selection(&self.state);
+                    }
                 }
             }
             Message::Cancel => {

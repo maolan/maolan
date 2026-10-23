@@ -152,6 +152,7 @@ impl Maolan {
             }
             Message::EditorConnectionsOpen(ref track_name) => {
                 let mut state = self.state.write().expect("state lock poisoned");
+                state.view = View::Workspace;
                 state.editor_connections = Some(track_name.clone());
                 state.connection_view_selection = ConnectionViewSelection::None;
                 state.message = format!("Opened editor connections: {}", track_name);

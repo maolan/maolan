@@ -10,6 +10,10 @@ pub struct TrackRenameView {
 }
 
 impl TrackRenameView {
+    pub fn name_input_id() -> maolan_widgets::iced::widget::Id {
+        maolan_widgets::iced::widget::Id::new("track-rename-name-input")
+    }
+
     pub fn new(_state: State) -> Self {
         Self { dialog: None }
     }
@@ -55,7 +59,9 @@ impl TrackRenameView {
                 row![
                     text("New name:"),
                     text_input("Enter new name", new_name)
+                        .id(Self::name_input_id())
                         .on_input(Message::TrackRenameInput)
+                        .on_submit(Message::TrackRenameConfirm)
                         .width(Length::Fixed(300.0)),
                 ]
                 .spacing(10)

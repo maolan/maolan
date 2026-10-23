@@ -64,6 +64,13 @@ impl MarkerView {
                     .on_submit(Message::MarkerNameConfirm)
                     .width(Length::Fill),
                 row![
+                    if is_rename {
+                        button("Delete")
+                            .on_press(Message::MarkerNameDelete)
+                            .style(button::danger)
+                    } else {
+                        button("Delete").style(button::danger)
+                    },
                     confirm_button,
                     button("Cancel")
                         .on_press(Message::MarkerNameCancel)

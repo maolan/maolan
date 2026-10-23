@@ -137,6 +137,9 @@ impl Maolan {
                 return Task::batch(vec![
                     self.send_current_tempo_map(),
                     self.update(Message::PlaybackTick),
+                    maolan_widgets::iced::widget::operation::focus(
+                        crate::toolbar::Toolbar::tempo_input_id(),
+                    ),
                 ]);
             }
             Message::TempoPointSelect { sample, additive } => {
@@ -153,7 +156,9 @@ impl Maolan {
                         Some(super::super::super::TimingSelectionLane::Tempo),
                     );
                     self.timing.sync_timing_inputs_from_selection(&self.state);
-                    return Task::none();
+                    return maolan_widgets::iced::widget::operation::focus(
+                        crate::toolbar::Toolbar::tempo_input_id(),
+                    );
                 }
                 self.timing.timing_selection_lane = if self.timing.selected_tempo_points.is_empty()
                 {
@@ -162,6 +167,9 @@ impl Maolan {
                     Some(super::super::super::TimingSelectionLane::Tempo)
                 };
                 self.timing.sync_timing_inputs_from_selection(&self.state);
+                return maolan_widgets::iced::widget::operation::focus(
+                    crate::toolbar::Toolbar::tempo_input_id(),
+                );
             }
             Message::TempoPointsMove {
                 from_samples,

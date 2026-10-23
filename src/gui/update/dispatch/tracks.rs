@@ -445,6 +445,9 @@ impl Maolan {
                     old_name: track_name.clone(),
                     new_name: track_name.clone(),
                 });
+                return maolan_widgets::iced::widget::operation::focus(
+                    crate::track_rename::TrackRenameView::name_input_id(),
+                );
             }
             Message::TrackRenameInput(_) => {}
             Message::TemplateSaveInput(_) => {
