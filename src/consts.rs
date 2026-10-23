@@ -141,7 +141,7 @@ pub mod connections_plugins {
     pub const PORT_HIT_RADIUS: f32 = AUDIO_PORT_RADIUS + 2.0;
     pub const MIDI_HIT_RADIUS: f32 = MIDI_PORT_RADIUS + 2.0;
     pub const TRACK_IO_W: f32 = 86.0;
-    pub const TRACK_IO_H: f32 = 200.0;
+    pub const TRACK_IO_H: f32 = 100.0;
     pub const TRACK_IO_MARGIN_X: f32 = 24.0;
 }
 

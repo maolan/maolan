@@ -61,7 +61,7 @@ impl Graph {
     }
 
     pub(crate) fn plugin_height(plugin: &PluginGraphPlugin) -> f32 {
-        MIN_PLUGIN_H
+        0.5 * MIN_PLUGIN_H
             .max(Self::required_height_for_ports(
                 plugin.audio_inputs,
                 AUDIO_PORT_RADIUS,
@@ -1564,6 +1564,28 @@ mod tests {
     fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
         (message, status)
+    }
+
+    #[test]
+    fn plugin_node_height_is_half_of_previous_minimum() {
+        let plugin = PluginGraphPlugin {
+            node: PluginGraphNode::Vst3PluginInstance(0),
+            instance_id: 0,
+            format: "VST3".to_string(),
+            uri: String::new(),
+            plugin_id: String::new(),
+            name: String::new(),
+            main_audio_inputs: 0,
+            main_audio_outputs: 0,
+            audio_inputs: 0,
+            audio_outputs: 0,
+            midi_inputs: 0,
+            midi_outputs: 0,
+            state: None,
+            bypassed: false,
+        };
+
+        assert_eq!(Graph::plugin_height(&plugin), MIN_PLUGIN_H / 2.0);
     }
 
     #[test]

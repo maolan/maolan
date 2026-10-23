@@ -6,6 +6,9 @@ impl Maolan {
             Message::EscapePressed => {
                 if self.track_rename.is_open() {
                     self.track_rename.close();
+                } else if self.track_template_save.is_open() {
+                    self.track_template_save.close();
+                    self.modal = None;
                 } else if matches!(
                     self.modal,
                     Some(Show::AddTrack | Show::AddFolder | Show::ApplyTemplate { .. })

@@ -630,6 +630,13 @@ pub(crate) struct CollectToSessionOperation {
     data_dir: PathBuf,
     pending_clap_refs: HashSet<PluginInstanceRef>,
     copied_files: HashMap<PathBuf, String>,
+    finish: CollectResourceFinish,
+}
+
+#[derive(Debug)]
+pub(crate) enum CollectResourceFinish {
+    SaveSession,
+    SaveTrackTemplate { track_name: String, path: String },
 }
 
 #[derive(Debug)]
@@ -2375,6 +2382,7 @@ impl Maolan {
             data_dir: data_dir.clone(),
             pending_clap_refs,
             copied_files: HashMap::new(),
+            finish: CollectResourceFinish::SaveSession,
         });
 
         for plugin_ref in &lv2_refs {
@@ -2456,13 +2464,13 @@ impl Maolan {
         &mut self,
         plugin_ref: &PluginInstanceRef,
         files: &[(u32, String)],
-    ) {
+    ) -> Task<Message> {
         tracing::info!(?plugin_ref, ?files, "Received CLAP resource files");
         let Some(op) = self.pending.collect_to_session_operation.as_mut() else {
-            return;
+            return Task::none();
         };
         if !op.pending_clap_refs.remove(plugin_ref) {
-            return;
+            return Task::none();
         }
 
         for (_index, rel) in files {
@@ -2486,13 +2494,14 @@ impl Maolan {
         }
 
         if op.pending_clap_refs.is_empty() {
-            self.finish_collect_to_session();
+            return self.finish_collect_to_session();
         }
+        Task::none()
     }
 
-    fn finish_collect_to_session(&mut self) {
+    fn finish_collect_to_session(&mut self) -> Task<Message> {
         let Some(op) = self.pending.collect_to_session_operation.take() else {
-            return;
+            return Task::none();
         };
 
         let copied_count = op.copied_files.len();
@@ -2506,15 +2515,24 @@ impl Maolan {
             self.rewrite_collected_plugin_state_paths(&op.session_root, &op.copied_files);
         }
 
-        if let Some(path) = self.session_dir.as_ref()
-            && let Err(e) = self.save(path.to_string_lossy().to_string())
-        {
-            self.state.write().expect("state lock poisoned").message =
-                format!("{message}; failed to save session: {e}");
-            return;
+        match op.finish {
+            CollectResourceFinish::SaveSession => {
+                if let Some(path) = self.session_dir.as_ref()
+                    && let Err(e) = self.save(path.to_string_lossy().to_string())
+                {
+                    self.state.write().expect("state lock poisoned").message =
+                        format!("{message}; failed to save session: {e}");
+                    return Task::none();
+                }
+                self.state.write().expect("state lock poisoned").message = message;
+                Task::none()
+            }
+            CollectResourceFinish::SaveTrackTemplate { track_name, path } => {
+                self.state.write().expect("state lock poisoned").message =
+                    format!("Saving template for {track_name}...");
+                self.save_track_as_template(&track_name, path)
+            }
         }
-
-        self.state.write().expect("state lock poisoned").message = message;
     }
 
     fn read_utf8_string_from_bytes(bytes: &[u8], start: usize) -> Option<(usize, String)> {
