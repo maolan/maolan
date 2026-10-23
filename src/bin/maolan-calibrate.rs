@@ -604,22 +604,13 @@ mod calibrator {
                     .get("sample_rate_hz")
                     .and_then(toml::Value::as_integer)
                     == Some(args.rate as i64)
-                && (entry.get("measurement_path").and_then(toml::Value::as_str)
-                    != Some("engine_io_delay_v1")
-                    || (entry.get("bits").and_then(toml::Value::as_integer)
-                        == Some(args.bits as i64)
-                        && entry.get("nperiods").and_then(toml::Value::as_integer)
-                            == Some(args.nperiods as i64)
-                        && entry.get("sync_mode").and_then(toml::Value::as_bool)
-                            == Some(args.sync_mode)
-                        && entry.get("exclusive").and_then(toml::Value::as_bool)
-                            == Some(args.exclusive))))
+                && entry.get("bits").and_then(toml::Value::as_integer) == Some(args.bits as i64)
+                && entry.get("nperiods").and_then(toml::Value::as_integer)
+                    == Some(args.nperiods as i64)
+                && entry.get("sync_mode").and_then(toml::Value::as_bool) == Some(args.sync_mode)
+                && entry.get("exclusive").and_then(toml::Value::as_bool) == Some(args.exclusive))
         });
         let mut record = toml::map::Map::new();
-        record.insert(
-            "measurement_path".into(),
-            toml::Value::String("engine_io_delay_v1".into()),
-        );
         record.insert("bits".into(), toml::Value::Integer(args.bits as i64));
         record.insert(
             "nperiods".into(),
@@ -1588,7 +1579,7 @@ mod calibrator {
         }
 
         #[test]
-        fn saved_engine_totals_preserve_settings_and_replace_legacy_calibration() {
+        fn saved_engine_totals_preserve_settings_and_replace_matching_calibration() {
             let dir = std::env::temp_dir().join(format!(
                 "maolan-calibration-{}-{}",
                 std::process::id(),
@@ -1607,6 +1598,10 @@ input_device_id = "/dev/dsp5"
 output_device_id = "/dev/dsp5"
 period_frames = 512
 sample_rate_hz = 48000
+bits = 32
+nperiods = 2
+sync_mode = false
+exclusive = false
 input_latency_frames = 279
 output_latency_frames = 280
 "#,
@@ -1637,7 +1632,7 @@ output_latency_frames = 280
                 .iter()
                 .find(|r| r["period_frames"].as_integer() == Some(512))
                 .unwrap();
-            assert_eq!(row["measurement_path"].as_str(), Some("engine_io_delay_v1"));
+            assert!(row.get("measurement_path").is_none());
             assert_eq!(row["input_latency_frames"].as_integer(), Some(614));
             assert_eq!(row["output_latency_frames"].as_integer(), Some(615));
             std::fs::remove_dir_all(dir).unwrap();

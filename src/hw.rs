@@ -166,8 +166,7 @@ impl HW {
             cfg.oss_calibrations
                 .iter()
                 .find(|c| {
-                    c.measurement_path == "engine_io_delay_v1"
-                        && c.bits == bits as usize
+                    c.bits == bits as usize
                         && c.nperiods == selection.nperiods
                         && c.sync_mode == selection.sync_mode
                         && c.exclusive == selection.exclusive

@@ -15,7 +15,6 @@ pub struct CliConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct CliOssCalibration {
-    pub measurement_path: String,
     pub bits: usize,
     pub nperiods: usize,
     pub sync_mode: bool,
