@@ -629,6 +629,7 @@ pub(crate) struct CollectToSessionOperation {
     session_root: PathBuf,
     data_dir: PathBuf,
     pending_clap_refs: HashSet<PluginInstanceRef>,
+    pending_state_refs: HashSet<PluginInstanceRef>,
     copied_files: HashMap<PathBuf, String>,
     finish: CollectResourceFinish,
 }
@@ -1929,6 +1930,10 @@ impl Maolan {
     }
 
     fn is_cleanup_target_rel(path: &str) -> bool {
+        if path.starts_with("data/") {
+            return true;
+        }
+
         if path.starts_with("audio/") || path.starts_with("midi/") {
             let rel_path = Path::new(path);
             let Some(ext) = Self::file_extension_lower(rel_path) else {
@@ -2033,6 +2038,74 @@ impl Maolan {
         referenced
     }
 
+    fn insert_plugin_asset_paths(
+        referenced: &mut HashSet<String>,
+        value: &Value,
+        session_root: &Path,
+    ) {
+        match value {
+            Value::String(path) => {
+                let path = Path::new(path);
+                let relative = if path.is_absolute() {
+                    let Ok(relative) = path.strip_prefix(session_root) else {
+                        return;
+                    };
+                    relative.to_string_lossy().replace('\\', "/")
+                } else {
+                    path.to_string_lossy().replace('\\', "/")
+                };
+                if relative.starts_with("data/") {
+                    Self::insert_referenced_session_media_path(referenced, &relative);
+                }
+            }
+            Value::Array(values) => {
+                let bytes: Option<Vec<u8>> = values
+                    .iter()
+                    .map(|value| value.as_u64().map(|byte| byte as u8))
+                    .collect();
+                if let Some(bytes) = bytes {
+                    let payload = if bytes.starts_with(b"maolan-modeler-state-") {
+                        bytes
+                            .iter()
+                            .position(|byte| *byte == b'\n')
+                            .map(|newline| &bytes[newline + 1..])
+                    } else {
+                        Some(bytes.as_slice())
+                    };
+                    if let Some(payload) = payload
+                        && let Ok(value) = serde_json::from_slice::<Value>(payload)
+                    {
+                        Self::insert_plugin_asset_paths(referenced, &value, session_root);
+                    }
+                } else {
+                    for value in values {
+                        Self::insert_plugin_asset_paths(referenced, value, session_root);
+                    }
+                }
+            }
+            Value::Object(values) => {
+                for value in values.values() {
+                    Self::insert_plugin_asset_paths(referenced, value, session_root);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn insert_plugin_asset_paths_from_tracks(
+        referenced: &mut HashSet<String>,
+        tracks: &[crate::state::Track],
+        session_root: &Path,
+    ) {
+        for track in tracks {
+            for clip in &track.audio.clips {
+                if let Some(graph) = &clip.plugin_graph_json {
+                    Self::insert_plugin_asset_paths(referenced, graph, session_root);
+                }
+            }
+        }
+    }
+
     fn insert_referenced_unused_clip_paths(
         referenced: &mut HashSet<String>,
         audio_clips: &[crate::state::AudioClip],
@@ -2064,7 +2137,10 @@ impl Maolan {
         referenced
     }
 
-    fn referenced_session_media_paths_from_file(path: &Path) -> io::Result<HashSet<String>> {
+    fn referenced_session_media_paths_from_file(
+        path: &Path,
+        session_root: &Path,
+    ) -> io::Result<HashSet<String>> {
         #[derive(serde::Deserialize)]
         struct SessionFileTracks {
             #[serde(default)]
@@ -2075,6 +2151,8 @@ impl Maolan {
             unused_midi_clips: Vec<crate::state::MIDIClip>,
             #[serde(default)]
             session_matrix: Option<crate::state::SessionMatrix>,
+            #[serde(default)]
+            graphs: serde_json::Map<String, Value>,
         }
 
         let file = std::fs::File::open(path)?;
@@ -2087,6 +2165,10 @@ impl Maolan {
             &session.unused_audio_clips,
             &session.unused_midi_clips,
         );
+        Self::insert_plugin_asset_paths_from_tracks(&mut referenced, &session.tracks, session_root);
+        for graph in session.graphs.values() {
+            Self::insert_plugin_asset_paths(&mut referenced, graph, session_root);
+        }
 
         // Session slots reference clips by id. Make sure media files for those
         // clips survive cleanup, even when the clip lives in the unused pool.
@@ -2182,6 +2264,25 @@ impl Maolan {
             let state = state.read().expect("state lock poisoned");
             Self::referenced_session_media_paths_from_tracks(&state.tracks)
         };
+        {
+            let state = state.read().expect("state lock poisoned");
+            Self::insert_plugin_asset_paths_from_tracks(
+                &mut referenced,
+                &state.tracks,
+                session_root,
+            );
+            for (plugins, _) in state.plugin_graphs_by_track.values() {
+                for plugin in plugins {
+                    if let Some(plugin_state) = &plugin.state {
+                        Self::insert_plugin_asset_paths(
+                            &mut referenced,
+                            plugin_state,
+                            session_root,
+                        );
+                    }
+                }
+            }
+        }
 
         // Other branch files contribute track and unused-pool references. The
         // current branch file is skipped: in-memory state is authoritative.
@@ -2206,7 +2307,7 @@ impl Maolan {
                 if path.file_name().and_then(|s| s.to_str()) == Some(current_branch_file.as_str()) {
                     continue;
                 }
-                match Self::referenced_session_media_paths_from_file(&path) {
+                match Self::referenced_session_media_paths_from_file(&path, session_root) {
                     Ok(refs) => referenced.extend(refs),
                     Err(_e) => {}
                 }
@@ -2295,6 +2396,13 @@ impl Maolan {
             &mut candidates,
         )
         .map_err(|e| format!("Failed to scan pitch/: {e}"))?;
+        Self::collect_cleanup_candidate_files(
+            &session_root.join("data"),
+            session_root,
+            &referenced,
+            &mut candidates,
+        )
+        .map_err(|e| format!("Failed to scan data/: {e}"))?;
         candidates.sort_by(|a, b| a.1.cmp(&b.1));
 
         for (path, rel) in candidates {
@@ -2308,6 +2416,9 @@ impl Maolan {
     }
 
     fn collect_to_session(&mut self) -> Result<String, String> {
+        if self.pending.collect_to_session_operation.is_some() {
+            return Err("A plugin resource collection is already in progress".to_string());
+        }
         let Some(session_root) = self.session_dir.clone() else {
             return Err("Collect requires an opened/saved session folder".to_string());
         };
@@ -2381,6 +2492,7 @@ impl Maolan {
             session_root,
             data_dir: data_dir.clone(),
             pending_clap_refs,
+            pending_state_refs: HashSet::new(),
             copied_files: HashMap::new(),
             finish: CollectResourceFinish::SaveSession,
         });
@@ -2389,8 +2501,7 @@ impl Maolan {
             Self::send_resource_dir_action(plugin_ref, "LV2", &data_dir, true);
         }
         for plugin_ref in &clap_refs {
-            Self::send_resource_dir_action(plugin_ref, "CLAP", &data_dir, true);
-            Self::send_clap_collect_resources_action(plugin_ref);
+            Self::send_clap_collect_resources_action(plugin_ref, &data_dir);
         }
 
         Ok("Collecting plugin files...".to_string())
@@ -2402,8 +2513,22 @@ impl Maolan {
         data_dir: &Path,
         shared: bool,
     ) {
+        let action = Self::resource_dir_action(plugin_ref, format, data_dir, shared);
+        tokio::spawn(async move {
+            if let Err(err) = CLIENT.send(EngineMessage::Request(action)).await {
+                eprintln!("failed to send plugin resource action to engine: {err}");
+            }
+        });
+    }
+
+    fn resource_dir_action(
+        plugin_ref: &PluginInstanceRef,
+        format: &str,
+        data_dir: &Path,
+        shared: bool,
+    ) -> Action {
         let directory = data_dir.to_string_lossy().to_string();
-        let action = match plugin_ref {
+        match plugin_ref {
             PluginInstanceRef::Track {
                 track_name,
                 instance_id,
@@ -2426,15 +2551,11 @@ impl Maolan {
                 directory,
                 shared,
             },
-        };
-        tokio::spawn(async move {
-            if let Err(err) = CLIENT.send(EngineMessage::Request(action)).await {
-                eprintln!("failed to send CLAP resource action to engine: {err}");
-            }
-        });
+        }
     }
 
-    fn send_clap_collect_resources_action(plugin_ref: &PluginInstanceRef) {
+    fn send_clap_collect_resources_action(plugin_ref: &PluginInstanceRef, data_dir: &Path) {
+        let set_directory = Self::resource_dir_action(plugin_ref, "CLAP", data_dir, true);
         let action = match plugin_ref {
             PluginInstanceRef::Track {
                 track_name,
@@ -2454,6 +2575,12 @@ impl Maolan {
             },
         };
         tokio::spawn(async move {
+            // Queue both requests in order; separate tasks can collect before
+            // the plugin has received its destination directory.
+            if let Err(err) = CLIENT.send(EngineMessage::Request(set_directory)).await {
+                eprintln!("failed to set CLAP resource directory: {err}");
+                return;
+            }
             if let Err(err) = CLIENT.send(EngineMessage::Request(action)).await {
                 eprintln!("failed to send CLAP resource action to engine: {err}");
             }
@@ -2493,7 +2620,47 @@ impl Maolan {
                 .insert(op.data_dir.join(rel), format!("data/{rel}"));
         }
 
-        if op.pending_clap_refs.is_empty() {
+        // Plugins without resources need no new snapshot (and may not
+        // implement the CLAP state extension).
+        if files.is_empty() {
+            if op.pending_clap_refs.is_empty() && op.pending_state_refs.is_empty() {
+                return self.finish_collect_to_session();
+            }
+            return Task::none();
+        }
+
+        // Collection updates the live plugin's paths. Refresh our saved state
+        // before rewriting those paths or saving the session/template.
+        op.pending_state_refs.insert(plugin_ref.clone());
+        let action = match plugin_ref {
+            PluginInstanceRef::Track {
+                track_name,
+                instance_id,
+            } => Action::TrackClapSnapshotState {
+                track_name: track_name.clone(),
+                instance_id: *instance_id,
+            },
+            PluginInstanceRef::Clip {
+                track_name,
+                clip_idx,
+                instance_id,
+            } => Action::ClipClapSnapshotState {
+                track_name: track_name.clone(),
+                clip_idx: *clip_idx,
+                instance_id: *instance_id,
+            },
+        };
+        self.send(action)
+    }
+
+    fn handle_collected_plugin_state(&mut self, plugin_ref: &PluginInstanceRef) -> Task<Message> {
+        let Some(op) = self.pending.collect_to_session_operation.as_mut() else {
+            return Task::none();
+        };
+        if op.pending_state_refs.remove(plugin_ref)
+            && op.pending_clap_refs.is_empty()
+            && op.pending_state_refs.is_empty()
+        {
             return self.finish_collect_to_session();
         }
         Task::none()
@@ -2641,11 +2808,34 @@ impl Maolan {
         }
     }
 
+    fn map_json_state_bytes(bytes: &[u8], map: impl FnOnce(&Value) -> Value) -> Option<Vec<u8>> {
+        let (prefix, value) = if let Ok(value) = serde_json::from_slice::<Value>(bytes) {
+            (&bytes[..0], value)
+        } else {
+            // Modeler state has a version header followed by a JSON document.
+            let start = bytes.iter().position(|byte| *byte == b'\n')? + 1;
+            let value = serde_json::from_slice::<Value>(&bytes[start..]).ok()?;
+            (&bytes[..start], value)
+        };
+        let mapped = map(&value);
+        if mapped == value {
+            return Some(bytes.to_vec());
+        }
+        let mut result = prefix.to_vec();
+        result.extend(serde_json::to_vec(&mapped).ok()?);
+        Some(result)
+    }
+
     fn rewrite_bytes_paths(
         bytes: &[u8],
         session_root: &Path,
         copied_files: &HashMap<PathBuf, String>,
     ) -> Vec<u8> {
+        if let Some(mapped) = Self::map_json_state_bytes(bytes, |value| {
+            Self::rewrite_plugin_state_paths(value, session_root, copied_files)
+        }) {
+            return mapped;
+        }
         let mut result = bytes.to_vec();
         let mut offset = 0;
         while offset + 4 <= result.len() {
@@ -2715,6 +2905,11 @@ impl Maolan {
     }
 
     fn resolve_bytes_paths(bytes: &[u8], session_root: &Path) -> Vec<u8> {
+        if let Some(mapped) = Self::map_json_state_bytes(bytes, |value| {
+            Self::resolve_plugin_state_paths_impl(value, session_root)
+        }) {
+            return mapped;
+        }
         let mut result = bytes.to_vec();
         let mut offset = 0;
         while offset + 4 <= result.len() {
@@ -2741,8 +2936,11 @@ impl Maolan {
         if p.is_absolute() {
             return p;
         }
-        if let Some(rest) = path.strip_prefix("data/") {
-            session_root.join("data").join(rest)
+        let mut components = p.components();
+        if matches!(components.next(), Some(Component::Normal(c)) if c == "data")
+            && components.next().is_some()
+        {
+            session_root.join(&p)
         } else {
             // Only rewrite explicit data/ paths; leave other relative strings
             // (e.g. plugin-specific state markers) untouched.
@@ -8669,6 +8867,51 @@ mod tests {
     }
 
     #[test]
+    fn delete_unused_session_media_files_cleans_data_and_keeps_plugin_assets() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_test_cleanup_data_{unique}"));
+        fs::create_dir_all(session_root.join("data")).expect("create data directory");
+        for name in ["current.nam", "other_branch.wav", "stale.nam"] {
+            fs::write(session_root.join("data").join(name), b"asset").expect("seed asset");
+        }
+
+        let current_bytes = b"maolan-modeler-state-v0.3.0\n{\"NAMPath\":\"data/current.nam\"}";
+        let mut current_track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 1, 1);
+        current_track.audio.clips.push(crate::state::AudioClip {
+            plugin_graph_json: Some(serde_json::json!({
+                "plugins": [{"state": {"bytes": current_bytes.to_vec()}}]
+            })),
+            ..Default::default()
+        });
+        let mut data = crate::state::StateData::default();
+        data.tracks.push(current_track);
+        let state: crate::state::State = std::sync::Arc::new(std::sync::RwLock::new(data));
+
+        let other_branch = serde_json::json!({
+            "graphs": {
+                "Track": {"plugins": [{"state": {"IRPath": "data/other_branch.wav"}}]}
+            }
+        });
+        fs::write(
+            session_root.join("other.json"),
+            serde_json::to_string(&other_branch).expect("serialize branch"),
+        )
+        .expect("write other branch");
+
+        let report = Maolan::delete_unused_session_media_files_for(&state, "main", &session_root)
+            .expect("cleanup");
+
+        assert_eq!(report.deleted_files, vec!["data/stale.nam"]);
+        assert!(session_root.join("data/current.nam").exists());
+        assert!(session_root.join("data/other_branch.wav").exists());
+        assert!(!session_root.join("data/stale.nam").exists());
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
     fn import_prepared_audio_peaks_stores_precomputed_peaks_by_clip_key() {
         let mut app = Maolan::default();
         let peaks = Arc::new(vec![vec![[0.1_f32, 0.4_f32], [-0.2_f32, 0.3_f32]]]);
@@ -11122,6 +11365,53 @@ mod tests {
         assert_eq!(rewritten, json!("data/external.wav"));
 
         let _ = fs::remove_dir_all(&session_root);
+    }
+
+    #[test]
+    fn collected_modeler_state_paths_survive_session_relocation() {
+        let root = PathBuf::from("/sessions/Sons of Hell");
+        let relocated = PathBuf::from("/relocated/Sons of Hell");
+        let header = b"maolan-modeler-state-v0.3.0\n";
+        let mut payload = json!({
+            "NAMPath": root.join("data/model.nam"),
+            "IRPath": root.join("data/cab.wav"),
+            "NAMPicturePath": root.join("data/amp picture"),
+            "IRPicturePath": root.join("data/cab picture"),
+            "NAMTone3000Ref": "https://www.tone3000.com/api/v1/models/804527/download/model.nam",
+            "NAMDisplayName": "Marshall \"JMP-1\"",
+            "params": {"Input": 0.0}
+        });
+        let mut copied = HashMap::new();
+        for name in ["model.nam", "cab.wav", "amp picture", "cab picture"] {
+            copied.insert(root.join("data").join(name), format!("data/{name}"));
+        }
+        let mut bytes = header.to_vec();
+        bytes.extend(serde_json::to_vec(&payload).unwrap());
+        let state = json!({"bytes": bytes});
+        let saved = Maolan::rewrite_plugin_state_paths(&state, &root, &copied);
+        let saved_bytes = Maolan::clap_state_from_json(&saved).unwrap().bytes;
+        assert!(saved_bytes.starts_with(header));
+        for (key, name) in [
+            ("NAMPath", "model.nam"),
+            ("IRPath", "cab.wav"),
+            ("NAMPicturePath", "amp picture"),
+            ("IRPicturePath", "cab picture"),
+        ] {
+            payload[key] = json!(format!("data/{name}"));
+        }
+        assert_eq!(
+            serde_json::from_slice::<Value>(&saved_bytes[header.len()..]).unwrap(),
+            payload
+        );
+        let restored = Maolan::clap_state_from_json_resolved(&saved, &relocated).unwrap();
+        assert!(restored.bytes.starts_with(header));
+        for key in ["NAMPath", "IRPath", "NAMPicturePath", "IRPicturePath"] {
+            payload[key] = json!(relocated.join(payload[key].as_str().unwrap()));
+        }
+        assert_eq!(
+            serde_json::from_slice::<Value>(&restored.bytes[header.len()..]).unwrap(),
+            payload
+        );
     }
 
     #[test]
