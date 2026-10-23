@@ -258,7 +258,6 @@ impl Maolan {
                     .entry(track_name.clone())
                     .or_default()
                     .insert(plugin_id.clone(), (**clap_state).clone());
-                #[cfg(unix)]
                 {
                     let state_json =
                         serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
@@ -282,6 +281,11 @@ impl Maolan {
                         plugin.state = Some(state_json);
                     }
                 }
+                drop(state);
+                return self.handle_collected_plugin_state(&crate::gui::PluginInstanceRef::Track {
+                    track_name: track_name.clone(),
+                    instance_id: *_instance_id,
+                });
             }
             Event::ClipClapStateSnapshot {
                 track_name,
@@ -309,6 +313,12 @@ impl Maolan {
                         clip.plugin_graph_json = Some(graph_json);
                     }
                 }
+                let collected =
+                    self.handle_collected_plugin_state(&crate::gui::PluginInstanceRef::Clip {
+                        track_name: track_name.clone(),
+                        clip_idx: *clip_idx,
+                        instance_id: *instance_id,
+                    });
                 if self.pending.pending_save_path.is_some() {
                     self.pending.pending_save_clap_clips.remove(&(
                         track_name.clone(),
@@ -316,9 +326,10 @@ impl Maolan {
                         *instance_id,
                     ));
                     if let Some(task) = self.complete_pending_save(track_name) {
-                        return task;
+                        return Task::batch(vec![collected, task]);
                     }
                 }
+                return collected;
             }
             Event::TrackVst3StateSnapshot {
                 track_name,

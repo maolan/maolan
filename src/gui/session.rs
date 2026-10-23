@@ -1690,6 +1690,7 @@ impl Maolan {
             session_root: template_root,
             data_dir: data_dir.clone(),
             pending_clap_refs: clap_refs.clone(),
+            pending_state_refs: Default::default(),
             copied_files: HashMap::new(),
             finish: CollectResourceFinish::SaveTrackTemplate {
                 track_name: track_name.to_string(),
@@ -1698,8 +1699,7 @@ impl Maolan {
         });
 
         for plugin_ref in &clap_refs {
-            Self::send_resource_dir_action(plugin_ref, "CLAP", &data_dir, true);
-            Self::send_clap_collect_resources_action(plugin_ref);
+            Self::send_clap_collect_resources_action(plugin_ref, &data_dir);
         }
         self.state.write().expect("state lock poisoned").message =
             format!("Collecting plugin files for track template '{track_name}'...");
