@@ -1696,8 +1696,7 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
             .oss_calibrations
             .iter()
             .find(|c| {
-                c.measurement_path == "engine_io_delay_v1"
-                    && c.bits == bits
+                c.bits == bits
                     && c.nperiods == options.nperiods
                     && c.sync_mode == options.sync_mode
                     && c.exclusive == options.exclusive
@@ -1958,7 +1957,7 @@ mod tests {
 
     #[cfg(target_os = "freebsd")]
     #[test]
-    fn engine_calibration_is_optional_and_legacy_measurements_are_ignored() {
+    fn engine_calibration_is_optional() {
         let options = CliOptions {
             device: Some("out".into()),
             input_device: Some("in".into()),
@@ -1966,7 +1965,6 @@ mod tests {
         };
         let mut config = CliConfig {
             oss_calibrations: vec![cli::config::CliOssCalibration {
-                measurement_path: "engine_io_delay_v1".into(),
                 input_device_id: "in".into(),
                 output_device_id: "out".into(),
                 bits: options.bits,
@@ -1996,7 +1994,7 @@ mod tests {
                 ..
             }
         ));
-        config.oss_calibrations[0].measurement_path.clear();
+        config.oss_calibrations.clear();
         assert!(matches!(
             resolve_open_audio_action(&options, &config).unwrap(),
             Action::OpenAudioDevice {

@@ -28,7 +28,6 @@ pub struct Config {
 #[serde(default)]
 #[derive(Default)]
 pub struct OssCalibration {
-    pub measurement_path: String,
     pub bits: usize,
     pub nperiods: usize,
     pub sync_mode: bool,
