@@ -137,7 +137,7 @@ impl Maolan {
                     track_name: track_name.clone(),
                     instance_id: *instance_id,
                 };
-                self.handle_clap_resource_files_response(&plugin_ref, files);
+                return self.handle_clap_resource_files_response(&plugin_ref, files);
             }
             Event::ClipClapResourceFiles {
                 track_name,
@@ -150,7 +150,7 @@ impl Maolan {
                     clip_idx: *clip_idx,
                     instance_id: *instance_id,
                 };
-                self.handle_clap_resource_files_response(&plugin_ref, files);
+                return self.handle_clap_resource_files_response(&plugin_ref, files);
             }
             Event::TrackClapStateDirty {
                 track_name,

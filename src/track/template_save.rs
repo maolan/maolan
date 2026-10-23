@@ -10,6 +10,10 @@ pub struct TrackTemplateSaveView {
 }
 
 impl TrackTemplateSaveView {
+    pub fn name_input_id() -> maolan_widgets::iced::widget::Id {
+        maolan_widgets::iced::widget::Id::new("track-template-save-name-input")
+    }
+
     pub fn new(_state: State) -> Self {
         Self { dialog: None }
     }
@@ -54,7 +58,9 @@ impl TrackTemplateSaveView {
                 row![
                     text("Template name:"),
                     text_input("Enter template name", template_name)
+                        .id(Self::name_input_id())
                         .on_input(Message::TrackTemplateSaveInput)
+                        .on_submit(Message::TrackTemplateSaveConfirm)
                         .width(Length::Fixed(300.0)),
                 ]
                 .spacing(10)

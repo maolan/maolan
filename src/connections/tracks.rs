@@ -221,13 +221,21 @@ impl Graph {
         label.chars().take(max_chars as usize).collect()
     }
 
-    const TRACK_NODE_SIZE: f32 = 140.0;
+    const TRACK_NODE_WIDTH: f32 = 140.0;
+    const TRACK_NODE_HEIGHT: f32 = 70.0;
+    const TRACK_PORT_CLEARANCE: f32 = 2.0;
     // Separate canvas boxes for the generator output and measurement input.
     const IO_DELAY_W: f32 = 160.0;
     const IO_DELAY_H: f32 = 160.0;
 
-    fn track_box_size(_track: &crate::state::Track) -> maolan_widgets::iced::Size {
-        maolan_widgets::iced::Size::new(Self::TRACK_NODE_SIZE, Self::TRACK_NODE_SIZE)
+    fn track_box_size(track: &crate::state::Track) -> maolan_widgets::iced::Size {
+        let input_ports = track.audio.ins + track.midi.ins;
+        let output_ports = track.audio.outs + track.midi.outs;
+        let max_ports = input_ports.max(output_ports);
+        let min_port_spacing = 2.0 * crate::consts::connections_plugins::AUDIO_PORT_RADIUS
+            + Self::TRACK_PORT_CLEARANCE;
+        let height = Self::TRACK_NODE_HEIGHT.max((max_ports + 1) as f32 * min_port_spacing);
+        maolan_widgets::iced::Size::new(Self::TRACK_NODE_WIDTH, height)
     }
 
     fn plugin_box_size(plugin: &PluginGraphPlugin) -> maolan_widgets::iced::Size {
@@ -5276,16 +5284,21 @@ mod tests {
     }
 
     #[test]
-    fn track_box_size_is_square() {
+    fn track_box_size_preserves_width_and_halves_height() {
         let track_few = crate::state::Track::new("few".to_string(), 0.0, 1, 0, 1, 0);
         let size_few = Graph::track_box_size(&track_few);
-        assert_eq!(size_few.width, Graph::TRACK_NODE_SIZE);
-        assert_eq!(size_few.height, Graph::TRACK_NODE_SIZE);
+        assert_eq!(size_few.width, Graph::TRACK_NODE_WIDTH);
+        assert_eq!(size_few.height, Graph::TRACK_NODE_HEIGHT);
 
-        let track_many = crate::state::Track::new("many".to_string(), 0.0, 8, 2, 8, 2);
+        let track_many = crate::state::Track::new("many".to_string(), 0.0, 1, 16, 0, 0);
         let size_many = Graph::track_box_size(&track_many);
-        assert_eq!(size_many.width, Graph::TRACK_NODE_SIZE);
-        assert_eq!(size_many.height, Graph::TRACK_NODE_SIZE);
+        assert_eq!(size_many.width, Graph::TRACK_NODE_WIDTH);
+        assert_eq!(size_many.height, 187.0);
+        let port_spacing = size_many.height / 17.0;
+        assert!(
+            port_spacing - crate::consts::connections_plugins::AUDIO_PORT_RADIUS * 2.0
+                >= Graph::TRACK_PORT_CLEARANCE
+        );
     }
 
     #[test]

@@ -481,6 +481,9 @@ impl Maolan {
                         name: String::new(),
                     });
                 self.modal = Some(Show::SaveTemplateAs);
+                return maolan_widgets::iced::widget::operation::focus(
+                    crate::track_template_save::TrackTemplateSaveView::name_input_id(),
+                );
             }
             Message::TrackTemplateSaveInput(_) => {
                 self.track_template_save.update(&message);

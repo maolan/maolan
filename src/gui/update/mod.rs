@@ -1187,7 +1187,7 @@ impl Maolan {
                 .pending_save_track_name
                 .take()
                 .unwrap_or_else(|| track_name.to_string());
-            return Some(self.save_track_as_template(&save_track_name, path));
+            return Some(self.collect_track_template_resources(&save_track_name, path));
         } else if let Err(e) = self.save(path.clone()) {
             self.session_ops.pending_exit_after_save = false;
             self.state.write().expect("state lock poisoned").message =

@@ -1,4 +1,7 @@
-use super::{CLIENT, Maolan, field_groups::TransferState};
+use super::{
+    CLIENT, CollectResourceFinish, CollectToSessionOperation, Maolan, PluginInstanceRef,
+    field_groups::TransferState,
+};
 use crate::{
     consts::state_ids::METRONOME_TRACK_ID,
     message::Message,
@@ -14,6 +17,7 @@ use maolan_engine::{
 use maolan_widgets::iced::{Length, Point, Task};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::{self, BufReader, BufWriter},
     path::{Path, PathBuf},
@@ -812,6 +816,8 @@ impl Maolan {
                 ))));
             }
         };
+        let template_root = template_path.parent().unwrap_or(Path::new("."));
+        let json = Self::resolve_collected_plugin_state_paths(&json, template_root);
 
         if let Some(value) = json["track"]["midi"].get("editor_view_mode")
             && let Ok(mode) =
@@ -845,6 +851,13 @@ impl Maolan {
             (state.vst3_plugins.clone(), state.clap_plugins.clone())
         };
         if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
+            // A saved connection list replaces the new track's default bypass,
+            // including when the list is empty. Replay only the saved wiring.
+            if graph.get("connections").is_some_and(Value::is_array) {
+                restore_actions.push(Action::TrackClearDefaultPassthrough {
+                    track_name: track_name.to_string(),
+                });
+            }
             let mut runtime_nodes = Vec::new();
             let mut next_instance_id = 0usize;
 
@@ -1208,6 +1221,11 @@ impl Maolan {
                 template_name
             ))));
         };
+        let template_root = Self::track_template_path(&template_name)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let json = Self::resolve_collected_plugin_state_paths(&json, &template_root);
 
         let mut existing: std::collections::HashSet<String> = self
             .state
@@ -1620,6 +1638,72 @@ impl Maolan {
                 value
             })
             .collect()
+    }
+
+    pub(super) fn collect_track_template_resources(
+        &mut self,
+        track_name: &str,
+        path: String,
+    ) -> Task<Message> {
+        if self.pending.collect_to_session_operation.is_some() {
+            self.state.write().expect("state lock poisoned").message =
+                "A plugin resource collection is already in progress".to_string();
+            return Task::none();
+        }
+
+        let member_names: std::collections::HashSet<String> = self
+            .collect_folder_member_names(track_name)
+            .into_iter()
+            .collect();
+        let clap_refs = {
+            let state = self.state.read().expect("state lock poisoned");
+            member_names
+                .iter()
+                .flat_map(|name| {
+                    state
+                        .plugin_graphs_by_track
+                        .get(name)
+                        .into_iter()
+                        .flat_map(|(plugins, _)| plugins.iter())
+                        .filter(|plugin| plugin.format.eq_ignore_ascii_case("CLAP"))
+                        .map(|plugin| PluginInstanceRef::Track {
+                            track_name: name.clone(),
+                            instance_id: plugin.instance_id,
+                        })
+                })
+                .collect::<std::collections::HashSet<_>>()
+        };
+
+        if clap_refs.is_empty() {
+            return self.save_track_as_template(track_name, path);
+        }
+
+        let template_root = PathBuf::from(&path);
+        let data_dir = template_root.join("data");
+        if let Err(error) = fs::create_dir_all(&data_dir) {
+            self.state.write().expect("state lock poisoned").message =
+                format!("Failed to create template data directory: {error}");
+            return Task::none();
+        }
+
+        self.pending.collect_to_session_operation = Some(CollectToSessionOperation {
+            session_root: template_root,
+            data_dir: data_dir.clone(),
+            pending_clap_refs: clap_refs.clone(),
+            copied_files: HashMap::new(),
+            finish: CollectResourceFinish::SaveTrackTemplate {
+                track_name: track_name.to_string(),
+                path,
+            },
+        });
+
+        for plugin_ref in &clap_refs {
+            Self::send_resource_dir_action(plugin_ref, "CLAP", &data_dir, true);
+            Self::send_clap_collect_resources_action(plugin_ref);
+        }
+        self.state.write().expect("state lock poisoned").message =
+            format!("Collecting plugin files for track template '{track_name}'...");
+        Task::none()
     }
 
     pub(super) fn save_track_as_template(&self, track_name: &str, path: String) -> Task<Message> {
@@ -4592,7 +4676,7 @@ mod tests {
     }
 
     #[test]
-    fn build_track_template_actions_loads_plugins_and_connections() {
+    fn build_track_template_actions_replaces_default_bypass_with_saved_connections() {
         let app = Maolan::default();
         let json = json!({
             "track": {"name": "Drums", "audio": {"ins": 2, "outs": 2}, "midi": {"ins": 0, "outs": 0}},
@@ -4618,6 +4702,10 @@ mod tests {
             } if track_name == "MyDrums" && plugin_id == "/fake/plugin.vst3"
         )));
 
+        assert!(matches!(
+            actions.first(),
+            Some(Action::TrackClearDefaultPassthrough { track_name }) if track_name == "MyDrums"
+        ));
         assert!(actions.iter().any(|a| matches!(
             a,
             Action::TrackConnectPluginAudio {
@@ -4629,6 +4717,20 @@ mod tests {
                 && matches!(from_node, maolan_engine::message::PluginGraphNode::TrackInput)
                 && matches!(to_node, maolan_engine::message::PluginGraphNode::Vst3PluginInstance(0))
         )));
+    }
+
+    #[test]
+    fn track_template_empty_routing_clears_default_passthrough() {
+        let app = Maolan::default();
+        let json = json!({
+            "graph": {"plugins": [], "connections": [], "connectable_connections": []}
+        });
+        let actions = app.build_track_template_actions("Disconnected", &json);
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            &actions[0],
+            Action::TrackClearDefaultPassthrough { track_name } if track_name == "Disconnected"
+        ));
     }
 
     #[test]
