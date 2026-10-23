@@ -1,7 +1,9 @@
 use super::{CLIENT, Maolan};
 use crate::{
     consts::gui::{METER_DIRTY_EPSILON_DB, METER_QUANTIZE_STEP_DB},
-    keyboard_shortcuts::{ShortcutBinding, ShortcutBindings, action_for_binding},
+    keyboard_shortcuts::{
+        ShortcutAction, ShortcutBinding, ShortcutBindings, action_for_binding, binding_for,
+    },
     message::Message,
     ui_timing::{
         METER_IDLE_UPDATE_INTERVAL, METER_UPDATE_INTERVAL, PLAYBACK_UI_UPDATE_INTERVAL,
@@ -146,19 +148,66 @@ impl Maolan {
             .collect();
         shortcut_overrides.sort_by_key(|(action, _)| *action);
         let capturing_shortcut = self.ui.shortcut_capture_action.is_some();
+        let editor_connections_open = self.state.read().expect("state lock poisoned").view
+            == crate::state::View::Workspace
+            && self
+                .state
+                .read()
+                .expect("state lock poisoned")
+                .editor_connections
+                .is_some();
         let keyboard_sub = keyboard::listen()
-            .with((current_view.clone(), shortcut_overrides, capturing_shortcut))
+            .with((
+                current_view.clone(),
+                shortcut_overrides,
+                capturing_shortcut,
+                editor_connections_open,
+            ))
             .map(
-                |((current_view, shortcut_overrides, capturing_shortcut), event)| {
-                    let shortcut_overrides = shortcut_overrides.into_iter().collect();
-                    Self::keyboard_message(
-                        event,
-                        current_view,
-                        &shortcut_overrides,
-                        capturing_shortcut,
-                    )
+                |(
+                    (current_view, shortcut_overrides, capturing_shortcut, editor_connections_open),
+                    event,
+                )| {
+                    let shortcut_overrides: ShortcutBindings =
+                        shortcut_overrides.into_iter().collect();
+                    let close_connections_binding =
+                        binding_for(&shortcut_overrides, ShortcutAction::CloseEditorConnections);
+                    let close_connections = matches!(
+                        &event,
+                        KeyEvent::KeyPressed { key, modifiers, .. }
+                            if ShortcutBinding::from_iced_key(key, *modifiers).as_ref()
+                                == Some(&close_connections_binding)
+                    );
+                    if editor_connections_open && !capturing_shortcut && close_connections {
+                        Message::EditorConnectionsClose
+                    } else {
+                        Self::keyboard_message(
+                            event,
+                            current_view,
+                            &shortcut_overrides,
+                            capturing_shortcut,
+                        )
+                    }
                 },
             );
+
+        // Text inputs capture Escape to clear focus, so the regular keyboard
+        // listener never sees it while an input field is focused.
+        let captured_escape_sub = event::listen_raw(|event, status, _window| {
+            if status == maolan_widgets::iced::event::Status::Captured
+                && matches!(
+                    event,
+                    maolan_widgets::iced::Event::Keyboard(KeyEvent::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
+                    })
+                )
+            {
+                Some(Message::EscapePressed)
+            } else {
+                None
+            }
+        });
 
         let event_sub = event::listen().map(|event| match event {
             event::Event::Mouse(mouse_event) => match mouse_event {
@@ -318,6 +367,7 @@ impl Maolan {
         Subscription::batch(vec![
             engine_sub,
             keyboard_sub,
+            captured_escape_sub,
             event_sub,
             shutdown_sub,
             playback_sub,

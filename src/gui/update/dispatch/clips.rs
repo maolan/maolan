@@ -69,6 +69,29 @@ impl Maolan {
                 markers.dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
                 self.track_marker.close();
             }
+            Message::MarkerNameDelete => {
+                let Some(dialog) = self.track_marker.dialog.clone() else {
+                    return Task::none();
+                };
+                let Some(marker_index) = dialog.marker_index else {
+                    return Task::none();
+                };
+                let mut state = self.state.write().expect("state lock poisoned");
+                if state
+                    .session_markers
+                    .get(marker_index)
+                    .is_some_and(|marker| marker.sample == dialog.sample)
+                {
+                    state.session_markers.remove(marker_index);
+                } else if let Some(index) = state
+                    .session_markers
+                    .iter()
+                    .position(|marker| marker.sample == dialog.sample)
+                {
+                    state.session_markers.remove(index);
+                }
+                self.track_marker.close();
+            }
             Message::MarkerNameCancel => {
                 self.track_marker.close();
             }

@@ -346,6 +346,10 @@ fn workspace_shortcuts(
                 keyboard_row(ShortcutAction::ToggleClipsPane, "Toggle clips pane"),
                 keyboard_row(ShortcutAction::ToggleCutIndicator, "Toggle cut indicator"),
                 keyboard_row(ShortcutAction::CreateMarker, "Create marker at playhead"),
+                keyboard_row(
+                    ShortcutAction::CloseEditorConnections,
+                    "Close track inner connections",
+                ),
             ],
             hint,
             overrides,

@@ -967,6 +967,7 @@ pub enum Message {
     },
     MarkerNameInput(String),
     MarkerNameConfirm,
+    MarkerNameDelete,
     MarkerNameCancel,
     MarkerLaneCreate {
         sample: usize,

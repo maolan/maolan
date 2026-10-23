@@ -1537,6 +1537,7 @@ impl Maolan {
             | Message::MarkerLaneEdit { .. }
             | Message::MarkerNameInput(_)
             | Message::MarkerNameConfirm
+            | Message::MarkerNameDelete
             | Message::MarkerNameCancel
             | Message::SelectClip { .. }
             | Message::ClipRenameShow { .. }

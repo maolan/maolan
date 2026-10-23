@@ -8,7 +8,7 @@ use crate::{
 use maolan_engine::message::GlobalMidiLearnTarget;
 use maolan_widgets::iced::{
     Alignment, Background, Border, Color, Length, Theme,
-    widget::{Space, button, container, mouse_area, pick_list, row, text, text_input, tooltip},
+    widget::{Id, Space, button, container, mouse_area, pick_list, row, text, text_input, tooltip},
 };
 use maolan_widgets::iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, hand, pause, play, radio, repeat, rewind,
@@ -43,6 +43,10 @@ pub struct ToolbarViewState {
 }
 
 impl Toolbar {
+    pub fn tempo_input_id() -> Id {
+        Id::new("tempo-input")
+    }
+
     pub fn new() -> Self {
         Self
     }
@@ -327,6 +331,7 @@ impl Toolbar {
                     step_button
                 },
                 text_input("BPM", &view_state.tempo_input)
+                    .id(Self::tempo_input_id())
                     .on_input(Message::TempoInputChanged)
                     .on_submit(Message::TempoInputCommit)
                     .width(Length::Fixed(72.0)),
