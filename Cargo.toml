@@ -29,7 +29,7 @@ maolan-editor = { version = "0.1.1", default-features = false, features = ["embe
 maolan-engine = { version = "0.4.13", features = ["audio", "midi", "plugins", "mixosc"] }
 maolan-pitch = "0.0.2"
 maolan-plugin-host = "0.1.2"
-maolan-widgets = "0.0.41"
+maolan-widgets = "0.0.42"
 mixosc = "0.0.16"
 midly = "0.5.3"
 pitch-detection = "0.3.0"

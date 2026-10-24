@@ -409,6 +409,7 @@ impl Maolan {
                             selected_modulator: self
                                 .selected_modulator_id
                                 .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
+                            waveform_log_scale: self.waveform_log_scale,
                         }),
                         View::Connections => {
                             let selected_modulator = self.selected_modulator_id.and_then(|id| {
@@ -628,6 +629,7 @@ impl Maolan {
                             selected_modulator: self
                                 .selected_modulator_id
                                 .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
+                            waveform_log_scale: self.waveform_log_scale,
                         }),
                         View::PitchCorrection => {
                             self.workspace.pitch_correction_view(WorkspaceViewArgs {
@@ -686,6 +688,7 @@ impl Maolan {
                                 selected_modulator: self
                                     .selected_modulator_id
                                     .and_then(|id| self.modulators.iter().find(|m| m.id == id)),
+                                waveform_log_scale: self.waveform_log_scale,
                             })
                         }
                     };
@@ -713,6 +716,7 @@ impl Maolan {
                                 .get("enabled")
                                 .and_then(serde_json::Value::as_bool)
                                 .unwrap_or(false),
+                            waveform_log_scale: self.waveform_log_scale,
                             active_view: state.view.clone(),
                         }
                     };

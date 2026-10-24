@@ -1299,6 +1299,7 @@ pub enum Message {
     ToggleEditorVisibility,
     ToggleToolbarVisibility,
     ToggleLogVisibility,
+    ToggleWaveformLogScale,
     ToggleShortcutsPane,
     ToggleModulatorsPane,
     ToggleClipsPane,

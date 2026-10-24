@@ -30,6 +30,7 @@ pub struct MenuViewState {
     pub modulators_pane_visible: bool,
     pub clips_pane_visible: bool,
     pub iodelay_enabled: bool,
+    pub waveform_log_scale: bool,
     pub active_view: View,
 }
 
@@ -229,6 +230,11 @@ impl Menu {
                         Message::ToggleToolbarVisibility
                     )),
                     (menu_checkbox_item("Log", state.log_visible, Message::ToggleLogVisibility)),
+                    (menu_checkbox_item(
+                        "Log-scale waveforms",
+                        state.waveform_log_scale,
+                        Message::ToggleWaveformLogScale
+                    )),
                     (menu_checkbox_item(
                         "Shortcuts",
                         state.shortcuts_pane_visible,

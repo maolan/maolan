@@ -272,6 +272,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub sample_rate: f64,
     pub modulators_pane_visible: bool,
     pub selected_modulator: Option<&'a crate::state::Modulator>,
+    pub waveform_log_scale: bool,
 }
 
 impl Workspace {
@@ -407,6 +408,7 @@ impl Workspace {
             sample_rate,
             modulators_pane_visible,
             selected_modulator,
+            waveform_log_scale,
         } = args;
         let (
             tracks_width,
@@ -566,6 +568,7 @@ impl Workspace {
                 recording_preview_peaks,
                 midi_clip_previews,
                 visible_track_window,
+                waveform_log_scale,
             });
             let editor = self.editor.clone();
             let editor_args_owned = OwnedEditorViewArgs {
@@ -581,6 +584,7 @@ impl Workspace {
                 recording_preview_peaks: recording_preview_peaks.cloned(),
                 midi_clip_previews: midi_clip_previews.cloned(),
                 visible_track_window,
+                waveform_log_scale,
             };
             let editor_body: Element<'_, Message> = lazy(editor_render_hash, move |_| {
                 editor.clone().into_view_owned(editor_args_owned.clone())
