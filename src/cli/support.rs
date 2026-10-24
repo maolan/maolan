@@ -2,8 +2,8 @@ use maolan_engine::{
     clap::ClapPluginInfo,
     kind::Kind,
     message::{
-        Action, AudioClipData, GlobalMidiLearnTarget, MidiClipData, MidiLearnBinding,
-        PitchCorrectionPointData, TrackMidiLearnTarget,
+        Action, AudioClipData, DEFAULT_FADE_SAMPLES, GlobalMidiLearnTarget, MidiClipData,
+        MidiLearnBinding, PitchCorrectionPointData, TrackMidiLearnTarget, clamp_fade_samples,
     },
     plugins::scan_plugins,
     vst3::Vst3PluginInfo,
@@ -490,6 +490,22 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                     midi_clip: None,
                 });
             } else {
+                let fade_enabled = clip
+                    .get("fade_enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let fade_in_samples = clamp_fade_samples(
+                    fade_enabled,
+                    clip.get("fade_in_samples")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(DEFAULT_FADE_SAMPLES as u64) as usize,
+                );
+                let fade_out_samples = clamp_fade_samples(
+                    fade_enabled,
+                    clip.get("fade_out_samples")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(DEFAULT_FADE_SAMPLES as u64) as usize,
+                );
                 actions.push(Action::AddClip {
                     clip_id: clip
                         .get("id")
@@ -521,18 +537,9 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                         .and_then(Value::as_str)
                         .map(str::to_string),
                     kind: Kind::Audio,
-                    fade_enabled: clip
-                        .get("fade_enabled")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true),
-                    fade_in_samples: clip
-                        .get("fade_in_samples")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(240) as usize,
-                    fade_out_samples: clip
-                        .get("fade_out_samples")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(240) as usize,
+                    fade_enabled,
+                    fade_in_samples,
+                    fade_out_samples,
                     source_name: clip
                         .get("pitch_correction_source_name")
                         .and_then(Value::as_str)
@@ -599,6 +606,22 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                     midi_clip: Some(parse_midi_clip_data(clip)?),
                 });
             } else {
+                let fade_enabled = clip
+                    .get("fade_enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let fade_in_samples = clamp_fade_samples(
+                    fade_enabled,
+                    clip.get("fade_in_samples")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(DEFAULT_FADE_SAMPLES as u64) as usize,
+                );
+                let fade_out_samples = clamp_fade_samples(
+                    fade_enabled,
+                    clip.get("fade_out_samples")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(DEFAULT_FADE_SAMPLES as u64) as usize,
+                );
                 actions.push(Action::AddClip {
                     clip_id: clip
                         .get("id")
@@ -627,18 +650,9 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
                     gain_db: clip.get("gain_db").and_then(Value::as_f64).unwrap_or(0.0) as f32,
                     peaks_file: None,
                     kind: Kind::MIDI,
-                    fade_enabled: clip
-                        .get("fade_enabled")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true),
-                    fade_in_samples: clip
-                        .get("fade_in_samples")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(240) as usize,
-                    fade_out_samples: clip
-                        .get("fade_out_samples")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(240) as usize,
+                    fade_enabled,
+                    fade_in_samples,
+                    fade_out_samples,
                     source_name: None,
                     source_offset: None,
                     source_length: None,
@@ -819,6 +833,22 @@ fn parse_pitch_correction_points(clip: &Value) -> Vec<PitchCorrectionPointData> 
 }
 
 fn parse_audio_clip_data(clip: &Value) -> Result<AudioClipData, String> {
+    let fade_enabled = clip
+        .get("fade_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let fade_in_samples = clamp_fade_samples(
+        fade_enabled,
+        clip.get("fade_in_samples")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_FADE_SAMPLES as u64) as usize,
+    );
+    let fade_out_samples = clamp_fade_samples(
+        fade_enabled,
+        clip.get("fade_out_samples")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_FADE_SAMPLES as u64) as usize,
+    );
     let mut data = AudioClipData {
         id: clip
             .get("id")
@@ -848,18 +878,9 @@ fn parse_audio_clip_data(clip: &Value) -> Result<AudioClipData, String> {
             .get("peaks_file")
             .and_then(Value::as_str)
             .map(str::to_string),
-        fade_enabled: clip
-            .get("fade_enabled")
-            .and_then(Value::as_bool)
-            .unwrap_or(true),
-        fade_in_samples: clip
-            .get("fade_in_samples")
-            .and_then(Value::as_u64)
-            .unwrap_or(240) as usize,
-        fade_out_samples: clip
-            .get("fade_out_samples")
-            .and_then(Value::as_u64)
-            .unwrap_or(240) as usize,
+        fade_enabled,
+        fade_in_samples,
+        fade_out_samples,
         preview_name: clip
             .get("pitch_correction_preview_name")
             .and_then(Value::as_str)
@@ -1242,5 +1263,51 @@ mod tests {
         assert!(actions.iter().any(
             |action| matches!(action, Action::TrackSetParent { track_name, parent_name } if track_name == "Child" && parent_name.as_deref() == Some("Folder"))
         ));
+    }
+}
+
+#[cfg(test)]
+mod fade_tests {
+    use super::*;
+
+    #[test]
+    fn restore_clamps_enabled_fades_to_minimum() {
+        let session = serde_json::json!({
+            "tracks": [{
+                "name": "t1",
+                "audio": {"ins": 1, "outs": 1, "clips": [
+                    {"name": "a.wav", "start": 0, "length": 1000,
+                     "fade_enabled": true, "fade_in_samples": 10, "fade_out_samples": 960},
+                    {"name": "b.wav", "start": 0, "length": 1000,
+                     "fade_enabled": false, "fade_in_samples": 10, "fade_out_samples": 0},
+                    {"name": "c.wav", "start": 0, "length": 1000,
+                     "fade_enabled": true, "fade_in_samples": 64, "fade_out_samples": 64}
+                ]},
+                "midi": {"ins": 1, "outs": 1, "clips": []}
+            }]
+        });
+        let actions = load_session_restore_actions_from_value(Path::new("/tmp"), &session)
+            .expect("restore actions");
+        let fades = actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::AddClip {
+                    kind: Kind::Audio,
+                    fade_enabled,
+                    fade_in_samples,
+                    fade_out_samples,
+                    ..
+                } => Some((*fade_enabled, *fade_in_samples, *fade_out_samples)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            fades,
+            vec![
+                (true, DEFAULT_FADE_SAMPLES, 960),
+                (false, 10, 0),
+                (true, DEFAULT_FADE_SAMPLES, DEFAULT_FADE_SAMPLES),
+            ]
+        );
     }
 }

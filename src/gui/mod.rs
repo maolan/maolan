@@ -10714,6 +10714,199 @@ mod tests {
         }
     }
 
+    #[test]
+    fn overlapping_recording_responses_preserve_supplied_fades() {
+        let mut app = Maolan::default();
+        app.state
+            .write()
+            .unwrap()
+            .tracks
+            .push(crate::state::Track::new(
+                "takes".to_string(),
+                0.0,
+                1,
+                1,
+                0,
+                0,
+            ));
+        for (index, (start, length, fade)) in [
+            (384_007, 382_976, 240),
+            (384_000, 382_976, 240),
+            (384_000, 62_983, 240),
+            (480_000, 200_000, 960),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let _ = app.update(Message::Response(Ok(Action::AddClip {
+                clip_id: format!("take-{index}"),
+                name: format!("audio/take-{index}.wav"),
+                track_name: "takes".to_string(),
+                start,
+                length,
+                offset: 0,
+                input_channel: 0,
+                muted: false,
+                reversed: false,
+                gain_db: 0.0,
+                peaks_file: None,
+                kind: Kind::Audio,
+                fade_enabled: true,
+                fade_in_samples: fade,
+                fade_out_samples: fade,
+                source_name: None,
+                source_offset: None,
+                source_length: None,
+                preview_name: None,
+                pitch_correction_points: vec![],
+                pitch_correction_frame_likeness: None,
+                pitch_correction_inertia_ms: None,
+                pitch_correction_formant_compensation: None,
+                pitch_correction_detector: Default::default(),
+                pitch_correction_mode: Default::default(),
+                plugin_graph_json: None,
+            })));
+        }
+        let state = app.state.read().unwrap();
+        let clips = &state.tracks[0].audio.clips;
+        assert_eq!(clips.len(), 4);
+        for (clip, expected) in clips.iter().zip([240, 240, 240, 960]) {
+            assert_eq!(clip.fade_in_samples, expected);
+            assert_eq!(clip.fade_out_samples, expected);
+        }
+    }
+
+    #[test]
+    fn fade_resize_clamps_enabled_fades_to_minimum() {
+        use maolan_widgets::iced::Point;
+        let mut app = Maolan::default();
+        let mut track = crate::state::Track::new("t".into(), 0.0, 1, 1, 0, 0);
+        track.audio.clips.push(crate::state::AudioClip {
+            name: "enabled.wav".into(),
+            start: 0,
+            length: 10_000,
+            fade_enabled: true,
+            fade_in_samples: 100,
+            ..Default::default()
+        });
+        track.audio.clips.push(crate::state::AudioClip {
+            name: "disabled.wav".into(),
+            start: 20_000,
+            length: 10_000,
+            fade_enabled: false,
+            fade_in_samples: 100,
+            ..Default::default()
+        });
+        app.state.write().unwrap().tracks.push(track);
+
+        let drag_fade_in_to_zero = |app: &mut Maolan, clip_idx: usize| {
+            // Each drag starts from the same cursor anchor; MouseMoved updates
+            // state.cursor, so reset it before every FadeResizeStart.
+            app.state.write().unwrap().cursor = Point::new(1000.0, 0.0);
+            let _ = app.update(Message::FadeResizeStart {
+                kind: Kind::Audio,
+                track_idx: "t".to_string(),
+                clip_idx,
+                is_fade_out: false,
+            });
+            // Far to the left of the 1000 px start: without the minimum this
+            // would compute to 0 samples.
+            let _ = app.update(Message::MouseMoved(
+                maolan_widgets::iced::mouse::Event::CursorMoved {
+                    position: Point::new(0.0, 0.0),
+                },
+            ));
+        };
+
+        drag_fade_in_to_zero(&mut app, 0);
+        {
+            let state = app.state.read().unwrap();
+            assert_eq!(
+                state.tracks[0].audio.clips[0].fade_in_samples,
+                maolan_engine::message::DEFAULT_FADE_SAMPLES,
+                "an enabled fade cannot be dragged below the minimum"
+            );
+        }
+
+        drag_fade_in_to_zero(&mut app, 1);
+        let state = app.state.read().unwrap();
+        assert_eq!(
+            state.tracks[0].audio.clips[1].fade_in_samples, 0,
+            "a disabled fade is not forced to the minimum"
+        );
+    }
+
+    #[test]
+    fn marquee_selects_visible_folder_order_in_both_drag_directions() {
+        use maolan_widgets::iced::Point;
+        for reverse in [false, true] {
+            let mut app = Maolan::default();
+            let pps = app.pixels_per_sample().max(1.0e-6);
+            let mut folder = crate::state::Track::new("folder".into(), 0.0, 0, 0, 0, 0);
+            folder.is_folder = true;
+            folder.folder_open = true;
+            let folder_height = folder.folder_content_height();
+            let make_track = |name: &str| {
+                let mut track = crate::state::Track::new(name.into(), 0.0, 2, 2, 0, 0);
+                track.audio.clips.push(crate::state::AudioClip {
+                    start: 0,
+                    length: 48_000,
+                    input_channel: 1,
+                    ..Default::default()
+                });
+                track
+            };
+            let other = make_track("other");
+            let other_height = other.height;
+            let target = make_track("target");
+            let mut child = make_track("child");
+            child.parent_track = Some("folder".into());
+            let child_height = child.height;
+            {
+                let mut state = app.state.write().unwrap();
+                state.view = crate::state::View::Workspace;
+                state.tracks = vec![folder, other, target, child];
+                let first = Point::new(1.0, folder_height + 5.0);
+                let last = Point::new(
+                    (48_000.0 * pps).max(12.0) - 1.0,
+                    folder_height + child_height + other_height - 5.0,
+                );
+                state.clip_marquee_start = Some(if reverse { last } else { first });
+                state.clip_marquee_end = Some(if reverse { first } else { last });
+            }
+            let _ = app.update(Message::MouseReleased);
+            let state = app.state.read().unwrap();
+            let selected: std::collections::HashSet<_> = state
+                .selected_clips
+                .iter()
+                .map(|clip| clip.track_idx.as_str())
+                .collect();
+            assert_eq!(
+                selected,
+                std::collections::HashSet::from(["child", "other"])
+            );
+        }
+    }
+
+    #[test]
+    fn marquee_endpoint_uses_editor_coordinates_without_global_mouse_drift() {
+        use maolan_widgets::iced::{Point, mouse};
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.write().unwrap();
+            state.view = crate::state::View::Workspace;
+            state.mouse_left_down = true;
+            state.clip_marquee_start = Some(Point::new(10.0, 20.0));
+            state.clip_marquee_end = state.clip_marquee_start;
+        }
+        let end = Point::new(80.0, 180.0);
+        let _ = app.update(Message::EditorMouseMoved(end));
+        let _ = app.update(Message::MouseMoved(mouse::Event::CursorMoved {
+            position: Point::new(400.0, 500.0),
+        }));
+        assert_eq!(app.state.read().unwrap().clip_marquee_end, Some(end));
+    }
+
     fn clip_move_echo_app() -> Maolan {
         let app = Maolan::default();
         let mut state = app.state.write().expect("state lock poisoned");

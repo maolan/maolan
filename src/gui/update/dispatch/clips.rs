@@ -257,10 +257,10 @@ impl Maolan {
                             if let Some(clip) = track.audio.clips.get(clip_idx) {
                                 (clip.fade_in_samples, clip.fade_out_samples)
                             } else {
-                                (240, 240)
+                                (DEFAULT_FADE_SAMPLES, DEFAULT_FADE_SAMPLES)
                             }
                         } else {
-                            (240, 240)
+                            (DEFAULT_FADE_SAMPLES, DEFAULT_FADE_SAMPLES)
                         }
                     };
 
@@ -462,8 +462,14 @@ impl Maolan {
                             "Discarded stale stretched clip result".to_string();
                         return Task::none();
                     }
-                    let fade_in = request.fade_in_samples.min(new_length / 2);
-                    let fade_out = request.fade_out_samples.min(new_length / 2);
+                    let fade_in = clamp_fade_samples(
+                        request.fade_enabled,
+                        request.fade_in_samples.min(new_length / 2),
+                    );
+                    let fade_out = clamp_fade_samples(
+                        request.fade_enabled,
+                        request.fade_out_samples.min(new_length / 2),
+                    );
                     self.state.write().expect("state lock poisoned").message = format!(
                         "Stretched audio clip '{}' to {:.2}x",
                         request.clip_name, request.stretch_ratio
@@ -1190,10 +1196,14 @@ impl Maolan {
                                 Kind::Audio => {
                                     if let Some(clip) = track.audio.clips.get_mut(index) {
                                         let max_fade = clip.length / 2;
+                                        let new_fade_samples = new_fade_samples.min(max_fade);
+                                        let fade_enabled = clip.fade_enabled;
                                         if is_fade_out {
-                                            clip.fade_out_samples = new_fade_samples.min(max_fade);
+                                            clip.fade_out_samples =
+                                                clamp_fade_samples(fade_enabled, new_fade_samples);
                                         } else {
-                                            clip.fade_in_samples = new_fade_samples.min(max_fade);
+                                            clip.fade_in_samples =
+                                                clamp_fade_samples(fade_enabled, new_fade_samples);
                                         }
                                     }
                                 }
@@ -1208,61 +1218,49 @@ impl Maolan {
                     .read()
                     .expect("state lock poisoned")
                     .mouse_left_down;
-                if mouse_left_down && !matches!(resizing, Some(Resizing::Clip { .. })) {
-                    if let Some(active) = self.drag.clip.as_mut() {
-                        active.end = position;
-                        let mut tasks = vec![maolan_widgets::iced_drop::zones_on_point(
-                            Message::HandleClipPreviewZones,
-                            position,
-                            None,
-                            None,
-                        )];
-                        if should_scroll_up {
-                            tasks.push(operation::scroll_by(
-                                Id::new(EDITOR_SCROLL_ID),
-                                operation::AbsoluteOffset {
-                                    x: 0.0,
-                                    y: -DRAG_SCROLL_STEP_Y,
-                                },
-                            ));
-                            tasks.push(operation::scroll_by(
-                                Id::new(TRACKS_SCROLL_ID),
-                                operation::AbsoluteOffset {
-                                    x: 0.0,
-                                    y: -DRAG_SCROLL_STEP_Y,
-                                },
-                            ));
-                        } else if should_scroll_down {
-                            tasks.push(operation::scroll_by(
-                                Id::new(EDITOR_SCROLL_ID),
-                                operation::AbsoluteOffset {
-                                    x: 0.0,
-                                    y: DRAG_SCROLL_STEP_Y,
-                                },
-                            ));
-                            tasks.push(operation::scroll_by(
-                                Id::new(TRACKS_SCROLL_ID),
-                                operation::AbsoluteOffset {
-                                    x: 0.0,
-                                    y: DRAG_SCROLL_STEP_Y,
-                                },
-                            ));
-                        }
-                        return Task::batch(tasks);
+                if mouse_left_down
+                    && !matches!(resizing, Some(Resizing::Clip { .. }))
+                    && let Some(active) = self.drag.clip.as_mut()
+                {
+                    active.end = position;
+                    let mut tasks = vec![maolan_widgets::iced_drop::zones_on_point(
+                        Message::HandleClipPreviewZones,
+                        position,
+                        None,
+                        None,
+                    )];
+                    if should_scroll_up {
+                        tasks.push(operation::scroll_by(
+                            Id::new(EDITOR_SCROLL_ID),
+                            operation::AbsoluteOffset {
+                                x: 0.0,
+                                y: -DRAG_SCROLL_STEP_Y,
+                            },
+                        ));
+                        tasks.push(operation::scroll_by(
+                            Id::new(TRACKS_SCROLL_ID),
+                            operation::AbsoluteOffset {
+                                x: 0.0,
+                                y: -DRAG_SCROLL_STEP_Y,
+                            },
+                        ));
+                    } else if should_scroll_down {
+                        tasks.push(operation::scroll_by(
+                            Id::new(EDITOR_SCROLL_ID),
+                            operation::AbsoluteOffset {
+                                x: 0.0,
+                                y: DRAG_SCROLL_STEP_Y,
+                            },
+                        ));
+                        tasks.push(operation::scroll_by(
+                            Id::new(TRACKS_SCROLL_ID),
+                            operation::AbsoluteOffset {
+                                x: 0.0,
+                                y: DRAG_SCROLL_STEP_Y,
+                            },
+                        ));
                     }
-                    let mut state = self.state.write().expect("state lock poisoned");
-                    if state.clip_marquee_start.is_some()
-                        && self.drag.clip.is_none()
-                        && !state.clip_click_consumed
-                        && matches!(state.view, View::Workspace)
-                        && self.modal.is_none()
-                    {
-                        let end = state.clip_marquee_end.unwrap_or(Point::new(0.0, 0.0));
-                        let dx = position.x - previous_cursor.x;
-                        let dy = position.y - previous_cursor.y;
-                        state.clip_marquee_end =
-                            Some(Point::new((end.x + dx).max(0.0), (end.y + dy).max(0.0)));
-                    }
+                    return Task::batch(tasks);
                 }
                 let mouse_right_down = self
                     .state
@@ -1335,6 +1333,9 @@ impl Maolan {
                     && state.clip_marquee_start.is_none()
                 {
                     state.clip_marquee_start = Some(position);
+                    state.clip_marquee_end = Some(position);
+                }
+                if state.clip_marquee_start.is_some() && state.mouse_left_down {
                     state.clip_marquee_end = Some(position);
                 }
                 if state.mouse_right_down
@@ -1613,22 +1614,17 @@ impl Maolan {
                         x = x.max(0.0);
                         y = y.max(0.0);
                         let pps = self.pixels_per_sample().max(1.0e-6);
-                        let mut y_offset = 0.0f32;
                         let mut selected = std::collections::HashSet::new();
                         let state = self.state.read().expect("state lock poisoned");
-                        for track in state
-                            .tracks
-                            .iter()
-                            .filter(|track| track.name != METRONOME_TRACK_ID)
+                        for (track, y_offset) in crate::workspace::editor_track_rows(&state.tracks)
                         {
                             let layout = track.lane_layout();
                             for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
-                                let lane =
-                                    clip.input_channel.min(track.audio.ins.saturating_sub(1));
-                                let cy = y_offset + track.lane_top(Kind::Audio, lane);
-                                let ch = layout.lane_height_for(Kind::Audio, lane).max(1.0);
+                                let lane = 0;
+                                let cy = y_offset + track.lane_top(Kind::Audio, lane) + 1.0;
+                                let ch = (layout.lane_height_for(Kind::Audio, lane) - 2.0).max(8.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {
@@ -1643,8 +1639,8 @@ impl Maolan {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
                                 let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
-                                let cy = y_offset + track.lane_top(Kind::MIDI, lane);
-                                let ch = layout.lane_height_for(Kind::MIDI, lane).max(1.0);
+                                let cy = y_offset + track.lane_top(Kind::MIDI, lane) + 1.0;
+                                let ch = (layout.lane_height_for(Kind::MIDI, lane) - 2.0).max(8.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {
@@ -1655,7 +1651,6 @@ impl Maolan {
                                     });
                                 }
                             }
-                            y_offset += track.height;
                         }
                         drop(state);
                         self.state

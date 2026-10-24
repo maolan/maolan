@@ -507,10 +507,6 @@ impl Maolan {
                                     if let Some(mut clip_data) = clip_to_move {
                                         clip_data.start = to.sample_offset;
                                         clip_data.input_channel = to.input_channel;
-                                        Self::apply_audio_cross_section_fades(
-                                            &mut to_track.audio.clips,
-                                            &mut clip_data,
-                                        );
                                         to_track.audio.clips.push(clip_data);
                                         moved_index =
                                             Some(to_track.audio.clips.len().saturating_sub(1));
@@ -622,7 +618,7 @@ impl Maolan {
                             {
                                 match kind {
                                     Kind::Audio => {
-                                        let mut clip = crate::state::AudioClip {
+                                        let clip = crate::state::AudioClip {
                                             id: clip_id.clone(),
                                             name: name.clone(),
                                             start: *start,
@@ -638,8 +634,14 @@ impl Maolan {
                                             peaks_file: peaks_file.clone(),
                                             peaks: precomputed_peaks.clone().unwrap_or_default(),
                                             fade_enabled: *fade_enabled,
-                                            fade_in_samples: *fade_in_samples,
-                                            fade_out_samples: *fade_out_samples,
+                                            fade_in_samples: clamp_fade_samples(
+                                                *fade_enabled,
+                                                *fade_in_samples,
+                                            ),
+                                            fade_out_samples: clamp_fade_samples(
+                                                *fade_enabled,
+                                                *fade_out_samples,
+                                            ),
                                             pitch_correction_preview_name: preview_name.clone(),
                                             pitch_correction_source_name: source_name.clone(),
                                             pitch_correction_source_offset: *source_offset,
@@ -668,10 +670,6 @@ impl Maolan {
                                             plugin_graph_json: plugin_graph_json.clone(),
                                             grouped_clips: vec![],
                                         };
-                                        Self::apply_audio_cross_section_fades(
-                                            &mut track.audio.clips,
-                                            &mut clip,
-                                        );
                                         track.audio.clips.push(clip);
                                     }
                                     Kind::MIDI => {
@@ -814,14 +812,10 @@ impl Maolan {
                                                     source_length_samples = total_samples;
                                                 }
                                             }
-                                            let mut clip = Self::audio_clip_from_data(
+                                            let clip = Self::audio_clip_from_data(
                                                 clip,
                                                 max_length_samples,
                                                 source_length_samples,
-                                            );
-                                            Self::apply_audio_cross_section_fades(
-                                                &mut track.audio.clips,
-                                                &mut clip,
                                             );
                                             track.audio.clips.push(clip);
                                         }
@@ -912,8 +906,10 @@ impl Maolan {
                                 && let Some(clip) = track.audio.clips.get_mut(*clip_index)
                             {
                                 clip.fade_enabled = *fade_enabled;
-                                clip.fade_in_samples = *fade_in_samples;
-                                clip.fade_out_samples = *fade_out_samples;
+                                clip.fade_in_samples =
+                                    clamp_fade_samples(*fade_enabled, *fade_in_samples);
+                                clip.fade_out_samples =
+                                    clamp_fade_samples(*fade_enabled, *fade_out_samples);
                             }
                         }
                         Action::SetClipSourceName {
