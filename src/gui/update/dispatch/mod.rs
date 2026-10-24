@@ -1281,6 +1281,8 @@ impl Maolan {
             | Message::TrackDrag { .. }
             | Message::TrackDropped(_, _)
             | Message::HandleTrackZones(_)
+            | Message::HandleTrackPreviewZones { .. }
+            | Message::TrackDragCanceled
             | Message::TrackToggleDiskMonitor { .. }
             | Message::TrackToggleInputMonitor { .. }
             | Message::TrackToggleMidiDiskMonitor { .. }

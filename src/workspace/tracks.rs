@@ -166,6 +166,9 @@ fn automation_lane_header_control(
 #[derive(Clone, Default)]
 struct TrackViewData {
     name: String,
+    drop_before: bool,
+    drop_into: bool,
+    dragging: bool,
     height: f32,
     layout: TrackLaneLayout,
     selected: bool,
@@ -210,6 +213,21 @@ struct TrackViewData {
     hidden: bool,
     effective_muted: bool,
     effective_soloed: bool,
+}
+
+fn track_drop_gap(active: bool) -> Element<'static, Message> {
+    container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(if active { 20.0 } else { 0.0 }))
+        .style(move |_theme| container::Style {
+            border: Border {
+                color: Color::from_rgba(1.0, 0.92, 0.18, 0.98),
+                width: if active { 2.0 } else { 0.0 },
+                radius: 3.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn context_menu_panel_style(theme: &Theme) -> container::Style {
@@ -786,6 +804,9 @@ impl Tracks {
         row_index.hash(&mut hasher);
         track_width_px.to_bits().hash(&mut hasher);
         track.name.hash(&mut hasher);
+        track.drop_before.hash(&mut hasher);
+        track.drop_into.hash(&mut hasher);
+        track.dragging.hash(&mut hasher);
         track.height.to_bits().hash(&mut hasher);
         track.layout.header_height.to_bits().hash(&mut hasher);
         for h in &track.layout.lane_heights {
@@ -1497,7 +1518,6 @@ impl Tracks {
         let track_ui = track_ui.height(Length::Fill);
 
         let track_body_content = container(row![track_ui.width(Length::Fill), setup_panel])
-            .id(track.name.clone())
             .width(Length::Fill)
             .height(Length::Fill)
             .padding([0, 6])
@@ -1512,8 +1532,12 @@ impl Tracks {
             .style(move |_theme| container::Style {
                 background: None,
                 border: Border {
-                    color: Color::from_rgb(0.0, 0.0, 0.0),
-                    width: 1.0,
+                    color: if track.drop_into {
+                        Color::from_rgba(1.0, 0.92, 0.18, 0.98)
+                    } else {
+                        Color::BLACK
+                    },
+                    width: if track.drop_into { 4.0 } else { 1.0 },
                     radius: 8.0.into(),
                 },
                 ..container::Style::default()
@@ -1522,8 +1546,8 @@ impl Tracks {
         let track_body: Element<'static, Message> = row![
             Space::new().width(Length::Fixed(indent)),
             Stack::new()
-                .push(track_body_border)
                 .push(track_body_content)
+                .push(track_body_border)
                 .width(Length::Fill)
                 .height(Length::Fixed(visible_height))
         ]
@@ -1536,17 +1560,28 @@ impl Tracks {
             // the mouse press before the drag gesture can start.
             .on_click(Message::SelectTrack(track.name.clone()))
             .on_drag(move |position, _| Message::TrackDrag { index, position })
+            .on_cancel(Message::TrackDragCanceled)
             .on_drop(Message::TrackDropped);
 
         let track_name_for_menu = track.name.clone();
         let track_name_for_hover = track_name_for_menu.clone();
         let track_name_for_toggle = track_name_for_menu.clone();
-        mouse_area(track_with_drop)
-            .on_move(move |position| Message::TrackContextMenuHover {
-                track_name: track_name_for_hover.clone(),
-                position,
-            })
-            .on_right_press(Message::TrackContextMenuToggle(track_name_for_toggle))
+        let track_area = mouse_area(super::drag_preview::DragPreview::new(
+            track_with_drop,
+            track.name.clone(),
+            outer_body_bg,
+            track.dragging,
+        ))
+        .on_move(move |position| Message::TrackContextMenuHover {
+            track_name: track_name_for_hover.clone(),
+            position,
+        })
+        .on_right_press(Message::TrackContextMenuToggle(track_name_for_toggle));
+        // Both children stay present, even with a zero-height gap, so moving
+        // the preview never replaces a row's active drag widget.
+        container(column![track_drop_gap(track.drop_before), track_area])
+            .id(track.name)
+            .width(Length::Fill)
             .into()
     }
 
@@ -1591,6 +1626,25 @@ impl Tracks {
                 child_elements,
             )
         }
+    }
+
+    fn apply_drop_preview(
+        node: &mut TrackNode,
+        preview: Option<&crate::state::TrackDropPreview>,
+    ) -> f32 {
+        use crate::state::TrackDropPreview;
+        node.data.drop_before =
+            matches!(preview, Some(TrackDropPreview::Before(name)) if *name == node.data.name);
+        node.data.drop_into =
+            matches!(preview, Some(TrackDropPreview::IntoFolder(name)) if *name == node.data.name);
+        let mut extra = 0.0;
+        if node.data.folder_open {
+            for child in &mut node.children {
+                extra += Self::apply_drop_preview(child, preview);
+            }
+        }
+        node.data.visible_height += extra;
+        extra + if node.data.drop_before { 20.0 } else { 0.0 }
     }
 
     fn build_track_tree(entries: &[(usize, TrackViewData)]) -> Vec<TrackNode> {
@@ -1670,7 +1724,7 @@ impl Tracks {
         selected_modulator: Option<&crate::state::Modulator>,
         filter: &str,
     ) -> Element<'_, Message> {
-        let (entries, width) = {
+        let (entries, width, drop_preview) = {
             let state = self.state.read().expect("state lock poisoned");
             let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
             let soloed_track_names: std::collections::HashSet<String> = state
@@ -1721,6 +1775,9 @@ impl Tracks {
                         index,
                         TrackViewData {
                             name: track.name.clone(),
+                            drop_before: false,
+                            drop_into: false,
+                            dragging: state.dragging_track.as_deref() == Some(track.name.as_str()),
                             height: track.height,
                             layout: track.lane_layout(),
                             selected: state.selected.contains(track.name.as_str()),
@@ -1802,16 +1859,26 @@ impl Tracks {
                     )
                 })
                 .collect::<Vec<_>>();
-            (entries, state.tracks_width)
+            (
+                entries,
+                state.tracks_width,
+                state.track_drop_preview.clone(),
+            )
         };
         let track_width_px = match width {
             Length::Fixed(v) => v,
             _ => 200.0,
         };
 
-        let roots = Self::filter_track_tree(Self::build_track_tree(&entries), filter);
+        let mut roots = Self::filter_track_tree(Self::build_track_tree(&entries), filter);
+        for root in &mut roots {
+            Self::apply_drop_preview(root, drop_preview.as_ref());
+        }
 
-        let root_heights: Vec<f32> = roots.iter().map(|r| r.data.visible_height).collect();
+        let root_heights: Vec<f32> = roots
+            .iter()
+            .map(|r| r.data.visible_height + if r.data.drop_before { 20.0 } else { 0.0 })
+            .collect();
         let filtering = !filter.trim().is_empty();
         let start = if filtering {
             0
@@ -1826,8 +1893,13 @@ impl Tracks {
         let top_padding = root_heights[..start].iter().sum::<f32>();
         let bottom_padding = root_heights[end..].iter().sum::<f32>();
         let visible_height = root_heights[start..end].iter().sum::<f32>();
-        let total_height = (TRACK_SEARCH_HEIGHT + top_padding + visible_height + bottom_padding)
-            .max(TRACK_SEARCH_HEIGHT);
+        let drop_at_end = matches!(drop_preview, Some(crate::state::TrackDropPreview::End));
+        let total_height = (TRACK_SEARCH_HEIGHT
+            + top_padding
+            + visible_height
+            + bottom_padding
+            + if drop_at_end { 20.0 } else { 0.0 })
+        .max(TRACK_SEARCH_HEIGHT);
 
         let children_elements: Vec<Element<'_, Message>> = roots[start..end]
             .iter()
@@ -1854,6 +1926,7 @@ impl Tracks {
         if bottom_padding > 0.0 {
             result = result.push(Space::new().height(Length::Fixed(bottom_padding)));
         }
+        result = result.push(track_drop_gap(drop_at_end));
         container(result.width(width))
             .style(|_theme| crate::style::app_background())
             .width(width)
@@ -1865,6 +1938,40 @@ impl Tracks {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn track_drop_preview_reserves_twenty_pixels_in_nested_folder() {
+        let entries = vec![
+            (
+                0,
+                TrackViewData {
+                    name: "Folder".into(),
+                    is_folder: true,
+                    folder_open: true,
+                    visible_height: 160.0,
+                    ..Default::default()
+                },
+            ),
+            (
+                1,
+                TrackViewData {
+                    name: "Child".into(),
+                    parent_track: Some("Folder".into()),
+                    visible_height: 80.0,
+                    ..Default::default()
+                },
+            ),
+        ];
+        let mut roots = Tracks::build_track_tree(&entries);
+        let preview = crate::state::TrackDropPreview::Before("Child".into());
+        assert_eq!(
+            Tracks::apply_drop_preview(&mut roots[0], Some(&preview)),
+            20.0
+        );
+        assert_eq!(roots[0].data.visible_height, 180.0);
+        assert!(roots[0].children[0].data.drop_before);
+        assert_eq!(roots[0].children[0].data.visible_height, 80.0);
+    }
 
     #[test]
     fn build_track_tree_groups_folder_children() {

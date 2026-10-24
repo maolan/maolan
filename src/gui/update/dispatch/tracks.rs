@@ -1,5 +1,137 @@
 use super::*;
 
+fn track_drop_preview(
+    tracks: &[crate::state::Track],
+    dragged: &str,
+    zones: &[(Id, maolan_widgets::iced::Rectangle)],
+) -> Option<crate::state::TrackDropPreview> {
+    use crate::state::TrackDropPreview;
+    let dragged_track = tracks.iter().find(|track| track.name == dragged)?;
+    // Nested folder zones overlap: the smallest row is the actual target.
+    let target = zones
+        .iter()
+        .filter_map(|(id, bounds)| {
+            tracks
+                .iter()
+                .find(|track| Id::from(track.name.clone()) == *id)
+                .map(|track| (track, bounds))
+        })
+        .min_by(|(_, a), (_, b)| a.height.total_cmp(&b.height));
+    let Some((target, _)) = target else {
+        return zones
+            .iter()
+            .any(|(id, _)| *id == Id::from("workspace-drop-zone"))
+            .then_some(TrackDropPreview::End);
+    };
+    let mut ancestor = Some(target.name.as_str());
+    for _ in 0..=tracks.len() {
+        let Some(name) = ancestor else { break };
+        if name == dragged {
+            return None;
+        }
+        ancestor = tracks
+            .iter()
+            .find(|track| track.name == name)
+            .and_then(|track| track.parent_track.as_deref());
+    }
+    if dragged_track.is_master && (target.is_folder || target.parent_track.is_some()) {
+        return None;
+    }
+    Some(if target.is_folder {
+        TrackDropPreview::IntoFolder(target.name.clone())
+    } else {
+        TrackDropPreview::Before(target.name.clone())
+    })
+}
+
+#[cfg(test)]
+mod drop_preview_tests {
+    use super::*;
+    use crate::state::{Track, TrackDropPreview};
+    use maolan_widgets::iced::Rectangle;
+
+    fn track(name: &str) -> Track {
+        Track::new(name.into(), 0.0, 0, 2, 0, 0)
+    }
+
+    fn zone(name: &str, height: f32) -> (Id, Rectangle) {
+        (
+            Id::from(name.to_owned()),
+            Rectangle {
+                height,
+                ..Rectangle::default()
+            },
+        )
+    }
+
+    #[test]
+    fn track_drop_preview_and_commit_place_fourth_before_second() {
+        let mut app = Maolan::default();
+        app.state.write().unwrap().tracks =
+            ["First", "Second", "Third", "Fourth"].map(track).to_vec();
+        app.track = Some("Fourth".into());
+        let zones = vec![zone("workspace-drop-zone", 500.0), zone("Second", 80.0)];
+        let _ = app.handle_tracks_message(Message::HandleTrackPreviewZones {
+            track_name: "Fourth".into(),
+            zones: zones.clone(),
+        });
+        assert_eq!(
+            app.state.read().unwrap().track_drop_preview,
+            Some(TrackDropPreview::Before("Second".into()))
+        );
+        let _ = app.handle_tracks_message(Message::HandleTrackZones(vec![zones[1].clone()]));
+        let state = app.state.read().unwrap();
+        assert_eq!(
+            state
+                .tracks
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            ["First", "Fourth", "Second", "Third"]
+        );
+        assert!(state.track_drop_preview.is_none());
+        assert!(app.track.is_none());
+    }
+
+    #[test]
+    fn track_drop_preview_prefers_nested_row_and_rejects_own_descendants() {
+        let mut folder = track("Folder");
+        folder.is_folder = true;
+        let mut child = track("Child");
+        child.parent_track = Some("Folder".into());
+        let tracks = vec![folder, child, track("Other")];
+        let zones = vec![zone("Folder", 200.0), zone("Child", 80.0)];
+        assert_eq!(
+            track_drop_preview(&tracks, "Other", &zones),
+            Some(TrackDropPreview::Before("Child".into()))
+        );
+        assert_eq!(track_drop_preview(&tracks, "Folder", &zones), None);
+        assert_eq!(
+            track_drop_preview(&tracks, "Other", &zones[..1]),
+            Some(TrackDropPreview::IntoFolder("Folder".into()))
+        );
+        assert_eq!(
+            track_drop_preview(&tracks, "Other", &[zone("workspace-drop-zone", 500.0)]),
+            Some(TrackDropPreview::End)
+        );
+    }
+
+    #[test]
+    fn track_drop_preview_ignores_late_reports_after_cancel() {
+        let mut app = Maolan::default();
+        app.state.write().unwrap().tracks = vec![track("First"), track("Second")];
+        app.track = Some("First".into());
+        let report = Message::HandleTrackPreviewZones {
+            track_name: "First".into(),
+            zones: vec![zone("Second", 80.0)],
+        };
+        let _ = app.handle_tracks_message(report.clone());
+        let _ = app.handle_tracks_message(Message::TrackDragCanceled);
+        let _ = app.handle_tracks_message(report);
+        assert!(app.state.read().unwrap().track_drop_preview.is_none());
+    }
+}
+
 #[derive(Clone, Copy)]
 enum TrackMonitorKind {
     Disk,
@@ -946,10 +1078,24 @@ impl Maolan {
                 if index < state.tracks.len() {
                     let track_name = state.tracks[index].name.clone();
                     drop(state);
-                    self.track = Some(track_name);
+                    self.track = Some(track_name.clone());
+                    self.state
+                        .write()
+                        .expect("state lock poisoned")
+                        .dragging_track = Some(track_name.clone());
+                    let preview = maolan_widgets::iced_drop::zones_on_point(
+                        move |zones| Message::HandleTrackPreviewZones {
+                            track_name: track_name.clone(),
+                            zones,
+                        },
+                        position,
+                        None,
+                        None,
+                    );
 
                     if position.y <= TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT {
                         return Task::batch(vec![
+                            preview,
                             operation::scroll_by(
                                 Id::new(EDITOR_SCROLL_ID),
                                 operation::AbsoluteOffset { x: 0.0, y: -28.0 },
@@ -960,20 +1106,60 @@ impl Maolan {
                             ),
                         ]);
                     }
+                    return preview;
                 }
             }
-            Message::TrackDropped(point, _rect) => {
+            Message::TrackDragCanceled => {
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .dragging_track = None;
+                self.track = None;
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .track_drop_preview = None;
+            }
+            Message::HandleTrackPreviewZones {
+                ref track_name,
+                ref zones,
+            } => {
+                if self.track.as_ref() != Some(track_name) {
+                    return Task::none();
+                }
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.track_drop_preview = track_drop_preview(&state.tracks, track_name, zones);
+            }
+            Message::TrackDropped(_point, _rect) => {
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .dragging_track = None;
                 if self.track.is_some() {
-                    return maolan_widgets::iced_drop::zones_on_point(
-                        Message::HandleTrackZones,
-                        point,
-                        None,
-                        None,
-                    );
+                    let preview = self
+                        .state
+                        .write()
+                        .expect("state lock poisoned")
+                        .track_drop_preview
+                        .take();
+                    if let Some(preview) = preview {
+                        let zones = match preview {
+                            crate::state::TrackDropPreview::Before(name)
+                            | crate::state::TrackDropPreview::IntoFolder(name) => {
+                                vec![(Id::from(name), maolan_widgets::iced::Rectangle::default())]
+                            }
+                            crate::state::TrackDropPreview::End => Vec::new(),
+                        };
+                        return Task::done(Message::HandleTrackZones(zones));
+                    }
                 }
                 self.track = None;
             }
             Message::HandleTrackZones(ref zones) => {
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .track_drop_preview = None;
                 if let Some(dragged_name) = self.track.clone() {
                     let dragged_id = Id::from(dragged_name.clone());
 
@@ -1100,11 +1286,21 @@ impl Maolan {
                                         return Task::batch(tasks);
                                     }
                                 } else {
-                                    // Dropping onto a non-folder reorders the track and removes it
-                                    // from any folder.
+                                    // The preview is immediately before this row, at its depth.
+                                    let parent_name = state
+                                        .tracks
+                                        .iter()
+                                        .find(|track| track.name == target_name)
+                                        .and_then(|track| track.parent_track.clone());
+                                    if state.tracks[dragged_index].is_master
+                                        && parent_name.is_some()
+                                    {
+                                        self.track = None;
+                                        return Task::none();
+                                    }
                                     let mut moved_track = state.tracks.remove(dragged_index);
-                                    let had_parent = moved_track.parent_track.is_some();
-                                    moved_track.parent_track = None;
+                                    let parent_changed = moved_track.parent_track != parent_name;
+                                    moved_track.parent_track = parent_name.clone();
                                     let to_index = state
                                         .tracks
                                         .iter()
@@ -1117,11 +1313,11 @@ impl Maolan {
                                     }
 
                                     drop(state);
-                                    if had_parent {
+                                    if parent_changed {
                                         self.track = None;
                                         return self.send(Action::TrackSetParent {
                                             track_name: dragged_name.clone(),
-                                            parent_name: None,
+                                            parent_name,
                                         });
                                     }
                                 }

@@ -1,4 +1,5 @@
 mod cursor_override;
+mod drag_preview;
 mod editor;
 mod mixer;
 mod ruler;
