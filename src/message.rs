@@ -1129,6 +1129,11 @@ pub enum Message {
     TrackContextMenuSubmenuOpen(crate::state::TrackContextSubmenu),
     TrackContextMenuSubmenuClose,
     HandleTrackZones(Vec<(Id, Rectangle)>),
+    HandleTrackPreviewZones {
+        track_name: String,
+        zones: Vec<(Id, Rectangle)>,
+    },
+    TrackDragCanceled,
 
     MouseMoved(mouse::Event),
     EditorMouseMoved(Point),

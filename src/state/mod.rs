@@ -1495,6 +1495,13 @@ pub struct DraggingPitchCorrectionPoints {
 
 pub type MidiClipPreviewMap = HashMap<(String, usize), Arc<Vec<PianoNote>>>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrackDropPreview {
+    Before(String),
+    IntoFolder(String),
+    End,
+}
+
 #[derive(Debug)]
 pub struct StateData {
     pub shift: bool,
@@ -1508,6 +1515,8 @@ pub struct StateData {
     pub selected_clips: HashSet<ClipId>,
     pub clip_context_menu: Option<ClipContextMenuState>,
     pub track_context_menu: Option<TrackContextMenuState>,
+    pub track_drop_preview: Option<TrackDropPreview>,
+    pub dragging_track: Option<String>,
     pub session_slot_context_menu: Option<SessionSlotContextMenuState>,
     pub session_scene_context_menu: Option<SessionSceneContextMenuState>,
     pub session_slot_context_hover: Option<((String, usize), Point)>,
@@ -1757,6 +1766,8 @@ impl Default for StateData {
             selected_clips: HashSet::new(),
             clip_context_menu: None,
             track_context_menu: None,
+            track_drop_preview: None,
+            dragging_track: None,
             session_slot_context_menu: None,
             session_scene_context_menu: None,
             session_slot_context_hover: None,
