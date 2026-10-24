@@ -418,6 +418,27 @@ impl Maolan {
             Message::ToggleLogVisibility => {
                 self.ui.show_log_window = !self.ui.show_log_window;
             }
+            Message::ToggleWaveformLogScale => {
+                self.waveform_log_scale = !self.waveform_log_scale;
+                let mut cfg = crate::config::Config::load().unwrap_or_default();
+                cfg.waveform_log_scale = self.waveform_log_scale;
+                match cfg.save() {
+                    Ok(()) => {
+                        self.state.write().expect("state lock poisoned").message = format!(
+                            "Waveform log scale {}",
+                            if self.waveform_log_scale {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            }
+                        );
+                    }
+                    Err(err) => {
+                        self.state.write().expect("state lock poisoned").message =
+                            format!("Failed to save waveform log scale preference: {err}");
+                    }
+                }
+            }
             Message::AddIoDelayMeasurement => {
                 let (measurement_id, gain) = {
                     let mut state = self.state.write().expect("state lock poisoned");

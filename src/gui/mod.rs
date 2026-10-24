@@ -483,6 +483,7 @@ fn build_offline_automation_lanes(
 #[derive(Debug, Clone)]
 struct AppPreferences {
     osc_enabled: bool,
+    waveform_log_scale: bool,
     default_export_sample_rate_hz: u32,
     default_snap_mode: SnapMode,
     default_midi_snap_mode: SnapMode,
@@ -497,6 +498,7 @@ impl Default for AppPreferences {
     fn default() -> Self {
         Self {
             osc_enabled: false,
+            waveform_log_scale: true,
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
             default_midi_snap_mode: SnapMode::Bar,
@@ -702,6 +704,7 @@ pub struct Maolan {
     hw_mixer: mixosc::app::MixOscApp,
     mixer_level_edit_track: Option<String>,
     mixer_level_edit_input: String,
+    waveform_log_scale: bool,
     prefs_osc_enabled: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
@@ -715,6 +718,7 @@ fn load_preferences() -> AppPreferences {
     let cfg = config::Config::load().unwrap_or_default();
     AppPreferences {
         osc_enabled: cfg.osc_enabled,
+        waveform_log_scale: cfg.waveform_log_scale,
         default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
         default_snap_mode: cfg.default_snap_mode,
         default_midi_snap_mode: cfg.default_midi_snap_mode,
@@ -875,6 +879,7 @@ impl Default for Maolan {
             hw_mixer: mixosc::app::MixOscApp::default(),
             mixer_level_edit_track: None,
             mixer_level_edit_input: String::new(),
+            waveform_log_scale: prefs.waveform_log_scale,
             prefs_osc_enabled: prefs.osc_enabled,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,

@@ -445,6 +445,7 @@ struct TrackNodeViewArgs<'a> {
     recording_preview_peaks:
         Option<&'a HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     midi_clip_previews: Option<&'a MidiClipPreviewMap>,
+    waveform_log_scale: bool,
 }
 
 fn view_track_node(
@@ -466,6 +467,7 @@ fn view_track_node(
         recording_preview_bounds: args.recording_preview_bounds,
         recording_preview_peaks: args.recording_preview_peaks,
         midi_clip_previews: args.midi_clip_previews,
+        waveform_log_scale: args.waveform_log_scale,
     }));
     for child in &node.children {
         column = column.push(view_track_node(child, args));
@@ -488,6 +490,7 @@ struct TrackElementViewArgs<'a> {
     recording_preview_peaks:
         Option<&'a HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     midi_clip_previews: Option<&'a MidiClipPreviewMap>,
+    waveform_log_scale: bool,
 }
 
 fn automation_point_color(target: &crate::message::TrackAutomationTarget) -> Color {
@@ -913,6 +916,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         recording_preview_bounds,
         recording_preview_peaks,
         midi_clip_previews,
+        waveform_log_scale,
         ..
     } = args;
     let clip_snap_outline = |clip_width: f32, clip_height: f32, radius: f32| {
@@ -1136,6 +1140,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             .with_size(clip_width, clip_height)
                             .with_label(display_clip_label.clone())
                             .selected(is_selected)
+                            .log_scaled(waveform_log_scale)
                             .hovered_handles(audio_left_handle_hovered, audio_right_handle_hovered)
                             .interactive(WidgetAudioClipInteraction {
                                 on_select: Message::SelectClip {
@@ -1263,6 +1268,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .with_session_root(session_root)
                         .with_size(clip_width, clip_height)
                         .with_label(display_clip_label.clone())
+                        .log_scaled(waveform_log_scale)
                         .preview(preview_fill, preview_border)
                         .into_element())
                     .position(Point::new(
@@ -1642,6 +1648,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 .with_session_root(session_root)
                                 .with_size(clip_width, clip_height)
                                 .with_label(display_clip_label)
+                                .log_scaled(waveform_log_scale)
                                 .preview(
                                     if active_target_valid {
                                         preview_fill
@@ -1794,13 +1801,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let preview_length = preview_current - preview_start;
         let preview_clip = container(
             container(Stack::with_children(vec![
-                AudioClipWidget::<Message>::waveform_overlay(
+                AudioClipWidget::<Message>::waveform_overlay_scaled(
                     preview_peaks,
                     None,
                     0,
                     preview_length,
                     preview_length,
                     preview_length,
+                    waveform_log_scale,
                 ),
                 container(text("REC").size(12))
                     .width(Length::Fill)
@@ -2148,6 +2156,7 @@ pub struct EditorViewArgs<'a> {
         Option<&'a HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
     pub visible_track_window: VisibleTrackWindow,
+    pub waveform_log_scale: bool,
 }
 
 #[derive(Clone)]
@@ -2165,6 +2174,7 @@ pub struct OwnedEditorViewArgs {
         Option<HashMap<String, maolan_engine::message::RecordingPeakPreview>>,
     pub midi_clip_previews: Option<MidiClipPreviewMap>,
     pub visible_track_window: VisibleTrackWindow,
+    pub waveform_log_scale: bool,
 }
 
 impl Editor {
@@ -2234,6 +2244,7 @@ impl Editor {
             .bottom_padding
             .to_bits()
             .hash(&mut hasher);
+        args.waveform_log_scale.hash(&mut hasher);
         if let Some(drag) = args.active_clip_drag {
             std::mem::discriminant(&drag.kind).hash(&mut hasher);
             drag.index.hash(&mut hasher);
@@ -2382,6 +2393,7 @@ impl Editor {
             recording_preview_peaks,
             midi_clip_previews,
             visible_track_window,
+            waveform_log_scale,
         } = args;
         let state_handle = self.state;
         let session_root_ref = session_root.as_ref();
@@ -2419,6 +2431,7 @@ impl Editor {
                 recording_preview_bounds,
                 recording_preview_peaks: recording_preview_peaks_ref,
                 midi_clip_previews: midi_clip_previews_ref,
+                waveform_log_scale,
             };
             result = result.push(view_track_node(root, &track_node_args));
         }

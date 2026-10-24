@@ -118,6 +118,7 @@ impl Maolan {
                 cfg.default_input_device_id = self.prefs_default_input_device_id.clone();
                 let prefs = super::super::super::AppPreferences {
                     osc_enabled: cfg.osc_enabled,
+                    waveform_log_scale: cfg.waveform_log_scale,
                     default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
                     default_snap_mode: cfg.default_snap_mode,
                     default_midi_snap_mode: cfg.default_midi_snap_mode,

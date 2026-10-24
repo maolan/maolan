@@ -1388,6 +1388,7 @@ impl Maolan {
             | Message::X32
             | Message::Session
             | Message::ToggleLogVisibility
+            | Message::ToggleWaveformLogScale
             | Message::ToggleShortcutsPane
             | Message::ToggleClipsPane
             | Message::ToggleModulatorsPane
