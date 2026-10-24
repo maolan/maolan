@@ -236,15 +236,22 @@ impl Maolan {
         } else {
             Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
         }
-        for track in &mut state.tracks {
+        let muted: Vec<bool> = state
+            .tracks
+            .iter()
+            .map(|track| track.effective_muted(&state.tracks))
+            .collect();
+        for (track, muted) in state.tracks.iter_mut().zip(muted) {
+            // Clear inherited mutes even outside the mixer viewport: these
+            // same meter values are also displayed in the timeline.
+            if muted {
+                track.meter_out_db.fill(-90.0);
+                continue;
+            }
             if let Some(visible_tracks) = visible_tracks.as_ref()
                 && track.name != crate::consts::state_ids::METRONOME_TRACK_ID
                 && !visible_tracks.contains(track.name.as_str())
             {
-                continue;
-            }
-            if track.muted {
-                track.meter_out_db.fill(-90.0);
                 continue;
             }
             if track_meters.is_empty() {
@@ -261,5 +268,72 @@ impl Maolan {
             }
         }
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_mute_clears_nested_audio_meters_and_rejects_stale_reports() {
+        let mut app = Maolan::default();
+        let hierarchy = [
+            ("Guitars", None, true),
+            ("Guitar 1", Some("Guitars"), true),
+            ("G1L1", Some("Guitar 1"), false),
+            ("Direct", Some("Guitars"), false),
+            ("Nested", Some("Guitar 1"), true),
+            ("Deep", Some("Nested"), false),
+            ("Unrelated", None, false),
+        ];
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            state.tracks = hierarchy
+                .iter()
+                .map(|(name, parent, folder)| {
+                    let mut track = crate::state::Track::new((*name).into(), 0.0, 0, 2, 0, 0);
+                    track.parent_track = parent.map(str::to_owned);
+                    track.is_folder = *folder;
+                    track.meter_out_db = vec![-6.0; 2];
+                    track
+                })
+                .collect();
+        }
+        assert!(app.handle_response_track_action(&Action::TrackToggleMute("Guitars".into())));
+        let assert_silent_descendants = |app: &Maolan| {
+            let state = app.state.read().expect("state lock poisoned");
+            for track in &state.tracks {
+                let expected = if track.name == "Unrelated" {
+                    -6.0
+                } else {
+                    -90.0
+                };
+                assert_eq!(track.meter_out_db, vec![expected; 2], "{}", track.name);
+                assert_eq!(track.muted, track.name == "Guitars");
+            }
+        };
+        assert_silent_descendants(&app);
+
+        let stale_meters: Vec<_> = hierarchy
+            .iter()
+            .map(|(name, _, _)| ((*name).to_owned(), vec![-6.0; 2]))
+            .collect();
+        let _ = app.apply_meter_snapshot(&[], &stale_meters);
+        for (track_name, output_db) in &stale_meters {
+            let _ = app.handle_engine_event(&maolan_engine::message::Event::TrackMeters {
+                track_name: track_name.clone(),
+                output_db: output_db.clone(),
+            });
+        }
+        assert_silent_descendants(&app);
+
+        assert!(app.handle_response_track_action(&Action::TrackToggleMute("Guitars".into())));
+        app.ui.mixer_visible = false;
+        let _ = app.apply_meter_snapshot(&[], &stale_meters);
+        let state = app.state.read().expect("state lock poisoned");
+        for track in &state.tracks {
+            assert!(track.meter_out_db.iter().all(|level| *level > -90.0));
+        }
     }
 }
