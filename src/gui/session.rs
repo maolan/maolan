@@ -184,6 +184,9 @@ impl Maolan {
     }
 
     pub(super) fn restore_actions_task(actions: Vec<Action>) -> Task<Message> {
+        let restores_session = actions
+            .iter()
+            .any(|a| matches!(a, Action::BeginSessionRestore));
         Task::perform(
             async move {
                 for action in actions {
@@ -194,7 +197,13 @@ impl Maolan {
                 }
                 Ok(())
             },
-            Message::SendMessageFinished,
+            move |result| {
+                if restores_session {
+                    Message::SessionRestoreSendFinished(result)
+                } else {
+                    Message::SendMessageFinished(result)
+                }
+            },
         )
     }
 
@@ -2103,6 +2112,9 @@ impl Maolan {
 
     pub(super) fn load(&mut self, path: String) -> std::io::Result<Task<Message>> {
         let restore_actions = self.load_restore_actions(path)?;
+        // Hide the editable session before the asynchronous sender starts.
+        // Only the engine's EndSessionRestore response makes it ready.
+        self.session_ops.session_restore_in_progress = true;
         Ok(Self::restore_actions_task(restore_actions))
     }
 

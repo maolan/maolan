@@ -105,8 +105,8 @@ struct SessionOverviewCanvas {
     timeline_samples: usize,
     visible_start_samples: f32,
     visible_samples: f32,
-    scroll_top_px: f32,
-    viewport_height_px: f32,
+    view_start_row: f32,
+    view_end_row: f32,
 }
 
 #[derive(Default)]
@@ -115,10 +115,16 @@ struct SessionOverviewCanvasState {
     last_hash: Cell<u64>,
 }
 
-fn build_editor_track_tree<'a>(all_tracks: &'a [Track]) -> Vec<EditorTrackNode<'a>> {
+fn build_editor_track_tree_with_visibility<'a>(
+    all_tracks: &'a [Track],
+    hide_closed_folder_children: bool,
+) -> Vec<EditorTrackNode<'a>> {
     let visible: Vec<&'a Track> = all_tracks
         .iter()
-        .filter(|t| t.name != METRONOME_TRACK_ID && !t.is_inside_closed_folder(all_tracks))
+        .filter(|t| {
+            t.name != METRONOME_TRACK_ID
+                && (!hide_closed_folder_children || !t.is_inside_closed_folder(all_tracks))
+        })
         .collect();
 
     let mut children_by_parent: std::collections::HashMap<String, Vec<&'a Track>> =
@@ -141,6 +147,10 @@ fn build_editor_track_tree<'a>(all_tracks: &'a [Track]) -> Vec<EditorTrackNode<'
     roots
 }
 
+fn build_editor_track_tree(all_tracks: &[Track]) -> Vec<EditorTrackNode<'_>> {
+    build_editor_track_tree_with_visibility(all_tracks, true)
+}
+
 fn flatten_editor_track_nodes<'a>(nodes: &'a [EditorTrackNode<'a>], tracks: &mut Vec<&'a Track>) {
     for node in nodes {
         tracks.push(node.track);
@@ -148,14 +158,17 @@ fn flatten_editor_track_nodes<'a>(nodes: &'a [EditorTrackNode<'a>], tracks: &mut
     }
 }
 
-fn session_overview_tracks(all_tracks: &[Track]) -> Vec<SessionOverviewTrack> {
-    let root_nodes = build_editor_track_tree(all_tracks);
-    let mut ordered_tracks = Vec::new();
-    flatten_editor_track_nodes(&root_nodes, &mut ordered_tracks);
-
-    ordered_tracks
-        .into_iter()
-        .map(|track| {
+fn session_overview_tracks(
+    all_tracks: &[Track],
+) -> (Vec<SessionOverviewTrack>, Vec<(usize, usize)>) {
+    let root_nodes = build_editor_track_tree_with_visibility(all_tracks, false);
+    let mut tracks = Vec::new();
+    let mut root_spans = Vec::new();
+    for node in &root_nodes {
+        let start = tracks.len();
+        let mut subtree = Vec::new();
+        flatten_editor_track_nodes(std::slice::from_ref(node), &mut subtree);
+        tracks.extend(subtree.into_iter().map(|track| {
             let audio = track.audio.clips.iter().map(|clip| SessionOverviewClip {
                 start: clip.start,
                 length: clip.length,
@@ -170,15 +183,44 @@ fn session_overview_tracks(all_tracks: &[Track]) -> Vec<SessionOverviewTrack> {
             });
 
             SessionOverviewTrack {
-                height: if track.is_folder {
+                height: if track.is_inside_closed_folder(all_tracks) {
+                    0.0
+                } else if track.is_folder {
                     track.folder_content_height()
                 } else {
                     track.height
                 },
                 clips: audio.chain(midi).collect(),
             }
-        })
-        .collect()
+        }));
+        root_spans.push((start, tracks.len()));
+    }
+    (tracks, root_spans)
+}
+
+/// Maps exact viewport pixel boundaries to the overview's uniform track rows.
+fn overview_view_rows(
+    root_spans: &[(usize, usize)],
+    root_heights: &[f32],
+    scroll_y: f32,
+    viewport_height: f32,
+) -> (f32, f32) {
+    let total_height = root_heights.iter().sum::<f32>();
+    let visible_height = viewport_height.max(0.0).min(total_height);
+    let top = scroll_y.clamp(0.0, 1.0) * (total_height - visible_height);
+    let map_boundary = |pixel: f32| {
+        let mut offset = 0.0;
+        for (&(start, end), &height) in root_spans.iter().zip(root_heights) {
+            if height > 0.0 && pixel < offset + height {
+                let progress = ((pixel - offset) / height).clamp(0.0, 1.0);
+                return (start as f32 + progress * (end - start) as f32)
+                    * SessionOverviewCanvas::TRACK_HEIGHT;
+            }
+            offset += height;
+        }
+        root_spans.last().map_or(0.0, |&(_, end)| end as f32) * SessionOverviewCanvas::TRACK_HEIGHT
+    };
+    (map_boundary(top), map_boundary(top + visible_height))
 }
 
 fn build_editor_track_subtree<'a>(
@@ -281,8 +323,8 @@ impl SessionOverviewCanvas {
         self.timeline_samples.hash(&mut hasher);
         self.visible_start_samples.to_bits().hash(&mut hasher);
         self.visible_samples.to_bits().hash(&mut hasher);
-        self.scroll_top_px.to_bits().hash(&mut hasher);
-        self.viewport_height_px.to_bits().hash(&mut hasher);
+        self.view_start_row.to_bits().hash(&mut hasher);
+        self.view_end_row.to_bits().hash(&mut hasher);
         self.tracks.len().hash(&mut hasher);
         for track in &self.tracks {
             track.height.to_bits().hash(&mut hasher);
@@ -300,19 +342,6 @@ impl SessionOverviewCanvas {
     fn sample_x(&self, sample: f32, width: f32) -> f32 {
         let timeline = self.timeline_samples.max(1) as f32;
         (sample / timeline * width).clamp(0.0, width)
-    }
-
-    fn row_for_editor_y(&self, editor_y: f32) -> f32 {
-        let mut accumulated = 0.0;
-        for (index, track) in self.tracks.iter().enumerate() {
-            let next = accumulated + track.height.max(1.0);
-            if editor_y <= next {
-                let progress = ((editor_y - accumulated) / (next - accumulated)).clamp(0.0, 1.0);
-                return (index as f32 + progress) * Self::TRACK_HEIGHT;
-            }
-            accumulated = next;
-        }
-        self.tracks.len() as f32 * Self::TRACK_HEIGHT
     }
 
     fn clip_color(kind: Kind, muted: bool) -> Color {
@@ -356,11 +385,15 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
                 Color::from_rgb(0.07, 0.08, 0.10),
             );
 
-            let content_height = self.tracks.len() as f32 * Self::TRACK_HEIGHT;
+            // Keep every track in the overview even in large sessions.
+            let scale =
+                (bounds.height / (self.tracks.len().max(1) as f32 * Self::TRACK_HEIGHT)).min(1.0);
+            let row_height = Self::TRACK_HEIGHT * scale;
+            let content_height = self.tracks.len() as f32 * row_height;
             let top = ((bounds.height - content_height) * 0.5).max(0.0);
 
             for (track_index, track) in self.tracks.iter().enumerate() {
-                let y = top + track_index as f32 * Self::TRACK_HEIGHT;
+                let y = top + track_index as f32 * row_height;
                 let row_color = if track_index % 2 == 0 {
                     Color::from_rgba(0.22, 0.25, 0.30, 0.34)
                 } else {
@@ -369,7 +402,7 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
                 frame.fill(
                     &Path::rectangle(
                         Point::new(0.0, y),
-                        maolan_widgets::iced::Size::new(bounds.width, Self::TRACK_HEIGHT),
+                        maolan_widgets::iced::Size::new(bounds.width, row_height),
                     ),
                     row_color,
                 );
@@ -388,7 +421,7 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
                     frame.fill(
                         &Path::rectangle(
                             Point::new(x, y),
-                            maolan_widgets::iced::Size::new(w, Self::TRACK_HEIGHT),
+                            maolan_widgets::iced::Size::new(w, row_height),
                         ),
                         Self::clip_color(clip.kind, clip.muted),
                     );
@@ -403,11 +436,10 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
             let view_w = (view_end - view_x)
                 .max(2.0)
                 .min((bounds.width - view_x).max(0.0));
-            let view_y = (top + self.row_for_editor_y(self.scroll_top_px)).min(bounds.height);
-            let view_bottom =
-                top + self.row_for_editor_y(self.scroll_top_px + self.viewport_height_px);
+            let view_y = (top + self.view_start_row * scale).min(bounds.height);
+            let view_bottom = top + self.view_end_row * scale;
             let view_h = (view_bottom - view_y)
-                .max(Self::TRACK_HEIGHT)
+                .max(0.0)
                 .min((bounds.height - view_y).max(0.0));
             frame.fill(
                 &Path::rectangle(
@@ -425,6 +457,167 @@ impl canvas::Program<Message> for SessionOverviewCanvas {
                     .with_color(Color::from_rgba(0.78, 0.88, 1.0, 0.92))
                     .with_width(1.0),
             );
+        });
+
+        vec![geom]
+    }
+}
+
+#[derive(Clone)]
+struct FolderPreviewClip {
+    start: usize,
+    length: usize,
+    kind: Kind,
+    muted: bool,
+}
+
+#[derive(Clone)]
+struct FolderPreviewNode {
+    clips: Vec<FolderPreviewClip>,
+    color: Option<Color>,
+    children: Vec<FolderPreviewNode>,
+}
+
+#[derive(Clone)]
+struct FolderPreviewCanvas {
+    root: FolderPreviewNode,
+    pixels_per_sample: f32,
+}
+
+#[derive(Default)]
+struct FolderPreviewCanvasState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
+fn folder_preview_node(track: &Track, all_tracks: &[Track]) -> FolderPreviewNode {
+    let muted = track.effective_muted(all_tracks);
+    let audio = track.audio.clips.iter().map(|clip| FolderPreviewClip {
+        start: clip.start,
+        length: clip.length,
+        kind: Kind::Audio,
+        muted: clip.muted || muted,
+    });
+    let midi = track.midi.clips.iter().map(|clip| FolderPreviewClip {
+        start: clip.start,
+        length: clip.length,
+        kind: Kind::MIDI,
+        muted: clip.muted || muted,
+    });
+    let children = all_tracks
+        .iter()
+        .filter(|t| t.parent_track.as_deref() == Some(track.name.as_str()))
+        .map(|t| folder_preview_node(t, all_tracks))
+        .collect();
+    FolderPreviewNode {
+        clips: audio.chain(midi).collect(),
+        color: track.color,
+        children,
+    }
+}
+
+fn hash_folder_preview_node<H: Hasher>(node: &FolderPreviewNode, hasher: &mut H) {
+    node.clips.len().hash(hasher);
+    for clip in &node.clips {
+        clip.start.hash(hasher);
+        clip.length.hash(hasher);
+        std::mem::discriminant(&clip.kind).hash(hasher);
+        clip.muted.hash(hasher);
+    }
+    match &node.color {
+        Some(color) => {
+            1u8.hash(hasher);
+            color.r.to_bits().hash(hasher);
+            color.g.to_bits().hash(hasher);
+            color.b.to_bits().hash(hasher);
+        }
+        None => 0u8.hash(hasher),
+    }
+    node.children.len().hash(hasher);
+    for child in &node.children {
+        hash_folder_preview_node(child, hasher);
+    }
+}
+
+impl FolderPreviewCanvas {
+    fn shape_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.pixels_per_sample.to_bits().hash(&mut hasher);
+        hash_folder_preview_node(&self.root, &mut hasher);
+        hasher.finish()
+    }
+
+    fn clip_color(node: &FolderPreviewNode, kind: Kind, muted: bool) -> Color {
+        let mut color = match &node.color {
+            Some(color) => *color,
+            None => match kind {
+                Kind::Audio => AUDIO_CLIP_SELECTED_BASE,
+                Kind::MIDI => MIDI_CLIP_SELECTED_BASE,
+            },
+        };
+        color.a = if muted { 0.28 } else { 0.72 };
+        color
+    }
+
+    fn draw_node(&self, frame: &mut Frame, node: &FolderPreviewNode, y: f32, height: f32) {
+        if height <= 0.0 {
+            return;
+        }
+        if node.children.is_empty() {
+            for clip in &node.clips {
+                if clip.length == 0 {
+                    continue;
+                }
+                let x = clip.start as f32 * self.pixels_per_sample;
+                let w = (clip.length as f32 * self.pixels_per_sample).max(1.0);
+                frame.fill(
+                    &Path::rectangle(Point::new(x, y), maolan_widgets::iced::Size::new(w, height)),
+                    Self::clip_color(node, clip.kind, clip.muted),
+                );
+            }
+            return;
+        }
+        let row_height = height / node.children.len() as f32;
+        for (index, child) in node.children.iter().enumerate() {
+            let child_y = y + index as f32 * row_height;
+            self.draw_node(frame, child, child_y, row_height);
+            if index > 0 {
+                frame.stroke(
+                    &Path::line(Point::new(0.0, child_y), Point::new(frame.width(), child_y)),
+                    canvas::Stroke::default()
+                        .with_color(Color::from_rgba(0.0, 0.0, 0.0, 0.22))
+                        .with_width(1.0),
+                );
+            }
+        }
+    }
+}
+
+impl canvas::Program<Message> for FolderPreviewCanvas {
+    type State = FolderPreviewCanvasState;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let hash = self.shape_hash(bounds);
+        if state.last_hash.get() != hash {
+            state.cache.clear();
+            state.last_hash.set(hash);
+        }
+
+        let geom = state.cache.draw(renderer, bounds.size(), |frame| {
+            self.draw_node(frame, &self.root, 0.0, bounds.height);
         });
 
         vec![geom]
@@ -1003,6 +1196,18 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         .position(Point::new(0.0, 0.0))
         .into(),
     );
+    if track.is_folder && !track.folder_open && track.has_folder_children(&state.tracks) {
+        clips.push(
+            pin(canvas(FolderPreviewCanvas {
+                root: folder_preview_node(track, &state.tracks),
+                pixels_per_sample,
+            })
+            .width(Length::Fill)
+            .height(Length::Fixed(height)))
+            .position(Point::new(0.0, 0.0))
+            .into(),
+        );
+    }
     let visible_automation_lanes: Vec<_> = track
         .automation_lanes
         .iter()
@@ -2188,18 +2393,13 @@ impl Editor {
         visible_samples: f32,
         editor_scroll_x: f32,
         editor_scroll_y: f32,
-        track_viewport_height: f32,
+        viewport_height: f32,
+        root_heights: &[f32],
     ) -> Element<'static, Message> {
         let state = self.state.read().expect("state lock poisoned");
-        let tracks = session_overview_tracks(&state.tracks);
-        let total_track_height = tracks
-            .iter()
-            .map(|track| track.height)
-            .sum::<f32>()
-            .max(1.0);
-        let viewport_height_px = track_viewport_height.max(1.0).min(total_track_height);
-        let max_scroll_px = (total_track_height - viewport_height_px).max(0.0);
-        let scroll_top_px = editor_scroll_y.clamp(0.0, 1.0) * max_scroll_px;
+        let (tracks, root_spans) = session_overview_tracks(&state.tracks);
+        let (view_start_row, view_end_row) =
+            overview_view_rows(&root_spans, root_heights, editor_scroll_y, viewport_height);
         let timeline_samples = timeline_samples.max(1);
         let visible_samples = visible_samples.max(1.0).min(timeline_samples as f32);
         let max_scroll_samples = (timeline_samples as f32 - visible_samples).max(0.0);
@@ -2210,8 +2410,8 @@ impl Editor {
             timeline_samples,
             visible_start_samples,
             visible_samples,
-            scroll_top_px,
-            viewport_height_px,
+            view_start_row,
+            view_end_row,
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2604,5 +2804,26 @@ mod tests {
         assert!(lv2_color.a > 0.0);
         assert!(vst3_color.a > 0.0);
         assert!(clap_color.a > 0.0);
+    }
+
+    #[test]
+    fn overview_viewport_tracks_exact_pixel_boundaries() {
+        let spans = [(0, 1), (1, 2), (2, 3)];
+        let heights = [100.0, 100.0, 100.0];
+        assert_eq!(overview_view_rows(&[], &[], 0.0, 100.0), (0.0, 0.0));
+        assert_eq!(overview_view_rows(&spans, &heights, 0.0, 400.0), (0.0, 6.0));
+        assert_eq!(overview_view_rows(&spans, &heights, 0.0, 150.0), (0.0, 3.0));
+        assert_eq!(overview_view_rows(&spans, &heights, 0.5, 100.0), (2.0, 4.0));
+        assert_eq!(overview_view_rows(&spans, &heights, 1.0, 150.0), (3.0, 6.0));
+        // A viewport smaller than a single track must remain fractional.
+        assert_eq!(overview_view_rows(&spans, &heights, 0.0, 25.0), (0.0, 0.5));
+    }
+
+    #[test]
+    fn overview_viewport_maps_variable_heights_and_folder_spans() {
+        let spans = [(0, 3), (3, 4)];
+        let heights = [50.0, 150.0];
+        assert_eq!(overview_view_rows(&spans, &heights, 0.0, 25.0), (0.0, 3.0));
+        assert_eq!(overview_view_rows(&spans, &heights, 1.0, 75.0), (7.0, 8.0));
     }
 }

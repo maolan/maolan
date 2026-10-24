@@ -2,6 +2,7 @@ pub(crate) mod field_groups;
 mod platform;
 mod session;
 mod subscriptions;
+mod timing_trace;
 pub(crate) mod update;
 mod view;
 
@@ -9331,6 +9332,45 @@ mod tests {
         assert!(!app.transport.paused);
         assert_eq!(app.rec.recording_preview_start_sample, Some(128));
         assert_eq!(app.rec.recording_preview_sample, Some(128));
+    }
+
+    #[test]
+    fn session_restore_blocks_play_until_engine_acknowledges_completion() {
+        let mut app = Maolan::default();
+        app.state.write().expect("state lock poisoned").hw_loaded = true;
+        app.session_ops.session_restore_in_progress = true;
+        for message in [
+            Message::TransportPlay,
+            Message::ToggleTransport,
+            Message::TransportPause,
+        ] {
+            let _ = app.update(message);
+            assert!(!app.transport.playing);
+            assert!(!app.transport.live_session_playing);
+        }
+        let _ = app.update(Message::SessionRestoreSendFinished(Ok(())));
+        assert!(app.session_ops.session_restore_in_progress);
+        let _ = app.update(Message::Response(Ok(Action::EndSessionRestore)));
+        assert!(!app.session_ops.session_restore_in_progress);
+        let _ = app.update(Message::TransportPlay);
+        assert!(app.transport.playing);
+    }
+
+    #[test]
+    fn session_restore_send_failure_leaves_loading_view() {
+        let mut app = Maolan::default();
+        app.session_ops.session_restore_in_progress = true;
+        let _ = app.update(Message::SessionRestoreSendFinished(Err(
+            "disconnected".into()
+        )));
+        assert!(!app.session_ops.session_restore_in_progress);
+        assert!(
+            app.state
+                .read()
+                .expect("state lock poisoned")
+                .message
+                .contains("disconnected")
+        );
     }
 
     #[test]

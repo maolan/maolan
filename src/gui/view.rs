@@ -217,6 +217,15 @@ impl Maolan {
     }
 
     pub fn view(&self) -> maolan_widgets::iced::Element<'_, Message> {
+        let _timing = super::timing_trace::Span::new("view", None);
+        if self.session_ops.session_restore_in_progress {
+            return self.wrap_with_log_window(
+                container(text("Loading session: restoring plugins and connections…"))
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+                    .into(),
+            );
+        }
         let state = self.state.read().expect("state lock poisoned");
         if state.hw_loaded {
             if self.clip_rename.is_open() {
