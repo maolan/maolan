@@ -3,6 +3,15 @@ use super::*;
 impl Maolan {
     pub(super) fn handle_session_io_message(&mut self, message: Message) -> Option<Task<Message>> {
         match message {
+            Message::SessionRestoreSendFinished(result) => {
+                if let Err(error) = result {
+                    self.session_ops.session_restore_in_progress = false;
+                    self.state.write().expect("state lock poisoned").message =
+                        format!("Failed to restore session: {error}");
+                }
+                // Sending the commands is not completion: wait for the engine.
+                Some(Task::none())
+            }
             Message::SaveFolderSelected(ref path_opt) => {
                 {
                     let mut state = self.state.write().expect("state lock poisoned");

@@ -1289,6 +1289,7 @@ pub enum Message {
     RecordFolderSelected(Option<PathBuf>),
 
     SendMessageFinished(Result<(), String>),
+    SessionRestoreSendFinished(Result<(), String>),
 
     Workspace,
     Connections,

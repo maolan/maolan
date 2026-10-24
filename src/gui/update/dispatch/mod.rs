@@ -1124,6 +1124,7 @@ impl Maolan {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let _timing = crate::gui::timing_trace::Span::new("update", Some(&message));
         struct SyncLogOnDrop(*mut Maolan);
 
         impl Drop for SyncLogOnDrop {
@@ -1135,6 +1136,21 @@ impl Maolan {
         }
 
         let _sync_log_on_drop = SyncLogOnDrop(self as *mut _);
+        // Keyboard shortcuts can still arrive while the loading view is shown.
+        if self.session_ops.session_restore_in_progress
+            && matches!(
+                message,
+                Message::ToggleTransport
+                    | Message::TransportPlay
+                    | Message::TransportPause
+                    | Message::TransportRecordToggle
+                    | Message::SessionSlotPressed { .. }
+                    | Message::SessionScenePressed(_)
+                    | Message::SessionNavLaunch
+            )
+        {
+            return Task::none();
+        }
         if self.handle_simple_ui_message(&message) {
             self.update_children(&message);
             return Task::none();

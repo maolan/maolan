@@ -25,10 +25,11 @@ use crate::{
 use cursor_override::CursorOverride;
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use maolan_widgets::iced::{
-    Alignment, Background, Color, Element, Length, Point, Theme,
+    Alignment, Background, Color, Element, Length, Point, Rectangle, Renderer, Theme,
     advanced::mouse,
     widget::{
-        Id, Space, Stack, button, column, container, lazy, mouse_area, pin, row, scrollable, text,
+        Id, Space, Stack, button, canvas, column, container, lazy, mouse_area, pin, row,
+        scrollable, text,
     },
 };
 use maolan_widgets::iced_drop::droppable;
@@ -36,7 +37,14 @@ use maolan_widgets::{
     horizontal_scrollbar::HorizontalScrollbar, vertical_scrollbar::VerticalScrollbar,
 };
 use ruler::RulerViewArgs;
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
 use tempo::{TempoViewArgs, TimelineZoomTarget};
 
 fn workspace_drop_target(
@@ -169,6 +177,15 @@ fn compute_visible_track_window(
     scroll_y: f32,
     viewport_height: f32,
 ) -> VisibleTrackWindow {
+    compute_visible_track_window_with_overscan(track_heights, scroll_y, viewport_height, 240.0)
+}
+
+fn compute_visible_track_window_with_overscan(
+    track_heights: &[f32],
+    scroll_y: f32,
+    viewport_height: f32,
+    overscan_px: f32,
+) -> VisibleTrackWindow {
     if track_heights.is_empty() {
         return VisibleTrackWindow {
             start_index: 0,
@@ -178,14 +195,12 @@ fn compute_visible_track_window(
         };
     }
 
-    const OVERSCAN_PX: f32 = 240.0;
-
     let total_height = track_heights.iter().sum::<f32>().max(1.0);
     let viewport_height = viewport_height.max(track_heights[0]).min(total_height);
     let max_scroll = (total_height - viewport_height).max(0.0);
     let scroll_top = scroll_y.clamp(0.0, 1.0) * max_scroll;
-    let visible_top = (scroll_top - OVERSCAN_PX).max(0.0);
-    let visible_bottom = (scroll_top + viewport_height + OVERSCAN_PX).min(total_height);
+    let visible_top = (scroll_top - overscan_px).max(0.0);
+    let visible_bottom = (scroll_top + viewport_height + overscan_px).min(total_height);
 
     let mut top_padding = 0.0;
     let mut start_index = 0;
@@ -225,6 +240,50 @@ pub struct Workspace {
     ruler: ruler::Ruler,
     tempo: tempo::Tempo,
     tracks: tracks::Tracks,
+    /// Real height of the editor lanes viewport as f32 bits, recorded every
+    /// frame by the probe overlay; 0 until the first frame is drawn.
+    editor_viewport_height_px: Arc<AtomicU32>,
+}
+
+/// Invisible overlay that measures the editor lanes viewport: its bounds are
+/// exactly the area the track scrollable occupies, which cannot be derived
+/// from the window size because the menu/toolbar/status-bar heights vary.
+#[derive(Clone)]
+struct ViewportProbeCanvas {
+    height_bits: Arc<AtomicU32>,
+}
+
+impl canvas::Program<Message> for ViewportProbeCanvas {
+    type State = ();
+
+    fn update(
+        &self,
+        _state: &mut Self::State,
+        _event: &maolan_widgets::iced::Event,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        if bounds.height.is_finite() && bounds.height > 0.0 {
+            let previous = self
+                .height_bits
+                .swap(bounds.height.to_bits(), Ordering::Relaxed);
+            if previous != bounds.height.to_bits() {
+                return Some(canvas::Action::publish(Message::None));
+            }
+        }
+        None
+    }
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        _renderer: &Renderer,
+        _theme: &Theme,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        vec![]
+    }
 }
 
 pub struct WorkspaceViewArgs<'a> {
@@ -286,6 +345,7 @@ impl Workspace {
             ruler: ruler::Ruler::new(),
             tempo: tempo::Tempo::new(),
             tracks: tracks::Tracks::new(state.clone()),
+            editor_viewport_height_px: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -506,6 +566,17 @@ impl Workspace {
         .max(160.0);
         let visible_track_window =
             compute_visible_track_window(&track_heights, editor_scroll_y, track_viewport_height);
+        // The session-overview border must reflect exactly the tracks in the
+        // viewport: no render overscan, and the measured viewport height
+        // recorded by the probe overlay instead of the window-size estimate.
+        let measured_viewport_height = {
+            let height = f32::from_bits(self.editor_viewport_height_px.load(Ordering::Relaxed));
+            if height.is_finite() && height > 0.0 {
+                Some(height)
+            } else {
+                None
+            }
+        };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
         let min_timeline_samples = (samples_per_bar * MIN_TIMELINE_BARS).max(1.0) as usize;
         let right_padding_samples = ((samples_per_bar * zoom_visible_bars) * 0.5).max(1.0) as usize;
@@ -640,7 +711,16 @@ impl Workspace {
             .height(Length::Fill)
             .into();
 
-            let editor_with_zoom = right_lanes_with_scrollbar;
+            let editor_with_zoom: Element<'_, Message> = Stack::from_vec(vec![
+                right_lanes_with_scrollbar,
+                canvas(ViewportProbeCanvas {
+                    height_bits: self.editor_viewport_height_px.clone(),
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+            ])
+            .into();
 
             let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
                 bpm: tempo,
@@ -744,7 +824,8 @@ impl Workspace {
                 min_visible_samples as f32,
                 editor_scroll_x,
                 editor_scroll_y,
-                track_viewport_height,
+                measured_viewport_height.unwrap_or(track_viewport_height),
+                &track_heights,
             );
             let right_panel = column![
                 container(session_overview)
@@ -1432,6 +1513,40 @@ mod tests {
         let window = compute_visible_track_window(&[], 0.0, 100.0);
         assert_eq!(window.start_index, 0);
         assert_eq!(window.end_index, 0);
+    }
+
+    #[test]
+    fn overview_window_without_overscan_shrinks_when_tracks_no_longer_fit() {
+        let heights = vec![82.0; 10];
+        let fits = compute_visible_track_window_with_overscan(&heights, 0.0, 900.0, 0.0);
+        assert_eq!(fits.end_index, 10, "every track fits inside the viewport");
+
+        let resized = compute_visible_track_window_with_overscan(&heights, 0.0, 500.0, 0.0);
+        assert!(
+            resized.end_index < 10,
+            "resized tracks that overflow the viewport narrow the window"
+        );
+
+        let taller = vec![150.0; 10];
+        let resized_more = compute_visible_track_window_with_overscan(&taller, 0.0, 500.0, 0.0);
+        assert!(
+            resized_more.end_index < resized.end_index,
+            "growing tracks narrows the window further"
+        );
+    }
+
+    #[test]
+    fn overview_window_follows_scroll_without_overscan() {
+        let heights = vec![100.0; 10];
+        let window = compute_visible_track_window_with_overscan(&heights, 1.0, 400.0, 0.0);
+        assert_eq!(
+            window.end_index, 10,
+            "scrolled to the bottom covers the last track"
+        );
+        assert!(
+            window.start_index > 0,
+            "scrolled to the bottom skips the first tracks"
+        );
     }
 
     #[test]

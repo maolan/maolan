@@ -233,6 +233,10 @@ impl Maolan {
                     }
                     now_sample = self.transport.transport_samples.max(0.0) as usize;
                 }
+                crate::gui::timing_trace::playback_tick(
+                    self.transport.transport_samples,
+                    self.transport.playing && !self.transport.paused,
+                );
                 let mut tasks = Vec::new();
                 {
                     let state = self.state.read().expect("state lock poisoned");

@@ -159,30 +159,30 @@ impl Maolan {
                     let state = self.state.read().expect("state lock poisoned");
                     state.tracks.iter().map(|t| t.name.clone()).collect()
                 };
-                let mut tasks = vec![
-                    self.send(Action::BeginSessionRestore),
-                    self.send(Action::Stop),
-                    self.send(Action::SetRecordEnabled(false)),
-                    self.send(Action::SetLoopRange(None)),
-                    self.send(Action::SetPunchRange(None)),
-                    self.send(Action::SetGlobalMidiLearnBinding {
+                let mut actions = vec![
+                    Action::BeginSessionRestore,
+                    Action::Stop,
+                    Action::SetRecordEnabled(false),
+                    Action::SetLoopRange(None),
+                    Action::SetPunchRange(None),
+                    Action::SetGlobalMidiLearnBinding {
                         target: maolan_engine::message::GlobalMidiLearnTarget::PlayPause,
                         binding: None,
-                    }),
-                    self.send(Action::SetGlobalMidiLearnBinding {
+                    },
+                    Action::SetGlobalMidiLearnBinding {
                         target: maolan_engine::message::GlobalMidiLearnTarget::Stop,
                         binding: None,
-                    }),
-                    self.send(Action::SetGlobalMidiLearnBinding {
+                    },
+                    Action::SetGlobalMidiLearnBinding {
                         target: maolan_engine::message::GlobalMidiLearnTarget::RecordToggle,
                         binding: None,
-                    }),
+                    },
                 ];
                 for name in existing_tracks {
-                    tasks.push(self.send(Action::RemoveTrack(name)));
+                    actions.push(Action::RemoveTrack(name));
                 }
-                tasks.push(self.send_modulators_to_engine());
-                tasks.push(self.send(Action::EndSessionRestore));
+                actions.push(Action::SetModulators(Vec::new()));
+                actions.push(Action::EndSessionRestore);
                 {
                     let mut state = self.state.write().expect("state lock poisoned");
                     state.connections.clear();
@@ -223,12 +223,12 @@ impl Maolan {
                 self.session_ops.has_unsaved_changes = false;
                 self.session_ops.engine_dirty = false;
                 self.session_ops.pending_exit_after_save = false;
-                self.session_ops.session_restore_in_progress = false;
+                self.session_ops.session_restore_in_progress = true;
                 self.session_ops.last_autosave_snapshot = None;
                 self.session_ops.pending_recovery_session_dir = None;
                 self.session_ops.pending_autosave_recovery = None;
                 self.session_ops.pending_open_session_dir = None;
-                Task::batch(tasks)
+                Self::restore_actions_task(actions)
             }
             Message::Request(ref a) => {
                 if let Action::TransportPosition(sample) = a {
