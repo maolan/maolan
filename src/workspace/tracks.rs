@@ -1064,7 +1064,6 @@ impl Tracks {
                 ..container::Style::default()
             }),
         )
-        .on_press(Message::SelectTrack(track.name.clone()))
         .on_enter(Message::ShortcutsHint(Some("Select track".to_string())))
         .on_exit(Message::ShortcutsHint(None));
 
@@ -1533,6 +1532,9 @@ impl Tracks {
         .into();
 
         let track_with_drop = droppable(track_body)
+            // Select through the drag widget so the title does not consume
+            // the mouse press before the drag gesture can start.
+            .on_click(Message::SelectTrack(track.name.clone()))
             .on_drag(move |position, _| Message::TrackDrag { index, position })
             .on_drop(Message::TrackDropped);
 

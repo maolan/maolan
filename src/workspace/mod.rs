@@ -38,6 +38,25 @@ use ruler::RulerViewArgs;
 use std::{collections::HashMap, path::PathBuf};
 use tempo::{TempoViewArgs, TimelineZoomTarget};
 
+fn workspace_drop_target(
+    content: Element<'_, Message>,
+    track_drag_active: bool,
+    session_slot_drag_active: bool,
+) -> Element<'_, Message> {
+    // Inserting this wrapper only when dragging replaces the widget tree,
+    // discarding the gesture state of the track that just started dragging.
+    let workspace = droppable(content);
+    if track_drag_active {
+        workspace.on_drop(Message::TrackDropped).into()
+    } else if session_slot_drag_active {
+        workspace
+            .on_drop(|_point, _rect| Message::WorkspaceSessionSlotDropped)
+            .into()
+    } else {
+        workspace.into()
+    }
+}
+
 pub use crate::consts::workspace_ids::{
     EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID, PIANO_TEMPO_SCROLL_ID,
     TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID, WORKSPACE_TEMPO_SCROLL_ID,
@@ -484,16 +503,6 @@ impl Workspace {
         .max(160.0);
         let visible_track_window =
             compute_visible_track_window(&track_heights, editor_scroll_y, track_viewport_height);
-        let tracks_visible_window = if track_drag_active {
-            VisibleTrackWindow {
-                start_index: 0,
-                end_index: track_heights.len(),
-                top_padding: 0.0,
-                bottom_padding: 0.0,
-            }
-        } else {
-            visible_track_window
-        };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
         let min_timeline_samples = (samples_per_bar * MIN_TIMELINE_BARS).max(1.0) as usize;
         let right_padding_samples = ((samples_per_bar * zoom_visible_bars) * 0.5).max(1.0) as usize;
@@ -523,7 +532,7 @@ impl Workspace {
             editor::clip_context_menu_overlay(&state, transport_active)
         };
         let tracks_scrolled = scrollable(self.tracks.view(
-            tracks_visible_window,
+            visible_track_window,
             selected_modulator,
             tracks_filter,
         ))
@@ -935,17 +944,11 @@ impl Workspace {
             .style(|_theme| crate::style::app_background())
             .width(Length::Fill)
             .height(Length::Fill);
-        let workspace: Element<'_, Message> = if track_drag_active {
-            droppable(workspace_drop_zone)
-                .on_drop(Message::TrackDropped)
-                .into()
-        } else if session_slot_drag_active {
-            droppable(workspace_drop_zone)
-                .on_drop(|_point, _rect| Message::WorkspaceSessionSlotDropped)
-                .into()
-        } else {
-            workspace_drop_zone.into()
-        };
+        let workspace = workspace_drop_target(
+            workspace_drop_zone.into(),
+            track_drag_active,
+            session_slot_drag_active,
+        );
         CursorOverride::new(
             workspace,
             self.state
@@ -1322,6 +1325,24 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::RwLock;
+
+    #[test]
+    fn starting_workspace_drag_preserves_child_widget_state() {
+        use maolan_widgets::iced::advanced::widget::{Tree, tree};
+
+        let view = |track_drag, slot_drag| {
+            workspace_drop_target(Space::new().into(), track_drag, slot_drag)
+        };
+        let idle = view(false, false);
+        let mut tree = Tree::new(idle.as_widget());
+        // Mark the otherwise stateless child to detect subtree replacement.
+        tree.children[0].state = tree::State::new(42_u32);
+        for (track_drag, slot_drag) in [(true, false), (false, false), (false, true)] {
+            let next = view(track_drag, slot_drag);
+            tree.diff(next.as_widget());
+            assert_eq!(*tree.children[0].state.downcast_ref::<u32>(), 42);
+        }
+    }
 
     #[test]
     fn update_is_a_no_op() {
