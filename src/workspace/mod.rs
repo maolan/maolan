@@ -1,3 +1,4 @@
+mod context_menu;
 mod cursor_override;
 mod drag_preview;
 mod editor;
@@ -23,6 +24,7 @@ use crate::{
     widget::{midi_edit, pitch_correction},
 };
 use cursor_override::CursorOverride;
+pub(crate) use editor::editor_track_rows;
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use maolan_widgets::iced::{
     Alignment, Background, Color, Element, Length, Point, Rectangle, Renderer, Theme,
@@ -661,7 +663,7 @@ impl Workspace {
                 editor.clone().into_view_owned(editor_args_owned.clone())
             })
             .into();
-            let editor_with_playhead = if let Some(x) = playhead_x_timeline {
+            let editor_with_playhead: Element<'_, Message> = if let Some(x) = playhead_x_timeline {
                 Stack::from_vec(vec![
                     editor_body,
                     pin(Self::playhead_line())
@@ -675,8 +677,19 @@ impl Workspace {
                 editor_body
             };
 
+            let editor_with_menu = if let Some((anchor, menu)) = clip_context_menu_overlay {
+                Stack::new()
+                    .push(editor_with_playhead)
+                    .push(Element::new(context_menu::ContextMenu::new(menu, anchor)))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                editor_with_playhead
+            };
+
             let editor_timeline_scrolled = scrollable(
-                container(editor_with_playhead)
+                container(editor_with_menu)
                     .width(Length::Fixed(editor_content_width))
                     .height(Length::Fixed(tracks_total_height)),
             )
@@ -720,6 +733,8 @@ impl Workspace {
                 .height(Length::Fill)
                 .into(),
             ])
+            .width(Length::Fill)
+            .height(Length::Fill)
             .into();
 
             let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
@@ -935,12 +950,6 @@ impl Workspace {
             if let Some((anchor, menu)) = track_context_menu_overlay {
                 stack = stack.push(pin(menu).position(Point::new(
                     anchor.x.max(0.0),
-                    self.tempo.height() + self.ruler.height() + anchor.y.max(0.0),
-                )));
-            }
-            if let Some((anchor, menu)) = clip_context_menu_overlay {
-                stack = stack.push(pin(menu).position(Point::new(
-                    tracks_width_px + 3.0 + anchor.x.max(0.0),
                     self.tempo.height() + self.ruler.height() + anchor.y.max(0.0),
                 )));
             }

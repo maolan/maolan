@@ -39,9 +39,9 @@ use maolan_engine::{
     history,
     kind::Kind,
     message::{
-        Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage, OfflineAutomationLane,
-        OfflineAutomationPoint, OfflineAutomationTarget, SessionAction,
-        SessionSlotState as EngineSessionSlotState,
+        Action, ClipMoveFrom, ClipMoveTo, DEFAULT_FADE_SAMPLES, Message as EngineMessage,
+        OfflineAutomationLane, OfflineAutomationPoint, OfflineAutomationTarget, SessionAction,
+        SessionSlotState as EngineSessionSlotState, clamp_fade_samples,
     },
 };
 use maolan_widgets::iced::widget::{Id, operation};
@@ -637,8 +637,8 @@ impl Maolan {
             peaks_file: None,
             kind: Kind::MIDI,
             fade_enabled: true,
-            fade_in_samples: 240,
-            fade_out_samples: 240,
+            fade_in_samples: DEFAULT_FADE_SAMPLES,
+            fade_out_samples: DEFAULT_FADE_SAMPLES,
             source_name: None,
             source_offset: None,
             source_length: None,
@@ -2264,67 +2264,6 @@ impl Maolan {
         }
     }
 
-    pub(crate) fn apply_audio_cross_section_fades(
-        clips: &mut [crate::state::AudioClip],
-        inserted: &mut crate::state::AudioClip,
-    ) {
-        let inserted_start = inserted.start;
-        let inserted_end = inserted.start.saturating_add(inserted.length);
-        let mut inserted_fade_in = None::<usize>;
-        let mut inserted_fade_out = None::<usize>;
-
-        for clip in clips
-            .iter_mut()
-            .filter(|clip| clip.input_channel == inserted.input_channel)
-        {
-            let clip_start = clip.start;
-            let clip_end = clip.start.saturating_add(clip.length);
-            let mut clip_fade_in = None::<usize>;
-            let mut clip_fade_out = None::<usize>;
-            let overlap_start = inserted_start.max(clip_start);
-            let overlap_end = inserted_end.min(clip_end);
-            if overlap_start >= overlap_end {
-                continue;
-            }
-
-            let overlap_len = overlap_end.saturating_sub(overlap_start);
-            if inserted_start == overlap_start && inserted_start != clip_start {
-                let fade = overlap_len.min(inserted.length);
-                inserted_fade_in = Some(inserted_fade_in.map_or(fade, |current| current.max(fade)));
-            }
-            if inserted_end == overlap_end && inserted_end != clip_end {
-                let fade = overlap_len.min(inserted.length);
-                inserted_fade_out =
-                    Some(inserted_fade_out.map_or(fade, |current| current.max(fade)));
-            }
-            if clip_start == overlap_start && clip_start != inserted_start {
-                let fade = overlap_len.min(clip.length);
-                clip_fade_in = Some(clip_fade_in.map_or(fade, |current| current.max(fade)));
-            }
-            if clip_end == overlap_end && clip_end != inserted_end {
-                let fade = overlap_len.min(clip.length);
-                clip_fade_out = Some(clip_fade_out.map_or(fade, |current| current.max(fade)));
-            }
-            if let Some(fade_in) = clip_fade_in {
-                clip.fade_enabled = true;
-                clip.fade_in_samples = fade_in;
-            }
-            if let Some(fade_out) = clip_fade_out {
-                clip.fade_enabled = true;
-                clip.fade_out_samples = fade_out;
-            }
-        }
-
-        if let Some(fade_in) = inserted_fade_in {
-            inserted.fade_enabled = true;
-            inserted.fade_in_samples = fade_in;
-        }
-        if let Some(fade_out) = inserted_fade_out {
-            inserted.fade_enabled = true;
-            inserted.fade_out_samples = fade_out;
-        }
-    }
-
     fn smooth_meter_db_levels(current: &mut Vec<f32>, target: &[f32]) {
         const RELEASE_DB_PER_UPDATE: f32 = 12.0;
 
@@ -2384,16 +2323,13 @@ impl Maolan {
     fn clip_at_position(&self, position: Point) -> Option<(String, Kind, usize)> {
         let pps = self.pixels_per_sample().max(1.0e-6);
         let state = self.state.read().expect("state lock poisoned");
-        let mut y_offset = 0.0f32;
-        for track in state
-            .tracks
-            .iter()
-            .filter(|track| track.name != METRONOME_TRACK_ID)
-        {
-            let track_top = y_offset;
-            let track_bottom = y_offset + track.height;
-            if position.y < track_top || position.y > track_bottom {
-                y_offset += track.height;
+        for (track, y_offset) in crate::workspace::editor_track_rows(&state.tracks) {
+            let height = if track.is_folder {
+                track.folder_content_height()
+            } else {
+                track.height
+            };
+            if position.y < y_offset || position.y >= y_offset + height {
                 continue;
             }
             let local_y = (position.y - y_offset).max(0.0);
@@ -2717,8 +2653,8 @@ impl Maolan {
                             peaks_file: None,
                             peaks: Default::default(),
                             fade_enabled: true,
-                            fade_in_samples: 240,
-                            fade_out_samples: 240,
+                            fade_in_samples: DEFAULT_FADE_SAMPLES,
+                            fade_out_samples: DEFAULT_FADE_SAMPLES,
                             pitch_correction_preview_name: None,
                             pitch_correction_source_name: None,
                             pitch_correction_source_offset: None,
@@ -2936,8 +2872,8 @@ impl Maolan {
                             peaks_file: None,
                             kind,
                             fade_enabled: true,
-                            fade_in_samples: 240,
-                            fade_out_samples: 240,
+                            fade_in_samples: DEFAULT_FADE_SAMPLES,
+                            fade_out_samples: DEFAULT_FADE_SAMPLES,
                             source_name: None,
                             source_offset: None,
                             source_length: None,
@@ -3268,8 +3204,8 @@ impl Maolan {
                         peaks_file: None,
                         kind: Kind::MIDI,
                         fade_enabled: true,
-                        fade_in_samples: 240,
-                        fade_out_samples: 240,
+                        fade_in_samples: DEFAULT_FADE_SAMPLES,
+                        fade_out_samples: DEFAULT_FADE_SAMPLES,
                         source_name: None,
                         source_offset: None,
                         source_length: None,
@@ -3296,8 +3232,8 @@ impl Maolan {
                         peaks_file: None,
                         kind: Kind::MIDI,
                         fade_enabled: true,
-                        fade_in_samples: 240,
-                        fade_out_samples: 240,
+                        fade_in_samples: DEFAULT_FADE_SAMPLES,
+                        fade_out_samples: DEFAULT_FADE_SAMPLES,
                         source_name: None,
                         source_offset: None,
                         source_length: None,
@@ -3371,8 +3307,8 @@ impl Maolan {
             peaks_file: None,
             kind: Kind::MIDI,
             fade_enabled: true,
-            fade_in_samples: 240,
-            fade_out_samples: 240,
+            fade_in_samples: DEFAULT_FADE_SAMPLES,
+            fade_out_samples: DEFAULT_FADE_SAMPLES,
             source_name: None,
             source_offset: None,
             source_length: None,
@@ -4485,69 +4421,6 @@ mod tests {
             "saved folder template should keep is_folder flag"
         );
         let _ = fs::remove_dir_all(&temp_home);
-    }
-
-    fn test_audio_clip(start: usize, length: usize) -> crate::state::AudioClip {
-        crate::state::AudioClip {
-            id: String::new(),
-            name: "clip.wav".to_string(),
-            start,
-            length,
-            offset: 0,
-            input_channel: 0,
-            muted: false,
-            reversed: false,
-            gain_db: 0.0,
-            edit_actions: Vec::new(),
-            max_length_samples: length,
-            source_length_samples: length,
-            peaks_file: None,
-            peaks: std::sync::Arc::new(vec![]),
-            fade_enabled: true,
-            fade_in_samples: 240,
-            fade_out_samples: 240,
-            pitch_correction_preview_name: None,
-            pitch_correction_source_name: None,
-            pitch_correction_source_offset: None,
-            pitch_correction_source_length: None,
-            pitch_correction_points: vec![],
-            pitch_correction_frame_likeness: None,
-            pitch_correction_inertia_ms: None,
-            pitch_correction_formant_compensation: None,
-            pitch_correction_detector: Default::default(),
-            pitch_correction_mode: Default::default(),
-            take_lane_override: None,
-            take_lane_pinned: false,
-            take_lane_locked: false,
-            plugin_graph_json: None,
-            grouped_clips: vec![],
-        }
-    }
-
-    #[test]
-    fn cross_section_fades_match_non_aligned_overlap_length() {
-        let mut existing = vec![test_audio_clip(0, 100)];
-        let mut inserted = test_audio_clip(80, 100);
-
-        Maolan::apply_audio_cross_section_fades(&mut existing, &mut inserted);
-
-        assert_eq!(existing[0].fade_out_samples, 20);
-        assert_eq!(inserted.fade_in_samples, 20);
-    }
-
-    #[test]
-    fn cross_section_fades_ignore_aligned_starts_and_ends() {
-        let mut same_start = vec![test_audio_clip(0, 100)];
-        let mut inserted_same_start = test_audio_clip(0, 40);
-        Maolan::apply_audio_cross_section_fades(&mut same_start, &mut inserted_same_start);
-        assert_eq!(same_start[0].fade_in_samples, 240);
-        assert_eq!(inserted_same_start.fade_in_samples, 240);
-
-        let mut same_end = vec![test_audio_clip(0, 100)];
-        let mut inserted_same_end = test_audio_clip(60, 40);
-        Maolan::apply_audio_cross_section_fades(&mut same_end, &mut inserted_same_end);
-        assert_eq!(same_end[0].fade_out_samples, 240);
-        assert_eq!(inserted_same_end.fade_out_samples, 240);
     }
 
     #[test]

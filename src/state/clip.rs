@@ -1,4 +1,5 @@
 use maolan_editor::app::AudioEditAction;
+use maolan_engine::message::DEFAULT_FADE_SAMPLES;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -75,7 +76,7 @@ fn default_fade_enabled() -> bool {
 }
 
 fn default_fade_samples() -> usize {
-    240
+    DEFAULT_FADE_SAMPLES
 }
 
 fn default_take_lane_flag() -> bool {

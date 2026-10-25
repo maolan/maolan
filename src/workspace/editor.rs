@@ -151,6 +151,24 @@ fn build_editor_track_tree(all_tracks: &[Track]) -> Vec<EditorTrackNode<'_>> {
     build_editor_track_tree_with_visibility(all_tracks, true)
 }
 
+/// Visible rows in the same order and with the same heights as `view_track_node`.
+pub(crate) fn editor_track_rows(all_tracks: &[Track]) -> Vec<(&Track, f32)> {
+    fn append<'a>(nodes: &[EditorTrackNode<'a>], rows: &mut Vec<(&'a Track, f32)>, y: &mut f32) {
+        for node in nodes {
+            rows.push((node.track, *y));
+            *y += if node.track.is_folder {
+                node.track.folder_content_height()
+            } else {
+                node.track.height
+            };
+            append(&node.children, rows, y);
+        }
+    }
+    let mut rows = Vec::new();
+    append(&build_editor_track_tree(all_tracks), &mut rows, &mut 0.0);
+    rows
+}
+
 fn flatten_editor_track_nodes<'a>(nodes: &'a [EditorTrackNode<'a>], tracks: &mut Vec<&'a Track>) {
     for node in nodes {
         tracks.push(node.track);
@@ -2817,6 +2835,27 @@ mod tests {
         assert_eq!(overview_view_rows(&spans, &heights, 1.0, 150.0), (3.0, 6.0));
         // A viewport smaller than a single track must remain fractional.
         assert_eq!(overview_view_rows(&spans, &heights, 0.0, 25.0), (0.0, 0.5));
+    }
+
+    #[test]
+    fn editor_rows_exclude_closed_folder_children_and_metronome() {
+        let mut folder = Track::new("folder".into(), 0.0, 0, 0, 0, 0);
+        folder.is_folder = true;
+        folder.folder_open = false;
+        folder.height = 1.0;
+        let folder_height = folder.folder_content_height();
+        let mut child = Track::new("child".into(), 0.0, 1, 1, 0, 0);
+        child.parent_track = Some("folder".into());
+        let bottom = Track::new("bottom".into(), 0.0, 1, 1, 0, 0);
+        let metronome = Track::new(METRONOME_TRACK_ID.into(), 0.0, 1, 1, 0, 0);
+        let tracks = [child, folder, metronome, bottom];
+        let rows = editor_track_rows(&tracks);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].0.name.as_str(), rows[0].1), ("folder", 0.0));
+        assert_eq!(
+            (rows[1].0.name.as_str(), rows[1].1),
+            ("bottom", folder_height)
+        );
     }
 
     #[test]

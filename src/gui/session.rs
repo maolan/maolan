@@ -10,8 +10,8 @@ use crate::{
 use maolan_engine::{
     kind::Kind,
     message::{
-        Action, ConnectableConnection, ConnectableRef, GlobalMidiLearnTarget,
-        Message as EngineMessage,
+        Action, ConnectableConnection, ConnectableRef, DEFAULT_FADE_SAMPLES, GlobalMidiLearnTarget,
+        Message as EngineMessage, clamp_fade_samples,
     },
 };
 use maolan_widgets::iced::{Length, Point, Task};
@@ -3408,10 +3408,20 @@ impl Maolan {
                         let muted = clip["muted"].as_bool().unwrap_or(false);
                         let peaks_file = clip["peaks_file"].as_str().map(|s| s.to_string());
                         let fade_enabled = clip["fade_enabled"].as_bool().unwrap_or(true);
-                        let fade_in_samples =
-                            clip["fade_in_samples"].as_u64().unwrap_or(240) as usize;
-                        let fade_out_samples =
-                            clip["fade_out_samples"].as_u64().unwrap_or(240) as usize;
+                        let fade_in_samples = clamp_fade_samples(
+                            fade_enabled,
+                            clip["fade_in_samples"]
+                                .as_u64()
+                                .unwrap_or(DEFAULT_FADE_SAMPLES as u64)
+                                as usize,
+                        );
+                        let fade_out_samples = clamp_fade_samples(
+                            fade_enabled,
+                            clip["fade_out_samples"]
+                                .as_u64()
+                                .unwrap_or(DEFAULT_FADE_SAMPLES as u64)
+                                as usize,
+                        );
 
                         if clip_name.trim().is_empty() {
                             warnings.push(format!(
@@ -3654,8 +3664,8 @@ impl Maolan {
                             peaks_file: None,
                             kind: Kind::MIDI,
                             fade_enabled: true,
-                            fade_in_samples: 240,
-                            fade_out_samples: 240,
+                            fade_in_samples: DEFAULT_FADE_SAMPLES,
+                            fade_out_samples: DEFAULT_FADE_SAMPLES,
                             source_name: None,
                             source_offset: None,
                             source_length: None,

@@ -243,9 +243,12 @@ impl Maolan {
                         clip.length,
                         &clip.edit_actions,
                     );
-                    clip.fade_enabled = summary.fade_in_samples > 0 || summary.fade_out_samples > 0;
-                    clip.fade_in_samples = summary.fade_in_samples;
-                    clip.fade_out_samples = summary.fade_out_samples;
+                    let fade_enabled = summary.fade_in_samples > 0 || summary.fade_out_samples > 0;
+                    clip.fade_enabled = fade_enabled;
+                    clip.fade_in_samples =
+                        clamp_fade_samples(fade_enabled, summary.fade_in_samples);
+                    clip.fade_out_samples =
+                        clamp_fade_samples(fade_enabled, summary.fade_out_samples);
                     clip.gain_db = summary.gain_db;
                     clip.reversed = summary.reversed;
                     summary
@@ -258,14 +261,15 @@ impl Maolan {
         };
 
         self.session_ops.has_unsaved_changes = true;
+        let fade_enabled = summary.fade_in_samples > 0 || summary.fade_out_samples > 0;
         self.send(Action::ApplyGroupedActions(vec![
             Action::SetClipFade {
                 track_name: ctx.track_name.clone(),
                 clip_index: ctx.clip_idx,
                 kind: Kind::Audio,
-                fade_enabled: summary.fade_in_samples > 0 || summary.fade_out_samples > 0,
-                fade_in_samples: summary.fade_in_samples,
-                fade_out_samples: summary.fade_out_samples,
+                fade_enabled,
+                fade_in_samples: clamp_fade_samples(fade_enabled, summary.fade_in_samples),
+                fade_out_samples: clamp_fade_samples(fade_enabled, summary.fade_out_samples),
             },
             Action::SetClipGainDb {
                 track_name: ctx.track_name.clone(),
