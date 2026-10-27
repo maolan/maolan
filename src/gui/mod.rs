@@ -9357,6 +9357,40 @@ mod tests {
     }
 
     #[test]
+    fn session_restore_preserves_saved_track_order_across_reloads() {
+        let mut app = Maolan::default();
+        let saved_order = ["Drums", "Bass", "Vocals"];
+        for _ in 0..3 {
+            let _ = app.update(Message::Response(Ok(Action::BeginSessionRestore)));
+            for name in saved_order {
+                let _ = app.update(Message::Response(Ok(Action::RemoveTrack(name.into()))));
+            }
+            for name in saved_order {
+                let _ = app.update(Message::Response(Ok(Action::AddTrack {
+                    name: name.into(),
+                    audio_ins: 1,
+                    audio_outs: 1,
+                    midi_ins: 0,
+                    midi_outs: 0,
+                    folder: false,
+                    mixosc_addr: None,
+                })));
+            }
+            let _ = app.update(Message::Response(Ok(Action::EndSessionRestore)));
+            let state = app.state.read().expect("state lock poisoned");
+            assert_eq!(
+                state
+                    .tracks
+                    .iter()
+                    .map(|track| track.name.as_str())
+                    .collect::<Vec<_>>(),
+                saved_order
+            );
+            assert!(state.undo_track_indices.is_empty());
+        }
+    }
+
+    #[test]
     fn session_restore_send_failure_leaves_loading_view() {
         let mut app = Maolan::default();
         app.session_ops.session_restore_in_progress = true;
