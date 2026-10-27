@@ -6,7 +6,7 @@ use crate::{
         ports::hover_radius,
         selection::is_bezier_hit,
     },
-    consts::connections_plugins::{MIN_PLUGIN_H, MIN_PORT_GAP},
+    consts::connections_plugins::MIN_PLUGIN_H,
     message::Message,
     state::State,
 };
@@ -197,7 +197,8 @@ impl Graph {
         if count == 0 {
             MIN_PLUGIN_H
         } else {
-            ((count + 1) as f32 * (PORT_DOT_RADIUS * 2.0 + MIN_PORT_GAP)).max(MIN_PLUGIN_H)
+            crate::connections::plugins::Graph::required_height_for_ports(count, PORT_DOT_RADIUS)
+                .max(MIN_PLUGIN_H)
         }
     }
 

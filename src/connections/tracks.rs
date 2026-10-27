@@ -8,7 +8,8 @@ use crate::{
     connections::ports::hover_radius,
     connections::selection::{is_cubic_bezier_hit, select_connection_indices},
     consts::connections_plugins::{
-        MIDI_HIT_RADIUS, PLUGIN_W, PORT_HIT_RADIUS, TRACK_IO_MARGIN_X, TRACK_IO_W,
+        AUDIO_PORT_RADIUS, MIDI_HIT_RADIUS, PLUGIN_W, PORT_HIT_RADIUS, TRACK_IO_MARGIN_X,
+        TRACK_IO_W,
     },
     message::{Message, TrackAutomationTarget},
     state::{
@@ -223,7 +224,6 @@ impl Graph {
 
     const TRACK_NODE_WIDTH: f32 = 140.0;
     const TRACK_NODE_HEIGHT: f32 = 70.0;
-    const TRACK_PORT_CLEARANCE: f32 = 2.0;
     // Separate canvas boxes for the generator output and measurement input.
     const IO_DELAY_W: f32 = 160.0;
     const IO_DELAY_H: f32 = 160.0;
@@ -232,9 +232,10 @@ impl Graph {
         let input_ports = track.audio.ins + track.midi.ins;
         let output_ports = track.audio.outs + track.midi.outs;
         let max_ports = input_ports.max(output_ports);
-        let min_port_spacing = 2.0 * crate::consts::connections_plugins::AUDIO_PORT_RADIUS
-            + Self::TRACK_PORT_CLEARANCE;
-        let height = Self::TRACK_NODE_HEIGHT.max((max_ports + 1) as f32 * min_port_spacing);
+        let height = Self::TRACK_NODE_HEIGHT.max(PluginGraph::required_height_for_ports(
+            max_ports,
+            AUDIO_PORT_RADIUS,
+        ));
         maolan_widgets::iced::Size::new(Self::TRACK_NODE_WIDTH, height)
     }
 
@@ -1549,13 +1550,15 @@ impl Graph {
                 Point::new(px, pos.y + size.height)
             }
             _ => {
-                let count = track.primary_audio_ins() + track.midi.ins;
-                let slot = if kind == Kind::MIDI {
-                    track.primary_audio_ins() + engine_port
-                } else {
-                    engine_port
-                };
-                let py = pos.y + (size.height / (count.max(1) + 1) as f32) * (slot + 1) as f32;
+                let py = PluginGraph::edge_port_y(
+                    pos.y,
+                    size.height,
+                    track.primary_audio_ins(),
+                    track.midi.ins,
+                    kind,
+                    engine_port,
+                )
+                .unwrap_or(pos.y + size.height * 0.5);
                 Point::new(pos.x, py)
             }
         }
@@ -1577,13 +1580,15 @@ impl Graph {
                 Point::new(px, pos.y)
             }
             _ => {
-                let count = track.primary_audio_outs() + track.midi.outs;
-                let slot = if kind == Kind::MIDI {
-                    track.primary_audio_outs() + engine_port
-                } else {
-                    engine_port
-                };
-                let py = pos.y + (size.height / (count.max(1) + 1) as f32) * (slot + 1) as f32;
+                let py = PluginGraph::edge_port_y(
+                    pos.y,
+                    size.height,
+                    track.primary_audio_outs(),
+                    track.midi.outs,
+                    kind,
+                    engine_port,
+                )
+                .unwrap_or(pos.y + size.height * 0.5);
                 Point::new(pos.x + size.width, py)
             }
         }
@@ -5284,7 +5289,7 @@ mod tests {
     }
 
     #[test]
-    fn track_box_size_preserves_width_and_halves_height() {
+    fn track_box_size_preserves_width_and_port_gap() {
         let track_few = crate::state::Track::new("few".to_string(), 0.0, 1, 0, 1, 0);
         let size_few = Graph::track_box_size(&track_few);
         assert_eq!(size_few.width, Graph::TRACK_NODE_WIDTH);
@@ -5297,7 +5302,7 @@ mod tests {
         let port_spacing = size_many.height / 17.0;
         assert!(
             port_spacing - crate::consts::connections_plugins::AUDIO_PORT_RADIUS * 2.0
-                >= Graph::TRACK_PORT_CLEARANCE
+                >= crate::consts::connections_plugins::MIN_PORT_GAP
         );
     }
 
