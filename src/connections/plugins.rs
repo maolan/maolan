@@ -61,7 +61,7 @@ impl Graph {
     }
 
     pub(crate) fn plugin_height(plugin: &PluginGraphPlugin) -> f32 {
-        0.5 * MIN_PLUGIN_H
+        (MIN_PLUGIN_H * 0.5)
             .max(Self::required_height_for_ports(
                 plugin.audio_inputs,
                 AUDIO_PORT_RADIUS,
@@ -1586,6 +1586,33 @@ mod tests {
         };
 
         assert_eq!(Graph::plugin_height(&plugin), MIN_PLUGIN_H / 2.0);
+    }
+
+    #[test]
+    fn plugin_node_height_preserves_port_gap() {
+        let plugin = PluginGraphPlugin {
+            node: PluginGraphNode::Vst3PluginInstance(0),
+            instance_id: 0,
+            format: "VST3".to_string(),
+            uri: String::new(),
+            plugin_id: String::new(),
+            name: String::new(),
+            main_audio_inputs: 0,
+            main_audio_outputs: 0,
+            audio_inputs: 0,
+            audio_outputs: 8,
+            midi_inputs: 0,
+            midi_outputs: 0,
+            state: None,
+            bypassed: false,
+        };
+
+        let height = Graph::plugin_height(&plugin);
+        let port_spacing = height / (plugin.audio_outputs + 1) as f32;
+        assert!(
+            port_spacing - crate::consts::connections_plugins::AUDIO_PORT_RADIUS * 2.0
+                >= crate::consts::connections_plugins::MIN_PORT_GAP
+        );
     }
 
     #[test]
