@@ -40,6 +40,7 @@ pub struct ToolbarViewState {
     pub playhead_bar: u64,
     pub playhead_beat: u64,
     pub active_view: Option<View>,
+    pub connections_zoom_visible: bool,
 }
 
 impl Toolbar {
@@ -379,6 +380,40 @@ impl Toolbar {
             .spacing(3)
             .align_y(Alignment::Center)
             .width(Length::Fill),
+            {
+                let zoom_buttons: maolan_widgets::iced::Element<'_, Message> =
+                    if view_state.connections_zoom_visible {
+                        row![
+                            with_tooltip(
+                                button(text("−").size(18))
+                                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                                    .on_press(Message::ConnectionsZoomOut)
+                                    .into(),
+                                "Zoom out",
+                            ),
+                            with_tooltip(
+                                button(text("↺").size(16))
+                                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                                    .on_press(Message::ConnectionsZoomReset)
+                                    .into(),
+                                "Reset zoom",
+                            ),
+                            with_tooltip(
+                                button(text("+").size(18))
+                                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                                    .on_press(Message::ConnectionsZoomIn)
+                                    .into(),
+                                "Zoom in",
+                            ),
+                            Space::new().width(4.0),
+                        ]
+                        .spacing(2)
+                        .into()
+                    } else {
+                        Space::new().into()
+                    };
+                zoom_buttons
+            },
             with_tooltip(
                 button(audio_lines())
                     .style(Self::button_style(true, false, Color::TRANSPARENT))

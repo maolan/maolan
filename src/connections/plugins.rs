@@ -47,6 +47,11 @@ pub struct Graph {
     state: State,
 }
 
+#[derive(Debug, Default)]
+pub struct GraphState {
+    zoom_animation: super::zoom::Animation,
+}
+
 impl Graph {
     pub fn new(state: State) -> Self {
         Self { state }
@@ -281,11 +286,24 @@ struct PortHit {
 }
 
 impl Graph {
-    fn closest_port(ports: &[PortHit], cursor: Point, hit_radius: f32) -> Option<&PortHit> {
+    fn closest_port(
+        ports: &[PortHit],
+        cursor: Point,
+        hit_radius: f32,
+        zoom: f32,
+    ) -> Option<&PortHit> {
         ports
             .iter()
             .filter_map(|p| {
-                let dist = cursor.distance(p.pos);
+                let dist = cursor.distance(p.pos)
+                    * if matches!(
+                        p.node,
+                        PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput
+                    ) {
+                        zoom
+                    } else {
+                        1.0
+                    };
                 (dist <= hit_radius).then_some((dist, p))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -294,24 +312,42 @@ impl Graph {
 }
 
 impl canvas::Program<Message> for Graph {
-    type State = ();
+    type State = GraphState;
 
     fn update(
         &self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
+        if let Some(action) = state
+            .zoom_animation
+            .update(&self.state, event, bounds, cursor)
+        {
+            return Some(action);
+        }
         let cursor_position = cursor.position_in(bounds)?;
+        let viewport = self.state.try_read().map_or(
+            super::zoom::Viewport {
+                scale: 1.0,
+                center: Point::new(bounds.width / 2.0, bounds.height / 2.0),
+                pan: maolan_widgets::iced::Vector::ZERO,
+            },
+            |data| super::zoom::Viewport::new(&data, bounds),
+        );
+        let zoom = viewport.scale;
+        let cursor_position = viewport.world(cursor_position);
 
         if let Ok(mut data) = self.state.try_write() {
             data.plugin_graph_track.as_ref()?;
 
             let mut audio_ports: Vec<PortHit> = vec![];
             let mut midi_ports: Vec<PortHit> = vec![];
-            let in_rect = Self::track_input_rect(bounds);
-            let out_rect = Self::track_output_rect(bounds);
+            let in_rect = super::zoom::Viewport::new(&data, bounds)
+                .world_rect(Self::track_input_rect(bounds));
+            let out_rect = super::zoom::Viewport::new(&data, bounds)
+                .world_rect(Self::track_output_rect(bounds));
             if let Some(track) = data
                 .tracks
                 .iter()
@@ -427,11 +463,16 @@ impl canvas::Program<Message> for Graph {
             match event {
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                     let port_hit =
-                        Self::closest_port(&audio_ports, cursor_position, PORT_HIT_RADIUS)
+                        Self::closest_port(&audio_ports, cursor_position, PORT_HIT_RADIUS, zoom)
                             .cloned()
                             .or_else(|| {
-                                Self::closest_port(&midi_ports, cursor_position, MIDI_HIT_RADIUS)
-                                    .cloned()
+                                Self::closest_port(
+                                    &midi_ports,
+                                    cursor_position,
+                                    MIDI_HIT_RADIUS,
+                                    zoom,
+                                )
+                                .cloned()
                             });
                     if let Some(hit) = port_hit {
                         data.plugin_graph_connecting = Some(PluginConnecting {
@@ -444,6 +485,12 @@ impl canvas::Program<Message> for Graph {
                         return Some(Action::capture());
                     }
 
+                    let screen_cursor = cursor.position_in(bounds)?;
+                    if Self::track_input_rect(bounds).contains(screen_cursor)
+                        || Self::track_output_rect(bounds).contains(screen_cursor)
+                    {
+                        return Some(Action::capture());
+                    }
                     let mut clicked_connection = None;
                     for (idx, conn) in data.plugin_graph_connections.iter().enumerate() {
                         let start =
@@ -686,6 +733,9 @@ impl canvas::Program<Message> for Graph {
                         return Some(Action::capture());
                     }
 
+                    if data.shift {
+                        return Some(state.zoom_animation.begin_pan(cursor.position()?));
+                    }
                     data.plugin_graph_selected_connections.clear();
                     data.plugin_graph_selected_connectable_connections.clear();
                     data.plugin_graph_selected_plugins.clear();
@@ -749,6 +799,7 @@ impl canvas::Program<Message> for Graph {
                             } else {
                                 MIDI_HIT_RADIUS
                             },
+                            zoom,
                         )
                         .cloned();
 
@@ -908,7 +959,19 @@ impl canvas::Program<Message> for Graph {
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
-        let cursor_position = cursor.position_in(bounds);
+        let viewport = self.state.try_read().map_or(
+            super::zoom::Viewport {
+                scale: 1.0,
+                center: Point::new(bounds.width / 2.0, bounds.height / 2.0),
+                pan: maolan_widgets::iced::Vector::ZERO,
+            },
+            |data| super::zoom::Viewport::new(&data, bounds),
+        );
+        let zoom = viewport.scale;
+        let center = viewport.center;
+        let cursor_position = cursor
+            .position_in(bounds)
+            .map(|point| viewport.world(point));
         let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
         let draw_true_gradient_box =
             |frame: &mut Frame, pos: Point, size: maolan_widgets::iced::Size, base: Color| {
@@ -934,44 +997,6 @@ impl canvas::Program<Message> for Graph {
                 .add_stop(1.0, darken(base, 0.08));
                 frame.fill(&path, grad);
             };
-        let draw_grid = |frame: &mut Frame, width: f32, height: f32| {
-            let minor = 24.0;
-            let major_every = 4usize;
-            let minor_color = Color::from_rgba(0.78, 0.86, 1.0, 0.05);
-            let major_color = Color::from_rgba(0.78, 0.86, 1.0, 0.10);
-
-            let mut i = 0usize;
-            let mut x = 0.0;
-            while x <= width {
-                let c = if i.is_multiple_of(major_every) {
-                    major_color
-                } else {
-                    minor_color
-                };
-                frame.stroke(
-                    &Path::line(Point::new(x, 0.0), Point::new(x, height)),
-                    canvas::Stroke::default().with_color(c).with_width(1.0),
-                );
-                i += 1;
-                x += minor;
-            }
-
-            let mut j = 0usize;
-            let mut y = 0.0;
-            while y <= height {
-                let c = if j.is_multiple_of(major_every) {
-                    major_color
-                } else {
-                    minor_color
-                };
-                frame.stroke(
-                    &Path::line(Point::new(0.0, y), Point::new(width, y)),
-                    canvas::Stroke::default().with_color(c).with_width(1.0),
-                );
-                j += 1;
-                y += minor;
-            }
-        };
         let bg = rgb8(23, 31, 48);
         let edge_panel = rgb8(27, 35, 54);
         let edge_panel_border = rgb8(66, 78, 108);
@@ -984,7 +1009,12 @@ impl canvas::Program<Message> for Graph {
         let conn_midi = midi_connection_color();
         let conn_selected = selected_connection_color();
         frame.fill(&Path::rectangle(Point::new(0.0, 0.0), bounds.size()), bg);
-        draw_grid(&mut frame, bounds.width, bounds.height);
+        super::zoom::draw_grid(&mut frame, bounds, viewport);
+        frame.push_transform();
+        frame.translate(viewport.pan);
+        frame.translate(maolan_widgets::iced::Vector::new(center.x, center.y));
+        frame.scale(zoom);
+        frame.translate(maolan_widgets::iced::Vector::new(-center.x, -center.y));
         if let Ok(data) = self.state.try_read() {
             let Some(track_name) = data.plugin_graph_track.as_ref() else {
                 return vec![frame.into_geometry()];
@@ -994,145 +1024,10 @@ impl canvas::Program<Message> for Graph {
             };
             let active_connecting = data.plugin_graph_connecting.as_ref();
 
-            let in_rect = Self::track_input_rect(bounds);
-            let out_rect = Self::track_output_rect(bounds);
-            let left_box = Path::rectangle(in_rect.position(), in_rect.size());
-            frame.fill(&left_box, edge_panel);
-            frame.stroke(
-                &left_box,
-                canvas::Stroke::default()
-                    .with_color(edge_panel_border)
-                    .with_width(2.0),
-            );
-            frame.fill_text(Text {
-                content: if data.plugin_graph_clip.is_some() {
-                    "Clip In".into()
-                } else {
-                    "Track In".into()
-                },
-                position: Point::new(in_rect.center_x(), in_rect.y + 18.0),
-                color: Color::WHITE,
-                align_x: Horizontal::Center.into(),
-                align_y: Vertical::Center,
-                ..Default::default()
-            });
-
-            let right_box = Path::rectangle(out_rect.position(), out_rect.size());
-            frame.fill(&right_box, edge_panel);
-            frame.stroke(
-                &right_box,
-                canvas::Stroke::default()
-                    .with_color(edge_panel_border)
-                    .with_width(2.0),
-            );
-            frame.fill_text(Text {
-                content: if data.plugin_graph_clip.is_some() {
-                    "Clip Out".into()
-                } else {
-                    "Track Out".into()
-                },
-                position: Point::new(out_rect.center_x(), out_rect.y + 18.0),
-                color: Color::WHITE,
-                align_x: Horizontal::Center.into(),
-                align_y: Vertical::Center,
-                ..Default::default()
-            });
-
-            for port in 0..track.audio.ins {
-                let Some(py) = Self::track_input_port_y(track, in_rect, Kind::Audio, port) else {
-                    continue;
-                };
-                let is_hovered = cursor_position.is_some_and(|cursor| {
-                    cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= PORT_HIT_RADIUS
-                });
-                let kind_ok = should_highlight_port(
-                    is_hovered,
-                    active_connecting.map(|c| c.kind),
-                    Kind::Audio,
-                );
-                let can_highlight = if let Some(connecting) = active_connecting {
-                    kind_ok && connecting.is_input
-                } else {
-                    kind_ok
-                };
-                frame.fill(
-                    &Path::circle(
-                        Point::new(in_rect.x + in_rect.width, py),
-                        hover_radius(5.0, can_highlight),
-                    ),
-                    Self::track_input_port_color(track, port),
-                );
-            }
-            for port in 0..track.midi.ins {
-                let Some(py) = Self::track_input_port_y(track, in_rect, Kind::MIDI, port) else {
-                    continue;
-                };
-                let is_hovered = cursor_position.is_some_and(|cursor| {
-                    cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= MIDI_HIT_RADIUS
-                });
-                let kind_ok = should_highlight_port(
-                    is_hovered,
-                    active_connecting.map(|c| c.kind),
-                    Kind::MIDI,
-                );
-                let can_highlight = if let Some(connecting) = active_connecting {
-                    kind_ok && connecting.is_input
-                } else {
-                    kind_ok
-                };
-                frame.fill(
-                    &Path::circle(
-                        Point::new(in_rect.x + in_rect.width, py),
-                        hover_radius(4.0, can_highlight),
-                    ),
-                    midi_port_color(),
-                );
-            }
-            for port in 0..track.audio.outs {
-                let Some(py) = Self::track_output_port_y(track, out_rect, Kind::Audio, port) else {
-                    continue;
-                };
-                let is_hovered = cursor_position.is_some_and(|cursor| {
-                    cursor.distance(Point::new(out_rect.x, py)) <= PORT_HIT_RADIUS
-                });
-                let kind_ok = should_highlight_port(
-                    is_hovered,
-                    active_connecting.map(|c| c.kind),
-                    Kind::Audio,
-                );
-                let can_highlight = if let Some(connecting) = active_connecting {
-                    kind_ok && !connecting.is_input
-                } else {
-                    kind_ok
-                };
-                frame.fill(
-                    &Path::circle(Point::new(out_rect.x, py), hover_radius(5.0, can_highlight)),
-                    Self::track_output_port_color(track, port),
-                );
-            }
-            for port in 0..track.midi.outs {
-                let Some(py) = Self::track_output_port_y(track, out_rect, Kind::MIDI, port) else {
-                    continue;
-                };
-                let is_hovered = cursor_position.is_some_and(|cursor| {
-                    cursor.distance(Point::new(out_rect.x, py)) <= MIDI_HIT_RADIUS
-                });
-                let kind_ok = should_highlight_port(
-                    is_hovered,
-                    active_connecting.map(|c| c.kind),
-                    Kind::MIDI,
-                );
-                let can_highlight = if let Some(connecting) = active_connecting {
-                    kind_ok && !connecting.is_input
-                } else {
-                    kind_ok
-                };
-                frame.fill(
-                    &Path::circle(Point::new(out_rect.x, py), hover_radius(4.0, can_highlight)),
-                    midi_port_color(),
-                );
-            }
-
+            let in_rect = super::zoom::Viewport::new(&data, bounds)
+                .world_rect(Self::track_input_rect(bounds));
+            let out_rect = super::zoom::Viewport::new(&data, bounds)
+                .world_rect(Self::track_output_rect(bounds));
             for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate() {
                 let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                 let plugin_h = Self::plugin_height(plugin);
@@ -1548,6 +1443,146 @@ impl canvas::Program<Message> for Graph {
                     );
                 }
             }
+            frame.pop_transform();
+            let in_rect = Self::track_input_rect(bounds);
+            let out_rect = Self::track_output_rect(bounds);
+            let cursor_position = cursor.position_in(bounds);
+            let left_box = Path::rectangle(in_rect.position(), in_rect.size());
+            frame.fill(&left_box, edge_panel);
+            frame.stroke(
+                &left_box,
+                canvas::Stroke::default()
+                    .with_color(edge_panel_border)
+                    .with_width(2.0),
+            );
+            frame.fill_text(Text {
+                content: if data.plugin_graph_clip.is_some() {
+                    "Clip In".into()
+                } else {
+                    "Track In".into()
+                },
+                position: Point::new(in_rect.center_x(), in_rect.y + 18.0),
+                color: Color::WHITE,
+                align_x: Horizontal::Center.into(),
+                align_y: Vertical::Center,
+                ..Default::default()
+            });
+
+            let right_box = Path::rectangle(out_rect.position(), out_rect.size());
+            frame.fill(&right_box, edge_panel);
+            frame.stroke(
+                &right_box,
+                canvas::Stroke::default()
+                    .with_color(edge_panel_border)
+                    .with_width(2.0),
+            );
+            frame.fill_text(Text {
+                content: if data.plugin_graph_clip.is_some() {
+                    "Clip Out".into()
+                } else {
+                    "Track Out".into()
+                },
+                position: Point::new(out_rect.center_x(), out_rect.y + 18.0),
+                color: Color::WHITE,
+                align_x: Horizontal::Center.into(),
+                align_y: Vertical::Center,
+                ..Default::default()
+            });
+
+            for port in 0..track.audio.ins {
+                let Some(py) = Self::track_input_port_y(track, in_rect, Kind::Audio, port) else {
+                    continue;
+                };
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= PORT_HIT_RADIUS
+                });
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::Audio,
+                );
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && connecting.is_input
+                } else {
+                    kind_ok
+                };
+                frame.fill(
+                    &Path::circle(
+                        Point::new(in_rect.x + in_rect.width, py),
+                        hover_radius(5.0, can_highlight),
+                    ),
+                    Self::track_input_port_color(track, port),
+                );
+            }
+            for port in 0..track.midi.ins {
+                let Some(py) = Self::track_input_port_y(track, in_rect, Kind::MIDI, port) else {
+                    continue;
+                };
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= MIDI_HIT_RADIUS
+                });
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::MIDI,
+                );
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && connecting.is_input
+                } else {
+                    kind_ok
+                };
+                frame.fill(
+                    &Path::circle(
+                        Point::new(in_rect.x + in_rect.width, py),
+                        hover_radius(4.0, can_highlight),
+                    ),
+                    midi_port_color(),
+                );
+            }
+            for port in 0..track.audio.outs {
+                let Some(py) = Self::track_output_port_y(track, out_rect, Kind::Audio, port) else {
+                    continue;
+                };
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(out_rect.x, py)) <= PORT_HIT_RADIUS
+                });
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::Audio,
+                );
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && !connecting.is_input
+                } else {
+                    kind_ok
+                };
+                frame.fill(
+                    &Path::circle(Point::new(out_rect.x, py), hover_radius(5.0, can_highlight)),
+                    Self::track_output_port_color(track, port),
+                );
+            }
+            for port in 0..track.midi.outs {
+                let Some(py) = Self::track_output_port_y(track, out_rect, Kind::MIDI, port) else {
+                    continue;
+                };
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(out_rect.x, py)) <= MIDI_HIT_RADIUS
+                });
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::MIDI,
+                );
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && !connecting.is_input
+                } else {
+                    kind_ok
+                };
+                frame.fill(
+                    &Path::circle(Point::new(out_rect.x, py), hover_radius(4.0, can_highlight)),
+                    midi_port_color(),
+                );
+            }
         }
         vec![frame.into_geometry()]
     }
@@ -1564,6 +1599,51 @@ mod tests {
     fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
         (message, status)
+    }
+
+    #[test]
+    fn fixed_track_ports_remain_pickable_at_any_zoom() {
+        for zoom in [0.05, 0.25, 1.0, 4.0, 20.0] {
+            for input in [true, false] {
+                for offset in [0.0, 20.0] {
+                    let mut data = crate::state::StateData {
+                        connections_zoom: zoom,
+                        connections_zoom_anchor: Some(Point::new(234.0, 172.0)),
+                        plugin_graph_track: Some("Synth".into()),
+                        ..Default::default()
+                    };
+                    data.tracks
+                        .push(crate::state::Track::new("Synth".into(), 0.0, 2, 2, 0, 0));
+                    let bounds = Rectangle::new(Point::new(20.0, 30.0), Size::new(800.0, 600.0));
+                    let rect = if input {
+                        Graph::track_input_rect(bounds)
+                    } else {
+                        Graph::track_output_rect(bounds)
+                    };
+                    let y =
+                        Graph::track_input_port_y(&data.tracks[0], rect, Kind::Audio, 0).unwrap();
+                    let x = if input { rect.x + rect.width } else { rect.x };
+                    let shared = Arc::new(RwLock::new(data));
+                    let graph = Graph::new(shared.clone());
+                    let _ = graph.update(
+                        &mut GraphState::default(),
+                        &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                        bounds,
+                        mouse::Cursor::Available(Point::new(bounds.x + x + offset, bounds.y + y)),
+                    );
+                    let state = shared.read().unwrap();
+                    assert_eq!(
+                        state.plugin_graph_connecting.is_some(),
+                        offset == 0.0,
+                        "zoom={zoom}, input={input}, offset={offset}"
+                    );
+                    if let Some(connection) = &state.plugin_graph_connecting {
+                        assert_eq!(connection.is_input, !input);
+                        assert_eq!(connection.from_port, 0);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1657,7 +1737,7 @@ mod tests {
 
         let action = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 cursor,
@@ -1710,7 +1790,7 @@ mod tests {
 
         let action = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
                 bounds,
                 mouse::Cursor::Available(cursor_pos),
@@ -1769,7 +1849,7 @@ mod tests {
 
         let action = graph
             .update(
-                &mut (),
+                &mut GraphState::default(),
                 &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                 bounds,
                 mouse::Cursor::Available(cursor_pos),

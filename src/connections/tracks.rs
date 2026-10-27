@@ -46,6 +46,7 @@ pub struct Graph {
 #[derive(Debug, Default)]
 pub struct GraphState {
     controller_drag: Option<ControllerDrag>,
+    zoom_animation: super::zoom::Animation,
 }
 
 #[derive(Debug, Clone)]
@@ -831,12 +832,14 @@ impl Graph {
         hw_width: f32,
     ) -> Option<Point> {
         match node {
-            PluginGraphNode::TrackInput => self
-                .folder_track(data)
-                .map(|t| Self::folder_input_port_position(t, port, bounds, hw_width)),
-            PluginGraphNode::TrackOutput => self
-                .folder_track(data)
-                .map(|t| Self::folder_output_port_position(t, port, bounds, hw_width)),
+            PluginGraphNode::TrackInput => self.folder_track(data).map(|t| {
+                super::zoom::Viewport::new(data, bounds)
+                    .world(Self::folder_input_port_position(t, port, bounds, hw_width))
+            }),
+            PluginGraphNode::TrackOutput => self.folder_track(data).map(|t| {
+                super::zoom::Viewport::new(data, bounds)
+                    .world(Self::folder_output_port_position(t, port, bounds, hw_width))
+            }),
             _ => {
                 let id = PluginGraph::plugin_node_instance_id(node)?;
                 let plugin = data
@@ -1014,7 +1017,9 @@ impl Graph {
                 port,
                 is_input: false,
                 kind: Self::track_port_kind(folder, port, true),
-                pos: Self::folder_input_port_position(folder, port, bounds, hw_width),
+                pos: super::zoom::Viewport::new(data, bounds).world(
+                    Self::folder_input_port_position(folder, port, bounds, hw_width),
+                ),
             });
         }
         let out_count = Self::folder_output_count(folder);
@@ -1024,7 +1029,9 @@ impl Graph {
                 port,
                 is_input: true,
                 kind: Self::track_port_kind(folder, port, false),
-                pos: Self::folder_output_port_position(folder, port, bounds, hw_width),
+                pos: super::zoom::Viewport::new(data, bounds).world(
+                    Self::folder_output_port_position(folder, port, bounds, hw_width),
+                ),
             });
         }
         hits
@@ -1110,10 +1117,19 @@ impl Graph {
         hits: &[PluginPortHit],
         cursor: Point,
         radius: f32,
+        zoom: f32,
     ) -> Option<PluginPortHit> {
         hits.iter()
             .filter_map(|hit| {
-                let dist = cursor.distance(hit.pos);
+                let dist = cursor.distance(hit.pos)
+                    * if matches!(
+                        hit.node,
+                        PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput
+                    ) {
+                        zoom
+                    } else {
+                        1.0
+                    };
                 (dist <= radius).then_some((dist, hit.clone()))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -1706,7 +1722,24 @@ impl canvas::Program<Message> for Graph {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
-        let cursor_position = cursor.position_in(bounds)?;
+        if let Some(action) = state
+            .zoom_animation
+            .update(&self.state, event, bounds, cursor)
+        {
+            return Some(action);
+        }
+        let screen_cursor = cursor.position_in(bounds)?;
+        let cursor_position = screen_cursor;
+        let viewport = self.state.try_read().map_or(
+            super::zoom::Viewport {
+                scale: 1.0,
+                center: Point::new(bounds.width / 2.0, bounds.height / 2.0),
+                pan: maolan_widgets::iced::Vector::ZERO,
+            },
+            |data| super::zoom::Viewport::new(&data, bounds),
+        );
+        let zoom = viewport.scale;
+        let cursor_position = viewport.world(cursor_position);
         let hw_width = 70.0;
         let midi_hw_box_h = 24.0;
         let midi_hw_box_gap = 6.0;
@@ -1816,8 +1849,10 @@ impl canvas::Program<Message> for Graph {
                     if let Some(folder) = folder {
                         let in_count = Self::folder_input_count(folder);
                         for j in 0..in_count {
-                            let pos = Self::folder_input_port_position(folder, j, bounds, hw_width);
-                            if cursor_position.distance(pos) < 10.0 {
+                            let pos = super::zoom::Viewport::new(&data, bounds).world(
+                                Self::folder_input_port_position(folder, j, bounds, hw_width),
+                            );
+                            if cursor_position.distance(pos) * zoom < 10.0 {
                                 data.connecting = Some(Connecting {
                                     from_track: HW_IN_ID.to_string(),
                                     from_port: j,
@@ -1831,9 +1866,10 @@ impl canvas::Program<Message> for Graph {
 
                         let out_count = Self::folder_output_count(folder);
                         for j in 0..out_count {
-                            let pos =
-                                Self::folder_output_port_position(folder, j, bounds, hw_width);
-                            if cursor_position.distance(pos) < 10.0 {
+                            let pos = super::zoom::Viewport::new(&data, bounds).world(
+                                Self::folder_output_port_position(folder, j, bounds, hw_width),
+                            );
+                            if cursor_position.distance(pos) * zoom < 10.0 {
                                 data.connecting = Some(Connecting {
                                     from_track: HW_OUT_ID.to_string(),
                                     from_port: j,
@@ -1846,6 +1882,19 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
+                    if folder_view
+                        && ((screen_cursor.x < hw_width
+                            && self
+                                .folder_track(&data)
+                                .is_some_and(|track| Self::folder_input_count(track) > 0))
+                            || (screen_cursor.x > bounds.width - hw_width
+                                && self
+                                    .folder_track(&data)
+                                    .is_some_and(|track| Self::folder_output_count(track) > 0)))
+                    {
+                        return Some(Action::capture());
+                    }
+
                     if !folder_view && let Some(hw_in) = &data.hw_in {
                         let pos = Point::new(0.0, 0.0);
                         for j in 0..hw_in.channels {
@@ -1853,7 +1902,12 @@ impl canvas::Program<Message> for Graph {
                                 + 50.0
                                 + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                     * (j + 1) as f32;
-                            if cursor_position.distance(Point::new(pos.x + hw_width, py)) < 10.0 {
+                            if cursor_position.distance(
+                                super::zoom::Viewport::new(&data, bounds)
+                                    .world(Point::new(pos.x + hw_width, py)),
+                            ) * zoom
+                                < 10.0
+                            {
                                 data.connecting = Some(Connecting {
                                     from_track: HW_IN_ID.to_string(),
                                     from_port: j,
@@ -1868,7 +1922,7 @@ impl canvas::Program<Message> for Graph {
                             pos,
                             maolan_widgets::iced::Size::new(hw_width, bounds.height),
                         )
-                        .contains(cursor_position)
+                        .contains(screen_cursor)
                         {
                             let now = Instant::now();
                             if let Some((last_track, last_time)) =
@@ -1895,7 +1949,12 @@ impl canvas::Program<Message> for Graph {
                                 + 50.0
                                 + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                     * (j + 1) as f32;
-                            if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
+                            if cursor_position.distance(
+                                super::zoom::Viewport::new(&data, bounds)
+                                    .world(Point::new(pos.x, py)),
+                            ) * zoom
+                                < 10.0
+                            {
                                 data.connecting = Some(Connecting {
                                     from_track: HW_OUT_ID.to_string(),
                                     from_port: j,
@@ -1910,7 +1969,7 @@ impl canvas::Program<Message> for Graph {
                             pos,
                             maolan_widgets::iced::Size::new(hw_width, bounds.height),
                         )
-                        .contains(cursor_position)
+                        .contains(screen_cursor)
                         {
                             let now = Instant::now();
                             if let Some((last_track, last_time)) =
@@ -2001,14 +2060,16 @@ impl canvas::Program<Message> for Graph {
                                 midi_hw_box_h,
                                 midi_hw_box_gap,
                             );
-                            let port_pos = Self::midi_hw_in_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
+                            let port_pos = super::zoom::Viewport::new(&data, bounds).world(
+                                Self::midi_hw_in_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                ),
                             );
-                            if cursor_position.distance(port_pos) < 10.0 {
+                            if cursor_position.distance(port_pos) * zoom < 10.0 {
                                 data.connecting = Some(Connecting {
                                     from_track: format!("{MIDI_HW_IN_ID}:{device}"),
                                     from_port: 0,
@@ -2030,11 +2091,11 @@ impl canvas::Program<Message> for Graph {
                                     default_rect.height,
                                 ),
                             );
-                            if rect.contains(cursor_position) {
+                            if rect.contains(screen_cursor) {
                                 data.moving_track = Some(MovingTrack {
                                     track_idx: format!("{MIDI_HW_IN_ID}:{device}"),
-                                    offset_x: cursor_position.x - pos.x,
-                                    offset_y: cursor_position.y - pos.y,
+                                    offset_x: screen_cursor.x - pos.x,
+                                    offset_y: screen_cursor.y - pos.y,
                                     start_position: pos,
                                 });
                                 return Some(Action::capture());
@@ -2051,16 +2112,18 @@ impl canvas::Program<Message> for Graph {
                                 midi_hw_box_h,
                                 midi_hw_box_gap,
                             );
-                            let port_pos = Self::midi_hw_out_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                bounds,
-                                hw_width,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
+                            let port_pos = super::zoom::Viewport::new(&data, bounds).world(
+                                Self::midi_hw_out_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    bounds,
+                                    hw_width,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                ),
                             );
-                            if cursor_position.distance(port_pos) < 10.0 {
+                            if cursor_position.distance(port_pos) * zoom < 10.0 {
                                 data.connecting = Some(Connecting {
                                     from_track: format!("{MIDI_HW_OUT_ID}:{device}"),
                                     from_port: 0,
@@ -2082,11 +2145,11 @@ impl canvas::Program<Message> for Graph {
                                     default_rect.height,
                                 ),
                             );
-                            if rect.contains(cursor_position) {
+                            if rect.contains(screen_cursor) {
                                 data.moving_track = Some(MovingTrack {
                                     track_idx: format!("{MIDI_HW_OUT_ID}:{device}"),
-                                    offset_x: cursor_position.x - pos.x,
-                                    offset_y: cursor_position.y - pos.y,
+                                    offset_x: screen_cursor.x - pos.x,
+                                    offset_y: screen_cursor.y - pos.y,
                                     start_position: pos,
                                 });
                                 return Some(Action::capture());
@@ -2442,18 +2505,21 @@ impl canvas::Program<Message> for Graph {
                             || (self.effective_folder(&data).is_some() && start_is_folder)
                         {
                             if let Some(folder) = self.folder_track(&data) {
-                                Some(Self::folder_input_port_position(
-                                    folder,
-                                    conn.from_port,
-                                    bounds,
-                                    hw_width,
+                                Some(super::zoom::Viewport::new(&data, bounds).world(
+                                    Self::folder_input_port_position(
+                                        folder,
+                                        conn.from_port,
+                                        bounds,
+                                        hw_width,
+                                    ),
                                 ))
                             } else {
-                                data.hw_in.as_ref().map(move |hw_in| {
+                                data.hw_in.as_ref().map(|hw_in| {
                                     let py = 50.0
                                         + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                             * (conn.from_port + 1) as f32;
-                                    Point::new(hw_width, py)
+                                    super::zoom::Viewport::new(&data, bounds)
+                                        .world(Point::new(hw_width, py))
                                 })
                             }
                         } else if let Some(device) =
@@ -2463,12 +2529,14 @@ impl canvas::Program<Message> for Graph {
                                 .iter()
                                 .position(|d| d == device)
                                 .map(|idx| {
-                                    Self::midi_hw_in_port_pos(
-                                        &data,
-                                        device,
-                                        idx,
-                                        midi_hw_box_h,
-                                        midi_hw_box_gap,
+                                    super::zoom::Viewport::new(&data, bounds).world(
+                                        Self::midi_hw_in_port_pos(
+                                            &data,
+                                            device,
+                                            idx,
+                                            midi_hw_box_h,
+                                            midi_hw_box_gap,
+                                        ),
                                     )
                                 })
                         } else if conn.from_track == IO_DELAY_ID {
@@ -2493,18 +2561,21 @@ impl canvas::Program<Message> for Graph {
                             || (self.effective_folder(&data).is_some() && end_is_folder)
                         {
                             if let Some(folder) = self.folder_track(&data) {
-                                Some(Self::folder_output_port_position(
-                                    folder,
-                                    conn.to_port,
-                                    bounds,
-                                    hw_width,
+                                Some(super::zoom::Viewport::new(&data, bounds).world(
+                                    Self::folder_output_port_position(
+                                        folder,
+                                        conn.to_port,
+                                        bounds,
+                                        hw_width,
+                                    ),
                                 ))
                             } else {
-                                data.hw_out.as_ref().map(move |hw_out| {
+                                data.hw_out.as_ref().map(|hw_out| {
                                     let py = 50.0
                                         + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                             * (conn.to_port + 1) as f32;
-                                    Point::new(bounds.width - hw_width, py)
+                                    super::zoom::Viewport::new(&data, bounds)
+                                        .world(Point::new(bounds.width - hw_width, py))
                                 })
                             }
                         } else if let Some(device) =
@@ -2514,14 +2585,16 @@ impl canvas::Program<Message> for Graph {
                                 .iter()
                                 .position(|d| d == device)
                                 .map(|idx| {
-                                    Self::midi_hw_out_port_pos(
-                                        &data,
-                                        device,
-                                        idx,
-                                        bounds,
-                                        hw_width,
-                                        midi_hw_box_h,
-                                        midi_hw_box_gap,
+                                    super::zoom::Viewport::new(&data, bounds).world(
+                                        Self::midi_hw_out_port_pos(
+                                            &data,
+                                            device,
+                                            idx,
+                                            bounds,
+                                            hw_width,
+                                            midi_hw_box_h,
+                                            midi_hw_box_gap,
+                                        ),
                                     )
                                 })
                         } else if let Some(measurement_id) =
@@ -2591,6 +2664,9 @@ impl canvas::Program<Message> for Graph {
                         return Some(action);
                     }
 
+                    if data.shift {
+                        return Some(state.zoom_animation.begin_pan(cursor.position()?));
+                    }
                     return Some(Action::publish(Message::ConnectionViewDeselectAll));
                 }
 
@@ -2656,10 +2732,12 @@ impl canvas::Program<Message> for Graph {
                                 if let Some(folder) = self.folder_track(&data) {
                                     let count = Self::folder_input_count(folder);
                                     for j in 0..count {
-                                        let pos = Self::folder_input_port_position(
-                                            folder, j, bounds, hw_width,
+                                        let pos = super::zoom::Viewport::new(&data, bounds).world(
+                                            Self::folder_input_port_position(
+                                                folder, j, bounds, hw_width,
+                                            ),
                                         );
-                                        if cursor_position.distance(pos) < 10.0 {
+                                        if cursor_position.distance(pos) * zoom < 10.0 {
                                             target_port = Some((HW_IN_ID.to_string(), j));
                                             break;
                                         }
@@ -2670,7 +2748,11 @@ impl canvas::Program<Message> for Graph {
                                             + ((bounds.height - 60.0)
                                                 / (hw_in.channels + 1) as f32)
                                                 * (j + 1) as f32;
-                                        if cursor_position.distance(Point::new(hw_width, py)) < 10.0
+                                        if cursor_position.distance(
+                                            super::zoom::Viewport::new(&data, bounds)
+                                                .world(Point::new(hw_width, py)),
+                                        ) * zoom
+                                            < 10.0
                                         {
                                             target_port = Some((HW_IN_ID.to_string(), j));
                                             break;
@@ -2695,14 +2777,16 @@ impl canvas::Program<Message> for Graph {
                                 && self.effective_folder(&data).is_none()
                             {
                                 for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
-                                    let port_pos = Self::midi_hw_in_port_pos(
-                                        &data,
-                                        device,
-                                        idx,
-                                        midi_hw_box_h,
-                                        midi_hw_box_gap,
+                                    let port_pos = super::zoom::Viewport::new(&data, bounds).world(
+                                        Self::midi_hw_in_port_pos(
+                                            &data,
+                                            device,
+                                            idx,
+                                            midi_hw_box_h,
+                                            midi_hw_box_gap,
+                                        ),
                                     );
-                                    if cursor_position.distance(port_pos) < 10.0 {
+                                    if cursor_position.distance(port_pos) * zoom < 10.0 {
                                         target_port =
                                             Some((format!("{MIDI_HW_IN_ID}:{device}"), 0));
                                         break;
@@ -2739,10 +2823,12 @@ impl canvas::Program<Message> for Graph {
                                 if let Some(folder) = self.folder_track(&data) {
                                     let count = Self::folder_output_count(folder);
                                     for j in 0..count {
-                                        let pos = Self::folder_output_port_position(
-                                            folder, j, bounds, hw_width,
+                                        let pos = super::zoom::Viewport::new(&data, bounds).world(
+                                            Self::folder_output_port_position(
+                                                folder, j, bounds, hw_width,
+                                            ),
                                         );
-                                        if cursor_position.distance(pos) < 10.0 {
+                                        if cursor_position.distance(pos) * zoom < 10.0 {
                                             target_port = Some((HW_OUT_ID.to_string(), j));
                                             break;
                                         }
@@ -2753,8 +2839,10 @@ impl canvas::Program<Message> for Graph {
                                             + ((bounds.height - 60.0)
                                                 / (hw_out.channels + 1) as f32)
                                                 * (j + 1) as f32;
-                                        if cursor_position
-                                            .distance(Point::new(bounds.width - hw_width, py))
+                                        if cursor_position.distance(
+                                            super::zoom::Viewport::new(&data, bounds)
+                                                .world(Point::new(bounds.width - hw_width, py)),
+                                        ) * zoom
                                             < 10.0
                                         {
                                             target_port = Some((HW_OUT_ID.to_string(), j));
@@ -2784,16 +2872,18 @@ impl canvas::Program<Message> for Graph {
                                 && self.effective_folder(&data).is_none()
                             {
                                 for (idx, device) in data.opened_midi_out_hw.iter().enumerate() {
-                                    let port_pos = Self::midi_hw_out_port_pos(
-                                        &data,
-                                        device,
-                                        idx,
-                                        bounds,
-                                        hw_width,
-                                        midi_hw_box_h,
-                                        midi_hw_box_gap,
+                                    let port_pos = super::zoom::Viewport::new(&data, bounds).world(
+                                        Self::midi_hw_out_port_pos(
+                                            &data,
+                                            device,
+                                            idx,
+                                            bounds,
+                                            hw_width,
+                                            midi_hw_box_h,
+                                            midi_hw_box_gap,
+                                        ),
                                     );
-                                    if cursor_position.distance(port_pos) < 10.0 {
+                                    if cursor_position.distance(port_pos) * zoom < 10.0 {
                                         target_port =
                                             Some((format!("{MIDI_HW_OUT_ID}:{device}"), 0));
                                         break;
@@ -2824,6 +2914,7 @@ impl canvas::Program<Message> for Graph {
                                     .collect::<Vec<_>>(),
                                 cursor_position,
                                 radius,
+                                zoom,
                             );
                             if let Some(target) = target {
                                 let target_ref =
@@ -3215,6 +3306,7 @@ impl canvas::Program<Message> for Graph {
                                 .collect::<Vec<_>>(),
                             cursor_position,
                             radius,
+                            zoom,
                         );
                         if let Some(target) = target {
                             let from_node = connecting.from_node.clone();
@@ -3412,8 +3504,10 @@ impl canvas::Program<Message> for Graph {
                     {
                         let in_count = Self::folder_input_count(folder);
                         for j in 0..in_count {
-                            let pos = Self::folder_input_port_position(folder, j, bounds, hw_width);
-                            if cursor_position.distance(pos) < 10.0 {
+                            let pos = super::zoom::Viewport::new(&data, bounds).world(
+                                Self::folder_input_port_position(folder, j, bounds, hw_width),
+                            );
+                            if cursor_position.distance(pos) * zoom < 10.0 {
                                 new_h = Some(Hovering::Port {
                                     track_idx: HW_IN_ID.to_string(),
                                     port_idx: j,
@@ -3425,9 +3519,10 @@ impl canvas::Program<Message> for Graph {
                         if new_h.is_none() {
                             let out_count = Self::folder_output_count(folder);
                             for j in 0..out_count {
-                                let pos =
-                                    Self::folder_output_port_position(folder, j, bounds, hw_width);
-                                if cursor_position.distance(pos) < 10.0 {
+                                let pos = super::zoom::Viewport::new(&data, bounds).world(
+                                    Self::folder_output_port_position(folder, j, bounds, hw_width),
+                                );
+                                if cursor_position.distance(pos) * zoom < 10.0 {
                                     new_h = Some(Hovering::Port {
                                         track_idx: HW_OUT_ID.to_string(),
                                         port_idx: j,
@@ -3449,7 +3544,12 @@ impl canvas::Program<Message> for Graph {
                                 + 50.0
                                 + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                     * (j + 1) as f32;
-                            if cursor_position.distance(Point::new(pos.x + hw_width, py)) < 10.0 {
+                            if cursor_position.distance(
+                                super::zoom::Viewport::new(&data, bounds)
+                                    .world(Point::new(pos.x + hw_width, py)),
+                            ) * zoom
+                                < 10.0
+                            {
                                 new_h = Some(Hovering::Port {
                                     track_idx: HW_IN_ID.to_string(),
                                     port_idx: j,
@@ -3470,7 +3570,12 @@ impl canvas::Program<Message> for Graph {
                                 + 50.0
                                 + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                     * (j + 1) as f32;
-                            if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
+                            if cursor_position.distance(
+                                super::zoom::Viewport::new(&data, bounds)
+                                    .world(Point::new(pos.x, py)),
+                            ) * zoom
+                                < 10.0
+                            {
                                 new_h = Some(Hovering::Port {
                                     track_idx: HW_OUT_ID.to_string(),
                                     port_idx: j,
@@ -3509,14 +3614,16 @@ impl canvas::Program<Message> for Graph {
 
                     if new_h.is_none() && !folder_view {
                         for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
-                            let port_pos = Self::midi_hw_in_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
+                            let port_pos = super::zoom::Viewport::new(&data, bounds).world(
+                                Self::midi_hw_in_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                ),
                             );
-                            if cursor_position.distance(port_pos) < 10.0 {
+                            if cursor_position.distance(port_pos) * zoom < 10.0 {
                                 new_h = Some(Hovering::Port {
                                     track_idx: format!("{MIDI_HW_IN_ID}:{device}"),
                                     port_idx: 0,
@@ -3529,16 +3636,18 @@ impl canvas::Program<Message> for Graph {
 
                     if new_h.is_none() && !folder_view {
                         for (idx, device) in data.opened_midi_out_hw.iter().enumerate() {
-                            let port_pos = Self::midi_hw_out_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                bounds,
-                                hw_width,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
+                            let port_pos = super::zoom::Viewport::new(&data, bounds).world(
+                                Self::midi_hw_out_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    bounds,
+                                    hw_width,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                ),
                             );
-                            if cursor_position.distance(port_pos) < 10.0 {
+                            if cursor_position.distance(port_pos) * zoom < 10.0 {
                                 new_h = Some(Hovering::Port {
                                     track_idx: format!("{MIDI_HW_OUT_ID}:{device}"),
                                     port_idx: 0,
@@ -3702,8 +3811,8 @@ impl canvas::Program<Message> for Graph {
                             data.midi_hw_in_positions.insert(
                                 device.to_string(),
                                 Point::new(
-                                    cursor_position.x - mt.offset_x,
-                                    cursor_position.y - mt.offset_y,
+                                    screen_cursor.x - mt.offset_x,
+                                    screen_cursor.y - mt.offset_y,
                                 ),
                             );
                             redraw_needed = true;
@@ -3713,8 +3822,8 @@ impl canvas::Program<Message> for Graph {
                             data.midi_hw_out_positions.insert(
                                 device.to_string(),
                                 Point::new(
-                                    cursor_position.x - mt.offset_x,
-                                    cursor_position.y - mt.offset_y,
+                                    screen_cursor.x - mt.offset_x,
+                                    screen_cursor.y - mt.offset_y,
                                 ),
                             );
                             redraw_needed = true;
@@ -3764,10 +3873,22 @@ impl canvas::Program<Message> for Graph {
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
+        let viewport = self.state.try_read().map_or(
+            super::zoom::Viewport {
+                scale: 1.0,
+                center: Point::new(bounds.width / 2.0, bounds.height / 2.0),
+                pan: maolan_widgets::iced::Vector::ZERO,
+            },
+            |data| super::zoom::Viewport::new(&data, bounds),
+        );
+        let zoom = viewport.scale;
+        let center = viewport.center;
         let hw_width = 70.0;
         let midi_hw_box_h = 24.0;
         let midi_hw_box_gap = 6.0;
-        let cursor_position = cursor.position_in(bounds);
+        let cursor_position = cursor
+            .position_in(bounds)
+            .map(|point| viewport.world(point));
         let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
         let draw_gradient_box =
             |frame: &mut Frame, pos: Point, size: maolan_widgets::iced::Size, base: Color| {
@@ -3811,44 +3932,6 @@ impl canvas::Program<Message> for Graph {
                 .add_stop(1.0, darken(base, 0.08));
                 frame.fill(&path, grad);
             };
-        let draw_grid = |frame: &mut Frame, width: f32, height: f32| {
-            let minor = 24.0;
-            let major_every = 4usize;
-            let minor_color = Color::from_rgba(0.78, 0.86, 1.0, 0.05);
-            let major_color = Color::from_rgba(0.78, 0.86, 1.0, 0.10);
-
-            let mut i = 0usize;
-            let mut x = 0.0;
-            while x <= width {
-                let c = if i.is_multiple_of(major_every) {
-                    major_color
-                } else {
-                    minor_color
-                };
-                frame.stroke(
-                    &Path::line(Point::new(x, 0.0), Point::new(x, height)),
-                    canvas::Stroke::default().with_color(c).with_width(1.0),
-                );
-                i += 1;
-                x += minor;
-            }
-
-            let mut j = 0usize;
-            let mut y = 0.0;
-            while y <= height {
-                let c = if j.is_multiple_of(major_every) {
-                    major_color
-                } else {
-                    minor_color
-                };
-                frame.stroke(
-                    &Path::line(Point::new(0.0, y), Point::new(width, y)),
-                    canvas::Stroke::default().with_color(c).with_width(1.0),
-                );
-                j += 1;
-                y += minor;
-            }
-        };
         let bg = rgb8(23, 31, 48);
         let edge_panel = rgb8(27, 35, 54);
         let edge_panel_border = rgb8(66, 78, 108);
@@ -3868,24 +3951,17 @@ impl canvas::Program<Message> for Graph {
         let conn_midi = midi_connection_color();
         let conn_selected = selected_connection_color();
         frame.fill(&Path::rectangle(Point::new(0.0, 0.0), bounds.size()), bg);
-        draw_grid(&mut frame, bounds.width, bounds.height);
+        super::zoom::draw_grid(&mut frame, bounds, viewport);
+        frame.push_transform();
+        frame.translate(viewport.pan);
+        frame.translate(maolan_widgets::iced::Vector::new(center.x, center.y));
+        frame.scale(zoom);
+        frame.translate(maolan_widgets::iced::Vector::new(-center.x, -center.y));
 
         if let Ok(data) = self.state.try_read() {
             use crate::state::ConnectionViewSelection;
 
             let visible_names = self.visible_track_names(&data);
-            if let Some(folder) = self.effective_folder(&data) {
-                frame.fill_text(Text {
-                    content: format!("Folder: {folder}"),
-                    position: Point::new(bounds.width / 2.0, 18.0),
-                    color: Color::from_rgb(0.78, 0.86, 1.0),
-                    size: 14.0.into(),
-                    align_x: Horizontal::Center.into(),
-                    align_y: Vertical::Center,
-                    ..Default::default()
-                });
-            }
-
             let folder_name_opt = self.effective_folder(&data);
             for (idx, conn) in data.connections.iter().enumerate() {
                 // In folder view, hide track-level connections that involve the folder
@@ -3919,18 +3995,21 @@ impl canvas::Program<Message> for Graph {
                     || (self.effective_folder(&data).is_some() && start_is_folder)
                 {
                     if let Some(folder) = self.folder_track(&data) {
-                        Some(Self::folder_input_port_position(
-                            folder,
-                            conn.from_port,
-                            bounds,
-                            hw_width,
+                        Some(super::zoom::Viewport::new(&data, bounds).world(
+                            Self::folder_input_port_position(
+                                folder,
+                                conn.from_port,
+                                bounds,
+                                hw_width,
+                            ),
                         ))
                     } else {
-                        data.hw_in.as_ref().map(move |hw_in| {
+                        data.hw_in.as_ref().map(|hw_in| {
                             let py = 50.0
                                 + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                     * (conn.from_port + 1) as f32;
-                            Point::new(hw_width, py)
+                            super::zoom::Viewport::new(&data, bounds)
+                                .world(Point::new(hw_width, py))
                         })
                     }
                 } else if let Some(device) =
@@ -3940,12 +4019,14 @@ impl canvas::Program<Message> for Graph {
                         .iter()
                         .position(|d| d == device)
                         .map(|idx| {
-                            Self::midi_hw_in_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
+                            super::zoom::Viewport::new(&data, bounds).world(
+                                Self::midi_hw_in_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                ),
                             )
                         })
                 } else if conn.from_track == IO_DELAY_ID {
@@ -3964,18 +4045,21 @@ impl canvas::Program<Message> for Graph {
                     || (self.effective_folder(&data).is_some() && end_is_folder)
                 {
                     if let Some(folder) = self.folder_track(&data) {
-                        Some(Self::folder_output_port_position(
-                            folder,
-                            conn.to_port,
-                            bounds,
-                            hw_width,
+                        Some(super::zoom::Viewport::new(&data, bounds).world(
+                            Self::folder_output_port_position(
+                                folder,
+                                conn.to_port,
+                                bounds,
+                                hw_width,
+                            ),
                         ))
                     } else {
-                        data.hw_out.as_ref().map(move |hw_out| {
+                        data.hw_out.as_ref().map(|hw_out| {
                             let py = 50.0
                                 + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                     * (conn.to_port + 1) as f32;
-                            Point::new(bounds.width - hw_width, py)
+                            super::zoom::Viewport::new(&data, bounds)
+                                .world(Point::new(bounds.width - hw_width, py))
                         })
                     }
                 } else if let Some(device) =
@@ -3985,14 +4069,16 @@ impl canvas::Program<Message> for Graph {
                         .iter()
                         .position(|d| d == device)
                         .map(|idx| {
-                            Self::midi_hw_out_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                bounds,
-                                hw_width,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
+                            super::zoom::Viewport::new(&data, bounds).world(
+                                Self::midi_hw_out_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    bounds,
+                                    hw_width,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                ),
                             )
                         })
                 } else if let Some(measurement_id) = Self::iodelay_measurement_id(&conn.to_track) {
@@ -4239,28 +4325,34 @@ impl canvas::Program<Message> for Graph {
                     let from_port = conn.from_port + offset;
                     let start_point = if conn.from_track == HW_IN_ID {
                         if let Some(folder) = folder_track {
-                            Some(Self::folder_input_port_position(
-                                folder, from_port, bounds, hw_width,
+                            Some(super::zoom::Viewport::new(&data, bounds).world(
+                                Self::folder_input_port_position(
+                                    folder, from_port, bounds, hw_width,
+                                ),
                             ))
                         } else {
-                            data.hw_in.as_ref().map(move |hw_in| {
+                            data.hw_in.as_ref().map(|hw_in| {
                                 let py = 50.0
                                     + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                         * (from_port + 1) as f32;
-                                Point::new(hw_width, py)
+                                super::zoom::Viewport::new(&data, bounds)
+                                    .world(Point::new(hw_width, py))
                             })
                         }
                     } else if conn.from_track == HW_OUT_ID {
                         if let Some(folder) = folder_track {
-                            Some(Self::folder_output_port_position(
-                                folder, from_port, bounds, hw_width,
+                            Some(super::zoom::Viewport::new(&data, bounds).world(
+                                Self::folder_output_port_position(
+                                    folder, from_port, bounds, hw_width,
+                                ),
                             ))
                         } else {
-                            data.hw_out.as_ref().map(move |hw_out| {
+                            data.hw_out.as_ref().map(|hw_out| {
                                 let py = 50.0
                                     + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                         * (from_port + 1) as f32;
-                                Point::new(bounds.width - hw_width, py)
+                                super::zoom::Viewport::new(&data, bounds)
+                                    .world(Point::new(bounds.width - hw_width, py))
                             })
                         }
                     } else if let Some(device) =
@@ -4270,12 +4362,14 @@ impl canvas::Program<Message> for Graph {
                             .iter()
                             .position(|d| d == device)
                             .map(|idx| {
-                                Self::midi_hw_in_port_pos(
-                                    &data,
-                                    device,
-                                    idx,
-                                    midi_hw_box_h,
-                                    midi_hw_box_gap,
+                                super::zoom::Viewport::new(&data, bounds).world(
+                                    Self::midi_hw_in_port_pos(
+                                        &data,
+                                        device,
+                                        idx,
+                                        midi_hw_box_h,
+                                        midi_hw_box_gap,
+                                    ),
                                 )
                             })
                     } else if let Some(device) =
@@ -4285,14 +4379,16 @@ impl canvas::Program<Message> for Graph {
                             .iter()
                             .position(|d| d == device)
                             .map(|idx| {
-                                Self::midi_hw_out_port_pos(
-                                    &data,
-                                    device,
-                                    idx,
-                                    bounds,
-                                    hw_width,
-                                    midi_hw_box_h,
-                                    midi_hw_box_gap,
+                                super::zoom::Viewport::new(&data, bounds).world(
+                                    Self::midi_hw_out_port_pos(
+                                        &data,
+                                        device,
+                                        idx,
+                                        bounds,
+                                        hw_width,
+                                        midi_hw_box_h,
+                                        midi_hw_box_gap,
+                                    ),
                                 )
                             })
                     } else if conn.from_track == IO_DELAY_ID {
@@ -4387,135 +4483,6 @@ impl canvas::Program<Message> for Graph {
                                 .with_width(2.0),
                         );
                     }
-                }
-            }
-
-            if self.folder_track(&data).is_some() {
-                let panel_style = FolderPanelStyle {
-                    fill: edge_panel,
-                    border: edge_panel_border,
-                };
-                self.draw_folder_side_panel(&mut frame, &data, bounds, hw_width, true, panel_style);
-                self.draw_folder_side_panel(
-                    &mut frame,
-                    &data,
-                    bounds,
-                    hw_width,
-                    false,
-                    panel_style,
-                );
-            }
-
-            if self.effective_folder(&data).is_none()
-                && let Some(hw_in) = &data.hw_in
-            {
-                let pos = Point::new(0.0, 0.0);
-                let rect = Path::rectangle(
-                    pos,
-                    maolan_widgets::iced::Size::new(hw_width, bounds.height),
-                );
-                frame.fill(&rect, edge_panel);
-                frame.stroke(
-                    &rect,
-                    canvas::Stroke::default()
-                        .with_color(edge_panel_border)
-                        .with_width(2.0),
-                );
-                frame.fill_text(Text {
-                    content: "hw:in".into(),
-                    position: Point::new(pos.x + hw_width / 2.0, pos.y + 20.0),
-                    color: Color::WHITE,
-                    align_x: Horizontal::Center.into(),
-                    ..Default::default()
-                });
-                for j in 0..hw_in.channels {
-                    let py = pos.y
-                        + 50.0
-                        + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32) * (j + 1) as f32;
-                    frame.fill_text(Text {
-                        content: format!("{}", j + 1),
-                        position: Point::new(pos.x + hw_width - 10.0, py),
-                        color: Color::from_rgb(0.65, 0.72, 0.84),
-                        size: 10.0.into(),
-                        align_x: Horizontal::Right.into(),
-                        align_y: Vertical::Center,
-                        ..Default::default()
-                    });
-                    let h_port = Hovering::Port {
-                        track_idx: HW_IN_ID.to_string(),
-                        port_idx: j,
-                        is_input: false,
-                    };
-                    let h = data.hovering == Some(h_port.clone());
-
-                    let can_highlight_port = should_highlight_port(
-                        h,
-                        data.connecting.as_ref().map(|c| c.kind),
-                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
-                    );
-
-                    frame.fill(
-                        &Path::circle(
-                            Point::new(pos.x + hw_width, py),
-                            hover_radius(5.0, can_highlight_port),
-                        ),
-                        audio_port_color(),
-                    );
-                }
-            }
-
-            if self.effective_folder(&data).is_none()
-                && let Some(hw_out) = &data.hw_out
-            {
-                let pos = Point::new(bounds.width - hw_width, 0.0);
-                let rect = Path::rectangle(
-                    pos,
-                    maolan_widgets::iced::Size::new(hw_width, bounds.height),
-                );
-                frame.fill(&rect, edge_panel);
-                frame.stroke(
-                    &rect,
-                    canvas::Stroke::default()
-                        .with_color(edge_panel_border)
-                        .with_width(2.0),
-                );
-                frame.fill_text(Text {
-                    content: "hw:out".into(),
-                    position: Point::new(pos.x + hw_width / 2.0, pos.y + 20.0),
-                    color: Color::WHITE,
-                    align_x: Horizontal::Center.into(),
-                    ..Default::default()
-                });
-                for j in 0..hw_out.channels {
-                    let py = pos.y
-                        + 50.0
-                        + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32) * (j + 1) as f32;
-                    frame.fill_text(Text {
-                        content: format!("{}", j + 1),
-                        position: Point::new(pos.x + 10.0, py),
-                        color: Color::from_rgb(0.65, 0.72, 0.84),
-                        size: 10.0.into(),
-                        align_x: Horizontal::Left.into(),
-                        align_y: Vertical::Center,
-                        ..Default::default()
-                    });
-                    let h_port = Hovering::Port {
-                        track_idx: HW_OUT_ID.to_string(),
-                        port_idx: j,
-                        is_input: true,
-                    };
-                    let h = data.hovering == Some(h_port.clone());
-
-                    let can_highlight_port = should_highlight_port(
-                        h,
-                        data.connecting.as_ref().map(|c| c.kind),
-                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
-                    );
-
-                    frame.fill(
-                        &Path::circle(Point::new(pos.x, py), hover_radius(5.0, can_highlight_port)),
-                        audio_port_color(),
-                    );
                 }
             }
 
@@ -4631,163 +4598,6 @@ impl canvas::Program<Message> for Graph {
                             audio_port_color(),
                         );
                     }
-                }
-            }
-
-            if self.effective_folder(&data).is_none() {
-                for (j, device) in data.opened_midi_in_hw.iter().enumerate() {
-                    let label = Self::midi_device_label(&data, device);
-                    let default_rect =
-                        Self::default_midi_in_rect(j, &label, midi_hw_box_h, midi_hw_box_gap);
-                    let pos = data
-                        .midi_hw_in_positions
-                        .get(device)
-                        .copied()
-                        .unwrap_or(Point::new(default_rect.x, default_rect.y));
-                    let selected_id = format!("{MIDI_HW_IN_ID}:{device}");
-                    let is_selected = data
-                        .moving_track
-                        .as_ref()
-                        .is_some_and(|mt| mt.track_idx == selected_id);
-                    let rect = Path::rectangle(
-                        pos,
-                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
-                    );
-                    let fill_color = if is_selected {
-                        midi_box_selected_fill
-                    } else {
-                        midi_box_fill
-                    };
-                    let stroke_color = if is_selected {
-                        midi_port_color()
-                    } else {
-                        midi_box_border
-                    };
-                    draw_gradient_box(
-                        &mut frame,
-                        pos,
-                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
-                        fill_color,
-                    );
-                    frame.stroke(
-                        &rect,
-                        canvas::Stroke::default()
-                            .with_color(stroke_color)
-                            .with_width(2.0),
-                    );
-                    frame.fill_text(Text {
-                        content: label,
-                        position: Point::new(
-                            pos.x + default_rect.width / 2.0,
-                            pos.y + default_rect.height / 2.0,
-                        ),
-                        color: Color::WHITE,
-                        size: 11.0.into(),
-                        align_x: Horizontal::Center.into(),
-                        align_y: Vertical::Center,
-                        ..Default::default()
-                    });
-                    frame.fill(
-                        &Path::circle(
-                            Point::new(
-                                pos.x + default_rect.width,
-                                pos.y + default_rect.height / 2.0,
-                            ),
-                            hover_radius(
-                                5.0,
-                                should_highlight_port(
-                                    data.hovering
-                                        == Some(Hovering::Port {
-                                            track_idx: selected_id.clone(),
-                                            port_idx: 0,
-                                            is_input: false,
-                                        }),
-                                    data.connecting.as_ref().map(|c| c.kind),
-                                    Kind::MIDI,
-                                ),
-                            ),
-                        ),
-                        midi_port_color(),
-                    );
-                }
-
-                for (j, device) in data.opened_midi_out_hw.iter().enumerate() {
-                    let label = Self::midi_device_label(&data, device);
-                    let default_rect = Self::default_midi_out_rect(
-                        j,
-                        &label,
-                        bounds,
-                        hw_width,
-                        midi_hw_box_h,
-                        midi_hw_box_gap,
-                    );
-                    let pos = data
-                        .midi_hw_out_positions
-                        .get(device)
-                        .copied()
-                        .unwrap_or(Point::new(default_rect.x, default_rect.y));
-                    let selected_id = format!("{MIDI_HW_OUT_ID}:{device}");
-                    let is_selected = data
-                        .moving_track
-                        .as_ref()
-                        .is_some_and(|mt| mt.track_idx == selected_id);
-                    let rect = Path::rectangle(
-                        pos,
-                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
-                    );
-                    let fill_color = if is_selected {
-                        midi_box_selected_fill
-                    } else {
-                        midi_box_fill
-                    };
-                    let stroke_color = if is_selected {
-                        midi_port_color()
-                    } else {
-                        midi_box_border
-                    };
-                    draw_gradient_box(
-                        &mut frame,
-                        pos,
-                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
-                        fill_color,
-                    );
-                    frame.stroke(
-                        &rect,
-                        canvas::Stroke::default()
-                            .with_color(stroke_color)
-                            .with_width(2.0),
-                    );
-                    frame.fill_text(Text {
-                        content: label,
-                        position: Point::new(
-                            pos.x + default_rect.width / 2.0,
-                            pos.y + default_rect.height / 2.0,
-                        ),
-                        color: Color::WHITE,
-                        size: 11.0.into(),
-                        align_x: Horizontal::Center.into(),
-                        align_y: Vertical::Center,
-                        ..Default::default()
-                    });
-                    frame.fill(
-                        &Path::circle(
-                            Point::new(pos.x, pos.y + default_rect.height / 2.0),
-                            hover_radius(
-                                5.0,
-                                should_highlight_port(
-                                    data.hovering
-                                        == Some(Hovering::Port {
-                                            track_idx: selected_id.clone(),
-                                            port_idx: 0,
-                                            is_input: true,
-                                        }),
-                                    data.connecting.as_ref().map(|c| c.kind),
-                                    Kind::MIDI,
-                                ),
-                            ),
-                        ),
-                        midi_port_color(),
-                    );
                 }
             }
 
@@ -5187,6 +4997,292 @@ impl canvas::Program<Message> for Graph {
                     });
                 }
             }
+            frame.pop_transform();
+            if self.folder_track(&data).is_some() {
+                let panel_style = FolderPanelStyle {
+                    fill: edge_panel,
+                    border: edge_panel_border,
+                };
+                self.draw_folder_side_panel(&mut frame, &data, bounds, hw_width, true, panel_style);
+                self.draw_folder_side_panel(
+                    &mut frame,
+                    &data,
+                    bounds,
+                    hw_width,
+                    false,
+                    panel_style,
+                );
+            }
+
+            if self.effective_folder(&data).is_none()
+                && let Some(hw_in) = &data.hw_in
+            {
+                let pos = Point::new(0.0, 0.0);
+                let rect = Path::rectangle(
+                    pos,
+                    maolan_widgets::iced::Size::new(hw_width, bounds.height),
+                );
+                frame.fill(&rect, edge_panel);
+                frame.stroke(
+                    &rect,
+                    canvas::Stroke::default()
+                        .with_color(edge_panel_border)
+                        .with_width(2.0),
+                );
+                frame.fill_text(Text {
+                    content: "hw:in".into(),
+                    position: Point::new(pos.x + hw_width / 2.0, pos.y + 20.0),
+                    color: Color::WHITE,
+                    align_x: Horizontal::Center.into(),
+                    ..Default::default()
+                });
+                for j in 0..hw_in.channels {
+                    let py = pos.y
+                        + 50.0
+                        + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32) * (j + 1) as f32;
+                    frame.fill_text(Text {
+                        content: format!("{}", j + 1),
+                        position: Point::new(pos.x + hw_width - 10.0, py),
+                        color: Color::from_rgb(0.65, 0.72, 0.84),
+                        size: 10.0.into(),
+                        align_x: Horizontal::Right.into(),
+                        align_y: Vertical::Center,
+                        ..Default::default()
+                    });
+                    let h_port = Hovering::Port {
+                        track_idx: HW_IN_ID.to_string(),
+                        port_idx: j,
+                        is_input: false,
+                    };
+                    let h = data.hovering == Some(h_port.clone());
+
+                    let can_highlight_port = should_highlight_port(
+                        h,
+                        data.connecting.as_ref().map(|c| c.kind),
+                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                    );
+
+                    frame.fill(
+                        &Path::circle(
+                            Point::new(pos.x + hw_width, py),
+                            hover_radius(5.0, can_highlight_port),
+                        ),
+                        audio_port_color(),
+                    );
+                }
+            }
+
+            if self.effective_folder(&data).is_none()
+                && let Some(hw_out) = &data.hw_out
+            {
+                let pos = Point::new(bounds.width - hw_width, 0.0);
+                let rect = Path::rectangle(
+                    pos,
+                    maolan_widgets::iced::Size::new(hw_width, bounds.height),
+                );
+                frame.fill(&rect, edge_panel);
+                frame.stroke(
+                    &rect,
+                    canvas::Stroke::default()
+                        .with_color(edge_panel_border)
+                        .with_width(2.0),
+                );
+                frame.fill_text(Text {
+                    content: "hw:out".into(),
+                    position: Point::new(pos.x + hw_width / 2.0, pos.y + 20.0),
+                    color: Color::WHITE,
+                    align_x: Horizontal::Center.into(),
+                    ..Default::default()
+                });
+                for j in 0..hw_out.channels {
+                    let py = pos.y
+                        + 50.0
+                        + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32) * (j + 1) as f32;
+                    frame.fill_text(Text {
+                        content: format!("{}", j + 1),
+                        position: Point::new(pos.x + 10.0, py),
+                        color: Color::from_rgb(0.65, 0.72, 0.84),
+                        size: 10.0.into(),
+                        align_x: Horizontal::Left.into(),
+                        align_y: Vertical::Center,
+                        ..Default::default()
+                    });
+                    let h_port = Hovering::Port {
+                        track_idx: HW_OUT_ID.to_string(),
+                        port_idx: j,
+                        is_input: true,
+                    };
+                    let h = data.hovering == Some(h_port.clone());
+
+                    let can_highlight_port = should_highlight_port(
+                        h,
+                        data.connecting.as_ref().map(|c| c.kind),
+                        self.get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                    );
+
+                    frame.fill(
+                        &Path::circle(Point::new(pos.x, py), hover_radius(5.0, can_highlight_port)),
+                        audio_port_color(),
+                    );
+                }
+            }
+
+            if self.effective_folder(&data).is_none() {
+                for (j, device) in data.opened_midi_in_hw.iter().enumerate() {
+                    let label = Self::midi_device_label(&data, device);
+                    let default_rect =
+                        Self::default_midi_in_rect(j, &label, midi_hw_box_h, midi_hw_box_gap);
+                    let pos = data
+                        .midi_hw_in_positions
+                        .get(device)
+                        .copied()
+                        .unwrap_or(Point::new(default_rect.x, default_rect.y));
+                    let selected_id = format!("{MIDI_HW_IN_ID}:{device}");
+                    let is_selected = data
+                        .moving_track
+                        .as_ref()
+                        .is_some_and(|mt| mt.track_idx == selected_id);
+                    let rect = Path::rectangle(
+                        pos,
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
+                    );
+                    let fill_color = if is_selected {
+                        midi_box_selected_fill
+                    } else {
+                        midi_box_fill
+                    };
+                    let stroke_color = if is_selected {
+                        midi_port_color()
+                    } else {
+                        midi_box_border
+                    };
+                    draw_gradient_box(
+                        &mut frame,
+                        pos,
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
+                        fill_color,
+                    );
+                    frame.stroke(
+                        &rect,
+                        canvas::Stroke::default()
+                            .with_color(stroke_color)
+                            .with_width(2.0),
+                    );
+                    frame.fill_text(Text {
+                        content: label,
+                        position: Point::new(
+                            pos.x + default_rect.width / 2.0,
+                            pos.y + default_rect.height / 2.0,
+                        ),
+                        color: Color::WHITE,
+                        size: 11.0.into(),
+                        align_x: Horizontal::Center.into(),
+                        align_y: Vertical::Center,
+                        ..Default::default()
+                    });
+                    frame.fill(
+                        &Path::circle(
+                            Point::new(
+                                pos.x + default_rect.width,
+                                pos.y + default_rect.height / 2.0,
+                            ),
+                            hover_radius(
+                                5.0,
+                                should_highlight_port(
+                                    data.hovering
+                                        == Some(Hovering::Port {
+                                            track_idx: selected_id.clone(),
+                                            port_idx: 0,
+                                            is_input: false,
+                                        }),
+                                    data.connecting.as_ref().map(|c| c.kind),
+                                    Kind::MIDI,
+                                ),
+                            ),
+                        ),
+                        midi_port_color(),
+                    );
+                }
+
+                for (j, device) in data.opened_midi_out_hw.iter().enumerate() {
+                    let label = Self::midi_device_label(&data, device);
+                    let default_rect = Self::default_midi_out_rect(
+                        j,
+                        &label,
+                        bounds,
+                        hw_width,
+                        midi_hw_box_h,
+                        midi_hw_box_gap,
+                    );
+                    let pos = data
+                        .midi_hw_out_positions
+                        .get(device)
+                        .copied()
+                        .unwrap_or(Point::new(default_rect.x, default_rect.y));
+                    let selected_id = format!("{MIDI_HW_OUT_ID}:{device}");
+                    let is_selected = data
+                        .moving_track
+                        .as_ref()
+                        .is_some_and(|mt| mt.track_idx == selected_id);
+                    let rect = Path::rectangle(
+                        pos,
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
+                    );
+                    let fill_color = if is_selected {
+                        midi_box_selected_fill
+                    } else {
+                        midi_box_fill
+                    };
+                    let stroke_color = if is_selected {
+                        midi_port_color()
+                    } else {
+                        midi_box_border
+                    };
+                    draw_gradient_box(
+                        &mut frame,
+                        pos,
+                        maolan_widgets::iced::Size::new(default_rect.width, default_rect.height),
+                        fill_color,
+                    );
+                    frame.stroke(
+                        &rect,
+                        canvas::Stroke::default()
+                            .with_color(stroke_color)
+                            .with_width(2.0),
+                    );
+                    frame.fill_text(Text {
+                        content: label,
+                        position: Point::new(
+                            pos.x + default_rect.width / 2.0,
+                            pos.y + default_rect.height / 2.0,
+                        ),
+                        color: Color::WHITE,
+                        size: 11.0.into(),
+                        align_x: Horizontal::Center.into(),
+                        align_y: Vertical::Center,
+                        ..Default::default()
+                    });
+                    frame.fill(
+                        &Path::circle(
+                            Point::new(pos.x, pos.y + default_rect.height / 2.0),
+                            hover_radius(
+                                5.0,
+                                should_highlight_port(
+                                    data.hovering
+                                        == Some(Hovering::Port {
+                                            track_idx: selected_id.clone(),
+                                            port_idx: 0,
+                                            is_input: true,
+                                        }),
+                                    data.connecting.as_ref().map(|c| c.kind),
+                                    Kind::MIDI,
+                                ),
+                            ),
+                        ),
+                        midi_port_color(),
+                    );
+                }
+            }
         }
         vec![frame.into_geometry()]
     }
@@ -5203,6 +5299,71 @@ mod tests {
     fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
         (message, status)
+    }
+
+    #[test]
+    fn fixed_hardware_and_focused_track_ports_remain_pickable_at_any_zoom() {
+        for zoom in [0.05, 0.25, 1.0, 4.0, 20.0] {
+            for focused in [false, true] {
+                for input in [true, false] {
+                    for offset in [0.0, 20.0] {
+                        let mut data = crate::state::StateData {
+                            connections_zoom: zoom,
+                            connections_zoom_anchor: Some(Point::new(234.0, 172.0)),
+                            hw_in: Some(crate::state::HW { channels: 2 }),
+                            hw_out: Some(crate::state::HW { channels: 2 }),
+                            ..Default::default()
+                        };
+                        if focused {
+                            data.tracks.push(crate::state::Track::new(
+                                "Synth".into(),
+                                0.0,
+                                2,
+                                2,
+                                0,
+                                0,
+                            ));
+                        }
+                        let bounds =
+                            Rectangle::new(Point::new(20.0, 30.0), Size::new(800.0, 600.0));
+                        let y = Graph::folder_input_port_y(0, 2, bounds.height);
+                        let x = if input {
+                            FOLDER_HW_WIDTH
+                        } else {
+                            bounds.width - FOLDER_HW_WIDTH
+                        };
+                        let shared = Arc::new(RwLock::new(data));
+                        let graph = Graph::new_with_focus(
+                            shared.clone(),
+                            focused.then(|| "Synth".into()),
+                            None,
+                        );
+                        let _ = graph.update(
+                            &mut GraphState::default(),
+                            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                            bounds,
+                            mouse::Cursor::Available(Point::new(
+                                bounds.x + x + offset,
+                                bounds.y + y,
+                            )),
+                        );
+                        let state = shared.read().unwrap();
+                        assert_eq!(
+                            state.connecting.is_some(),
+                            offset == 0.0,
+                            "zoom={zoom}, focused={focused}, input={input}, offset={offset}"
+                        );
+                        if let Some(connection) = &state.connecting {
+                            assert_eq!(connection.is_input, !input);
+                            assert_eq!(
+                                connection.from_track,
+                                if input { HW_IN_ID } else { HW_OUT_ID }
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
