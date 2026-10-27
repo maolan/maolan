@@ -371,7 +371,11 @@ impl Maolan {
                                 state.connections.retain(|conn| {
                                     conn.from_track != *name && conn.to_track != *name
                                 });
-                                state.undo_track_indices.insert(name.clone(), removed_idx);
+                                // Session replacement recreates tracks in saved order;
+                                // these removals must not supply undo insertion positions.
+                                if !self.session_ops.session_restore_in_progress {
+                                    state.undo_track_indices.insert(name.clone(), removed_idx);
+                                }
                                 state.tracks.remove(removed_idx);
 
                                 state.selected.remove(name);

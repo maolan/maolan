@@ -14,6 +14,7 @@ Maolan is a Rust DAW focused on recording, editing, routing, automation, export,
 
 - Unix builds support CLAP, VST3, and LV2.
 - Windows builds support CLAP and VST3.
+- macOS builds support AU and CLAP.
 - Plugin compatibility is host-dependent and should be treated as evolving rather than guaranteed.
 
 ## Build
