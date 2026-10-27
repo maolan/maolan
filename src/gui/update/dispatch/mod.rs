@@ -1384,6 +1384,9 @@ impl Maolan {
                 return self.handle_transport_control_message(message);
             }
             Message::ZoomSliderChanged(_)
+            | Message::ConnectionsZoomIn
+            | Message::ConnectionsZoomOut
+            | Message::ConnectionsZoomReset
             | Message::TimelineZoomByScroll(_)
             | Message::EditorScrollXChanged(_)
             | Message::EditorScrollXPixels(_)

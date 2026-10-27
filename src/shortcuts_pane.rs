@@ -153,6 +153,7 @@ fn connections_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
         "Mouse",
         vec![
             static_row("Drag plugin node: Move node"),
+            static_row("Shift + drag empty canvas: Pan view"),
             static_row("Drag from port to port: Create connection"),
             static_row("Select connection + Delete: Remove connection"),
             static_row("Select plugin + Delete: Remove plugin"),

@@ -6,3 +6,4 @@ pub mod port_kind;
 pub mod ports;
 pub mod selection;
 pub mod tracks;
+pub(crate) mod zoom;

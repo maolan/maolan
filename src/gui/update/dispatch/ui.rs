@@ -180,6 +180,29 @@ impl Maolan {
 impl Maolan {
     pub(super) fn handle_ui_message(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ConnectionsZoomIn
+            | Message::ConnectionsZoomOut
+            | Message::ConnectionsZoomReset => {
+                if let Ok(mut state) = self.state.write() {
+                    match message {
+                        Message::ConnectionsZoomIn => {
+                            state.connections_zoom =
+                                crate::connections::zoom::scaled(state.connections_zoom, 1.2);
+                        }
+                        Message::ConnectionsZoomOut => {
+                            state.connections_zoom =
+                                crate::connections::zoom::scaled(state.connections_zoom, 1.0 / 1.2);
+                        }
+                        Message::ConnectionsZoomReset => {
+                            state.connections_zoom = 1.0;
+                            state.connections_zoom_anchor = None;
+                            state.connections_pan = maolan_widgets::iced::Vector::ZERO;
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                return Task::none();
+            }
             Message::ZoomSliderChanged(value) => {
                 self.ui.zoom_visible_bars = crate::gui::zoom_slider_to_visible_bars(value);
                 let max_scroll = self.editor_max_scroll_samples();

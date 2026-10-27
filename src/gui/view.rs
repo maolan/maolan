@@ -313,6 +313,9 @@ impl Maolan {
                     let plugin_graph_track = state.plugin_graph_track.clone();
                     let plugin_graph_clip = state.plugin_graph_clip.clone();
                     let connections_folder = state.connections_folder.clone();
+                    let session_view_connections_active = state.session_view_connections.is_some();
+                    let editor_connections_active =
+                        state.editor_connections.is_some() && self.ui.editor_visible;
                     {
                         let mut cache = self.ui.track_names_cache.borrow_mut();
                         let unchanged = {
@@ -757,6 +760,13 @@ impl Maolan {
                             playhead_bar,
                             playhead_beat,
                             active_view: Some(view_kind.clone()),
+                            connections_zoom_visible: matches!(
+                                view_kind,
+                                View::Connections | View::TrackPlugins
+                            ) || (matches!(view_kind, View::Session)
+                                && session_view_connections_active)
+                                || (matches!(view_kind, View::Workspace)
+                                    && editor_connections_active),
                         }));
                     }
                     if matches!(view_kind, View::TrackPlugins) {
