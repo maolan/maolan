@@ -159,6 +159,11 @@ impl Maolan {
                 self.send(Action::TransportPosition(end_sample))
             }
             Message::PlaybackTick => {
+                // Progress messages redraw the export playhead. Playback
+                // ticks must not advance it or send timing changes to the renderer.
+                if self.export_playhead_active() {
+                    return Task::none();
+                }
                 if tokio::runtime::Handle::try_current().is_ok() {
                     if let Some(snapshot) = CLIENT.session_runtime_snapshot() {
                         if self.transport.live_session_playing && self.transport.record_armed {

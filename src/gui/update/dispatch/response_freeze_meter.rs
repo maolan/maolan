@@ -216,6 +216,64 @@ impl Maolan {
                     format!("Freeze canceled for '{}'", track_name);
                 Some(Task::none())
             }
+            Action::StemsOfflineBounceProgress {
+                progress,
+                operation,
+            } => {
+                if self.transfer.export_in_progress
+                    && self
+                        .transfer
+                        .export_pending_bounces
+                        .contains(maolan_engine::message::STEMS_BOUNCE_JOB_KEY)
+                {
+                    self.transfer.export_progress = 0.05 + progress * 0.15;
+                    self.transfer.export_operation = operation
+                        .clone()
+                        .or_else(|| Some("Bouncing tracks...".to_string()));
+                    self.update_export_playhead(*progress);
+                }
+                Some(Task::none())
+            }
+            Action::StemsOfflineBounced { stems } => {
+                if self.transfer.export_in_progress {
+                    *self
+                        .transfer
+                        .export_stem_bounce_outcome
+                        .lock()
+                        .expect("stem bounce outcome lock poisoned") =
+                        crate::gui::field_groups::StemBounceOutcome::Done(stems.clone());
+                    if self
+                        .transfer
+                        .export_pending_bounces
+                        .remove(maolan_engine::message::STEMS_BOUNCE_JOB_KEY)
+                        && self.transfer.export_pending_bounces.is_empty()
+                        && let Some(notify) = self.transfer.export_bounce_notify.take()
+                    {
+                        notify.notify_one();
+                    }
+                }
+                Some(Task::none())
+            }
+            Action::StemsOfflineBounceCanceled => {
+                if self.transfer.export_in_progress {
+                    *self
+                        .transfer
+                        .export_stem_bounce_outcome
+                        .lock()
+                        .expect("stem bounce outcome lock poisoned") =
+                        crate::gui::field_groups::StemBounceOutcome::Canceled;
+                    if self
+                        .transfer
+                        .export_pending_bounces
+                        .remove(maolan_engine::message::STEMS_BOUNCE_JOB_KEY)
+                        && self.transfer.export_pending_bounces.is_empty()
+                        && let Some(notify) = self.transfer.export_bounce_notify.take()
+                    {
+                        notify.notify_one();
+                    }
+                }
+                Some(Task::none())
+            }
             _ => None,
         }
     }
@@ -274,6 +332,83 @@ impl Maolan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn export_playhead_app() -> Maolan {
+        let mut app = Maolan::default();
+        app.transfer.export_in_progress = true;
+        app.transfer
+            .export_pending_bounces
+            .insert(maolan_engine::message::STEMS_BOUNCE_JOB_KEY.to_string());
+        app.transfer.export_playhead_range = Some((10_000, 110_000));
+        app.transfer.export_render_mode = crate::message::ExportRenderMode::StemsPostFader;
+        app.transport.playback_rate_hz = 48_000.0;
+        app
+    }
+
+    #[test]
+    fn stems_progress_snaps_playhead_to_export_position() {
+        let mut app = export_playhead_app();
+        let _ = app.update(Message::Response(Ok(Action::StemsOfflineBounceProgress {
+            progress: 0.5,
+            operation: Some("Rendering stems".to_string()),
+        })));
+        assert_eq!(app.transport.transport_samples, 60_000.0);
+    }
+
+    #[test]
+    fn export_playhead_waits_for_render_progress_and_ignores_transport_reports() {
+        let mut app = export_playhead_app();
+        app.transport.playing = true;
+        app.transport.paused = true;
+        app.update_export_playhead(0.5);
+        app.handle_response_timing_state_action(&Action::TransportPosition(123));
+        app.handle_response_timing_state_action(&Action::TransportPositionAt {
+            sample: 456,
+            after_frames: 64,
+        });
+        let _ = app.handle_transport_message(crate::message::Message::PlaybackTick);
+        assert_eq!(app.transport.transport_samples, 60_000.0);
+        assert!(!app.transport.playing);
+        app.update_export_playhead(0.75);
+        assert_eq!(app.transport.transport_samples, 85_000.0);
+    }
+
+    #[test]
+    fn export_playhead_restored_on_completion_error_or_cancellation() {
+        for (progress, operation) in [
+            (1.0, "Complete"),
+            (0.0, "Error: disk full"),
+            (0.0, "Error: Export cancelled"),
+        ] {
+            let mut app = export_playhead_app();
+            app.transfer.export_resume_sample = Some(42_000.0);
+            app.update_export_playhead(0.5);
+            let _ = app.handle_export_message(Message::ExportProgress {
+                progress,
+                operation: Some(operation.to_string()),
+            });
+            assert_eq!(app.transport.transport_samples, 42_000.0);
+            assert!(!app.export_playhead_active());
+            assert!(!app.transfer.export_in_progress);
+            app.handle_response_freeze_meter_action(&Action::StemsOfflineBounceProgress {
+                progress: 0.9,
+                operation: None,
+            });
+            assert_eq!(app.transport.transport_samples, 42_000.0);
+        }
+    }
+
+    #[test]
+    fn finishing_export_restores_transport_position() {
+        let mut app = export_playhead_app();
+        app.transport.transport_samples = 42_000.0;
+        app.transfer.export_resume_sample = Some(42_000.0);
+        app.update_export_playhead(0.5);
+        app.finish_export_playhead();
+        assert_eq!(app.transport.transport_samples, 42_000.0);
+        assert!(app.transfer.export_playhead_range.is_none());
+        assert!(app.transfer.export_resume_sample.is_none());
+    }
 
     #[test]
     fn folder_mute_clears_nested_audio_meters_and_rejects_stale_reports() {

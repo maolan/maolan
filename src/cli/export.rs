@@ -502,21 +502,37 @@ where
     }
 
     let mut written = Vec::new();
+    let is_post_fader = matches!(settings.render_mode, ExportRenderMode::StemsPostFader);
     for (idx, track) in selected_tracks.iter().enumerate() {
         progress_callback(
             0.1 + (idx as f32 / selected_tracks.len().max(1) as f32) * 0.75,
             Some(format!("Rendering stem: {}", track.name)),
         );
         let output_channels = track.output_ports.max(1);
-        let mut stem_buffer = mix_track_clips_to_channels(
-            &track.audio_clips,
-            session_root,
-            total_length,
-            output_channels,
-            track.level,
-            track.balance,
-            matches!(settings.render_mode, ExportRenderMode::StemsPostFader),
-        )?;
+        // Folder tracks hold no clips of their own; their stem is the sum of
+        // their subtracks, mixed the way they sound during playback.
+        let mut stem_buffer = if track.is_folder {
+            mix_folder_descendants(
+                track,
+                &tracks,
+                session_root,
+                total_length,
+                output_channels,
+                is_post_fader,
+                has_solo,
+                false,
+            )?
+        } else {
+            mix_track_clips_to_channels(
+                &track.audio_clips,
+                session_root,
+                total_length,
+                output_channels,
+                track.level,
+                track.balance,
+                is_post_fader,
+            )?
+        };
         if settings.normalize {
             apply_export_normalization(
                 &mut stem_buffer,
@@ -586,27 +602,7 @@ fn mix_track_clips_to_channels(
 ) -> io::Result<Vec<f32>> {
     let output_channels = output_channels.max(1);
     let mut mixed = vec![0.0_f32; total_length * output_channels];
-    let channel_gains = if apply_fader {
-        let level_amp = 10.0_f32.powf(level_db / 20.0);
-        if output_channels == 2 {
-            vec![
-                if balance <= 0.0 {
-                    level_amp
-                } else {
-                    level_amp * (1.0 - balance)
-                },
-                if balance >= 0.0 {
-                    level_amp
-                } else {
-                    level_amp * (1.0 + balance)
-                },
-            ]
-        } else {
-            vec![level_amp; output_channels]
-        }
-    } else {
-        vec![1.0; output_channels]
-    };
+    let channel_gains = channel_gains(output_channels, level_db, balance, apply_fader);
     for clip in clips {
         mix_clip_into_buffer(
             clip,
@@ -618,6 +614,175 @@ fn mix_track_clips_to_channels(
         )?;
     }
     Ok(mixed)
+}
+
+fn channel_gains(
+    output_channels: usize,
+    level_db: f32,
+    balance: f32,
+    apply_fader: bool,
+) -> Vec<f32> {
+    if !apply_fader {
+        return vec![1.0; output_channels.max(1)];
+    }
+    let level_amp = 10.0_f32.powf(level_db / 20.0);
+    if output_channels == 2 {
+        vec![
+            if balance <= 0.0 {
+                level_amp
+            } else {
+                level_amp * (1.0 - balance)
+            },
+            if balance >= 0.0 {
+                level_amp
+            } else {
+                level_amp * (1.0 + balance)
+            },
+        ]
+    } else {
+        vec![level_amp; output_channels.max(1)]
+    }
+}
+
+/// Mix a folder track's stem from its subtracks. Each subtrack is rendered
+/// into its own output channels (with its fader applied when `apply_fader`
+/// is set) and accumulated one-to-one into the folder's channels, mirroring
+/// the engine's implicit child-to-parent routing; the folder's own fader is
+/// then applied on top, exactly as it is during playback. Nested folders
+/// recurse, so every level's fader is honored.
+///
+/// Audibility mirrors the engine's mute/solo policy: muted tracks (and
+/// tracks inside a muted folder) are silent, and when any track is soloed
+/// only soloed tracks and tracks inside a soloed folder contribute. The
+/// engine additionally keeps "upstream" tracks of a soloed track audible
+/// through explicit cross-track connections; that case is not replicated
+/// here.
+fn mix_folder_descendants(
+    folder: &ExportTrack,
+    tracks: &[ExportTrack],
+    session_root: &Path,
+    total_length: usize,
+    output_channels: usize,
+    apply_fader: bool,
+    has_solo: bool,
+    solo_ancestor: bool,
+) -> io::Result<Vec<f32>> {
+    let output_channels = output_channels.max(1);
+    let mut mixed = vec![0.0_f32; total_length * output_channels];
+    let by_name: HashMap<&str, &ExportTrack> = tracks
+        .iter()
+        .map(|track| (track.name.as_str(), track))
+        .collect();
+    let mut children_map: HashMap<&str, Vec<&str>> = HashMap::new();
+    for track in tracks {
+        if let Some(parent) = track.parent_track.as_deref() {
+            children_map
+                .entry(parent)
+                .or_default()
+                .push(track.name.as_str());
+        }
+    }
+    // Stack entries: (track name, inside a soloed folder, inside a muted
+    // folder). A folder's solo/mute state applies to its whole subtree.
+    let folder_solo = folder.soloed || solo_ancestor;
+    let mut visited = HashSet::new();
+    let mut stack: Vec<(&str, bool, bool)> = children_map
+        .get(folder.name.as_str())
+        .into_iter()
+        .flatten()
+        .map(|&child| (child, folder_solo, folder.muted))
+        .collect();
+    while let Some((name, solo_ancestor, muted_ancestor)) = stack.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        let Some(track) = by_name.get(name).copied() else {
+            continue;
+        };
+        let in_muted_folder = muted_ancestor || track.muted;
+        let child_solo = solo_ancestor || track.soloed;
+        if track.is_folder {
+            // Folders hold no clips; recurse so nested subfolders still
+            // contribute — e.g. a soloed grandchild under an unsoloed
+            // subfolder sounds during playback. The recursion covers the
+            // whole subtree, so its children are not pushed on this stack.
+            if in_muted_folder {
+                continue;
+            }
+            let sub_buffer = mix_folder_descendants(
+                track,
+                tracks,
+                session_root,
+                total_length,
+                track.output_ports.max(1),
+                apply_fader,
+                has_solo,
+                child_solo,
+            )?;
+            accumulate_ports(
+                &mut mixed,
+                &sub_buffer,
+                total_length,
+                output_channels,
+                track.output_ports.max(1),
+            );
+        } else {
+            if let Some(children) = children_map.get(name) {
+                for &child in children {
+                    stack.push((child, child_solo, in_muted_folder));
+                }
+            }
+            if in_muted_folder || (has_solo && !track.soloed && !solo_ancestor) {
+                continue;
+            }
+            let track_channels = track.output_ports.max(1);
+            let track_buffer = mix_track_clips_to_channels(
+                &track.audio_clips,
+                session_root,
+                total_length,
+                track_channels,
+                track.level,
+                track.balance,
+                apply_fader,
+            )?;
+            accumulate_ports(
+                &mut mixed,
+                &track_buffer,
+                total_length,
+                output_channels,
+                track_channels,
+            );
+        }
+    }
+    if apply_fader {
+        let gains = channel_gains(output_channels, folder.level, folder.balance, true);
+        for frame in 0..total_length {
+            let base = frame * output_channels;
+            for (ch, gain) in gains.iter().enumerate() {
+                mixed[base + ch] *= gain;
+            }
+        }
+    }
+    Ok(mixed)
+}
+
+/// Add `src` into `dst` one output port at a time: source port *i* feeds
+/// destination port *i* for the ports both buffers have in common.
+fn accumulate_ports(
+    dst: &mut [f32],
+    src: &[f32],
+    total_length: usize,
+    dst_channels: usize,
+    src_channels: usize,
+) {
+    let common = dst_channels.min(src_channels);
+    for frame in 0..total_length {
+        let dst_base = frame * dst_channels;
+        let src_base = frame * src_channels;
+        for ch in 0..common {
+            dst[dst_base + ch] += src[src_base + ch];
+        }
+    }
 }
 
 fn mix_clip_into_buffer(
@@ -873,6 +1038,198 @@ fn apply_export_normalization(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod folder_stem_tests {
+    use super::*;
+    use crate::cli::support::ExportSessionData;
+
+    fn folder_stem_session(clip_name: &str) -> ExportSessionData {
+        ExportSessionData {
+            tracks: vec![
+                ExportTrack {
+                    name: "folder".to_string(),
+                    level: -6.0,
+                    balance: 0.0,
+                    muted: false,
+                    soloed: false,
+                    output_ports: 2,
+                    is_folder: true,
+                    parent_track: None,
+                    audio_clips: vec![],
+                },
+                ExportTrack {
+                    name: "child".to_string(),
+                    level: 0.0,
+                    balance: 0.0,
+                    muted: false,
+                    soloed: false,
+                    output_ports: 2,
+                    is_folder: false,
+                    parent_track: Some("folder".to_string()),
+                    audio_clips: vec![AudioClipData {
+                        name: clip_name.to_string(),
+                        start: 0,
+                        length: 4410,
+                        offset: 0,
+                        ..Default::default()
+                    }],
+                },
+            ],
+            connections: vec![],
+        }
+    }
+
+    fn stem_settings(render_mode: ExportRenderMode) -> ExportSettings {
+        let mut settings = ExportSettings::new(44_100, 2);
+        settings.format_flac = false;
+        settings.format_mp3 = false;
+        settings.format_ogg = false;
+        settings.bit_depth = ExportBitDepth::Float32;
+        settings.dither = ExportDither::None;
+        settings.render_mode = render_mode;
+        settings.master_limiter = false;
+        settings
+    }
+
+    fn nested_folder_session(clip_name: &str) -> ExportSessionData {
+        ExportSessionData {
+            tracks: vec![
+                ExportTrack {
+                    name: "folder".to_string(),
+                    level: 0.0,
+                    balance: 0.0,
+                    muted: false,
+                    soloed: false,
+                    output_ports: 2,
+                    is_folder: true,
+                    parent_track: None,
+                    audio_clips: vec![],
+                },
+                ExportTrack {
+                    name: "sub".to_string(),
+                    level: -6.0,
+                    balance: 0.0,
+                    muted: false,
+                    soloed: false,
+                    output_ports: 2,
+                    is_folder: true,
+                    parent_track: Some("folder".to_string()),
+                    audio_clips: vec![],
+                },
+                ExportTrack {
+                    name: "child".to_string(),
+                    level: 0.0,
+                    balance: 0.0,
+                    muted: false,
+                    soloed: false,
+                    output_ports: 2,
+                    is_folder: false,
+                    parent_track: Some("sub".to_string()),
+                    audio_clips: vec![AudioClipData {
+                        name: clip_name.to_string(),
+                        start: 0,
+                        length: 4410,
+                        offset: 0,
+                        ..Default::default()
+                    }],
+                },
+            ],
+            connections: vec![],
+        }
+    }
+
+    fn write_test_clip(dir: &Path) {
+        let clip_path = dir.join("clip.wav");
+        let samples = vec![0.5_f32; 4410 * 2];
+        maolan_engine::audio_codec::encode_audio_to_file(
+            &clip_path,
+            &samples,
+            2,
+            44_100,
+            maolan_engine::audio_codec::AudioEncodeFormat::Wav(
+                maolan_engine::audio_codec::WavBitDepth::Float32,
+            ),
+            maolan_engine::audio_codec::AudioDither::None,
+        )
+        .expect("encode test clip");
+    }
+
+    async fn assert_folder_stem(
+        dir: &Path,
+        session: &ExportSessionData,
+        stem_name: &str,
+        expected: f32,
+    ) {
+        let base = dir.join("export");
+        export_session(
+            session,
+            dir,
+            &base,
+            &stem_settings(stems_mode(stem_name)),
+            |_, _| {},
+        )
+        .await
+        .expect("stem export");
+        let stem_path = dir.join("export_stems").join(stem_name);
+        let (stem_samples, channels, _) =
+            maolan_engine::audio_codec::decode_audio_to_f32_interleaved_sync(&stem_path)
+                .expect("decode folder stem");
+        assert_eq!(channels, 2, "{stem_name} should stay stereo");
+        assert!(!stem_samples.is_empty(), "{stem_name} should not be empty");
+        for &sample in &stem_samples[..stem_samples.len().min(4410 * 2)] {
+            assert!(
+                (sample - expected).abs() < 1.0e-4,
+                "{stem_name}: sample {sample} != expected {expected}"
+            );
+        }
+    }
+
+    fn stems_mode(stem_name: &str) -> ExportRenderMode {
+        if stem_name.ends_with("_post.wav") {
+            ExportRenderMode::StemsPostFader
+        } else {
+            ExportRenderMode::StemsPreFader
+        }
+    }
+
+    #[tokio::test]
+    async fn folder_stem_contains_subtrack_mix() {
+        let dir =
+            std::env::temp_dir().join(format!("maolan_folder_stem_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create test session dir");
+        write_test_clip(&dir);
+
+        let session = folder_stem_session("clip.wav");
+        let expected = 0.5 * 10.0_f32.powf(-6.0 / 20.0);
+        assert_folder_stem(&dir, &session, "folder_post.wav", expected).await;
+        assert_folder_stem(&dir, &session, "folder_pre.wav", 0.5).await;
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn nested_folder_stem_applies_each_levels_fader_once() {
+        let dir = std::env::temp_dir().join(format!(
+            "maolan_nested_folder_stem_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create test session dir");
+        write_test_clip(&dir);
+
+        let session = nested_folder_session("clip.wav");
+        // Only the subfolder's fader sits between the child and the top
+        // folder. A regression that walks the child twice (once per folder
+        // level) would add an extra un-faded copy and fail this.
+        let expected = 0.5 * 10.0_f32.powf(-6.0 / 20.0);
+        assert_folder_stem(&dir, &session, "folder_post.wav", expected).await;
+        assert_folder_stem(&dir, &session, "folder_pre.wav", 0.5).await;
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]

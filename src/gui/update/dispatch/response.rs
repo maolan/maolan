@@ -1813,6 +1813,27 @@ impl Maolan {
                 if !self.pending.pending_track_freeze_bounce.is_empty() {
                     self.pending.pending_track_freeze_bounce.clear();
                 }
+                // A failed multi-stem bounce reports as a bare error with no
+                // track name; record it so the waiting export task unblocks
+                // with the failure instead of hanging on the sentinel.
+                if self.transfer.export_in_progress
+                    && self
+                        .transfer
+                        .export_pending_bounces
+                        .remove(maolan_engine::message::STEMS_BOUNCE_JOB_KEY)
+                {
+                    *self
+                        .transfer
+                        .export_stem_bounce_outcome
+                        .lock()
+                        .expect("stem bounce outcome lock poisoned") =
+                        crate::gui::field_groups::StemBounceOutcome::Failed(e.clone());
+                    if self.transfer.export_pending_bounces.is_empty()
+                        && let Some(notify) = self.transfer.export_bounce_notify.take()
+                    {
+                        notify.notify_one();
+                    }
+                }
                 self.pending.freeze_in_progress = false;
                 self.pending.freeze_track_name = None;
                 self.pending.freeze_cancel_requested = false;

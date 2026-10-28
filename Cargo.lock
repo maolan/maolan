@@ -5898,9 +5898,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.17"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f384de50b3357d5b99d00b5d1a055ce2599008d7cd066679d3ff084fcc3c400a"
+checksum = "84a082f91e49f0e92c0b41e327a43e743fbdcd4b737f3e5b53f36b6e58a3650b"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5925,6 +5925,7 @@ dependencies = [
  "oxideav-flac",
  "oxideav-mp3",
  "oxideav-ogg",
+ "rayon",
  "rtrb",
  "rubato",
  "serde",

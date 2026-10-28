@@ -59,6 +59,16 @@ impl Maolan {
                 self.transfer.adjust_bit_depth_if_needed();
                 true
             }
+            Message::ExportStemTrackToggled(track_name, enabled) => {
+                if *enabled {
+                    self.transfer
+                        .export_stem_track_selection
+                        .insert(track_name.clone());
+                } else {
+                    self.transfer.export_stem_track_selection.remove(track_name);
+                }
+                true
+            }
             Message::ExportRealtimeFallbackToggled(enabled) => {
                 self.transfer.export_realtime_fallback = *enabled;
                 true

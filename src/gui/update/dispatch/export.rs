@@ -600,6 +600,27 @@ impl Maolan {
                     .unwrap_or(48_000);
                 self.transfer.export_sample_rate_hz = nearest_rate;
                 self.transfer.normalize_hw_out_ports(&self.state);
+                {
+                    let state = self.state.read().expect("state lock poisoned");
+                    let is_exportable =
+                        |name: &str| name != crate::consts::state_ids::METRONOME_TRACK_ID;
+                    self.transfer.export_stem_track_selection = state
+                        .tracks
+                        .iter()
+                        .filter(|track| {
+                            is_exportable(&track.name) && state.selected.contains(&track.name)
+                        })
+                        .map(|track| track.name.clone())
+                        .collect();
+                    if self.transfer.export_stem_track_selection.is_empty() {
+                        self.transfer.export_stem_track_selection = state
+                            .tracks
+                            .iter()
+                            .filter(|track| is_exportable(&track.name))
+                            .map(|track| track.name.clone())
+                            .collect();
+                    }
+                }
                 self.modal = Some(crate::message::Show::ExportSettings);
             }
             Message::ExportRangeSelected(range) => {
@@ -721,6 +742,25 @@ impl Maolan {
                         "Select at least one hw:out port for mixdown export".to_string();
                     return Task::none();
                 }
+                if !matches!(self.transfer.export_render_mode, ExportRenderMode::Mixdown) {
+                    let track_exists = {
+                        let state = self.state.read().expect("state lock poisoned");
+                        let existing: std::collections::HashSet<&str> = state
+                            .tracks
+                            .iter()
+                            .map(|track| track.name.as_str())
+                            .collect();
+                        self.transfer
+                            .export_stem_track_selection
+                            .retain(|name| existing.contains(name.as_str()));
+                        !self.transfer.export_stem_track_selection.is_empty()
+                    };
+                    if !track_exists {
+                        self.state.write().expect("state lock poisoned").message =
+                            "Select at least one track for stem export".to_string();
+                        return Task::none();
+                    }
+                }
                 self.modal = None;
                 return Task::perform(
                     async move {
@@ -789,36 +829,88 @@ impl Maolan {
                 let session_range = self.transport.session_range_samples;
                 let loop_range = self.transport.loop_range_samples;
                 let punch_range = self.transport.punch_range_samples;
+                let selected_tracks: std::collections::HashSet<String> = self
+                    .transfer
+                    .export_stem_track_selection
+                    .iter()
+                    .filter(|name| *name != crate::consts::state_ids::METRONOME_TRACK_ID)
+                    .cloned()
+                    .collect();
 
                 self.transfer.export_in_progress = true;
                 self.transfer.export_progress = 0.0;
                 self.transfer.export_operation = Some("Preparing".to_string());
+                // Drive the playhead from the export position so the GUI
+                // shows where the render currently is; restored on finish.
+                {
+                    let total = self.session_content_end_sample();
+                    self.transfer.export_playhead_range = match export_range {
+                        crate::message::ExportRange::Session => session_range,
+                        crate::message::ExportRange::Loop => loop_range,
+                        crate::message::ExportRange::Punch => punch_range,
+                        crate::message::ExportRange::All => Some((0, total)),
+                    }
+                    .filter(|(start, end)| *end > *start);
+                    self.transfer.export_resume_sample = Some(self.transport.transport_samples);
+                    self.update_export_playhead(0.0);
+                }
                 self.transfer.export_cancel =
                     std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let export_cancel = self.transfer.export_cancel.clone();
 
                 self.transfer.export_pending_bounces.clear();
-                if matches!(
-                    render_mode,
-                    crate::message::ExportRenderMode::StemsPostFader
-                ) {
+                *self
+                    .transfer
+                    .export_stem_bounce_outcome
+                    .lock()
+                    .expect("stem bounce outcome lock poisoned") =
+                    crate::gui::field_groups::StemBounceOutcome::Pending;
+                if !matches!(render_mode, crate::message::ExportRenderMode::Mixdown) {
+                    // Insert the sentinel for the single multi-stem bounce job
+                    // exactly when export_session (gui/mod.rs tracks_to_bounce)
+                    // will request it, or the bounce notify never fires and
+                    // the export hangs. Folders with a soloed descendant are
+                    // included because they sound during playback.
                     let state_guard = self.state.read().expect("state lock poisoned");
                     let has_solo = state_guard.tracks.iter().any(|t| t.soloed);
-                    let selected_set: std::collections::HashSet<String> =
-                        state_guard.selected.iter().cloned().collect();
-                    for track in &state_guard.tracks {
-                        if selected_set.contains(&track.name)
-                            && !track.muted
-                            && (!has_solo || track.soloed)
+                    let parent_of: std::collections::HashMap<String, Option<String>> = state_guard
+                        .tracks
+                        .iter()
+                        .map(|t| (t.name.clone(), t.parent_track.clone()))
+                        .collect();
+                    let soloed_names: std::collections::HashSet<String> = state_guard
+                        .tracks
+                        .iter()
+                        .filter(|t| t.soloed)
+                        .map(|t| t.name.clone())
+                        .collect();
+                    let stems_requested = state_guard.tracks.iter().any(|track| {
+                        if !self
+                            .transfer
+                            .export_stem_track_selection
+                            .contains(&track.name)
+                            || track.muted
                         {
-                            self.transfer
-                                .export_pending_bounces
-                                .insert(track.name.clone());
+                            return false;
                         }
+                        !has_solo
+                            || track.soloed
+                            || (track.is_folder
+                                && Self::folder_has_soloed_descendant(
+                                    &track.name,
+                                    &parent_of,
+                                    &soloed_names,
+                                ))
+                    });
+                    if stems_requested {
+                        self.transfer
+                            .export_pending_bounces
+                            .insert(maolan_engine::message::STEMS_BOUNCE_JOB_KEY.to_string());
                     }
                 }
                 let bounce_notify = std::sync::Arc::new(tokio::sync::Notify::new());
                 self.transfer.export_bounce_notify = Some(bounce_notify.clone());
+                let stem_bounce_outcome_clone = self.transfer.export_stem_bounce_outcome.clone();
 
                 return Task::run(
                     {
@@ -869,6 +961,8 @@ impl Maolan {
                                 master_limiter_ceiling_dbtp: export_master_limiter_ceiling_dbtp,
                                 state: state_clone,
                                 session_root: session_root.clone(),
+                                selected_tracks,
+                                stem_bounce_outcome: stem_bounce_outcome_clone,
                             };
                             let result = Self::export_session(
                                 &options,
@@ -924,20 +1018,33 @@ impl Maolan {
                     && op.starts_with("Error:")
                 {
                     self.transfer.export_in_progress = false;
+                    self.finish_export_playhead();
                     self.state.write().expect("state lock poisoned").message = op.clone();
                 } else if progress >= 1.0 {
                     self.transfer.export_in_progress = false;
+                    self.finish_export_playhead();
                     self.state.write().expect("state lock poisoned").message = operation
                         .clone()
                         .unwrap_or_else(|| "Export complete".to_string());
-                } else if let Some(op) = operation {
-                    let percent = (progress * 100.0) as usize;
-                    self.state.write().expect("state lock poisoned").message =
-                        format!("Exporting ({percent}%): {}", op);
                 } else {
-                    let percent = (progress * 100.0) as usize;
-                    self.state.write().expect("state lock poisoned").message =
-                        format!("Exporting ({percent}%)...");
+                    // Stems get exact positions from the engine's bounce
+                    // progress; the mixdown derives its position from the
+                    // overall export progress.
+                    if matches!(
+                        self.transfer.export_render_mode,
+                        crate::message::ExportRenderMode::Mixdown
+                    ) {
+                        self.update_export_playhead(progress);
+                    }
+                    if let Some(op) = operation {
+                        let percent = (progress * 100.0) as usize;
+                        self.state.write().expect("state lock poisoned").message =
+                            format!("Exporting ({percent}%): {}", op);
+                    } else {
+                        let percent = (progress * 100.0) as usize;
+                        self.state.write().expect("state lock poisoned").message =
+                            format!("Exporting ({percent}%)...");
+                    }
                 }
             }
             _ => {}
