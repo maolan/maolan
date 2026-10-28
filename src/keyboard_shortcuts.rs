@@ -30,6 +30,7 @@ pub enum ShortcutAction {
     ToggleCutIndicator,
     CreateMarker,
     CloseEditorConnections,
+    CloseMidiEditor,
     ToggleSelectedPluginBypass,
     ToggleWorkspaceSession,
     QuantizeSelectedNotes,
@@ -48,7 +49,7 @@ pub enum ShortcutAction {
 }
 
 impl ShortcutAction {
-    pub const ALL: [Self; 37] = [
+    pub const ALL: [Self; 38] = [
         Self::NewSession,
         Self::OpenSession,
         Self::SaveSession,
@@ -71,6 +72,7 @@ impl ShortcutAction {
         Self::ToggleCutIndicator,
         Self::CreateMarker,
         Self::CloseEditorConnections,
+        Self::CloseMidiEditor,
         Self::ToggleSelectedPluginBypass,
         Self::ToggleWorkspaceSession,
         Self::QuantizeSelectedNotes,
@@ -110,6 +112,7 @@ impl ShortcutAction {
             Self::ToggleCutIndicator => Message::ToggleCutIndicator,
             Self::CreateMarker => Message::MarkerLaneCreateAtPlayhead,
             Self::CloseEditorConnections => Message::EditorConnectionsClose,
+            Self::CloseMidiEditor => Message::Workspace,
             Self::ToggleSelectedPluginBypass => Message::ToggleSelectedPluginBypass,
             Self::ToggleWorkspaceSession => {
                 if matches!(current_view, crate::state::View::Session) {
@@ -282,6 +285,7 @@ pub fn default_binding(action: ShortcutAction) -> ShortcutBinding {
         Action::CloseEditorConnections => {
             ShortcutBinding::new(Key::Character("c".into()), false, true)
         }
+        Action::CloseMidiEditor => ShortcutBinding::new(Key::Character("c".into()), false, true),
         Action::ToggleSelectedPluginBypass => {
             ShortcutBinding::new(Key::Character("b".into()), false, false)
         }
@@ -329,6 +333,9 @@ fn shortcut_priority(current_view: crate::state::View) -> Vec<ShortcutAction> {
     use ShortcutAction as Action;
 
     let mut actions = Vec::new();
+    if matches!(current_view, crate::state::View::Piano) {
+        actions.push(Action::CloseMidiEditor);
+    }
     if matches!(current_view, crate::state::View::Session) {
         actions.extend([
             Action::SessionStopAll,

@@ -64,6 +64,7 @@ impl Maolan {
                 let ctrl = self.state.read().expect("state lock poisoned").ctrl;
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.track_context_menu = None;
+                state.selected_clips.clear();
                 if shift || ctrl {
                     state.connections_last_track_click = None;
                 } else if let Some((last_track, last_time)) = &state.connections_last_track_click
@@ -157,6 +158,7 @@ impl Maolan {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.track_context_menu = None;
                 state.connections_last_track_click = None;
+                state.selected_clips.clear();
 
                 if shift {
                     let anchor = state

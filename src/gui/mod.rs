@@ -11185,6 +11185,48 @@ mod tests {
         assert_eq!(app.state.read().unwrap().clip_marquee_end, Some(end));
     }
 
+    #[test]
+    fn midi_drag_creates_file_after_release_below_closed_folder() {
+        use maolan_widgets::iced::{Point, mouse};
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("maolan_midi_drag_{unique}"));
+        let mut app = Maolan {
+            session_dir: Some(root.clone()),
+            ..Maolan::default()
+        };
+        let mut folder = crate::state::Track::new("folder".into(), 0.0, 0, 0, 0, 0);
+        folder.is_folder = true;
+        folder.folder_open = false;
+        let y = folder.folder_content_height() + 10.0;
+        let mut child = crate::state::Track::new("hidden".into(), 0.0, 2, 2, 0, 0);
+        child.parent_track = Some("folder".into());
+        let midi = crate::state::Track::new("Drums".into(), 0.0, 0, 2, 1, 0);
+        {
+            let mut state = app.state.write().unwrap();
+            state.view = crate::state::View::Workspace;
+            state.tracks = vec![folder, child, midi];
+        }
+        let start = Point::new(10.0, y);
+        let end = Point::new(100.0, y);
+        let _ = app.update(Message::EditorMouseMoved(start));
+        let _ = app.update(Message::MousePressed(mouse::Button::Right));
+        let _ = app.update(Message::EditorMouseMoved(start));
+        let _ = app.update(Message::EditorMouseMoved(end));
+        let _ = app.update(Message::MouseMoved(mouse::Event::CursorMoved {
+            position: Point::new(400.0, 500.0),
+        }));
+        assert_eq!(app.state.read().unwrap().midi_clip_create_end, Some(end));
+        let task = app.update(Message::MouseReleased);
+        assert!(task.units() > 0, "release must send the AddClip request");
+        let bytes = fs::read(root.join("midi/Drums_clip.mid")).expect("created MIDI file");
+        midly::Smf::parse(&bytes).expect("valid MIDI file");
+        assert!(app.state.read().unwrap().midi_clip_create_start.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn clip_move_echo_app() -> Maolan {
         let app = Maolan::default();
         let mut state = app.state.write().expect("state lock poisoned");
