@@ -45,7 +45,7 @@ use maolan_engine::audio_codec::{
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{
     Action, ConnectableConnection, ConnectableRef, Message as EngineMessage, OfflineAutomationLane,
-    OfflineAutomationPoint, OfflineAutomationTarget,
+    OfflineAutomationPoint, OfflineAutomationTarget, OfflineBounceStem, OfflineStemOutput,
 };
 use maolan_widgets::horizontal_slider::horizontal_slider;
 use maolan_widgets::iced::{
@@ -382,6 +382,10 @@ struct ExportSessionOptions {
     master_limiter_ceiling_dbtp: f32,
     state: State,
     session_root: PathBuf,
+    selected_tracks: HashSet<String>,
+    /// Shared with the response handler, which records the terminal report
+    /// of the single multi-stem bounce job.
+    stem_bounce_outcome: Arc<std::sync::Mutex<StemBounceOutcome>>,
 }
 
 struct ExportWriteRequest<'a> {
@@ -661,8 +665,8 @@ pub(crate) struct PendingNativeUiFallback {
 
 use field_groups::{
     AutomationRuntimeState, DragState, GenerateState, PendingOpsState, PluginParamState,
-    PluginScanState, RecordingPreviewState, SessionOpsState, TimingState, TransferState,
-    TransportUiState, UiState,
+    PluginScanState, RecordingPreviewState, SessionOpsState, StemBounceOutcome, TimingState,
+    TransferState, TransportUiState, UiState,
 };
 
 pub struct Maolan {
@@ -4075,6 +4079,128 @@ impl Maolan {
         cropped
     }
 
+    /// Whether `folder_name` has a soloed track anywhere in its subtree,
+    /// walking parent chains. Mirrors the engine's `folder_has_soloed_descendant`
+    /// (topology.rs) so stem export produces folder stems exactly for the
+    /// folders that sound during playback.
+    fn folder_has_soloed_descendant(
+        folder_name: &str,
+        parent_of: &HashMap<String, Option<String>>,
+        soloed_names: &HashSet<String>,
+    ) -> bool {
+        soloed_names.iter().any(|soloed| {
+            let mut current = parent_of.get(soloed).and_then(|parent| parent.as_deref());
+            while let Some(parent) = current {
+                if parent == folder_name {
+                    return true;
+                }
+                current = parent_of.get(parent).and_then(|p| p.as_deref());
+            }
+            false
+        })
+    }
+
+    /// Map an export render progress (0..1) to the playhead so the GUI
+    /// shows where the export currently is. Stems render the range linearly
+    /// (the engine pass is sample-ordered); mixdown maps the track-mixing
+    /// phase (0.1..0.8 of the overall progress) onto the range.
+    /// Only reported progress moves the playhead: offline rendering can run
+    /// faster or slower than playback, or stall while encoding.
+    pub(super) fn update_export_playhead(&mut self, progress: f32) {
+        let Some((start, end)) = self.transfer.export_playhead_range else {
+            return;
+        };
+        // The engine is suspended during the offline render; any leftover
+        // playing/paused state would fight the export-driven position.
+        self.transport.playing = false;
+        self.transport.paused = false;
+        self.transport.last_playback_tick = None;
+        self.transport.pending_transport_position = None;
+        let span = (end - start) as f64;
+        let phase = if matches!(
+            self.transfer.export_render_mode,
+            crate::message::ExportRenderMode::Mixdown
+        ) {
+            // The mixdown mixes every track across the full range, so only
+            // its track-mixing phase maps to a position.
+            ((f64::from(progress) - 0.1) / 0.7).clamp(0.0, 1.0)
+        } else {
+            f64::from(progress).clamp(0.0, 1.0)
+        };
+        let sample = (start as f64 + phase * span).min(end as f64);
+        self.transport.transport_samples = sample;
+    }
+
+    /// Whether the export playhead currently drives `transport_samples`.
+    pub(super) fn export_playhead_active(&self) -> bool {
+        self.transfer.export_playhead_range.is_some()
+    }
+
+    /// Stop driving the playhead from export progress and restore the
+    /// transport position the user had before the export started.
+    pub(super) fn finish_export_playhead(&mut self) {
+        self.transfer.export_playhead_range = None;
+        if let Some(resume) = self.transfer.export_resume_sample.take() {
+            self.transport.transport_samples = resume;
+        }
+    }
+
+    /// Latest clip end across the session, the export's "All" range end.
+    pub(super) fn session_content_end_sample(&self) -> usize {
+        self.state
+            .read()
+            .expect("state lock poisoned")
+            .tracks
+            .iter()
+            .flat_map(|track| track.audio.clips.iter())
+            .map(|clip| clip.start.saturating_add(clip.length))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Latest clip end across a folder's own clips and all of its
+    /// descendants' clips. Folder tracks hold no clips themselves, so a
+    /// folder bounce sized from its own clips alone would collapse to a
+    /// single silent frame.
+    fn folder_content_length(folder: &ExportTrackData, tracks: &[ExportTrackData]) -> usize {
+        let mut children_map: HashMap<String, Vec<String>> = HashMap::new();
+        for track in tracks {
+            if let Some(parent) = track.parent_track.as_deref() {
+                children_map
+                    .entry(parent.to_string())
+                    .or_default()
+                    .push(track.name.clone());
+            }
+        }
+        let clip_end = |clips: &[crate::state::AudioClip]| {
+            clips
+                .iter()
+                .map(|clip| clip.start.saturating_add(clip.length))
+                .max()
+                .unwrap_or(0)
+        };
+        let mut max_end = clip_end(&folder.clips);
+        let mut visited = HashSet::new();
+        let mut stack: Vec<&str> = vec![folder.name.as_str()];
+        while let Some(name) = stack.pop() {
+            let Some(children) = children_map.get(name) else {
+                continue;
+            };
+            for child in children {
+                if !visited.insert(child.clone()) {
+                    continue;
+                }
+                if let Some(track) = tracks.iter().find(|track| track.name == *child) {
+                    max_end = max_end.max(clip_end(&track.clips));
+                }
+                stack.push(child);
+            }
+        }
+        max_end
+    }
+
+    /// Read a headerless little-endian f32 stream written by the engine's
+    /// single-pass stems bounce.
     /// Compute which hw:out ports a track's output port reaches, following
     /// track-to-track and folder routing. This mirrors the engine's routing
     /// enough to make the offline export sound like the live playback.
@@ -4225,7 +4351,7 @@ impl Maolan {
                 tracks_data,
                 state.connections.clone(),
                 max_length,
-                state.selected.iter().cloned().collect::<HashSet<String>>(),
+                options.selected_tracks.clone(),
             )
         };
 
@@ -4326,144 +4452,7 @@ impl Maolan {
             }
         }
 
-        let stem_mode_label = if matches!(render_mode, ExportRenderMode::StemsPreFader) {
-            "pre"
-        } else {
-            "post"
-        };
-        let export_parent = export_path.parent().unwrap_or_else(|| Path::new("."));
-        let export_stem = export_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("export");
-        let stem_dir = export_parent.join(format!("{export_stem}_stems"));
-
-        let mut temp_bounce_files: Vec<PathBuf> = Vec::new();
-        if matches!(render_mode, ExportRenderMode::StemsPostFader) {
-            let has_solo = tracks.iter().any(|track| track.soloed);
-            let tracks_to_bounce: Vec<usize> = tracks
-                .iter()
-                .enumerate()
-                .filter(|(_, track)| {
-                    selected_tracks.contains(&track.name)
-                        && !track.muted
-                        && (!has_solo || track.soloed)
-                })
-                .map(|(idx, _)| idx)
-                .collect();
-
-            if !tracks_to_bounce.is_empty() {
-                fs::create_dir_all(&stem_dir).map_err(|e| {
-                    io::Error::other(format!(
-                        "Failed to create stem directory '{}': {}",
-                        stem_dir.display(),
-                        e
-                    ))
-                })?;
-
-                struct BounceInfo {
-                    track_idx: usize,
-                    temp_path: PathBuf,
-                    render_length: usize,
-                    automation_lanes: Vec<OfflineAutomationLane>,
-                }
-
-                let mut bounce_infos: Vec<BounceInfo> = Vec::new();
-                for track_idx in &tracks_to_bounce {
-                    let track = &tracks[*track_idx];
-                    let render_length = track
-                        .clips
-                        .iter()
-                        .map(|clip| clip.start.saturating_add(clip.length))
-                        .max()
-                        .unwrap_or(0)
-                        .max(1);
-                    let automation_lanes = {
-                        let state_guard = state.read().expect("state lock poisoned");
-                        if let Some(t) = state_guard.tracks.iter().find(|t| t.name == track.name) {
-                            build_offline_automation_lanes(&t.automation_lanes)
-                        } else {
-                            Vec::new()
-                        }
-                    };
-                    let temp_path = stem_dir.join(format!(
-                        ".maolan_bounce_{}_{}.wav",
-                        std::process::id(),
-                        Self::sanitize_export_component(&track.name)
-                    ));
-                    temp_bounce_files.push(temp_path.clone());
-                    bounce_infos.push(BounceInfo {
-                        track_idx: *track_idx,
-                        temp_path,
-                        render_length,
-                        automation_lanes,
-                    });
-                }
-
-                progress_callback(0.05, Some("Bouncing tracks...".to_string()));
-                tokio::task::yield_now().await;
-                for info in &bounce_infos {
-                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        return Err(io::Error::other("Export cancelled".to_string()));
-                    }
-                    if let Err(e) = CLIENT
-                        .send(EngineMessage::Request(Action::TrackOfflineBounce {
-                            track_name: tracks[info.track_idx].name.clone(),
-                            output_path: info.temp_path.to_string_lossy().to_string(),
-                            start_sample: 0,
-                            length_samples: info.render_length,
-                            automation_lanes: info.automation_lanes.clone(),
-                            apply_fader: true,
-                        }))
-                        .await
-                    {
-                        return Err(io::Error::other(format!(
-                            "Failed to request bounce for '{}': {e}",
-                            tracks[info.track_idx].name
-                        )));
-                    }
-                }
-
-                if let Some(notify) = bounce_notify {
-                    notify.notified().await;
-                    progress_callback(0.20, Some("Bounces complete".to_string()));
-                    tokio::task::yield_now().await;
-                }
-
-                for info in &bounce_infos {
-                    let bounced_clip = AudioClip {
-                        name: info.temp_path.to_string_lossy().to_string(),
-                        start: 0,
-                        length: info.render_length,
-                        offset: 0,
-                        input_channel: 0,
-                        muted: false,
-                        max_length_samples: info.render_length,
-                        source_length_samples: info.render_length,
-                        peaks_file: None,
-                        peaks: ClipPeaks::default(),
-                        fade_enabled: false,
-                        fade_in_samples: 0,
-                        fade_out_samples: 0,
-                        pitch_correction_preview_name: None,
-                        pitch_correction_source_name: None,
-                        pitch_correction_source_offset: None,
-                        pitch_correction_source_length: None,
-                        pitch_correction_points: vec![],
-                        pitch_correction_frame_likeness: None,
-                        pitch_correction_inertia_ms: None,
-                        pitch_correction_formant_compensation: None,
-                        ..Default::default()
-                    };
-                    tracks[info.track_idx].clips = vec![bounced_clip];
-                }
-            }
-        }
-
         if total_length == 0 {
-            for path in &temp_bounce_files {
-                let _ = fs::remove_file(path);
-            }
             return Err(io::Error::other(
                 "No audio clips found. Nothing to export.".to_string(),
             ));
@@ -4487,7 +4476,191 @@ impl Maolan {
             return Err(io::Error::other("Select at least one export format"));
         }
 
+        let stem_mode_label = if matches!(render_mode, ExportRenderMode::StemsPreFader) {
+            "pre"
+        } else {
+            "post"
+        };
+        let export_parent = export_path.parent().unwrap_or_else(|| Path::new("."));
+        let export_stem = export_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("export");
+        let stem_dir = export_parent.join(format!("{export_stem}_stems"));
+
+        let mut temp_bounce_files: Vec<PathBuf> = Vec::new();
+        // Stems reported done by the engine job; consumed by the stem loop.
+        let mut bounced_stems: Vec<OfflineBounceStem> = Vec::new();
+        let is_post_fader = matches!(render_mode, ExportRenderMode::StemsPostFader);
         let has_solo = tracks.iter().any(|track| track.soloed);
+        let parent_of: HashMap<String, Option<String>> = tracks
+            .iter()
+            .map(|track| (track.name.clone(), track.parent_track.clone()))
+            .collect();
+        let soloed_names: HashSet<String> = tracks
+            .iter()
+            .filter(|track| track.soloed)
+            .map(|track| track.name.clone())
+            .collect();
+        if !matches!(render_mode, ExportRenderMode::Mixdown) {
+            // Every selected track is bounced in a single engine pass — the
+            // way realtime playback renders all tracks at once — with all
+            // conversion (sample rate, bit depth, dither, limiter) applied
+            // before samples hit disk. Post-fader keeps faders; pre-fader
+            // bypasses them (`apply_fader` below). Folders with a soloed
+            // descendant are included too — they sound during playback even
+            // when the folder itself is not soloed.
+            let tracks_to_bounce: Vec<usize> = tracks
+                .iter()
+                .enumerate()
+                .filter(|(_, track)| {
+                    if !selected_tracks.contains(&track.name) || track.muted {
+                        return false;
+                    }
+                    !has_solo
+                        || track.soloed
+                        || (track.is_folder
+                            && Self::folder_has_soloed_descendant(
+                                &track.name,
+                                &parent_of,
+                                &soloed_names,
+                            ))
+                })
+                .map(|(idx, _)| idx)
+                .collect();
+
+            if !tracks_to_bounce.is_empty() {
+                fs::create_dir_all(&stem_dir).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to create stem directory '{}': {}",
+                        stem_dir.display(),
+                        e
+                    ))
+                })?;
+
+                let mut stems: Vec<OfflineBounceStem> = Vec::new();
+                for track_idx in &tracks_to_bounce {
+                    let track = &tracks[*track_idx];
+                    // Render only the export window: the track's content end
+                    // (a folder's subtree end) capped at the range end. A
+                    // track with no content in the window still gets a
+                    // silence stem spanning the range, as before.
+                    let content_end = if track.is_folder {
+                        Self::folder_content_length(track, &tracks)
+                    } else {
+                        track
+                            .clips
+                            .iter()
+                            .map(|clip| clip.start.saturating_add(clip.length))
+                            .max()
+                            .unwrap_or(0)
+                    }
+                    .min(range_end);
+                    let render_length = content_end
+                        .saturating_sub(range_start)
+                        .max(range_end - range_start)
+                        .max(1);
+                    let automation_lanes = {
+                        let state_guard = state.read().expect("state lock poisoned");
+                        if let Some(t) = state_guard.tracks.iter().find(|t| t.name == track.name) {
+                            build_offline_automation_lanes(&t.automation_lanes)
+                        } else {
+                            Vec::new()
+                        }
+                    };
+                    // Normalization needs a separate sweep after the render:
+                    // the engine writes one WAV temp at the export rate and
+                    // bit depth, which the stem loop below measures, gains
+                    // and re-encodes. Without normalization the temps are
+                    // already the final files in every selected format.
+                    let outputs: Vec<OfflineStemOutput> = if normalize {
+                        let temp_path = stem_dir.join(format!(
+                            ".maolan_bounce_{}_{}.wav",
+                            std::process::id(),
+                            Self::sanitize_export_component(&track.name)
+                        ));
+                        temp_bounce_files.push(temp_path.clone());
+                        vec![OfflineStemOutput {
+                            path: temp_path.to_string_lossy().to_string(),
+                            format: maolan_engine::audio_codec::AudioEncodeFormat::Wav(
+                                Self::export_bit_depth_to_wav(bit_depth),
+                            ),
+                            dither: Self::export_dither_to_engine(dither),
+                        }]
+                    } else {
+                        export_formats
+                            .iter()
+                            .map(|format| {
+                                let temp_path = stem_dir.join(format!(
+                                    ".maolan_bounce_{}_{}.{}",
+                                    std::process::id(),
+                                    Self::sanitize_export_component(&track.name),
+                                    Self::export_format_extension(*format)
+                                ));
+                                temp_bounce_files.push(temp_path.clone());
+                                OfflineStemOutput {
+                                    path: temp_path.to_string_lossy().to_string(),
+                                    format: Self::export_format_to_engine(*format, bit_depth),
+                                    dither: Self::export_dither_to_engine(dither),
+                                }
+                            })
+                            .collect()
+                    };
+                    stems.push(OfflineBounceStem {
+                        track_name: track.name.clone(),
+                        start_sample: range_start,
+                        length_samples: render_length,
+                        sample_rate: sample_rate.max(1) as u32,
+                        limiter_ceiling: if master_limiter && !normalize {
+                            Some(master_limiter_ceiling_dbtp)
+                        } else {
+                            None
+                        },
+                        automation_lanes,
+                        apply_fader: is_post_fader,
+                        outputs,
+                    });
+                }
+
+                progress_callback(0.05, Some("Bouncing tracks...".to_string()));
+                tokio::task::yield_now().await;
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(io::Error::other("Export cancelled".to_string()));
+                }
+                if let Err(e) = CLIENT
+                    .send(EngineMessage::Request(Action::StemsOfflineBounce { stems }))
+                    .await
+                {
+                    return Err(io::Error::other(format!(
+                        "Failed to request stems bounce: {e}"
+                    )));
+                }
+
+                if let Some(notify) = bounce_notify {
+                    let finished = loop {
+                        notify.notified().await;
+                        let outcome = options
+                            .stem_bounce_outcome
+                            .lock()
+                            .expect("stem bounce outcome lock poisoned");
+                        match &*outcome {
+                            StemBounceOutcome::Pending => continue,
+                            StemBounceOutcome::Canceled => {
+                                return Err(io::Error::other("Export cancelled".to_string()));
+                            }
+                            StemBounceOutcome::Failed(e) => {
+                                return Err(io::Error::other(format!("Stem render failed: {e}")));
+                            }
+                            StemBounceOutcome::Done(stems) => break stems.clone(),
+                        }
+                    };
+                    bounced_stems.extend(finished);
+                    progress_callback(0.20, Some("Bounces complete".to_string()));
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+
         if !matches!(render_mode, ExportRenderMode::Mixdown) && selected_tracks.is_empty() {
             return Err(io::Error::other(
                 "Stem export requires at least one selected track",
@@ -4707,10 +4880,23 @@ impl Maolan {
             return Ok(());
         }
 
+        // A folder with a soloed descendant sounds during playback (the
+        // engine's mute/solo policy enables it), so it gets a stem even
+        // though the folder itself is not soloed.
         let selected_tracks: Vec<_> = tracks
             .iter()
             .filter(|track| {
-                selected_tracks.contains(&track.name) && !track.muted && (!has_solo || track.soloed)
+                if !selected_tracks.contains(&track.name) || track.muted {
+                    return false;
+                }
+                !has_solo
+                    || track.soloed
+                    || (track.is_folder
+                        && Self::folder_has_soloed_descendant(
+                            &track.name,
+                            &parent_of,
+                            &soloed_names,
+                        ))
             })
             .collect();
         if selected_tracks.is_empty() {
@@ -4726,32 +4912,43 @@ impl Maolan {
             let start = 0.1 + (idx as f32 / selected_tracks.len() as f32) * 0.75;
             progress_callback(start, Some(format!("Rendering stem: {}", track.name)));
             tokio::task::yield_now().await;
-            let output_channels = track.output_ports.max(1);
-
-            let is_post_fader = matches!(render_mode, ExportRenderMode::StemsPostFader);
-            let can_zero_copy = is_post_fader
-                && matches!(options.export_range, ExportRange::All)
-                && export_formats.len() == 1
-                && export_formats[0] == ExportFormat::Wav
-                && bit_depth == ExportBitDepth::Float32
-                && !normalize
-                && !master_limiter;
-
-            if can_zero_copy {
-                let temp_path = track
-                    .clips
-                    .first()
-                    .map(|c| {
-                        let p = PathBuf::from(&c.name);
-                        if p.is_absolute() {
-                            p
-                        } else {
-                            session_root.join(&c.name)
-                        }
-                    })
-                    .ok_or_else(|| {
-                        io::Error::other(format!("No bounced clip for track '{}'", track.name))
+            let Some(stem) = bounced_stems
+                .iter()
+                .find(|stem| stem.track_name == track.name)
+            else {
+                continue;
+            };
+            if normalize {
+                // Separate sweep: measure and gain the rendered WAV temp
+                // (already at the export sample rate and bit depth), apply
+                // the master limiter, and encode the final format(s).
+                let temp_path = PathBuf::from(&stem.outputs[0].path);
+                let (mut samples, channels, decoded_rate) =
+                    decode_audio_to_f32_interleaved_sync(&temp_path).map_err(|e| {
+                        io::Error::other(format!(
+                            "Failed to decode bounced audio '{}': {}",
+                            temp_path.display(),
+                            e
+                        ))
                     })?;
+                Self::apply_export_normalization(
+                    &mut samples,
+                    ExportNormalizeParams {
+                        mode: normalize_mode,
+                        target_dbfs: normalize_target_dbfs,
+                        target_lufs: normalize_target_lufs,
+                        true_peak_dbtp: normalize_true_peak_dbtp,
+                        tp_limiter: normalize_tp_limiter,
+                        sample_rate: decoded_rate as i32,
+                        output_channels: channels,
+                    },
+                )?;
+                if master_limiter {
+                    let ceiling_amp = 10.0_f32
+                        .powf(master_limiter_ceiling_dbtp / 20.0)
+                        .clamp(0.0, 1.0);
+                    maolan_engine::simd::clamp_inplace(&mut samples, -ceiling_amp, ceiling_amp);
+                }
                 for format in &export_formats {
                     let stem_file = stem_dir.join(format!(
                         "{}_{}.{}",
@@ -4759,98 +4956,28 @@ impl Maolan {
                         stem_mode_label,
                         Self::export_format_extension(*format)
                     ));
-                    fs::rename(&temp_path, &stem_file)?;
-                }
-                continue;
-            }
-
-            let _normalize_params = ExportNormalizeParams {
-                mode: normalize_mode,
-                target_dbfs: normalize_target_dbfs,
-                target_lufs: normalize_target_lufs,
-                true_peak_dbtp: normalize_true_peak_dbtp,
-                tp_limiter: normalize_tp_limiter,
-                sample_rate,
-                output_channels,
-            };
-
-            let stem_buffer = if is_post_fader {
-                let temp_path = track
-                    .clips
-                    .first()
-                    .map(|c| {
-                        let p = PathBuf::from(&c.name);
-                        if p.is_absolute() {
-                            p
-                        } else {
-                            session_root.join(&c.name)
-                        }
-                    })
-                    .ok_or_else(|| {
-                        io::Error::other(format!("No bounced clip for track '{}'", track.name))
+                    Self::write_export_audio(ExportWriteRequest {
+                        export_path: &stem_file,
+                        mixed_buffer: &samples,
+                        sample_rate: decoded_rate as i32,
+                        output_channels: channels,
+                        bit_depth,
+                        dither,
+                        format: *format,
                     })?;
-                let (samples, wav_channels, _) = decode_audio_to_f32_interleaved_sync(&temp_path)
-                    .map_err(|e| {
-                    io::Error::other(format!(
-                        "Failed to decode bounced audio '{}': {}",
-                        temp_path.display(),
-                        e
-                    ))
-                })?;
-                let wav_frames = samples.len() / wav_channels;
-                let mut buf = vec![0.0_f32; total_length * output_channels];
-                let copy_frames = wav_frames.min(total_length);
-                if wav_channels == output_channels {
-                    let copy_samples = copy_frames * output_channels;
-                    buf[..copy_samples].copy_from_slice(&samples[..copy_samples]);
-                } else if wav_channels == 1 {
-                    for ch in 0..output_channels {
-                        let dst_offset = ch;
-                        for frame in 0..copy_frames {
-                            buf[frame * output_channels + dst_offset] = samples[frame];
-                        }
-                    }
-                } else {
-                    for frame in 0..copy_frames {
-                        for ch in 0..output_channels {
-                            let src_ch = ch.min(wav_channels.saturating_sub(1));
-                            buf[frame * output_channels + ch] =
-                                samples[frame * wav_channels + src_ch];
-                        }
-                    }
                 }
-                buf
             } else {
-                Self::mix_track_clips_to_channels(
-                    &track.clips,
-                    session_root,
-                    total_length,
-                    output_channels,
-                    track.level,
-                    track.balance,
-                    false,
-                )?
-            };
-
-            let stem_buffer =
-                Self::crop_export_range(&stem_buffer, range_start, range_end, output_channels);
-
-            for format in &export_formats {
-                let stem_file = stem_dir.join(format!(
-                    "{}_{}.{}",
-                    Self::sanitize_export_component(&track.name),
-                    stem_mode_label,
-                    Self::export_format_extension(*format)
-                ));
-                Self::write_export_audio(ExportWriteRequest {
-                    export_path: &stem_file,
-                    mixed_buffer: &stem_buffer,
-                    sample_rate,
-                    output_channels,
-                    bit_depth,
-                    dither,
-                    format: *format,
-                })?;
+                // The engine already converted everything during the render:
+                // rename each temp into its final stem name as-is.
+                for output in &stem.outputs {
+                    let stem_file = stem_dir.join(format!(
+                        "{}_{}.{}",
+                        Self::sanitize_export_component(&track.name),
+                        stem_mode_label,
+                        Self::engine_format_extension(output.format)
+                    ));
+                    fs::rename(&output.path, &stem_file)?;
+                }
             }
             if realtime_fallback {
                 let seconds = (total_length as f64 / sample_rate.max(1) as f64).max(0.0);
@@ -6123,6 +6250,19 @@ impl Maolan {
         }
     }
 
+    /// File extension for an engine-side encode format, used to name the
+    /// per-format temp files of the stems bounce.
+    fn engine_format_extension(
+        format: maolan_engine::wav_stream::AudioEncodeFormat,
+    ) -> &'static str {
+        match format {
+            maolan_engine::wav_stream::AudioEncodeFormat::Wav(_) => "wav",
+            maolan_engine::wav_stream::AudioEncodeFormat::Flac(_) => "flac",
+            maolan_engine::wav_stream::AudioEncodeFormat::OggFlac(_) => "ogg",
+            maolan_engine::wav_stream::AudioEncodeFormat::Mp3 => "mp3",
+        }
+    }
+
     fn export_base_path(path: PathBuf) -> PathBuf {
         let known_ext = path
             .extension()
@@ -6179,6 +6319,47 @@ impl Maolan {
                 .first()
                 .copied()
                 .unwrap_or(ExportBitDepth::Int24)
+        };
+        let stem_tracks: Vec<(String, bool, usize, bool)> = {
+            fn visit(
+                tracks: &[crate::state::Track],
+                parent: Option<&str>,
+                depth: usize,
+                emitted: &mut std::collections::HashSet<String>,
+                entries: &mut Vec<(String, bool, usize, bool)>,
+            ) {
+                for track in tracks.iter().filter(|track| {
+                    track.name != crate::consts::state_ids::METRONOME_TRACK_ID
+                        && (track.parent_track.as_deref() == parent
+                            || (parent.is_none()
+                                && track
+                                    .parent_track
+                                    .as_deref()
+                                    .is_some_and(|name| !tracks.iter().any(|t| t.name == name))))
+                }) {
+                    if !emitted.insert(track.name.clone()) {
+                        continue;
+                    }
+                    entries.push((track.name.clone(), track.muted, depth, track.is_folder));
+                    visit(
+                        tracks,
+                        Some(track.name.as_str()),
+                        depth + 1,
+                        emitted,
+                        entries,
+                    );
+                }
+            }
+            let state = self.state.read().expect("state lock poisoned");
+            let mut entries = Vec::new();
+            visit(
+                &state.tracks,
+                None,
+                0,
+                &mut std::collections::HashSet::new(),
+                &mut entries,
+            );
+            entries
         };
 
         let body = container(
@@ -6314,9 +6495,72 @@ impl Maolan {
                                 .spacing(8),
                             )
                         } else {
-                            container(text(
-                                "Stem export writes one channel per track output port.",
-                            ))
+                            container(
+                                column![
+                                    text("Tracks to export as stems:"),
+                                    if stem_tracks.is_empty() {
+                                        maolan_widgets::iced::Element::from(text(
+                                            "No tracks in this session.",
+                                        ))
+                                    } else {
+                                        maolan_widgets::iced::Element::from(
+                                            column(
+                                                stem_tracks
+                                                    .iter()
+                                                    .map(|(name, muted, depth, is_folder)| {
+                                                        let mut label = String::new();
+                                                        if *is_folder {
+                                                            label.push_str("▼ ");
+                                                        }
+                                                        label.push_str(name);
+                                                        if *muted {
+                                                            label.push_str(" (muted)");
+                                                        }
+                                                        let entry: maolan_widgets::iced::Element<
+                                                            '_,
+                                                            Message,
+                                                        > = checkbox(
+                                                            self.transfer
+                                                                .export_stem_track_selection
+                                                                .contains(name),
+                                                        )
+                                                        .label(label)
+                                                        .on_toggle({
+                                                            let name = name.clone();
+                                                            move |enabled| {
+                                                                Message::ExportStemTrackToggled(
+                                                                    name.clone(),
+                                                                    enabled,
+                                                                )
+                                                            }
+                                                        })
+                                                        .into();
+                                                        if *depth == 0 {
+                                                            entry
+                                                        } else {
+                                                            row![
+                                                                maolan_widgets::iced::widget::Space::new()
+                                                                    .width(Length::Fixed(
+                                                                        18.0 * *depth as f32,
+                                                                    )),
+                                                                entry
+                                                            ]
+                                                            .into()
+                                                        }
+                                                    })
+                                                    .collect::<Vec<
+                                                        maolan_widgets::iced::Element<'_, Message>,
+                                                    >>(),
+                                            )
+                                            .spacing(6),
+                                        )
+                                    },
+                                    text(
+                                        "Stem export writes one channel per track output port. Muted tracks are skipped."
+                                    ),
+                                ]
+                                .spacing(8),
+                            )
                         },
                         checkbox(self.transfer.export_realtime_fallback)
                             .label("Real-time fallback render")

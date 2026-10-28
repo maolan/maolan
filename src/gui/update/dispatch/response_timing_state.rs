@@ -50,6 +50,9 @@ impl Maolan {
                 true
             }
             Action::TransportPosition(sample) => {
+                if self.export_playhead_active() {
+                    return true;
+                }
                 self.transport.pending_transport_position = None;
                 self.transport.transport_samples = *sample as f64;
                 if self.transport.playing && !self.transport.paused {
@@ -65,6 +68,9 @@ impl Maolan {
                 sample,
                 after_frames,
             } => {
+                if self.export_playhead_active() {
+                    return true;
+                }
                 if self.transport.playing && !self.transport.paused {
                     let delay_s = *after_frames as f64 / self.transport.playback_rate_hz.max(1.0);
                     self.transport.pending_transport_position =

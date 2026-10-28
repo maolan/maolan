@@ -142,6 +142,18 @@ pub struct PluginScanState {
     pub plugin_list_filter: String,
 }
 
+/// Terminal state of the single multi-stem offline bounce job. The engine
+/// renders every stem in one pass; the response handler records the outcome
+/// here and wakes the export task, which consumes it after the notify.
+#[derive(Debug, Default)]
+pub enum StemBounceOutcome {
+    #[default]
+    Pending,
+    Done(Vec<maolan_engine::message::OfflineBounceStem>),
+    Canceled,
+    Failed(String),
+}
+
 /// Import/export progress and format settings.
 #[derive(Debug)]
 pub struct TransferState {
@@ -155,6 +167,14 @@ pub struct TransferState {
     pub export_cancel: Arc<AtomicBool>,
     pub export_pending_bounces: HashSet<String>,
     pub export_bounce_notify: Option<Arc<tokio::sync::Notify>>,
+    /// Terminal report of the single multi-stem bounce job: the response
+    /// handler stores it, the export task picks it up after the notify.
+    pub export_stem_bounce_outcome: Arc<std::sync::Mutex<StemBounceOutcome>>,
+    /// While an export runs, the playhead mirrors the render position:
+    /// the export's sample range
+    /// and the transport position to restore when the export finishes.
+    pub export_playhead_range: Option<(usize, usize)>,
+    pub export_resume_sample: Option<f64>,
     pub export_progress: f32,
     pub export_operation: Option<String>,
     pub export_sample_rate_hz: u32,
@@ -167,6 +187,7 @@ pub struct TransferState {
     pub export_render_mode: ExportRenderMode,
     pub export_range: ExportRange,
     pub export_hw_out_ports: BTreeSet<usize>,
+    pub export_stem_track_selection: BTreeSet<String>,
     pub export_realtime_fallback: bool,
     pub export_normalize: bool,
     pub export_normalize_mode: ExportNormalizeMode,
@@ -191,6 +212,9 @@ impl Default for TransferState {
             export_cancel: Arc::new(AtomicBool::new(false)),
             export_pending_bounces: HashSet::new(),
             export_bounce_notify: None,
+            export_stem_bounce_outcome: Arc::new(std::sync::Mutex::new(StemBounceOutcome::Pending)),
+            export_playhead_range: None,
+            export_resume_sample: None,
             export_progress: 0.0,
             export_operation: None,
             export_sample_rate_hz: 48_000,
@@ -203,6 +227,7 @@ impl Default for TransferState {
             export_render_mode: ExportRenderMode::Mixdown,
             export_range: ExportRange::Session,
             export_hw_out_ports: [0_usize, 1].into_iter().collect(),
+            export_stem_track_selection: BTreeSet::new(),
             export_realtime_fallback: false,
             export_normalize: false,
             export_normalize_mode: ExportNormalizeMode::Peak,

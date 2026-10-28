@@ -1049,6 +1049,7 @@ pub enum Message {
     ExportRenderModeSelected(ExportRenderMode),
     ExportRangeSelected(ExportRange),
     ExportHwOutPortToggled(usize, bool),
+    ExportStemTrackToggled(String, bool),
     ExportRealtimeFallbackToggled(bool),
     ExportBitDepthSelected(ExportBitDepth),
     ExportDitherSelected(ExportDither),
