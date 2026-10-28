@@ -1,6 +1,37 @@
 use super::*;
 
 impl Maolan {
+    fn audition_note(&mut self, note: u8, velocity: u8, on: bool) -> Task<Message> {
+        let track_name = {
+            let mut state = self.state.write().expect("state lock poisoned");
+            if on {
+                let Some(track_name) = state.piano.as_ref().map(|p| p.track_idx.clone()) else {
+                    return Task::none();
+                };
+                let key = (track_name.clone(), note);
+                if !state.piano_audition_notes.contains(&key) {
+                    state.piano_audition_notes.push(key);
+                }
+                track_name
+            } else {
+                let Some(index) = state
+                    .piano_audition_notes
+                    .iter()
+                    .position(|(_, active_note)| *active_note == note)
+                else {
+                    return Task::none();
+                };
+                state.piano_audition_notes.remove(index).0
+            }
+        };
+        self.send(Action::PianoKey {
+            track_name,
+            note,
+            velocity: if on { velocity } else { 0 },
+            on,
+        })
+    }
+
     pub(super) fn handle_piano_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PianoZoomXChanged(value) => {
@@ -107,8 +138,11 @@ impl Maolan {
                     let track_name = piano.track_idx.clone();
                     drop(state);
                     let mut state = self.state.write().expect("state lock poisoned");
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name) {
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
+                        && track.midi.editor_view_mode != mode
+                    {
                         track.midi.editor_view_mode = mode;
+                        self.session_ops.has_unsaved_changes = true;
                     }
                 }
             }
@@ -137,72 +171,16 @@ impl Maolan {
                 state.piano_sysex_panel_open = false;
             }
             Message::PianoKeyPressed(note, velocity) => {
-                let track_name = self
-                    .state
-                    .read()
-                    .expect("state lock poisoned")
-                    .piano
-                    .as_ref()
-                    .map(|p| p.track_idx.clone());
-                if let Some(track_name) = track_name {
-                    return self.send(Action::PianoKey {
-                        track_name,
-                        note,
-                        velocity,
-                        on: true,
-                    });
-                }
+                return self.audition_note(note, velocity, true);
             }
             Message::PianoKeyReleased(note) => {
-                let track_name = self
-                    .state
-                    .read()
-                    .expect("state lock poisoned")
-                    .piano
-                    .as_ref()
-                    .map(|p| p.track_idx.clone());
-                if let Some(track_name) = track_name {
-                    return self.send(Action::PianoKey {
-                        track_name,
-                        note,
-                        velocity: 0,
-                        on: false,
-                    });
-                }
+                return self.audition_note(note, 0, false);
             }
             Message::DrumKeyPressed(note, velocity) => {
-                let track_name = self
-                    .state
-                    .read()
-                    .expect("state lock poisoned")
-                    .piano
-                    .as_ref()
-                    .map(|p| p.track_idx.clone());
-                if let Some(track_name) = track_name {
-                    return self.send(Action::PianoKey {
-                        track_name,
-                        note,
-                        velocity,
-                        on: true,
-                    });
-                }
+                return self.audition_note(note, velocity, true);
             }
             Message::DrumKeyReleased(note) => {
-                let track_name = self
-                    .state
-                    .read()
-                    .expect("state lock poisoned")
-                    .piano
-                    .as_ref()
-                    .map(|p| p.track_idx.clone());
-                if let Some(track_name) = track_name {
-                    return self.send(Action::PianoKey {
-                        track_name,
-                        note,
-                        velocity: 0,
-                        on: false,
-                    });
-                }
+                return self.audition_note(note, 0, false);
             }
             Message::PianoNoteClick {
                 note_index,

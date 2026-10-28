@@ -124,16 +124,41 @@ impl Maolan {
         &'a self,
         content: maolan_widgets::iced::Element<'a, Message>,
     ) -> maolan_widgets::iced::Element<'a, Message> {
-        if !self.ui.show_log_window {
+        if !self.ui.show_log_window && !self.transfer.export_in_progress {
             return content;
         }
-        let overlay = container(self.log_window())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(24)
-            .align_x(maolan_widgets::iced::alignment::Horizontal::Right)
-            .align_y(maolan_widgets::iced::alignment::Vertical::Bottom);
-        Stack::with_children(vec![content, overlay.into()]).into()
+        let mut layers = vec![content];
+        if self.ui.show_log_window && !self.transfer.export_in_progress {
+            let overlay = container(self.log_window())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(24)
+                .align_x(maolan_widgets::iced::alignment::Horizontal::Right)
+                .align_y(maolan_widgets::iced::alignment::Vertical::Bottom);
+            layers.push(overlay.into());
+        }
+        if self.transfer.export_in_progress {
+            let blocker = container(button("Cancel").on_press(Message::Cancel))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(|_theme| container::Style {
+                    background: Some(maolan_widgets::iced::Background::Color(Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.3,
+                    ))),
+                    ..Default::default()
+                });
+            layers.push(
+                mouse_area(blocker)
+                    .on_press(Message::None)
+                    .on_right_press(Message::None)
+                    .on_middle_press(Message::None)
+                    .on_scroll(|_| Message::None)
+                    .into(),
+            );
+        }
+        Stack::with_children(layers).into()
     }
 
     fn playhead_bar_beat(&self, state: &crate::state::StateData, sample: usize) -> (u64, u64) {

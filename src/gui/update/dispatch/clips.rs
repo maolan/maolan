@@ -1358,6 +1358,20 @@ impl Maolan {
                         }
                     }
                 }
+                let audition_notes = {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    std::mem::take(&mut state.piano_audition_notes)
+                };
+                if !audition_notes.is_empty() {
+                    return Task::batch(audition_notes.into_iter().map(|(track_name, note)| {
+                        self.send(Action::PianoKey {
+                            track_name,
+                            note,
+                            velocity: 0,
+                            on: false,
+                        })
+                    }));
+                }
                 if self.modal.is_some() {
                     let mut state = self.state.write().expect("state lock poisoned");
                     state.mouse_left_down = false;
@@ -1394,6 +1408,32 @@ impl Maolan {
                         create_end,
                     )
                 };
+                // Canvas widgets can miss the release when another widget or
+                // the window captures it. The global release subscription is
+                // still delivered, so finish a piano note from its last drag
+                // position here as a fallback. Taking the preview makes this
+                // safe when the canvas already handled the release.
+                let piano_note = {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    let note = state.piano_creating_note.take();
+                    if note.is_some() {
+                        state.piano_painted_notes.clear();
+                    }
+                    note
+                };
+                if let Some(creating) = piano_note {
+                    return if creating.repeat {
+                        self.insert_painted_piano_notes_between(
+                            creating.start_point,
+                            creating.current_point,
+                        )
+                    } else {
+                        self.insert_stretched_piano_note_between(
+                            creating.start_point,
+                            creating.current_point,
+                        )
+                    };
+                }
                 self.drag.clip_preview_snap_adjust_samples = 0.0;
                 self.drag.clip_snap_targets.clear();
                 if let Some(Resizing::Clip {

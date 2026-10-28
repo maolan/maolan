@@ -1140,6 +1140,46 @@ impl Maolan {
         }
 
         let _sync_log_on_drop = SyncLogOnDrop(self as *mut _);
+        if self.transfer.export_in_progress
+            && !matches!(
+                message,
+                Message::None
+                    | Message::Response(_)
+                    | Message::EngineEvent(_)
+                    | Message::EngineQueryReply(_)
+                    | Message::ExportProgress { .. }
+                    | Message::Cancel
+                    | Message::PlaybackTick
+                    | Message::MeterPollTick
+                    | Message::AutosaveSnapshotTick
+                    | Message::RecordingPreviewTick
+                    | Message::RecordingPreviewPeaksTick
+                    | Message::DrainAudioPeakUpdates
+                    | Message::SendMessageFinished(_)
+                    | Message::SessionRestoreSendFinished(_)
+                    | Message::ImportProgress { .. }
+                    | Message::ImportFinished { .. }
+                    | Message::ImportPreparedAudioPeaks { .. }
+                    | Message::ClipOpenPitchCorrectionProgress { .. }
+                    | Message::TrackTemplatesLoaded(_, _)
+                    | Message::PreferencesDevicesLoaded { .. }
+                    | Message::AudioEditorBufferLoaded { .. }
+                    | Message::MidiClipPreviewLoaded { .. }
+                    | Message::ClipPitchCorrectionResynthFinished { .. }
+                    | Message::ClipStretchFinished { .. }
+                    | Message::ClipOpenPitchCorrectionFinished { .. }
+                    | Message::GenerateAudioProgress { .. }
+                    | Message::GenerateAudioFinished(_)
+                    | Message::GenerateMidiProgress { .. }
+                    | Message::GenerateMidiFinished(_)
+                    | Message::MouseReleased
+                    | Message::ShiftReleased
+                    | Message::CtrlReleased
+                    | Message::WindowResized(_)
+            )
+        {
+            return Task::none();
+        }
         // Keyboard shortcuts can still arrive while the loading view is shown.
         if self.session_ops.session_restore_in_progress
             && matches!(
@@ -2318,6 +2358,47 @@ mod tests {
             state,
             ..Maolan::default()
         }
+    }
+
+    #[test]
+    fn changing_midi_editor_mode_marks_session_unsaved() {
+        let state = crate::state::State::default();
+        {
+            let mut guard = state.write().expect("state lock poisoned");
+            guard.view = crate::state::View::Piano;
+            guard.piano = Some(crate::state::PianoData {
+                track_idx: "Drums".to_string(),
+                clip_index: 0,
+                clip_start_samples: 0,
+                clip_length_samples: 1000,
+                notes: Vec::new(),
+                controllers: Vec::new(),
+                sysexes: Vec::new(),
+                midnam_note_names: std::collections::HashMap::new(),
+            });
+            guard.tracks.push(crate::state::Track::new(
+                "Drums".to_string(),
+                0.0,
+                0,
+                2,
+                1,
+                0,
+            ));
+        }
+        let mut app = Maolan {
+            state,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::MidiEditorViewModeSelected(
+            crate::message::MidiEditorViewMode::DrumGrid,
+        ));
+
+        assert!(app.session_ops.has_unsaved_changes);
+        assert_eq!(
+            app.state.read().unwrap().tracks[0].midi.editor_view_mode,
+            crate::message::MidiEditorViewMode::DrumGrid
+        );
     }
 
     #[test]
