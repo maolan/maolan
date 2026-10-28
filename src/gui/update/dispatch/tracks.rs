@@ -829,6 +829,18 @@ impl Maolan {
                     return self.update(Message::PianoDeleteSelectedNotes);
                 }
 
+                let editor_connections_open = {
+                    let state = self.state.read().expect("state lock poisoned");
+                    matches!(view, crate::state::View::Workspace)
+                        && state.editor_connections.is_some()
+                };
+                if editor_connections_open {
+                    if let Some(task) = self.remove_selected_track_plugin_graph_items() {
+                        return task;
+                    }
+                    return self.update(Message::RemoveSelected);
+                }
+
                 let selected_clips: Vec<_> = if matches!(view, crate::state::View::Workspace) {
                     self.state
                         .read()

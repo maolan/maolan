@@ -2288,19 +2288,18 @@ impl Maolan {
 
     fn midi_lane_at_position(&self, position: Point) -> Option<(String, usize)> {
         let state = self.state.read().expect("state lock poisoned");
-        let mut y_offset = 0.0f32;
-        for track in state
-            .tracks
-            .iter()
-            .filter(|track| track.name != METRONOME_TRACK_ID)
-        {
+        for (track, y_offset) in crate::workspace::editor_track_rows(&state.tracks) {
             let track_top = y_offset;
-            let track_bottom = y_offset + track.height;
-            if position.y < track_top || position.y > track_bottom {
-                y_offset += track.height;
+            let height = if track.is_folder {
+                track.folder_content_height()
+            } else {
+                track.height
+            };
+            let track_bottom = y_offset + height;
+            if position.y < track_top || position.y >= track_bottom {
                 continue;
             }
-            if track.midi.ins == 0 {
+            if track.midi_lane_count() == 0 {
                 return None;
             }
             let local_y = (position.y - y_offset).max(0.0);

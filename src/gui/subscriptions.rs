@@ -179,7 +179,11 @@ impl Maolan {
                                 == Some(&close_connections_binding)
                     );
                     if editor_connections_open && !capturing_shortcut && close_connections {
-                        Message::EditorConnectionsClose
+                        if matches!(current_view, crate::state::View::Piano) {
+                            Message::Workspace
+                        } else {
+                            Message::EditorConnectionsClose
+                        }
                     } else {
                         Self::keyboard_message(
                             event,
@@ -209,16 +213,27 @@ impl Maolan {
             }
         });
 
-        let event_sub = event::listen().map(|event| match event {
-            event::Event::Mouse(mouse_event) => match mouse_event {
-                mouse::Event::ButtonPressed(button) => Message::MousePressed(button),
-                mouse::Event::CursorMoved { .. } => Message::MouseMoved(mouse_event),
-                mouse::Event::ButtonReleased(_) => Message::MouseReleased,
+        let event_sub = event::listen_with(|event, status, _window| {
+            // Finish active gestures even when a widget captures the release.
+            if matches!(event, event::Event::Mouse(mouse::Event::ButtonReleased(_))) {
+                return Some(Message::MouseReleased);
+            }
+            if status == event::Status::Captured {
+                return None;
+            }
+            Some(match event {
+                event::Event::Mouse(mouse_event) => match mouse_event {
+                    mouse::Event::ButtonPressed(button) => Message::MousePressed(button),
+                    mouse::Event::CursorMoved { .. } => Message::MouseMoved(mouse_event),
+                    mouse::Event::ButtonReleased(_) => Message::MouseReleased,
+                    _ => Message::None,
+                },
+                event::Event::Window(window::Event::Resized(size)) => Message::WindowResized(size),
+                event::Event::Window(window::Event::CloseRequested) => {
+                    Message::WindowCloseRequested
+                }
                 _ => Message::None,
-            },
-            event::Event::Window(window::Event::Resized(size)) => Message::WindowResized(size),
-            event::Event::Window(window::Event::CloseRequested) => Message::WindowCloseRequested,
-            _ => Message::None,
+            })
         });
 
         let shutdown_sub = Subscription::run(|| {

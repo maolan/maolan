@@ -182,6 +182,7 @@ fn piano_shortcuts(
                     "Humanize selected notes"
                 ),
                 keyboard_row(ShortcutAction::GrooveSelectedNotes, "Groove selected notes"),
+                keyboard_row(ShortcutAction::CloseMidiEditor, "Close MIDI editor"),
                 keyboard_row(ShortcutAction::ToggleTransport, "Toggle play/stop"),
                 keyboard_row(ShortcutAction::PauseTransport, "Pause"),
                 keyboard_row(ShortcutAction::JumpToStart, "Rewind to start"),

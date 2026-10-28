@@ -104,6 +104,14 @@ impl Maolan {
                 let ctrl = self.state.read().expect("state lock poisoned").ctrl;
                 let mut state = self.state.write().expect("state lock poisoned");
 
+                state.selected.clear();
+                if matches!(
+                    state.connection_view_selection,
+                    ConnectionViewSelection::Tracks(_)
+                ) {
+                    state.connection_view_selection = ConnectionViewSelection::None;
+                }
+
                 let clip_id = ClipId {
                     track_idx: track_idx.clone(),
                     clip_idx,
@@ -777,9 +785,8 @@ impl Maolan {
                     && position.y
                         <= TRACK_DRAG_SCROLL_TOP_INSET + TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT;
                 let should_scroll_down = position.y >= mixer_drag_scroll_top;
-                let previous_cursor = {
+                {
                     let mut state = self.state.write().expect("state lock poisoned");
-                    let prev = state.cursor;
                     state.cursor = position;
 
                     if let Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) =
@@ -797,8 +804,7 @@ impl Maolan {
                             }
                         }
                     }
-                    prev
-                };
+                }
                 match resizing {
                     Some(Resizing::Track(..)) => {}
                     Some(Resizing::Lane(
@@ -1261,33 +1267,6 @@ impl Maolan {
                         ));
                     }
                     return Task::batch(tasks);
-                }
-                let mouse_right_down = self
-                    .state
-                    .read()
-                    .expect("state lock poisoned")
-                    .mouse_right_down;
-                if mouse_right_down
-                    && !matches!(resizing, Some(Resizing::Clip { .. }))
-                    && self.drag.clip.is_none()
-                    && matches!(
-                        self.state.read().expect("state lock poisoned").view,
-                        View::Workspace
-                    )
-                    && self.modal.is_none()
-                {
-                    let can_start = self.midi_lane_at_position(position).is_some();
-                    let mut state = self.state.write().expect("state lock poisoned");
-                    if state.midi_clip_create_start.is_none() && can_start {
-                        state.midi_clip_create_start = Some(position);
-                        state.midi_clip_create_end = Some(position);
-                    } else if state.midi_clip_create_start.is_some() {
-                        let end = state.midi_clip_create_end.unwrap_or(position);
-                        let dx = position.x - previous_cursor.x;
-                        let dy = position.y - previous_cursor.y;
-                        state.midi_clip_create_end =
-                            Some(Point::new((end.x + dx).max(0.0), (end.y + dy).max(0.0)));
-                    }
                 }
                 if self.track.is_some() && (should_scroll_up || should_scroll_down) {
                     let delta_y = if should_scroll_up {
