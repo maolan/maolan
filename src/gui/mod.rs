@@ -8706,7 +8706,53 @@ mod tests {
                 .get("Drums")
         );
 
+        let _ = restored.update(Message::Response(Ok(Action::AddTrack {
+            name: "Drums".to_string(),
+            audio_ins: 2,
+            audio_outs: 2,
+            midi_ins: 1,
+            midi_outs: 1,
+            folder: false,
+            mixosc_addr: None,
+        })));
+        assert_eq!(
+            restored.state.read().unwrap().tracks[0]
+                .midi
+                .editor_view_mode,
+            crate::message::MidiEditorViewMode::DrumGrid
+        );
+
         fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn undo_track_removal_restores_midi_editor_view_mode() {
+        let mut app = Maolan::default();
+        let mut track = crate::state::Track::new("Drums".into(), 0.0, 0, 2, 1, 0);
+        track.midi.editor_view_mode = crate::message::MidiEditorViewMode::DrumGrid;
+        app.state.write().unwrap().tracks.push(track);
+
+        let _ = app.update(Message::Response(Ok(Action::RemoveTrack("Drums".into()))));
+        let _ = app.update(Message::Response(Ok(Action::AddTrack {
+            name: "Drums".into(),
+            audio_ins: 0,
+            audio_outs: 2,
+            midi_ins: 1,
+            midi_outs: 0,
+            folder: false,
+            mixosc_addr: None,
+        })));
+
+        let state = app.state.read().unwrap();
+        let track = state
+            .tracks
+            .iter()
+            .find(|track| track.name == "Drums")
+            .unwrap();
+        assert_eq!(
+            track.midi.editor_view_mode,
+            crate::message::MidiEditorViewMode::DrumGrid
+        );
     }
 
     #[test]

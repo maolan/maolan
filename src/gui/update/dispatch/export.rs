@@ -591,6 +591,7 @@ impl Maolan {
                         "Export requires an opened/saved session".to_string();
                     return Task::none();
                 }
+                self.transfer.export_render_mode = ExportRenderMode::Mixdown;
                 let nearest_rate = crate::consts::gui_mod::STANDARD_EXPORT_SAMPLE_RATES
                     .iter()
                     .min_by_key(|rate| {

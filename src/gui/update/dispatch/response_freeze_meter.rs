@@ -399,6 +399,23 @@ mod tests {
     }
 
     #[test]
+    fn export_blocks_user_actions_until_progress_finishes() {
+        let mut app = export_playhead_app();
+        let mixer_visible = app.ui.mixer_visible;
+        let _ = app.update(Message::ToggleMixerVisibility);
+        assert_eq!(app.ui.mixer_visible, mixer_visible);
+
+        let _ = app.update(Message::ExportProgress {
+            progress: 1.0,
+            operation: Some("Complete".to_string()),
+        });
+        assert!(!app.transfer.export_in_progress);
+
+        let _ = app.update(Message::ToggleMixerVisibility);
+        assert_ne!(app.ui.mixer_visible, mixer_visible);
+    }
+
+    #[test]
     fn finishing_export_restores_transport_position() {
         let mut app = export_playhead_app();
         app.transport.transport_samples = 42_000.0;

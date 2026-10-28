@@ -218,6 +218,7 @@ impl Maolan {
                             mixosc_addr,
                         } => {
                             let mut state = self.state.write().expect("state lock poisoned");
+                            let undo_track_index = state.undo_track_indices.remove(name);
                             let is_new_track =
                                 !state.tracks.iter().any(|track| track.name == *name);
                             let mut track = Track::new(
@@ -245,7 +246,7 @@ impl Maolan {
                                 let min_h = track.min_height_for_layout();
                                 track.height = existing_height.max(min_h);
                                 state.tracks[pos] = track;
-                            } else if let Some(index) = state.undo_track_indices.remove(name) {
+                            } else if let Some(index) = undo_track_index {
                                 let insert_index = index.min(state.tracks.len());
                                 state.tracks.insert(insert_index, track);
                             } else {
@@ -375,6 +376,11 @@ impl Maolan {
                                 // these removals must not supply undo insertion positions.
                                 if !self.session_ops.session_restore_in_progress {
                                     state.undo_track_indices.insert(name.clone(), removed_idx);
+                                    if let Some(track) = state.tracks.get(removed_idx) {
+                                        self.pending
+                                            .pending_track_midi_editor_view_mode
+                                            .insert(name.clone(), track.midi.editor_view_mode);
+                                    }
                                 }
                                 state.tracks.remove(removed_idx);
 
