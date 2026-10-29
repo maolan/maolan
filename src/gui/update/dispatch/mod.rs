@@ -647,15 +647,9 @@ impl Maolan {
                             })
                         }
                         PluginGraphNode::ClapPluginInstance(_) => {
-                            let plugin_id = state
-                                .plugin_graph_plugins
-                                .iter()
-                                .find(|p| p.instance_id == instance_id)
-                                .map(|p| p.plugin_id.clone())
-                                .unwrap_or_default();
-                            self.send(Action::TrackUnloadClapPlugin {
+                            self.send(Action::TrackUnloadClapPluginInstance {
                                 track_name: track_name.clone(),
-                                plugin_id,
+                                instance_id,
                             })
                         }
                         PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => Task::none(),

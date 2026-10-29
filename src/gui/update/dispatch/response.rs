@@ -1561,6 +1561,7 @@ impl Maolan {
                         | Action::TrackSetLv2ControlValue { track_name, .. }
                         | Action::TrackLoadVst3Plugin { track_name, .. }
                         | Action::TrackUnloadVst3PluginInstance { track_name, .. }
+                        | Action::TrackUnloadClapPluginInstance { track_name, .. }
                         | Action::TrackConnectPluginAudio { track_name, .. }
                         | Action::TrackDisconnectPluginAudio { track_name, .. }
                         | Action::TrackConnectPluginMidi { track_name, .. }
