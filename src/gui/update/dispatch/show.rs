@@ -11,11 +11,10 @@ impl Maolan {
         {
             return Task::none();
         }
-        {
-            let mut state = self.state.write().expect("state lock poisoned");
-            state.ctrl = false;
-            state.shift = false;
-        }
+        self.state
+            .write()
+            .expect("state lock poisoned")
+            .clear_modifiers();
         match show {
             Show::Save => {
                 if let Some(path) = &self.session_dir {

@@ -1169,6 +1169,8 @@ impl Maolan {
                     | Message::MouseReleased
                     | Message::ShiftReleased
                     | Message::CtrlReleased
+                    | Message::ControlReleased
+                    | Message::AltReleased
                     | Message::WindowResized(_)
             )
         {
@@ -2717,7 +2719,8 @@ mod tests {
         {
             let mut state = app.state.write().expect("state lock poisoned");
             state.piano_selected_notes = [0, 1].iter().copied().collect();
-            state.ctrl = true;
+            state.ctrl = !cfg!(target_os = "macos");
+            state.alt = cfg!(target_os = "macos");
         }
         app.timing.midi_snap_mode = crate::message::SnapMode::NoSnap;
 

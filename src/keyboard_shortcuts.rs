@@ -168,7 +168,7 @@ impl ShortcutBinding {
         let key = ShortcutKey::from_iced_key(key)?;
         Some(Self {
             key,
-            ctrl: modifiers.control(),
+            ctrl: modifiers.command(),
             shift: modifiers.shift(),
         })
     }
@@ -176,7 +176,14 @@ impl ShortcutBinding {
     pub fn label(&self) -> String {
         let mut parts = Vec::new();
         if self.ctrl {
-            parts.push("Ctrl".to_string());
+            parts.push(
+                if cfg!(target_os = "macos") {
+                    "Cmd"
+                } else {
+                    "Ctrl"
+                }
+                .to_string(),
+            );
         }
         if self.shift {
             parts.push("Shift".to_string());
@@ -324,9 +331,18 @@ pub fn action_for_binding(
     overrides: &ShortcutBindings,
     current_view: crate::state::View,
 ) -> Option<ShortcutAction> {
-    shortcut_priority(current_view)
+    let action = shortcut_priority(current_view)
         .into_iter()
-        .find(|action| &binding_for(overrides, *action) == binding)
+        .find(|action| &binding_for(overrides, *action) == binding);
+    #[cfg(target_os = "macos")]
+    if action.is_none() && binding.ctrl && !binding.shift {
+        match binding.key {
+            ShortcutKey::ArrowLeft => return Some(ShortcutAction::JumpToStart),
+            ShortcutKey::ArrowRight => return Some(ShortcutAction::JumpToEnd),
+            _ => {}
+        }
+    }
+    action
 }
 
 fn shortcut_priority(current_view: crate::state::View) -> Vec<ShortcutAction> {

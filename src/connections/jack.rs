@@ -461,7 +461,9 @@ impl canvas::Program<Message> for Graph {
         let (ports, nodes) = Self::layout(&data.jack_graph, bounds, &data.jack_node_positions);
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if !(cfg!(target_os = "macos") && (data.control || data.alt)) =>
+            {
                 state.moving_node = None;
                 for (id, _label, rect) in Self::button_rects(bounds) {
                     if rect.contains(cursor_position) {
@@ -548,7 +550,12 @@ impl canvas::Program<Message> for Graph {
                 }
                 return Some(Action::request_redraw());
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Middle
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && data.alt) =>
+            {
                 for port in ports.values() {
                     if port.is_maolan
                         && port.kind == Kind::Audio
@@ -563,7 +570,12 @@ impl canvas::Program<Message> for Graph {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Right
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && data.control) =>
+            {
                 for connection in &data.jack_graph.connections {
                     let (Some(source), Some(destination)) = (
                         ports.get(&connection.source),

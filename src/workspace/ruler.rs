@@ -25,6 +25,8 @@ pub struct Ruler;
 struct RulerState {
     dragging: bool,
     drag_with_right: bool,
+    drag_with_middle: bool,
+    modifiers: maolan_widgets::iced::keyboard::Modifiers,
     drag_adjust_loop_edge: bool,
     adjust_loop_start: bool,
     drag_move_loop_range: bool,
@@ -41,6 +43,8 @@ impl Default for RulerState {
         Self {
             dragging: false,
             drag_with_right: false,
+            drag_with_middle: false,
+            modifiers: maolan_widgets::iced::keyboard::Modifiers::default(),
             drag_adjust_loop_edge: false,
             adjust_loop_start: false,
             drag_move_loop_range: false,
@@ -233,10 +237,17 @@ impl canvas::Program<Message> for RulerCanvas {
         };
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Keyboard(maolan_widgets::iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.modifiers = *modifiers;
+                return None;
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if !(cfg!(target_os = "macos") && state.modifiers.alt()) =>
+            {
                 if let Some(pos) = cursor_position {
                     state.dragging = true;
                     state.drag_with_right = false;
+                    state.drag_with_middle = false;
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     state.drag_start_x = x;
                     state.last_x = x;
@@ -248,11 +259,17 @@ impl canvas::Program<Message> for RulerCanvas {
                     return Some(CanvasAction::capture());
                 }
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Middle
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && state.modifiers.alt()) =>
+            {
                 if let Some(pos) = cursor_position
                     && let Some((loop_start, loop_end)) = self.loop_range_samples
                     && loop_end > loop_start
                 {
+                    state.drag_with_middle = true;
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     let start_x = timeline_sample_to_x_f32(
                         loop_start as f32,
@@ -358,8 +375,15 @@ impl canvas::Program<Message> for RulerCanvas {
                 state.drag_move_loop_range = false;
                 return Some(CanvasAction::capture());
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) if state.dragging => {
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if state.dragging
+                    && (*button == mouse::Button::Middle
+                        || (cfg!(target_os = "macos")
+                            && *button == mouse::Button::Left
+                            && state.drag_with_middle)) =>
+            {
                 state.dragging = false;
+                state.drag_with_middle = false;
                 if self.pixels_per_sample <= 1.0e-9 {
                     return None;
                 }

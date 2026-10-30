@@ -13,11 +13,10 @@ impl Maolan {
                 Some(Task::none())
             }
             Message::SaveFolderSelected(ref path_opt) => {
-                {
-                    let mut state = self.state.write().expect("state lock poisoned");
-                    state.ctrl = false;
-                    state.shift = false;
-                }
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .clear_modifiers();
                 if let Some(path) = path_opt {
                     self.session_dir = Some(path.clone());
                     return Some(self.refresh_graphs_then_save(path.to_string_lossy().to_string()));
@@ -30,11 +29,10 @@ impl Maolan {
                 None
             }
             Message::RecordFolderSelected(ref path_opt) => {
-                {
-                    let mut state = self.state.write().expect("state lock poisoned");
-                    state.ctrl = false;
-                    state.shift = false;
-                }
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .clear_modifiers();
                 if let Some(path) = path_opt {
                     self.session_dir = Some(path.clone());
                     self.transport.record_armed = true;
@@ -49,11 +47,10 @@ impl Maolan {
                 }
             }
             Message::OpenFolderSelected(Some(path)) => {
-                {
-                    let mut state = self.state.write().expect("state lock poisoned");
-                    state.ctrl = false;
-                    state.shift = false;
-                }
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .clear_modifiers();
                 if !path.exists() {
                     self.forget_recent_session_path(&path);
                     self.state.write().expect("state lock poisoned").message =

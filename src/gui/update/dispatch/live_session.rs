@@ -48,6 +48,13 @@ impl Maolan {
                 scene_index,
                 icon,
             } => {
+                if cfg!(target_os = "macos") && self.state.read().expect("state lock poisoned").alt
+                {
+                    return self.handle_live_session_message(Message::SessionSlotClearRef {
+                        track_name,
+                        scene_index,
+                    });
+                }
                 {
                     let mut state = self.state.write().expect("state lock poisoned");
                     state.session.ensure_track_slots(&track_name);
