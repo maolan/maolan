@@ -1151,8 +1151,12 @@ pub enum Message {
 
     ShiftPressed,
     CtrlPressed,
+    ControlPressed,
+    AltPressed,
     ShiftReleased,
     CtrlReleased,
+    ControlReleased,
+    AltReleased,
     SelectAll,
 
     WindowResized(Size),

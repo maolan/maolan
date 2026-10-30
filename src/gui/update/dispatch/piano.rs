@@ -228,7 +228,7 @@ impl Maolan {
             }
             Message::PianoNotesEndDrag => {
                 let mut state = self.state.write().expect("state lock poisoned");
-                let copy = state.ctrl;
+                let copy = state.copy_modifier();
                 if let Some(dragging) = state.piano_dragging_notes.take() {
                     let zoom_x = state.piano_zoom_x;
                     let zoom_y = state.piano_zoom_y;
@@ -1347,6 +1347,8 @@ impl Maolan {
             }
             Message::PianoDeleteNotes { ref note_indices } => {
                 let mut state = self.state.write().expect("state lock poisoned");
+                state.piano_dragging_notes = None;
+                state.piano_resizing_note = None;
                 let mut selected_indices = note_indices.clone();
                 selected_indices.sort_unstable();
                 selected_indices.dedup();
@@ -1453,7 +1455,7 @@ impl Maolan {
                     let Some(piano) = state.piano.as_ref() else {
                         return Task::none();
                     };
-                    let copy = state.ctrl;
+                    let copy = state.copy_modifier();
                     let track_name = piano.track_idx.clone();
                     let clip_idx = piano.clip_index;
                     let tempo = state.tempo.max(1.0);

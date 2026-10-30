@@ -94,6 +94,8 @@ struct ContextMenuState {
 #[derive(Debug)]
 struct TempoState {
     drag_mode: DragMode,
+    emulated_middle: bool,
+    modifiers: maolan_widgets::iced::keyboard::Modifiers,
     time_range_samples: Option<(usize, usize)>,
     context_menu: Option<ContextMenuState>,
     cache: canvas::Cache,
@@ -104,6 +106,8 @@ impl Default for TempoState {
     fn default() -> Self {
         Self {
             drag_mode: DragMode::None,
+            emulated_middle: false,
+            modifiers: maolan_widgets::iced::keyboard::Modifiers::default(),
             time_range_samples: None,
             context_menu: None,
             cache: canvas::Cache::default(),
@@ -381,7 +385,15 @@ impl canvas::Program<Message> for TempoCanvas {
         };
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Keyboard(maolan_widgets::iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.modifiers = *modifiers;
+                return None;
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if !(cfg!(target_os = "macos")
+                    && (state.modifiers.alt() || state.modifiers.control())) =>
+            {
+                state.emulated_middle = false;
                 if let Some(pos) = cursor_position {
                     if let Some(menu) = state.context_menu
                         && let Some(item_idx) = context_menu_hit(pos, menu)
@@ -675,7 +687,13 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Right
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && state.modifiers.control()) =>
+            {
+                state.emulated_middle = false;
                 if let Some(pos) = cursor_position {
                     if pos.x <= LEFT_HIT_WIDTH {
                         return Some(CanvasAction::capture());
@@ -816,7 +834,13 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Middle
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && state.modifiers.alt()) =>
+            {
+                state.emulated_middle = true;
                 if let Some(pos) = cursor_position
                     && pos.x > LEFT_HIT_WIDTH
                 {
@@ -914,7 +938,13 @@ impl canvas::Program<Message> for TempoCanvas {
                     return Some(CanvasAction::capture());
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if *button == mouse::Button::Middle
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && state.emulated_middle) =>
+            {
+                state.emulated_middle = false;
                 let drag_mode = std::mem::replace(&mut state.drag_mode, DragMode::None);
                 match drag_mode {
                     DragMode::AdjustPunchEdge {

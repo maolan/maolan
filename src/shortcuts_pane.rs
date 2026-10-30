@@ -54,7 +54,7 @@ struct ShortcutRow {
 
 enum PaneRow {
     Editable(ShortcutRow),
-    Static(&'static str),
+    Static(String),
 }
 
 fn keyboard_row(action: ShortcutAction, label: &'static str) -> PaneRow {
@@ -62,6 +62,16 @@ fn keyboard_row(action: ShortcutAction, label: &'static str) -> PaneRow {
 }
 
 fn static_row(label: &'static str) -> PaneRow {
+    if !cfg!(target_os = "macos") {
+        return PaneRow::Static(label.to_string());
+    }
+    let label = match label {
+        "Ctrl+drag: Copy clip" => "Option+drag: Copy clip".to_string(),
+        _ => label
+            .replace("Ctrl", "Cmd")
+            .replace("Middle", "Option+")
+            .replace("Right", "Secondary"),
+    };
     PaneRow::Static(label)
 }
 
@@ -89,7 +99,7 @@ fn row_element(
     match item {
         PaneRow::Editable(row) => editable_row(row, hint, overrides, editing),
         PaneRow::Static(label) => {
-            styled_row(format!("  * {label}"), highlighted(label, hint), false)
+            styled_row(format!("  * {label}"), highlighted(&label, hint), false)
         }
     }
 }
@@ -303,10 +313,12 @@ fn session_shortcuts(
         section(
             "Mouse",
             vec![
-                static_row("Click slot: Launch/stop clip"),
-                static_row("Click scene: Launch all clips in scene"),
-                static_row("Right click slot: Context menu"),
-                static_row("Double click slot: Open referenced clip"),
+                static_row("Click slot: Cycle play/stop scene participation"),
+                static_row("Right click slot: Clear play/stop participation"),
+                static_row("Middle click slot: Clear clip reference"),
+                static_row("Click scene: Select or queue scene"),
+                static_row("Right click scene: Context menu"),
+                static_row("Double click track: Open connections"),
             ],
             hint,
             overrides,
@@ -348,6 +360,10 @@ fn workspace_shortcuts(
                 keyboard_row(ShortcutAction::ToggleClipsPane, "Toggle clips pane"),
                 keyboard_row(ShortcutAction::ToggleCutIndicator, "Toggle cut indicator"),
                 keyboard_row(ShortcutAction::CreateMarker, "Create marker at playhead"),
+                keyboard_row(
+                    ShortcutAction::ToggleSelectedPluginBypass,
+                    "Toggle selected plugin bypass",
+                ),
                 keyboard_row(
                     ShortcutAction::CloseEditorConnections,
                     "Close track inner connections",
@@ -407,7 +423,6 @@ fn workspace_shortcuts(
                 static_row("Right click or N: Create marker at playhead"),
                 static_row("Left drag marker: Move"),
                 static_row("Right click marker: Rename"),
-                static_row("Middle click marker: Delete"),
             ],
             hint,
             overrides,
@@ -426,7 +441,8 @@ fn workspace_shortcuts(
         section(
             "Automation Lanes",
             vec![
-                static_row("Left click empty area: Insert automation point"),
+                static_row("Right click empty area: Insert automation point"),
+                static_row("Right drag empty area: Draw automation ramp"),
                 static_row("Right click point: Delete automation point"),
             ],
             hint,
@@ -440,7 +456,6 @@ fn workspace_shortcuts(
                 static_row("Left drag: Set loop range"),
                 static_row("Middle drag inside loop: Move loop range"),
                 static_row("Middle drag loop edge: Adjust loop start/end"),
-                static_row("Right drag: Adjust nearest loop edge"),
             ],
             hint,
             overrides,

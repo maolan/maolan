@@ -102,11 +102,11 @@ impl Toolbar {
         let punch_active = view_state.has_punch_range && view_state.punch_enabled;
         fn with_tooltip<'a>(
             element: maolan_widgets::iced::Element<'a, Message>,
-            label: &'static str,
+            label: impl Into<String>,
         ) -> maolan_widgets::iced::Element<'a, Message> {
             tooltip(
                 element,
-                container(text(label).size(12))
+                container(text(label.into()).size(12))
                     .padding([4, 8])
                     .style(|_theme: &Theme| container::Style {
                         text_color: Some(Color::from_rgb(0.94, 0.94, 0.94)),
@@ -136,7 +136,12 @@ impl Toolbar {
             if let Some(msg) = right_press {
                 area = area.on_right_press(msg);
             }
-            with_tooltip(area.into(), hint)
+            let label = if cfg!(target_os = "macos") {
+                hint.replace("Ctrl", "Cmd")
+            } else {
+                hint.to_string()
+            };
+            with_tooltip(area.into(), label)
         }
         let play_button = with_hint(
             button(play())

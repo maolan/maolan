@@ -132,6 +132,8 @@ impl Maolan {
                 }
                 state.mouse_left_down = true;
                 state.mouse_right_down = false;
+                state.emulated_middle_click =
+                    (cfg!(target_os = "macos") && state.alt).then_some(state.cursor);
                 state.clip_click_consumed = true;
                 state.clip_marquee_start = None;
                 state.clip_marquee_end = None;
@@ -141,7 +143,7 @@ impl Maolan {
                     crate::message::DraggedClip::new(kind, clip_idx, track_idx.clone());
                 dragged.start = state.cursor;
                 dragged.end = state.cursor;
-                dragged.copy = state.ctrl;
+                dragged.copy = state.copy_modifier();
                 self.drag.clip = Some(dragged);
             }
             Message::ClipRenameShow {
@@ -604,10 +606,23 @@ impl Maolan {
                 if button == mouse::Button::Middle {
                     return self.split_clip_at_position(self.active_workspace_cursor());
                 }
+                let button = if cfg!(target_os = "macos")
+                    && button == mouse::Button::Left
+                    && self.state.read().expect("state lock poisoned").control
+                {
+                    mouse::Button::Right
+                } else {
+                    button
+                };
                 match button {
                     mouse::Button::Left => {
+                        let cursor = self.active_workspace_cursor();
+                        let emulate_middle = cfg!(target_os = "macos")
+                            && self.state.read().expect("state lock poisoned").alt
+                            && self.clip_at_position(cursor).is_some();
                         let mut state = self.state.write().expect("state lock poisoned");
                         state.mouse_left_down = true;
+                        state.emulated_middle_click = emulate_middle.then_some(cursor);
                         state.clip_marquee_start = None;
                         state.clip_marquee_end = None;
                     }
@@ -615,7 +630,10 @@ impl Maolan {
                         let cursor = self.active_workspace_cursor();
                         let clip_hit = self.clip_at_position(cursor);
                         let anchor_for_hit = cursor;
+                        self.drag.clip = None;
                         let mut state = self.state.write().expect("state lock poisoned");
+                        state.mouse_left_down = false;
+                        state.emulated_middle_click = None;
                         if let Some((track_idx, kind, clip_idx)) = clip_hit {
                             let id = crate::state::ClipId {
                                 track_idx,
@@ -788,6 +806,12 @@ impl Maolan {
                 {
                     let mut state = self.state.write().expect("state lock poisoned");
                     state.cursor = position;
+                    if state
+                        .emulated_middle_click
+                        .is_some_and(|start| start.distance(position) > 3.0)
+                    {
+                        state.emulated_middle_click = None;
+                    }
 
                     if let Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) =
                         resizing
@@ -1341,6 +1365,31 @@ impl Maolan {
                 }
             }
             Message::MouseReleased => {
+                let emulated_middle_click = self
+                    .state
+                    .write()
+                    .expect("state lock poisoned")
+                    .emulated_middle_click
+                    .take();
+                if let Some(position) = emulated_middle_click {
+                    {
+                        let mut state = self.state.write().expect("state lock poisoned");
+                        state.mouse_left_down = false;
+                        state.mouse_right_down = false;
+                        state.clip_click_consumed = false;
+                        state.clip_marquee_start = None;
+                        state.clip_marquee_end = None;
+                        state.midi_clip_create_start = None;
+                        state.midi_clip_create_end = None;
+                        state.resizing = None;
+                    }
+                    self.drag.clip = None;
+                    self.drag.clip_preview_target_track = None;
+                    self.drag.clip_preview_target_valid = false;
+                    self.drag.clip_preview_snap_adjust_samples = 0.0;
+                    self.drag.clip_snap_targets.clear();
+                    return self.split_clip_at_position(position);
+                }
                 let active = std::mem::take(&mut self.automation.touch_active_keys);
                 for (track_name, keys) in active {
                     if let Some(values) = self
@@ -1698,6 +1747,10 @@ impl Maolan {
                 self.drag.clip_preview_target_valid = false;
             }
             Message::ClipDrag(ref clip) => {
+                self.state
+                    .write()
+                    .expect("state lock poisoned")
+                    .emulated_middle_click = None;
                 if !self
                     .state
                     .read()
@@ -1735,7 +1788,11 @@ impl Maolan {
                         let cursor = self.state.read().expect("state lock poisoned").cursor;
                         dragged.start = cursor;
                         dragged.end = cursor;
-                        dragged.copy = self.state.read().expect("state lock poisoned").ctrl;
+                        dragged.copy = self
+                            .state
+                            .read()
+                            .expect("state lock poisoned")
+                            .copy_modifier();
                         self.drag.clip = Some(dragged);
                         self.drag.clip_preview_snap_adjust_samples = 0.0;
                         self.drag.clip_snap_targets.clear();

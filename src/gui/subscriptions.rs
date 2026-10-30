@@ -417,13 +417,41 @@ impl Maolan {
 
                 match key {
                     keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
-                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
+                    keyboard::Key::Named(keyboard::key::Named::Control) => {
+                        if cfg!(target_os = "macos") {
+                            Message::ControlPressed
+                        } else {
+                            Message::CtrlPressed
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Super)
+                        if cfg!(target_os = "macos") =>
+                    {
+                        Message::CtrlPressed
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Alt)
+                        if cfg!(target_os = "macos") =>
+                    {
+                        Message::AltPressed
+                    }
                     _ => Message::None,
                 }
             }
             KeyEvent::KeyReleased { key, .. } => match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
-                keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
+                keyboard::Key::Named(keyboard::key::Named::Control) => {
+                    if cfg!(target_os = "macos") {
+                        Message::ControlReleased
+                    } else {
+                        Message::CtrlReleased
+                    }
+                }
+                keyboard::Key::Named(keyboard::key::Named::Super) if cfg!(target_os = "macos") => {
+                    Message::CtrlReleased
+                }
+                keyboard::Key::Named(keyboard::key::Named::Alt) if cfg!(target_os = "macos") => {
+                    Message::AltReleased
+                }
                 _ => Message::None,
             },
             _ => Message::None,
@@ -552,7 +580,7 @@ mod tests {
                     modified_key: Key::Character("r".into()),
                     physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyR),
                     location: keyboard::Location::Standard,
-                    modifiers: Modifiers::CTRL,
+                    modifiers: Modifiers::COMMAND,
                     text: Some("r".into()),
                     repeat: false,
                 },
@@ -568,7 +596,7 @@ mod tests {
                     modified_key: Key::Character("l".into()),
                     physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyL),
                     location: keyboard::Location::Standard,
-                    modifiers: Modifiers::CTRL,
+                    modifiers: Modifiers::COMMAND,
                     text: Some("l".into()),
                     repeat: false,
                 },
@@ -680,7 +708,7 @@ mod tests {
                     modified_key: Key::Character("t".into()),
                     physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyT),
                     location: keyboard::Location::Standard,
-                    modifiers: Modifiers::CTRL,
+                    modifiers: Modifiers::COMMAND,
                     text: Some("t".into()),
                     repeat: false,
                 },
@@ -700,7 +728,7 @@ mod tests {
                     modified_key: Key::Character("t".into()),
                     physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyT),
                     location: keyboard::Location::Standard,
-                    modifiers: Modifiers::CTRL,
+                    modifiers: Modifiers::COMMAND,
                     text: Some("t".into()),
                     repeat: false,
                 },

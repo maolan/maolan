@@ -1506,6 +1506,8 @@ pub enum TrackDropPreview {
 pub struct StateData {
     pub shift: bool,
     pub ctrl: bool,
+    pub control: bool,
+    pub alt: bool,
     pub tracks: Vec<Track>,
     pub unused_audio_clips: Vec<AudioClip>,
     pub unused_midi_clips: Vec<MIDIClip>,
@@ -1536,6 +1538,7 @@ pub struct StateData {
     pub cut_indicator: Option<(f32, f32, f32)>,
     pub mouse_left_down: bool,
     pub mouse_right_down: bool,
+    pub emulated_middle_click: Option<Point>,
     pub clip_marquee_start: Option<Point>,
     pub clip_marquee_end: Option<Point>,
     pub midi_clip_create_start: Option<Point>,
@@ -1753,6 +1756,23 @@ pub struct CreatingPianoNote {
     pub repeat: bool,
 }
 
+impl StateData {
+    pub const fn copy_modifier(&self) -> bool {
+        if cfg!(target_os = "macos") {
+            self.alt
+        } else {
+            self.ctrl
+        }
+    }
+
+    pub fn clear_modifiers(&mut self) {
+        self.shift = false;
+        self.ctrl = false;
+        self.control = false;
+        self.alt = false;
+    }
+}
+
 impl Default for StateData {
     fn default() -> Self {
         let cfg = config::Config::load().unwrap_or_default();
@@ -1761,6 +1781,8 @@ impl Default for StateData {
         Self {
             shift: false,
             ctrl: false,
+            control: false,
+            alt: false,
             tracks: vec![],
             unused_audio_clips: vec![],
             unused_midi_clips: vec![],
@@ -1794,6 +1816,7 @@ impl Default for StateData {
             cut_indicator: None,
             mouse_left_down: false,
             mouse_right_down: false,
+            emulated_middle_click: None,
             clip_marquee_start: None,
             clip_marquee_end: None,
             midi_clip_create_start: None,

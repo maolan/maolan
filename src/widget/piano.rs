@@ -69,6 +69,7 @@ pub struct PianoRollInteractionState {
     pub dragging_mode: DraggingMode,
     pub drag_start: Option<Point>,
     pub drag_current: Option<Point>,
+    emulated_middle_click: bool,
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
@@ -103,9 +104,12 @@ impl Program<Message> for PianoRollInteraction {
         let notes = &roll.notes;
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if !(cfg!(target_os = "macos") && app_state.control) =>
+            {
                 if let Some(position) = cursor.position_in(bounds) {
                     if let Some(note_idx) = self.note_at_position(position, row_h, pps, notes) {
+                        state.emulated_middle_click = cfg!(target_os = "macos") && app_state.alt;
                         let note = notes.get(note_idx)?;
                         let note_x = note.start_sample as f32 * pps;
                         let note_w = (note.length_samples as f32 * pps).max(2.0);
@@ -157,7 +161,12 @@ impl Program<Message> for PianoRollInteraction {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Right
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && app_state.control) =>
+            {
                 if let Some(position) = cursor.position_in(bounds) {
                     state.drag_start = Some(position);
                     state.drag_current = Some(position);
@@ -232,6 +241,28 @@ impl Program<Message> for PianoRollInteraction {
                 if state.drag_start.is_some() =>
             {
                 let mode = state.dragging_mode;
+                if state.emulated_middle_click
+                    && matches!(
+                        mode,
+                        DraggingMode::DraggingNotes | DraggingMode::ResizingNote
+                    )
+                    && state
+                        .drag_start
+                        .zip(state.drag_current)
+                        .is_some_and(|(start, current)| start.distance(current) < 3.0)
+                    && let Some(position) = cursor.position_in(bounds)
+                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, notes)
+                {
+                    state.drag_start = None;
+                    state.drag_current = None;
+                    state.dragging_mode = DraggingMode::None;
+                    return Some(
+                        CanvasAction::publish(Message::PianoDeleteNotes {
+                            note_indices: vec![note_idx],
+                        })
+                        .and_capture(),
+                    );
+                }
                 state.drag_start = None;
                 state.dragging_mode = DraggingMode::None;
 
@@ -260,8 +291,12 @@ impl Program<Message> for PianoRollInteraction {
                     DraggingMode::None => {}
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right))
-                if state.drag_start.is_some() =>
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if state.drag_start.is_some()
+                    && (*button == mouse::Button::Right
+                        || (cfg!(target_os = "macos")
+                            && *button == mouse::Button::Left
+                            && state.dragging_mode == DraggingMode::CreatingNote)) =>
             {
                 let mode = state.dragging_mode;
                 let release_position = cursor.position_in(bounds).unwrap_or_else(|| {

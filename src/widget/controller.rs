@@ -484,7 +484,9 @@ impl Program<Message> for ControllerRollInteraction {
         let row_h = (bounds.height / controller_lane_line_count(lane).max(1) as f32).max(1.0);
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if !(cfg!(target_os = "macos") && (app_state.control || app_state.alt)) =>
+            {
                 let position = cursor.position_in(bounds)?;
                 if matches!(lane, PianoControllerLane::SysEx) {
                     if let Some(index) = self.sysex_at_position(position, pps, sysexes) {
@@ -578,7 +580,12 @@ impl Program<Message> for ControllerRollInteraction {
                 }
                 None
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Middle
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && app_state.alt) =>
+            {
                 let position = cursor.position_in(bounds)?;
                 if matches!(lane, PianoControllerLane::SysEx) {
                     return None;
@@ -790,7 +797,12 @@ impl Program<Message> for ControllerRollInteraction {
                 }
                 None
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if *button == mouse::Button::Middle
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && matches!(&state.mode, ControllerDragMode::Erasing { .. })) =>
+            {
                 if let ControllerDragMode::Erasing {
                     start,
                     mut current,
@@ -884,7 +896,12 @@ impl Program<Message> for ControllerRollInteraction {
                 }
                 None
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if *button == mouse::Button::Right
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && app_state.control) =>
+            {
                 if matches!(
                     lane,
                     PianoControllerLane::Velocity | PianoControllerLane::SysEx
@@ -900,7 +917,12 @@ impl Program<Message> for ControllerRollInteraction {
                 }
                 None
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if *button == mouse::Button::Right
+                    || (cfg!(target_os = "macos")
+                        && *button == mouse::Button::Left
+                        && matches!(&state.mode, ControllerDragMode::Drawing { .. })) =>
+            {
                 if let ControllerDragMode::Drawing { start, current } = state.mode {
                     state.mode = ControllerDragMode::None;
                     let lane_cfg = match lane {

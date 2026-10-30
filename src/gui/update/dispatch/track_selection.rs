@@ -57,6 +57,22 @@ impl Maolan {
                 self.state.write().expect("state lock poisoned").ctrl = false;
                 None
             }
+            Message::ControlPressed => {
+                self.state.write().expect("state lock poisoned").control = true;
+                None
+            }
+            Message::ControlReleased => {
+                self.state.write().expect("state lock poisoned").control = false;
+                None
+            }
+            Message::AltPressed => {
+                self.state.write().expect("state lock poisoned").alt = true;
+                None
+            }
+            Message::AltReleased => {
+                self.state.write().expect("state lock poisoned").alt = false;
+                None
+            }
             Message::SelectTrack(ref name) => {
                 let now = Instant::now();
                 let track_name = name.clone();
