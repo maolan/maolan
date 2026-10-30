@@ -154,7 +154,7 @@ jobs:
           cp target/release/maolan-cli "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan-cli"
           cp target/release/maolan-osc "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan-osc"
           cp target/release/maolan-plugin-host "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan-plugin-host"
-          cp assets/images/maolan-icon.svg "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan.svg"
+          cp assets/images/maolan.svg "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan.svg"
           cp assets/desktop/maolan.desktop "$RUNNER_TEMP/maolan-pkg/${ASSET_BASENAME}/maolan.desktop"
           tar -C "$RUNNER_TEMP/maolan-pkg" -czf "dist/${ASSET_BASENAME}.tar.gz" "${ASSET_BASENAME}"
           mv target/debian/*.deb dist/
@@ -235,8 +235,8 @@ jobs:
           New-Item -ItemType Directory -Force $nsiTemp | Out-Null
           Copy-Item scripts\installer.nsi "$nsiTemp\installer.nsi" -Force
           Copy-Item LICENSE "$nsiTemp\LICENSE" -Force
-          $iconPath = "$nsiTemp\maolan-icon.ico"
-          Copy-Item assets\images\maolan-icon.ico $iconPath -Force
+          $iconPath = "$nsiTemp\maolan.ico"
+          Copy-Item assets\images\maolan.ico $iconPath -Force
           Push-Location $nsiTemp
           & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" "/INPUTCHARSET" "UTF8" "/DMAOLAN_VERSION=$pkgVersion" "/DMAOLAN_PRODUCT_VERSION=$productVersion" "/DMAOLAN_ICON=$iconPath" "$nsiTemp\installer.nsi"
           Pop-Location
@@ -251,7 +251,7 @@ jobs:
           Copy-Item target/release/maolan-cli.exe "$stage/${{ env.ASSET_BASENAME }}/"
           Copy-Item target/release/maolan-osc.exe "$stage/${{ env.ASSET_BASENAME }}/"
           Copy-Item target/release/maolan-plugin-host.exe "$stage/${{ env.ASSET_BASENAME }}/"
-          Copy-Item assets/images/maolan-icon.svg "$stage/${{ env.ASSET_BASENAME }}/maolan.svg"
+          Copy-Item assets/images/maolan.svg "$stage/${{ env.ASSET_BASENAME }}/maolan.svg"
           Copy-Item assets/desktop/maolan.desktop "$stage/${{ env.ASSET_BASENAME }}/maolan.desktop"
           Compress-Archive -Path "$stage/${{ env.ASSET_BASENAME }}" -DestinationPath "dist/${{ env.ASSET_BASENAME }}.zip"
 
