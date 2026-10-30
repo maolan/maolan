@@ -73,7 +73,7 @@ assets = [
   ["target/release/maolan-osc", "usr/bin/", "755"],
   ["target/release/maolan-plugin-host", "usr/bin/", "755"],
   ["assets/desktop/maolan.desktop", "usr/share/applications/", "644"],
-  ["assets/images/maolan-icon.svg", "usr/share/icons/hicolor/scalable/apps/maolan.svg", "644"],
+  ["assets/images/maolan.svg", "usr/share/icons/hicolor/scalable/apps/maolan.svg", "644"],
   ["README.md", "usr/share/doc/maolan/", "644"],
   ["LICENSE", "usr/share/doc/maolan/", "644"],
 ]
@@ -89,7 +89,7 @@ assets = [
   { source = "target/release/maolan-osc", dest = "/usr/bin/maolan-osc", mode = "755" },
   { source = "target/release/maolan-plugin-host", dest = "/usr/bin/maolan-plugin-host", mode = "755" },
   { source = "assets/desktop/maolan.desktop", dest = "/usr/share/applications/maolan.desktop", mode = "644" },
-  { source = "assets/images/maolan-icon.svg", dest = "/usr/share/icons/hicolor/scalable/apps/maolan.svg", mode = "644" },
+  { source = "assets/images/maolan.svg", dest = "/usr/share/icons/hicolor/scalable/apps/maolan.svg", mode = "644" },
   { source = "README.md", dest = "/usr/share/doc/maolan/README.md", mode = "644" },
   { source = "LICENSE", dest = "/usr/share/doc/maolan/LICENSE", mode = "644" },
 ]
