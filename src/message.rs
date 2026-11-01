@@ -911,6 +911,41 @@ impl fmt::Display for PianoChordKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoScaleChordSelection {
+    Scale(PianoScale),
+    Chord(PianoChordKind),
+}
+
+impl PianoScaleChordSelection {
+    pub fn all() -> Vec<Self> {
+        PianoScale::ALL
+            .into_iter()
+            .map(Self::Scale)
+            .chain(
+                [
+                    PianoChordKind::MajorTriad,
+                    PianoChordKind::MinorTriad,
+                    PianoChordKind::Dominant7,
+                    PianoChordKind::Major7,
+                    PianoChordKind::Minor7,
+                ]
+                .into_iter()
+                .map(Self::Chord),
+            )
+            .collect()
+    }
+}
+
+impl fmt::Display for PianoScaleChordSelection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scale(scale) => scale.fmt(f),
+            Self::Chord(chord) => chord.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportBitDepth {
     Int16,
     Int24,
@@ -1805,7 +1840,7 @@ pub enum Message {
     PianoHideOutOfScale(bool),
     PianoShowNoteNames(bool),
     PianoChordSelectedNotes,
-    PianoChordKindSelected(PianoChordKind),
+    PianoScaleChordSelected(PianoScaleChordSelection),
     PianoLegatoSelectedNotes,
     PianoVelocityShapeSelectedNotes,
     PianoVelocityShapeAmountChanged(f32),
@@ -2378,6 +2413,16 @@ mod tests {
         assert_eq!(format!("{}", PianoChordKind::MajorTriad), "Maj");
         assert_eq!(format!("{}", PianoChordKind::MinorTriad), "Min");
         assert_eq!(format!("{}", PianoChordKind::Dominant7), "7");
+    }
+
+    #[test]
+    fn piano_scale_chord_selection_contains_all_scales_and_chords() {
+        let selections = PianoScaleChordSelection::all();
+        assert_eq!(selections.len(), PianoScale::ALL.len() + 5);
+        assert!(selections.contains(&PianoScaleChordSelection::Scale(PianoScale::Major)));
+        assert!(selections.contains(&PianoScaleChordSelection::Scale(PianoScale::Yo)));
+        assert!(selections.contains(&PianoScaleChordSelection::Chord(PianoChordKind::MajorTriad)));
+        assert!(selections.contains(&PianoScaleChordSelection::Chord(PianoChordKind::Minor7)));
     }
 
     #[test]

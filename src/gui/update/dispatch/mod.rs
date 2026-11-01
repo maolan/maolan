@@ -1538,7 +1538,7 @@ impl Maolan {
             | Message::PianoScaleSelected(_)
             | Message::PianoHideOutOfScale(_)
             | Message::PianoShowNoteNames(_)
-            | Message::PianoChordKindSelected(_)
+            | Message::PianoScaleChordSelected(_)
             | Message::PianoVelocityShapeAmountChanged(_)
             | Message::MidiClipPreviewLoaded { .. }
             | Message::OpenMidiPiano { .. } => return self.handle_piano_message(message),

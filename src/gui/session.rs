@@ -2189,6 +2189,8 @@ impl Maolan {
             state.session_genre.clear();
             state.piano_scale_root = crate::message::PianoScaleRoot::C;
             state.piano_scale = crate::message::PianoScale::Major;
+            state.piano_scale_chord_selection =
+                crate::message::PianoScaleChordSelection::Scale(crate::message::PianoScale::Major);
             state.plugin_graphs_by_track.clear();
             state.connectable_connections_by_track.clear();
         }
@@ -2561,6 +2563,8 @@ impl Maolan {
                 .and_then(Value::as_str)
                 .and_then(crate::message::PianoScale::from_label)
                 .unwrap_or(crate::message::PianoScale::Major);
+            state.piano_scale_chord_selection =
+                crate::message::PianoScaleChordSelection::Scale(state.piano_scale);
         }
         if let Some(export) = session.get("export").and_then(Value::as_object) {
             self.transfer.export_sample_rate_hz = export

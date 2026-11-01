@@ -3214,22 +3214,24 @@ impl Maolan {
         stretch_ratio: f32,
         sample_rate: u32,
         channels: usize,
-        formant_compensation: bool,
-    ) -> io::Result<timestretch::StretchParams> {
+        _formant_compensation: bool,
+    ) -> io::Result<timestretch::SessionConfig> {
         if channels > 2 {
             return Err(io::Error::other(format!(
                 "Time stretching supports mono or stereo clips, got {channels} channels"
             )));
         }
 
-        let mut params = timestretch::StretchParams::new(stretch_ratio.max(0.01) as f64)
-            .with_sample_rate(sample_rate)
-            .with_channels(channels.max(1) as u32);
-        if !formant_compensation {
-            params.envelope_preservation = false;
-            params.envelope_strength = 0.0;
-        }
-        Ok(params)
+        let tempo = timestretch::DurationRatio::new(stretch_ratio.max(0.01) as f64)
+            .map_err(|e| io::Error::other(format!("Invalid time stretch ratio: {e}")))?
+            .tempo();
+        Ok(timestretch::SessionConfig {
+            source_sample_rate: sample_rate,
+            output_sample_rate: sample_rate,
+            channels: channels.max(1),
+            parameters: timestretch::Parameters::keylock(tempo),
+            ..timestretch::SessionConfig::default()
+        })
     }
 
     fn fit_interleaved_frames(mut samples: Vec<f32>, channels: usize, frames: usize) -> Vec<f32> {
@@ -3271,8 +3273,9 @@ impl Maolan {
         let output_path = session_root.join(&output_rel);
 
         let params = Self::timestretch_params(stretch_ratio, sample_rate, channels, true)?;
-        let stretched = timestretch::stretch(segment_samples, &params)
-            .map_err(|e| io::Error::other(format!("Failed to stretch audio clip: {e}")))?;
+        let stretched = timestretch::render(segment_samples, params)
+            .map_err(|e| io::Error::other(format!("Failed to stretch audio clip: {e}")))?
+            .samples;
         tokio::task::yield_now().await;
         Self::write_wav_f32(&output_path, &stretched, channels, sample_rate)?;
 
@@ -3806,9 +3809,14 @@ impl Maolan {
                 chunk.to_vec()
             } else {
                 let pitch_factor = 2.0_f64.powf(semitones as f64 / 12.0);
-                timestretch::pitch_shift(chunk, &base_params, pitch_factor).map_err(|e| {
-                    io::Error::other(format!("Failed to render pitch correction: {e}"))
-                })?
+                let mut params = base_params.clone();
+                params.parameters.pitch = timestretch::PitchRatio::new(pitch_factor)
+                    .map_err(|e| io::Error::other(format!("Invalid pitch ratio: {e}")))?;
+                timestretch::render(chunk, params)
+                    .map_err(|e| {
+                        io::Error::other(format!("Failed to render pitch correction: {e}"))
+                    })?
+                    .samples
             };
             rendered.extend(Self::fit_interleaved_frames(
                 corrected,
