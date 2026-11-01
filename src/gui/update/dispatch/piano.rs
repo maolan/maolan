@@ -251,7 +251,8 @@ impl Maolan {
                     let delta_y = dragging.current_point.y - dragging.start_point.y;
 
                     let delta_samples = (delta_x / pps) as i64;
-                    let delta_pitch = -(delta_y / row_h).round() as i8;
+                    let pitch_rows = state.piano_pitch_rows();
+                    let delta_rows = (delta_y / row_h).round();
 
                     let snap_sample = |sample: f32| -> usize {
                         if matches!(
@@ -283,8 +284,7 @@ impl Maolan {
                             .map(|(offset, note)| {
                                 let new_start =
                                     snap_sample(note.start_sample as f32 + delta_samples as f32);
-                                let new_pitch =
-                                    (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
+                                let new_pitch = pitch_rows.shift(note.pitch, delta_rows);
                                 (
                                     insert_base + offset,
                                     maolan_engine::message::MidiNoteData {
@@ -316,8 +316,7 @@ impl Maolan {
                             if let Some(note) = piano.notes.get_mut(note_idx) {
                                 let new_start =
                                     snap_sample(note.start_sample as f32 + delta_samples as f32);
-                                let new_pitch =
-                                    (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
+                                let new_pitch = pitch_rows.shift(note.pitch, delta_rows);
                                 note.start_sample = new_start;
                                 note.pitch = new_pitch;
                             }
@@ -509,7 +508,24 @@ impl Maolan {
                         .piano
                         .as_ref()
                         .map(|piano| {
-                            (0..piano.notes.len()).collect::<std::collections::HashSet<_>>()
+                            let drum_grid = state
+                                .tracks
+                                .iter()
+                                .find(|t| t.name == piano.track_idx)
+                                .is_some_and(|t| {
+                                    matches!(
+                                        t.midi.editor_view_mode,
+                                        crate::message::MidiEditorViewMode::DrumGrid
+                                    )
+                                });
+                            let rows = state.piano_pitch_rows();
+                            piano
+                                .notes
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, note)| drum_grid || rows.row(note.pitch).is_some())
+                                .map(|(idx, _)| idx)
+                                .collect::<std::collections::HashSet<_>>()
                         })
                         .unwrap_or_default();
                     state.piano_selected_notes = all_notes;
@@ -1256,12 +1272,12 @@ impl Maolan {
                     let max_y = start.y.max(position.y);
 
                     let mut selected = std::collections::HashSet::new();
+                    let rows = state.piano_pitch_rows();
                     if let Some(piano) = state.piano.as_ref() {
                         for (idx, note) in piano.notes.iter().enumerate() {
-                            if note.pitch > PITCH_MAX {
+                            let Some(y_idx) = rows.row(note.pitch) else {
                                 continue;
-                            }
-                            let y_idx = usize::from(PITCH_MAX - note.pitch);
+                            };
                             let y = y_idx as f32 * row_h + 1.0;
                             let x = note.start_sample as f32 * pps;
                             let w = (note.length_samples as f32 * pps).max(2.0);
@@ -1917,13 +1933,13 @@ impl Maolan {
                 });
             }
             Message::PianoScaleSelectedNotes => {
-                let (root, minor) = {
+                let (root, scale) = {
                     let state = self.state.read().expect("state lock poisoned");
-                    (state.piano_scale_root.semitone(), state.piano_scale_minor)
+                    (state.piano_scale_root.semitone(), state.piano_scale)
                 };
                 return self.selected_piano_notes_edit(move |_idx, note| {
                     let mut out = note.clone();
-                    out.pitch = Self::nearest_scale_pitch(note.pitch, root, minor);
+                    out.pitch = Self::nearest_scale_pitch(note.pitch, root, scale);
                     out
                 });
             }
@@ -2151,16 +2167,29 @@ impl Maolan {
                     .piano_groove_amount = value.clamp(0.0, 1.0);
             }
             Message::PianoScaleRootSelected(root) => {
-                self.state
-                    .write()
-                    .expect("state lock poisoned")
-                    .piano_scale_root = root;
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.piano_scale_root = root;
+                if state.piano_hide_out_of_scale {
+                    state.reset_piano_row_interaction();
+                }
+                drop(state);
+                return self.sync_piano_scrollbars();
             }
-            Message::PianoScaleMinorToggled(minor) => {
-                self.state
-                    .write()
-                    .expect("state lock poisoned")
-                    .piano_scale_minor = minor;
+            Message::PianoScaleSelected(scale) => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.piano_scale = scale;
+                if state.piano_hide_out_of_scale {
+                    state.reset_piano_row_interaction();
+                }
+                drop(state);
+                return self.sync_piano_scrollbars();
+            }
+            Message::PianoHideOutOfScale(hide) => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.piano_hide_out_of_scale = hide;
+                state.reset_piano_row_interaction();
+                drop(state);
+                return self.sync_piano_scrollbars();
             }
             Message::PianoShowNoteNames(show) => {
                 self.state

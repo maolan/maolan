@@ -1,8 +1,8 @@
 use crate::{
     consts::{
         widget_piano::{
-            KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_NOTE_COUNT, NOTES_PER_OCTAVE, OCTAVES,
-            TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+            KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, NOTES_PER_OCTAVE, OCTAVES, TOOLS_STRIP_WIDTH,
+            WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
         },
         workspace::PLAYHEAD_WIDTH_PX,
     },
@@ -136,6 +136,10 @@ impl MIDIEdit {
         let chord_kind = state.piano_chord_kind;
         let velocity_shape_amount = state.piano_velocity_shape_amount.clamp(0.0, 1.0);
         let controller_lane = state.piano_controller_lane;
+        let scale_root = state.piano_scale_root;
+        let scale = state.piano_scale;
+        let hide_out_of_scale = state.piano_hide_out_of_scale;
+        let pitch_rows = state.piano_pitch_rows();
 
         let Some(roll) = state.piano.as_ref() else {
             return container(text("No MIDI clip selected."))
@@ -413,7 +417,7 @@ impl MIDIEdit {
                 })
                 .into()
         } else {
-            notes_h = MIDI_NOTE_COUNT as f32
+            notes_h = pitch_rows.pitches().len() as f32
                 * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
                     * zoom_y)
                     .max(1.0);
@@ -427,9 +431,9 @@ impl MIDIEdit {
                 playhead_width: PLAYHEAD_WIDTH_PX,
                 clip_length_samples: roll.clip_length_samples,
             }
-            .view({
-                let mut piano_layers: Vec<Element<'_, Message>> = vec![
-                    PianoRoll::new(
+            .view_with_rows(
+                {
+                    let piano_roll = PianoRoll::new(
                         roll.notes.clone(),
                         roll.clip_length_samples,
                         zoom_y,
@@ -446,28 +450,35 @@ impl MIDIEdit {
                         ))
                         .height(Length::Fixed(notes_h))
                         .into(),
-                    )
-                    .into_element(),
-                ];
-
-                if let Some(x) = step_cursor_x {
-                    piano_layers.push(
-                        pin(container("")
-                            .width(Length::Fixed(PLAYHEAD_WIDTH_PX))
-                            .height(Length::Fixed(notes_h))
-                            .style(|_theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgba(
-                                    0.18, 0.95, 0.95, 0.95,
-                                ))),
-                                ..container::Style::default()
-                            }))
-                        .position(Point::new(x.max(0.0), 0.0))
-                        .into(),
                     );
-                }
+                    let piano_roll = if hide_out_of_scale {
+                        piano_roll.with_scale_filter(scale_root.semitone(), scale.intervals())
+                    } else {
+                        piano_roll
+                    };
+                    let mut piano_layers: Vec<Element<'_, Message>> =
+                        vec![piano_roll.into_element()];
 
-                piano_layers
-            });
+                    if let Some(x) = step_cursor_x {
+                        piano_layers.push(
+                            pin(container("")
+                                .width(Length::Fixed(PLAYHEAD_WIDTH_PX))
+                                .height(Length::Fixed(notes_h))
+                                .style(|_theme| container::Style {
+                                    background: Some(Background::Color(Color::from_rgba(
+                                        0.18, 0.95, 0.95, 0.95,
+                                    ))),
+                                    ..container::Style::default()
+                                }))
+                            .position(Point::new(x.max(0.0), 0.0))
+                            .into(),
+                        );
+                    }
+
+                    piano_layers
+                },
+                &pitch_rows,
+            );
 
             let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
                 let octave = (OCTAVES - 1 - octave_idx) as u8;
@@ -494,6 +505,54 @@ impl MIDIEdit {
                     .padding(0),
                 )
             });
+            let keyboard = if hide_out_of_scale {
+                let row_h = maolan_widgets::piano::row_height(zoom_y);
+                pitch_rows.pitches().iter().fold(column![], |col, &pitch| {
+                    let black = maolan_widgets::piano::is_black_key(pitch);
+                    let label = visible_names.get(&pitch).cloned().unwrap_or_else(|| {
+                        let names = [
+                            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+                        ];
+                        format!(
+                            "{}{}",
+                            names[usize::from(pitch % 12)],
+                            i16::from(pitch / 12) - 1
+                        )
+                    });
+                    col.push(
+                        mouse_area(
+                            container(
+                                text(if show_note_names {
+                                    label
+                                } else {
+                                    String::new()
+                                })
+                                .size(10),
+                            )
+                            .width(Length::Fixed(KEYBOARD_WIDTH))
+                            .height(Length::Fixed(row_h))
+                            .style(move |_| container::Style {
+                                background: Some(Background::Color(if black {
+                                    Color::BLACK
+                                } else {
+                                    Color::WHITE
+                                })),
+                                text_color: Some(if black { Color::WHITE } else { Color::BLACK }),
+                                border: Border {
+                                    width: 0.5,
+                                    color: Color::from_rgb(0.3, 0.3, 0.3),
+                                    ..Border::default()
+                                },
+                                ..container::Style::default()
+                            }),
+                        )
+                        .on_press(Message::PianoKeyPressed(pitch, 100))
+                        .on_release(Message::PianoKeyReleased(pitch)),
+                    )
+                })
+            } else {
+                keyboard
+            };
             container(
                 keyboard
                     .width(Length::Fixed(KEYBOARD_WIDTH))
@@ -618,6 +677,9 @@ impl MIDIEdit {
             }
             PianoControllerLane::Velocity => {
                 for note in &roll.notes {
+                    if hide_out_of_scale && !scale_root.contains_pitch(note.pitch, scale) {
+                        continue;
+                    }
                     let x = note.start_sample as f32 * pps_ctrl;
                     let row = usize::from(127_u8.saturating_sub(note.velocity));
                     let y = row as f32 * ctrl_row_h;
@@ -681,7 +743,9 @@ impl MIDIEdit {
                 let selected: std::collections::HashSet<usize> =
                     state.piano_selected_notes.iter().copied().collect();
                 for (idx, note) in roll.notes.iter().enumerate() {
-                    if !selected.contains(&idx) {
+                    if !selected.contains(&idx)
+                        || (hide_out_of_scale && !scale_root.contains_pitch(note.pitch, scale))
+                    {
                         continue;
                     }
                     let color = piano::note_color(note.velocity, note.channel);
@@ -1060,6 +1124,28 @@ impl MIDIEdit {
                 checkbox(show_note_names)
                     .label("Note names")
                     .on_toggle(Message::PianoShowNoteNames)
+                    .size(14)
+                    .width(Length::Fill),
+                row![
+                    text("Scale").size(11),
+                    pick_list(
+                        crate::consts::message_lists::PIANO_SCALE_ROOT_ALL.to_vec(),
+                        Some(scale_root),
+                        Message::PianoScaleRootSelected,
+                    )
+                    .width(Length::Fixed(64.0)),
+                    pick_list(
+                        crate::message::PianoScale::ALL.to_vec(),
+                        Some(scale),
+                        Message::PianoScaleSelected,
+                    )
+                    .width(Length::Fixed(150.0)),
+                ]
+                .spacing(6)
+                .align_y(maolan_widgets::iced::Alignment::Center),
+                checkbox(hide_out_of_scale)
+                    .label("Hide out-of-scale")
+                    .on_toggle(Message::PianoHideOutOfScale)
                     .size(14)
                     .width(Length::Fill),
                 row![button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),]

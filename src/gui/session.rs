@@ -642,7 +642,7 @@ impl Maolan {
                 "track_number": metadata_track_number,
                 "genre": state.session_genre.clone(),
                 "scale_root": state.piano_scale_root.to_string(),
-                "scale_mode": if state.piano_scale_minor { "minor" } else { "major" },
+                "scale_mode": state.piano_scale.to_string(),
             },
             "transport": {
                 "loop_range_samples": self.transport.loop_range_samples.map(|(start, end)| vec![start, end]),
@@ -2030,7 +2030,7 @@ impl Maolan {
                 "track_number": metadata_track_number,
                 "genre": state.session_genre.clone(),
                 "scale_root": state.piano_scale_root.to_string(),
-                "scale_mode": if state.piano_scale_minor { "minor" } else { "major" },
+                "scale_mode": state.piano_scale.to_string(),
             },
             "transport": {
                 "loop_range_samples": self.transport.loop_range_samples.map(|(start, end)| vec![start, end]),
@@ -2188,7 +2188,7 @@ impl Maolan {
             state.session_track_number.clear();
             state.session_genre.clear();
             state.piano_scale_root = crate::message::PianoScaleRoot::C;
-            state.piano_scale_minor = false;
+            state.piano_scale = crate::message::PianoScale::Major;
             state.plugin_graphs_by_track.clear();
             state.connectable_connections_by_track.clear();
         }
@@ -2556,11 +2556,11 @@ impl Maolan {
                 .and_then(Value::as_str)
                 .and_then(crate::message::PianoScaleRoot::from_label)
                 .unwrap_or(crate::message::PianoScaleRoot::C);
-            state.piano_scale_minor = metadata
+            state.piano_scale = metadata
                 .get("scale_mode")
                 .and_then(Value::as_str)
-                .map(|mode| mode.eq_ignore_ascii_case("minor"))
-                .unwrap_or(false);
+                .and_then(crate::message::PianoScale::from_label)
+                .unwrap_or(crate::message::PianoScale::Major);
         }
         if let Some(export) = session.get("export").and_then(Value::as_object) {
             self.transfer.export_sample_rate_hz = export
