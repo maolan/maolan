@@ -5951,9 +5951,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-generate"
-version = "0.0.18"
+version = "0.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbac33d5b87b201f3f4f6b6102fb62239efb4bbbe7178d0952e5ee5154dc6827"
+checksum = "74e702422cd5ae1fca357b5812f63b333d1d852297b3a7d7fbdec77b41720cce"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -5977,9 +5977,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-llama"
-version = "0.0.3"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c49c0c897f4fe20d6980a425421f3876ba48792267478bd5f65ce6b41af39f"
+checksum = "cd3d4714a91312b9d366c82f2aa5736c6ffb62c5bdc11142cae8b927ce3ac5e7"
 dependencies = [
  "base64 0.23.1",
  "burn",
@@ -6005,9 +6005,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-pitch"
-version = "0.0.2"
+version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07b9e11f866bfb17d7aeea54c47bbc3e77b99d0115e821e2ec3f6b1e3097b1cb"
+checksum = "e7a4f4105f9f2bca0f7c7550968f1f3a3f2e0318416b09f21631f43a8845b616"
 dependencies = [
  "anyhow",
  "burn",
