@@ -19,7 +19,7 @@ use crate::{
     consts::widget_piano::PITCH_MAX,
     message::{
         ClipPitchCorrectionRequest, ClipStretchRequest, ClipStretchResult, ExportNormalizeMode,
-        ExportRenderMode, Message, Show, TrackAutomationMode, TrackAutomationTarget,
+        ExportRenderMode, Message, PianoScale, Show, TrackAutomationMode, TrackAutomationTarget,
     },
     platform_caps,
     state::{
@@ -1391,12 +1391,8 @@ impl Maolan {
         (x % range) as i64 - amplitude
     }
 
-    fn nearest_scale_pitch(pitch: u8, root_semitone: u8, minor: bool) -> u8 {
-        let pattern: &[u8] = if minor {
-            &[0, 2, 3, 5, 7, 8, 10]
-        } else {
-            &[0, 2, 4, 5, 7, 9, 11]
-        };
+    fn nearest_scale_pitch(pitch: u8, root_semitone: u8, scale: PianoScale) -> u8 {
+        let pattern = scale.intervals();
         let mut best = pitch;
         let mut best_dist = i16::MAX;
         for candidate in 0_u8..=127_u8 {
@@ -3822,6 +3818,7 @@ impl Maolan {
 #[cfg(all(test, unix))]
 mod tests {
     use super::Maolan;
+    use crate::message::PianoScale;
     use crate::state::{AudioClip, PitchCorrectionData, PitchCorrectionPoint, Track};
     use maolan_engine::kind::Kind;
     use maolan_engine::message::Action;
@@ -4008,16 +4005,35 @@ mod tests {
 
     #[test]
     fn nearest_scale_pitch_major() {
-        assert_eq!(Maolan::nearest_scale_pitch(0, 0, false), 0);
-        assert_eq!(Maolan::nearest_scale_pitch(1, 0, false), 0);
-        assert_eq!(Maolan::nearest_scale_pitch(6, 0, false), 5);
+        assert_eq!(Maolan::nearest_scale_pitch(0, 0, PianoScale::Major), 0);
+        assert_eq!(Maolan::nearest_scale_pitch(1, 0, PianoScale::Major), 0);
+        assert_eq!(Maolan::nearest_scale_pitch(6, 0, PianoScale::Major), 5);
     }
 
     #[test]
     fn nearest_scale_pitch_minor() {
-        assert_eq!(Maolan::nearest_scale_pitch(0, 0, true), 0);
-        assert_eq!(Maolan::nearest_scale_pitch(1, 0, true), 0);
-        assert_eq!(Maolan::nearest_scale_pitch(4, 0, true), 3);
+        assert_eq!(
+            Maolan::nearest_scale_pitch(0, 0, PianoScale::NaturalMinor),
+            0
+        );
+        assert_eq!(
+            Maolan::nearest_scale_pitch(1, 0, PianoScale::NaturalMinor),
+            0
+        );
+        assert_eq!(
+            Maolan::nearest_scale_pitch(4, 0, PianoScale::NaturalMinor),
+            3
+        );
+    }
+
+    #[test]
+    fn nearest_scale_pitch_uses_selected_scale() {
+        assert_eq!(Maolan::nearest_scale_pitch(5, 0, PianoScale::Hirajoshi), 4);
+        assert_eq!(
+            Maolan::nearest_scale_pitch(5, 0, PianoScale::MinorPentatonic),
+            5
+        );
+        assert_eq!(Maolan::nearest_scale_pitch(6, 0, PianoScale::WholeTone), 6);
     }
 
     #[test]

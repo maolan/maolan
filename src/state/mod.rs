@@ -13,7 +13,7 @@ mod track;
 
 use crate::config;
 use crate::message::{
-    PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScaleRoot,
+    PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScale, PianoScaleRoot,
     PianoVelocityKind, TrackAutomationMode, TrackAutomationTarget,
 };
 
@@ -1683,7 +1683,8 @@ pub struct StateData {
     pub piano_rpn_kind: PianoRpnKind,
     pub piano_nrpn_kind: PianoNrpnKind,
     pub piano_scale_root: PianoScaleRoot,
-    pub piano_scale_minor: bool,
+    pub piano_scale: PianoScale,
+    pub piano_hide_out_of_scale: bool,
     pub piano_chord_kind: PianoChordKind,
     pub piano_velocity_shape_amount: f32,
     pub piano_selected_sysex: Option<usize>,
@@ -1757,6 +1758,22 @@ pub struct CreatingPianoNote {
 }
 
 impl StateData {
+    pub fn piano_pitch_rows(&self) -> maolan_widgets::piano_roll::PitchRows {
+        maolan_widgets::piano_roll::PitchRows::new(self.piano_hide_out_of_scale.then_some((
+            self.piano_scale_root.semitone(),
+            self.piano_scale.intervals(),
+        )))
+    }
+
+    pub fn reset_piano_row_interaction(&mut self) {
+        self.piano_selected_notes.clear();
+        self.piano_dragging_notes = None;
+        self.piano_resizing_note = None;
+        self.piano_creating_note = None;
+        self.piano_selecting_rect = None;
+        self.piano_painted_notes.clear();
+    }
+
     pub const fn copy_modifier(&self) -> bool {
         if cfg!(target_os = "macos") {
             self.alt
@@ -1960,7 +1977,8 @@ impl Default for StateData {
             piano_rpn_kind: PianoRpnKind::PitchBendSensitivity,
             piano_nrpn_kind: PianoNrpnKind::Brightness,
             piano_scale_root: PianoScaleRoot::C,
-            piano_scale_minor: false,
+            piano_scale: PianoScale::Major,
+            piano_hide_out_of_scale: false,
             piano_chord_kind: PianoChordKind::MajorTriad,
             piano_velocity_shape_amount: 1.0,
             piano_selected_sysex: None,

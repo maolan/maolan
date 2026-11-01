@@ -7320,9 +7320,12 @@ impl Maolan {
                         Message::PianoScaleRootSelected
                     )
                     .width(Length::Fixed(90.0)),
-                    checkbox(state.piano_scale_minor)
-                        .label("Minor")
-                        .on_toggle(Message::PianoScaleMinorToggled),
+                    pick_list(
+                        crate::message::PianoScale::ALL.to_vec(),
+                        Some(state.piano_scale),
+                        Message::PianoScaleSelected,
+                    )
+                    .width(Length::Fixed(190.0)),
                 ]
                 .spacing(10)
                 .align_y(maolan_widgets::iced::Alignment::Center),
@@ -8170,7 +8173,7 @@ mod tests {
         {
             let mut state = app.state.write().expect("state lock poisoned");
             state.piano_scale_root = crate::message::PianoScaleRoot::FSharp;
-            state.piano_scale_minor = true;
+            state.piano_scale = crate::message::PianoScale::HungarianMinor;
         }
         app.save(session_root.to_string_lossy().to_string())
             .expect("save session");
@@ -8180,7 +8183,10 @@ mod tests {
             serde_json::from_reader(File::open(&session_path).expect("open saved session"))
                 .expect("parse saved session");
         assert_eq!(session["metadata"]["scale_root"].as_str(), Some("F#"));
-        assert_eq!(session["metadata"]["scale_mode"].as_str(), Some("minor"));
+        assert_eq!(
+            session["metadata"]["scale_mode"].as_str(),
+            Some("Hungarian Minor")
+        );
 
         let mut restored = Maolan::default();
         let _ = restored
@@ -8192,7 +8198,10 @@ mod tests {
                 state.piano_scale_root,
                 crate::message::PianoScaleRoot::FSharp
             );
-            assert!(state.piano_scale_minor);
+            assert_eq!(
+                state.piano_scale,
+                crate::message::PianoScale::HungarianMinor
+            );
         }
 
         fs::remove_dir_all(&session_root).expect("cleanup temp session");

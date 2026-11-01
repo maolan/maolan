@@ -565,8 +565,7 @@ impl Maolan {
 
         let raw_start_sample = (position.x.max(0.0) / pps).floor().max(0.0);
         let pitch_row = (position.y / row_h).floor();
-        let pitch_row = pitch_row.clamp(0.0, f32::from(PITCH_MAX)) as usize;
-        let pitch = PITCH_MAX.saturating_sub(pitch_row as u8);
+        let pitch = state.piano_pitch_rows().pitch_at(pitch_row);
 
         (raw_start_sample, pitch)
     }
@@ -1536,7 +1535,8 @@ impl Maolan {
             | Message::PianoHumanizeVelocityAmountChanged(_)
             | Message::PianoGrooveAmountChanged(_)
             | Message::PianoScaleRootSelected(_)
-            | Message::PianoScaleMinorToggled(_)
+            | Message::PianoScaleSelected(_)
+            | Message::PianoHideOutOfScale(_)
             | Message::PianoShowNoteNames(_)
             | Message::PianoChordKindSelected(_)
             | Message::PianoVelocityShapeAmountChanged(_)

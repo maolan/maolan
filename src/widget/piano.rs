@@ -1,6 +1,6 @@
 use crate::{
     consts::widget_piano::{NOTES_PER_OCTAVE, PITCH_MAX, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE},
-    message::Message,
+    message::{Message, PianoScale, PianoScaleRoot},
     state::State,
 };
 use maolan_widgets::iced::{
@@ -8,6 +8,8 @@ use maolan_widgets::iced::{
     widget::canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
 };
 pub use maolan_widgets::piano::{note_color, octave_note_count};
+
+type ScaleFilter = Option<(PianoScaleRoot, PianoScale)>;
 
 #[derive(Debug)]
 pub struct PianoRollInteraction {
@@ -29,12 +31,18 @@ impl PianoRollInteraction {
         row_h: f32,
         pps: f32,
         notes: &[crate::state::PianoNote],
+        scale_filter: ScaleFilter,
     ) -> Option<usize> {
+        let rows = maolan_widgets::piano_roll::PitchRows::new(
+            scale_filter.map(|(root, scale)| (root.semitone(), scale.intervals())),
+        );
         for (idx, note) in notes.iter().enumerate() {
-            if note.pitch > PITCH_MAX {
+            if note.pitch > PITCH_MAX
+                || scale_filter.is_some_and(|(root, scale)| !root.contains_pitch(note.pitch, scale))
+            {
                 continue;
             }
-            let y_idx = usize::from(PITCH_MAX.saturating_sub(note.pitch));
+            let y_idx = rows.row(note.pitch).expect("visible pitch");
             let y = y_idx as f32 * row_h + 1.0;
             let x = note.start_sample as f32 * pps;
             let w = (note.length_samples as f32 * pps).max(2.0);
@@ -102,13 +110,18 @@ impl Program<Message> for PianoRollInteraction {
             .max(1.0);
         let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
         let notes = &roll.notes;
+        let scale_filter = app_state
+            .piano_hide_out_of_scale
+            .then_some((app_state.piano_scale_root, app_state.piano_scale));
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if !(cfg!(target_os = "macos") && app_state.control) =>
             {
                 if let Some(position) = cursor.position_in(bounds) {
-                    if let Some(note_idx) = self.note_at_position(position, row_h, pps, notes) {
+                    if let Some(note_idx) =
+                        self.note_at_position(position, row_h, pps, notes, scale_filter)
+                    {
                         state.emulated_middle_click = cfg!(target_os = "macos") && app_state.alt;
                         let note = notes.get(note_idx)?;
                         let note_x = note.start_sample as f32 * pps;
@@ -182,7 +195,8 @@ impl Program<Message> for PianoRollInteraction {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
                 if let Some(position) = cursor.position_in(bounds)
-                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, notes)
+                    && let Some(note_idx) =
+                        self.note_at_position(position, row_h, pps, notes, scale_filter)
                 {
                     return Some(
                         CanvasAction::publish(Message::PianoDeleteNotes {
@@ -223,7 +237,8 @@ impl Program<Message> for PianoRollInteraction {
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 if let Some(position) = cursor.position_in(bounds)
-                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, notes)
+                    && let Some(note_idx) =
+                        self.note_at_position(position, row_h, pps, notes, scale_filter)
                 {
                     let velocity_delta = Self::velocity_delta_from_scroll(delta);
                     if velocity_delta != 0 {
@@ -251,7 +266,8 @@ impl Program<Message> for PianoRollInteraction {
                         .zip(state.drag_current)
                         .is_some_and(|(start, current)| start.distance(current) < 3.0)
                     && let Some(position) = cursor.position_in(bounds)
-                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, notes)
+                    && let Some(note_idx) =
+                        self.note_at_position(position, row_h, pps, notes, scale_filter)
                 {
                     state.drag_start = None;
                     state.drag_current = None;
@@ -341,6 +357,10 @@ impl Program<Message> for PianoRollInteraction {
 
         let zoom_x = app_state.piano_zoom_x;
         let zoom_y = app_state.piano_zoom_y;
+        let scale_filter = app_state
+            .piano_hide_out_of_scale
+            .then_some((app_state.piano_scale_root, app_state.piano_scale));
+        let rows = app_state.piano_pitch_rows();
         let selected_notes = &app_state.piano_selected_notes;
         let selecting_rect = app_state.piano_selecting_rect;
         let dragging_notes = app_state.piano_dragging_notes.as_ref();
@@ -356,10 +376,13 @@ impl Program<Message> for PianoRollInteraction {
 
         for &note_idx in selected_notes {
             if let Some(note) = roll.notes.get(note_idx) {
-                if note.pitch > PITCH_MAX {
+                if note.pitch > PITCH_MAX
+                    || scale_filter
+                        .is_some_and(|(root, scale)| !root.contains_pitch(note.pitch, scale))
+                {
                     continue;
                 }
-                let y_idx = usize::from(PITCH_MAX.saturating_sub(note.pitch));
+                let y_idx = rows.row(note.pitch).expect("visible pitch");
                 let y = y_idx as f32 * row_h + 1.0;
                 let x = note.start_sample as f32 * pps;
                 let w = (note.length_samples as f32 * pps).max(2.0);
@@ -390,11 +413,14 @@ impl Program<Message> for PianoRollInteraction {
             let delta_y = dragging.current_point.y - dragging.start_point.y;
 
             for note in &dragging.original_notes {
-                if note.pitch > PITCH_MAX {
+                if note.pitch > PITCH_MAX
+                    || scale_filter
+                        .is_some_and(|(root, scale)| !root.contains_pitch(note.pitch, scale))
+                {
                     continue;
                 }
-                let y_idx = usize::from(PITCH_MAX.saturating_sub(note.pitch));
-                let y = y_idx as f32 * row_h + 1.0 + delta_y;
+                let target_pitch = rows.shift(note.pitch, delta_y / row_h);
+                let y = rows.row(target_pitch).expect("visible pitch") as f32 * row_h + 1.0;
                 let x = note.start_sample as f32 * pps + delta_x;
                 let w = (note.length_samples as f32 * pps).max(2.0);
                 let h = (row_h - 2.0).max(2.0);
@@ -478,8 +504,11 @@ impl Program<Message> for PianoRollInteraction {
                 )
             };
 
-            if original.pitch <= PITCH_MAX {
-                let y_idx = usize::from(PITCH_MAX.saturating_sub(original.pitch));
+            if original.pitch <= PITCH_MAX
+                && scale_filter
+                    .is_none_or(|(root, scale)| root.contains_pitch(original.pitch, scale))
+            {
+                let y_idx = rows.row(original.pitch).expect("visible pitch");
                 let y = y_idx as f32 * row_h + 1.0;
                 let x = preview_start as f32 * pps;
                 let w = (preview_len as f32 * pps).max(2.0);
@@ -508,7 +537,9 @@ impl Program<Message> for PianoRollInteraction {
             let end = creating.current_point;
             let start_x = start.x.min(end.x).max(0.0);
             let end_x = start.x.max(end.x).max(0.0);
-            let y_row = (start.y / row_h).floor().max(0.0);
+            let y_row = (start.y / row_h)
+                .floor()
+                .clamp(0.0, (rows.pitches().len() - 1) as f32);
             let y = y_row * row_h + 1.0;
             let h = (row_h - 2.0).max(2.0);
             let w = (end_x - start_x).max(2.0);
@@ -590,6 +621,35 @@ mod tests {
     }
 
     #[test]
+    fn filtered_hit_testing_uses_collapsed_rows_and_original_indices() {
+        let note = |pitch| crate::state::PianoNote {
+            start_sample: 10,
+            length_samples: 20,
+            pitch,
+            velocity: 100,
+            channel: 0,
+            mpe: Default::default(),
+        };
+        let interaction = PianoRollInteraction::new(piano_state_with_note(note(60)), 1.0);
+        let notes = vec![note(61), note(60), note(62)];
+        let rows =
+            maolan_widgets::piano_roll::PitchRows::new(Some((0, PianoScale::Major.intervals())));
+        for (index, pitch) in [(1, 60), (2, 62)] {
+            let position = Point::new(20.0, rows.row(pitch).unwrap() as f32 * 10.0 + 2.0);
+            assert_eq!(
+                interaction.note_at_position(
+                    position,
+                    10.0,
+                    1.0,
+                    &notes,
+                    Some((PianoScaleRoot::C, PianoScale::Major))
+                ),
+                Some(index)
+            );
+        }
+    }
+
+    #[test]
     fn piano_roll_update_clicking_note_edge_starts_resize() {
         let note = crate::state::PianoNote {
             start_sample: 10,
@@ -633,6 +693,47 @@ mod tests {
         assert_eq!(status, event::Status::Captured);
         assert_eq!(interaction_state.dragging_mode, DraggingMode::ResizingNote);
         assert_eq!(interaction_state.drag_start, Some(Point::new(11.0, y)));
+    }
+
+    #[test]
+    fn piano_roll_hidden_note_does_not_capture_click() {
+        let note = crate::state::PianoNote {
+            start_sample: 10,
+            length_samples: 20,
+            pitch: 61,
+            velocity: 100,
+            channel: 0,
+            mpe: Default::default(),
+        };
+        let state = piano_state_with_note(note);
+        state
+            .write()
+            .expect("state lock poisoned")
+            .piano_hide_out_of_scale = true;
+        let interaction = PianoRollInteraction::new(state, 1.0);
+        let mut interaction_state = PianoRollInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 600.0));
+        let row_h =
+            (WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32).max(1.0);
+        let y = usize::from(PITCH_MAX.saturating_sub(61)) as f32 * row_h + 2.0;
+        let position = Point::new(20.0, y);
+
+        let action = interaction
+            .update(
+                &mut interaction_state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(position),
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        assert!(matches!(
+            message,
+            Some(Message::PianoSelectRectStart { position: p }) if p == position
+        ));
+        assert_eq!(status, event::Status::Captured);
+        assert_eq!(interaction_state.dragging_mode, DraggingMode::SelectingRect);
     }
 
     #[test]

@@ -566,6 +566,241 @@ impl fmt::Display for PianoVelocityKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoScale {
+    Major,
+    NaturalMinor,
+    Dorian,
+    Phrygian,
+    Lydian,
+    Mixolydian,
+    Locrian,
+    HarmonicMinor,
+    MelodicMinor,
+    HarmonicMajor,
+    MajorPentatonic,
+    MinorPentatonic,
+    Blues,
+    Chromatic,
+    WholeTone,
+    Augmented,
+    LydianDominant,
+    Altered,
+    BebopDominant,
+    MajorBebop,
+    DoubleHarmonic,
+    Enigmatic,
+    Gypsy,
+    HalfDiminished,
+    Hirajoshi,
+    HungarianMinor,
+    HungarianMajor,
+    In,
+    Insen,
+    Istrian,
+    Iwato,
+    LocrianNatural6,
+    LydianAugmented,
+    LydianDiminished,
+    MajorLocrian,
+    NeapolitanMajor,
+    NeapolitanMinor,
+    OctatonicWholeHalf,
+    OctatonicHalfWhole,
+    Persian,
+    PhrygianDominant,
+    Prometheus,
+    ScaleOfHarmonics,
+    Tritone,
+    TwoSemitoneTritone,
+    UkrainianDorian,
+    Yo,
+}
+
+impl PianoScale {
+    pub const ALL: [Self; 47] = [
+        Self::Major,
+        Self::NaturalMinor,
+        Self::Dorian,
+        Self::Phrygian,
+        Self::Lydian,
+        Self::Mixolydian,
+        Self::Locrian,
+        Self::HarmonicMinor,
+        Self::MelodicMinor,
+        Self::HarmonicMajor,
+        Self::MajorPentatonic,
+        Self::MinorPentatonic,
+        Self::Blues,
+        Self::Chromatic,
+        Self::WholeTone,
+        Self::Augmented,
+        Self::LydianDominant,
+        Self::Altered,
+        Self::BebopDominant,
+        Self::MajorBebop,
+        Self::DoubleHarmonic,
+        Self::Enigmatic,
+        Self::Gypsy,
+        Self::HalfDiminished,
+        Self::Hirajoshi,
+        Self::HungarianMinor,
+        Self::HungarianMajor,
+        Self::In,
+        Self::Insen,
+        Self::Istrian,
+        Self::Iwato,
+        Self::LocrianNatural6,
+        Self::LydianAugmented,
+        Self::LydianDiminished,
+        Self::MajorLocrian,
+        Self::NeapolitanMajor,
+        Self::NeapolitanMinor,
+        Self::OctatonicWholeHalf,
+        Self::OctatonicHalfWhole,
+        Self::Persian,
+        Self::PhrygianDominant,
+        Self::Prometheus,
+        Self::ScaleOfHarmonics,
+        Self::Tritone,
+        Self::TwoSemitoneTritone,
+        Self::UkrainianDorian,
+        Self::Yo,
+    ];
+
+    pub const fn intervals(self) -> &'static [u8] {
+        match self {
+            Self::Major => &[0, 2, 4, 5, 7, 9, 11],
+            Self::NaturalMinor => &[0, 2, 3, 5, 7, 8, 10],
+            Self::Dorian => &[0, 2, 3, 5, 7, 9, 10],
+            Self::Phrygian => &[0, 1, 3, 5, 7, 8, 10],
+            Self::Lydian => &[0, 2, 4, 6, 7, 9, 11],
+            Self::Mixolydian => &[0, 2, 4, 5, 7, 9, 10],
+            Self::Locrian => &[0, 1, 3, 5, 6, 8, 10],
+            Self::HarmonicMinor => &[0, 2, 3, 5, 7, 8, 11],
+            Self::MelodicMinor => &[0, 2, 3, 5, 7, 9, 11],
+            Self::HarmonicMajor => &[0, 2, 4, 5, 7, 8, 11],
+            Self::MajorPentatonic => &[0, 2, 4, 7, 9],
+            Self::MinorPentatonic => &[0, 3, 5, 7, 10],
+            Self::Blues => &[0, 3, 5, 6, 7, 10],
+            Self::Chromatic => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            Self::WholeTone => &[0, 2, 4, 6, 8, 10],
+            Self::Augmented => &[0, 3, 4, 7, 8, 11],
+            Self::LydianDominant => &[0, 2, 4, 6, 7, 9, 10],
+            Self::Altered => &[0, 1, 3, 4, 6, 8, 10],
+            Self::BebopDominant => &[0, 2, 4, 5, 7, 9, 10, 11],
+            Self::MajorBebop => &[0, 2, 4, 5, 7, 8, 9, 11],
+            Self::DoubleHarmonic => &[0, 1, 4, 5, 7, 8, 11],
+            Self::Enigmatic => &[0, 1, 4, 6, 8, 10, 11],
+            Self::Gypsy => &[0, 2, 3, 6, 7, 8, 10],
+            Self::HalfDiminished => &[0, 2, 3, 5, 6, 8, 10],
+            Self::Hirajoshi => &[0, 4, 6, 7, 11],
+            Self::HungarianMinor => &[0, 2, 3, 6, 7, 8, 11],
+            Self::HungarianMajor => &[0, 3, 4, 6, 7, 9, 10],
+            Self::In => &[0, 1, 5, 7, 8],
+            Self::Insen => &[0, 1, 5, 7, 10],
+            Self::Istrian => &[0, 1, 3, 4, 6, 7],
+            Self::Iwato => &[0, 1, 5, 6, 10],
+            Self::LocrianNatural6 => &[0, 1, 3, 5, 6, 9, 10],
+            Self::LydianAugmented => &[0, 2, 4, 6, 8, 9, 11],
+            Self::LydianDiminished => &[0, 2, 3, 6, 7, 9, 11],
+            Self::MajorLocrian => &[0, 2, 4, 5, 6, 8, 10],
+            Self::NeapolitanMajor => &[0, 1, 3, 5, 7, 9, 11],
+            Self::NeapolitanMinor => &[0, 1, 3, 5, 7, 8, 11],
+            Self::OctatonicWholeHalf => &[0, 2, 3, 5, 6, 8, 9, 11],
+            Self::OctatonicHalfWhole => &[0, 1, 3, 4, 6, 7, 9, 10],
+            Self::Persian => &[0, 1, 4, 5, 6, 8, 11],
+            Self::PhrygianDominant => &[0, 1, 4, 5, 7, 8, 10],
+            Self::Prometheus => &[0, 2, 4, 6, 9, 10],
+            Self::ScaleOfHarmonics => &[0, 3, 4, 5, 7, 9],
+            Self::Tritone => &[0, 1, 4, 6, 7, 10],
+            Self::TwoSemitoneTritone => &[0, 1, 2, 6, 7, 8],
+            Self::UkrainianDorian => &[0, 2, 3, 6, 7, 9, 10],
+            Self::Yo => &[0, 2, 5, 7, 9],
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Major => "Major",
+            Self::NaturalMinor => "Natural Minor",
+            Self::Dorian => "Dorian",
+            Self::Phrygian => "Phrygian",
+            Self::Lydian => "Lydian",
+            Self::Mixolydian => "Mixolydian",
+            Self::Locrian => "Locrian",
+            Self::HarmonicMinor => "Harmonic Minor",
+            Self::MelodicMinor => "Melodic Minor",
+            Self::HarmonicMajor => "Harmonic Major",
+            Self::MajorPentatonic => "Major Pentatonic",
+            Self::MinorPentatonic => "Minor Pentatonic",
+            Self::Blues => "Blues",
+            Self::Chromatic => "Chromatic",
+            Self::WholeTone => "Whole Tone",
+            Self::Augmented => "Augmented",
+            Self::LydianDominant => "Lydian Dominant",
+            Self::Altered => "Altered",
+            Self::BebopDominant => "Bebop Dominant",
+            Self::MajorBebop => "Major Bebop",
+            Self::DoubleHarmonic => "Double Harmonic",
+            Self::Enigmatic => "Enigmatic",
+            Self::Gypsy => "Gypsy",
+            Self::HalfDiminished => "Half Diminished",
+            Self::Hirajoshi => "Hirajoshi",
+            Self::HungarianMinor => "Hungarian Minor",
+            Self::HungarianMajor => "Hungarian Major",
+            Self::In => "In",
+            Self::Insen => "Insen",
+            Self::Istrian => "Istrian",
+            Self::Iwato => "Iwato",
+            Self::LocrianNatural6 => "Locrian Natural 6",
+            Self::LydianAugmented => "Lydian Augmented",
+            Self::LydianDiminished => "Lydian Diminished",
+            Self::MajorLocrian => "Major Locrian",
+            Self::NeapolitanMajor => "Neapolitan Major",
+            Self::NeapolitanMinor => "Neapolitan Minor",
+            Self::OctatonicWholeHalf => "Octatonic Whole-Half",
+            Self::OctatonicHalfWhole => "Octatonic Half-Whole",
+            Self::Persian => "Persian",
+            Self::PhrygianDominant => "Phrygian Dominant",
+            Self::Prometheus => "Prometheus",
+            Self::ScaleOfHarmonics => "Scale of Harmonics",
+            Self::Tritone => "Tritone",
+            Self::TwoSemitoneTritone => "Two-Semitone Tritone",
+            Self::UkrainianDorian => "Ukrainian Dorian",
+            Self::Yo => "Yo",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        let normalized = label
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', '-'], " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        match normalized.as_str() {
+            "ionian" => return Some(Self::Major),
+            "minor" | "aeolian" => return Some(Self::NaturalMinor),
+            "melodic minor ascending" => return Some(Self::MelodicMinor),
+            "acoustic" => return Some(Self::LydianDominant),
+            "super locrian" => return Some(Self::Altered),
+            "hungarian gypsy" => return Some(Self::HungarianMinor),
+            _ => {}
+        }
+        Self::ALL
+            .into_iter()
+            .find(|scale| scale.label().to_ascii_lowercase().replace(['_', '-'], " ") == normalized)
+    }
+}
+
+impl fmt::Display for PianoScale {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PianoScaleRoot {
     C,
     CSharp,
@@ -597,6 +832,11 @@ impl PianoScaleRoot {
             PianoScaleRoot::ASharp => 10,
             PianoScaleRoot::B => 11,
         }
+    }
+
+    pub fn contains_pitch(self, pitch: u8, scale: PianoScale) -> bool {
+        let relative = (pitch as i16 - self.semitone() as i16).rem_euclid(12) as u8;
+        scale.intervals().contains(&relative)
     }
 
     pub fn from_label(label: &str) -> Option<Self> {
@@ -1561,7 +1801,8 @@ pub enum Message {
     PianoNrpnKindSelected(PianoNrpnKind),
     PianoScaleSelectedNotes,
     PianoScaleRootSelected(PianoScaleRoot),
-    PianoScaleMinorToggled(bool),
+    PianoScaleSelected(PianoScale),
+    PianoHideOutOfScale(bool),
     PianoShowNoteNames(bool),
     PianoChordSelectedNotes,
     PianoChordKindSelected(PianoChordKind),
@@ -2083,6 +2324,37 @@ mod tests {
         assert_eq!(PianoScaleRoot::D.semitone(), 2);
         assert_eq!(PianoScaleRoot::A.semitone(), 9);
         assert_eq!(PianoScaleRoot::B.semitone(), 11);
+    }
+
+    #[test]
+    fn piano_scale_contains_pitch_uses_root_and_scale() {
+        assert!(PianoScaleRoot::C.contains_pitch(60, PianoScale::Major));
+        assert!(!PianoScaleRoot::C.contains_pitch(61, PianoScale::Major));
+        assert!(PianoScaleRoot::D.contains_pitch(61, PianoScale::Major));
+        assert!(PianoScaleRoot::C.contains_pitch(63, PianoScale::NaturalMinor));
+        assert!(!PianoScaleRoot::C.contains_pitch(64, PianoScale::NaturalMinor));
+        assert!(PianoScaleRoot::CSharp.contains_pitch(61, PianoScale::Major));
+        assert!(PianoScaleRoot::C.contains_pitch(66, PianoScale::Hirajoshi));
+        assert!(!PianoScaleRoot::C.contains_pitch(62, PianoScale::Hirajoshi));
+    }
+
+    #[test]
+    fn piano_scale_labels_round_trip() {
+        for scale in PianoScale::ALL {
+            assert_eq!(PianoScale::from_label(scale.label()), Some(scale));
+            assert_eq!(scale.intervals().first(), Some(&0));
+            assert!(scale.intervals().windows(2).all(|pair| pair[0] < pair[1]));
+        }
+        assert_eq!(PianoScale::from_label("major"), Some(PianoScale::Major));
+        assert_eq!(
+            PianoScale::from_label("minor"),
+            Some(PianoScale::NaturalMinor)
+        );
+        assert_eq!(PianoScale::from_label("Ionian"), Some(PianoScale::Major));
+        assert_eq!(
+            PianoScale::from_label("Aeolian"),
+            Some(PianoScale::NaturalMinor)
+        );
     }
 
     #[test]
