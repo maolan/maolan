@@ -631,6 +631,13 @@ impl canvas::Program<Message> for TempoCanvas {
                         if self.pixels_per_sample <= 1.0e-9 {
                             return Some(CanvasAction::capture());
                         }
+                        let drag_delta = (last_x - drag_start_x).abs();
+                        if drag_delta < 3.0 {
+                            let sample = snap_sample(sample_at_x(last_x)).0;
+                            return Some(CanvasAction::publish(view_api::transport_position(
+                                sample,
+                            )));
+                        }
                         let (start, end) = snap_range_samples(
                             drag_start_x,
                             last_x,
@@ -2444,5 +2451,61 @@ mod tests {
         );
         assert!(matches!(state.drag_mode, DragMode::None));
         assert!(release.is_some());
+    }
+
+    #[test]
+    fn left_click_in_session_lane_moves_playhead_without_changing_range() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: None,
+            session_range_samples: Some((20, 80)),
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
+            zoom_target: TimelineZoomTarget::Workspace,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(100.0, TEMPO_HIT_HEIGHT * 1.5));
+
+        let press = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("press action");
+        let (_, status) = action_message(press);
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(state.drag_mode, DragMode::Time { .. }));
+
+        let release = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("release action");
+        let (message, _) = action_message(release);
+        assert_eq!(
+            view_api::transport_position_sample(message.as_ref().expect("transport message")),
+            Some(100)
+        );
+        assert_eq!(state.time_range_samples, Some((20, 80)));
     }
 }

@@ -2970,7 +2970,7 @@ impl Maolan {
     fn is_import_audio_path(path: &Path) -> bool {
         matches!(
             Self::file_extension_lower(path).as_deref(),
-            Some("wav" | "flac")
+            Some("wav" | "flac" | "mp3" | "ogg")
         )
     }
 
@@ -8800,6 +8800,12 @@ mod tests {
         )));
         assert!(Maolan::is_import_audio_path(std::path::Path::new(
             "take.WAV"
+        )));
+        assert!(Maolan::is_import_audio_path(std::path::Path::new(
+            "take.MP3"
+        )));
+        assert!(Maolan::is_import_audio_path(std::path::Path::new(
+            "take.OGG"
         )));
         assert!(Maolan::is_import_midi_path(std::path::Path::new(
             "pattern.MID"

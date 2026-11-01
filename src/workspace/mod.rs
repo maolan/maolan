@@ -887,47 +887,28 @@ impl Workspace {
         ]
         .width(tracks_width);
 
-        let tracks_splitter = mouse_area(column![
-            container("")
-                .width(Length::Fixed(3.0))
-                .height(Length::Fixed(self.tempo.height()))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.5,
-                        g: 0.5,
-                        b: 0.5,
-                        a: 0.5,
-                    })),
-                    ..container::Style::default()
-                }),
-            container("")
-                .width(Length::Fixed(3.0))
-                .height(Length::Fixed(self.ruler.height()))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.5,
-                        g: 0.5,
-                        b: 0.5,
-                        a: 0.5,
-                    })),
-                    ..container::Style::default()
-                }),
-            container("")
-                .width(Length::Fixed(3.0))
-                .height(Length::Fill)
-                .style(move |_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.7,
-                        g: 0.7,
-                        b: 0.7,
-                        a: if tracks_resize_hovered { 0.95 } else { 0.6 },
-                    })),
-                    ..container::Style::default()
-                }),
-        ])
-        .on_enter(Message::TracksResizeHover(true))
-        .on_exit(Message::TracksResizeHover(false))
-        .on_press(Message::TracksResizeStart);
+        let tracks_splitter = column![
+            Space::new().width(Length::Fixed(3.0)).height(Length::Fixed(
+                TRACK_SEARCH_HEIGHT + self.tempo.height() + self.ruler.height()
+            )),
+            mouse_area(
+                container("")
+                    .width(Length::Fixed(3.0))
+                    .height(Length::Fill)
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.7,
+                            g: 0.7,
+                            b: 0.7,
+                            a: if tracks_resize_hovered { 0.95 } else { 0.6 },
+                        })),
+                        ..container::Style::default()
+                    }),
+            )
+            .on_enter(Message::TracksResizeHover(true))
+            .on_exit(Message::TracksResizeHover(false))
+            .on_press(Message::TracksResizeStart),
+        ];
 
         let shared_workspace: Element<'_, Message> = match (tracks_visible, editor_visible) {
             (true, true) => row![left_panel, tracks_splitter, right_panel]
