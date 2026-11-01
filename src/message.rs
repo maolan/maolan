@@ -845,6 +845,8 @@ pub struct ClipStretchRequest {
     pub stretch_ratio: f32,
 }
 
+pub type ClipStretchResult = (ClipStretchRequest, Result<(String, usize), String>);
+
 #[derive(Debug, Clone)]
 pub struct ClipPitchCorrectionRequest {
     pub track_idx: String,
@@ -1726,8 +1728,7 @@ pub enum Message {
         kind: Kind,
     },
     ClipStretchFinished {
-        request: ClipStretchRequest,
-        result: Result<(String, usize), String>,
+        results: Vec<ClipStretchResult>,
     },
     ClipOpenPitchCorrection {
         track_idx: String,

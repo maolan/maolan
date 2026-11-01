@@ -18,8 +18,8 @@ use crate::{
     consts::state_ids::METRONOME_TRACK_ID,
     consts::widget_piano::PITCH_MAX,
     message::{
-        ClipPitchCorrectionRequest, ClipStretchRequest, ExportNormalizeMode, ExportRenderMode,
-        Message, Show, TrackAutomationMode, TrackAutomationTarget,
+        ClipPitchCorrectionRequest, ClipStretchRequest, ClipStretchResult, ExportNormalizeMode,
+        ExportRenderMode, Message, Show, TrackAutomationMode, TrackAutomationTarget,
     },
     platform_caps,
     state::{
@@ -3473,46 +3473,49 @@ impl Maolan {
         )
     }
 
-    fn start_clip_stretch_request(&mut self, request: ClipStretchRequest) -> Task<Message> {
+    fn start_clip_stretch_requests(&mut self, requests: Vec<ClipStretchRequest>) -> Task<Message> {
         let Some(session_root) = self.session_dir.clone() else {
             self.state.write().expect("state lock poisoned").message =
                 "Stretching audio clips requires an opened/saved session".to_string();
             return Task::none();
         };
-        let source_path = if std::path::Path::new(&request.clip_name).is_absolute() {
-            std::path::PathBuf::from(&request.clip_name)
-        } else {
-            session_root.join(&request.clip_name)
-        };
-        self.start_clip_stretch_request_with_source(request, session_root, source_path)
-    }
-
-    fn start_clip_stretch_request_with_source(
-        &mut self,
-        request: ClipStretchRequest,
-        session_root: std::path::PathBuf,
-        source_path: std::path::PathBuf,
-    ) -> Task<Message> {
-        if !source_path.exists() {
-            self.state.write().expect("state lock poisoned").message =
-                format!("Audio clip source is missing: {}", source_path.display());
+        if requests.is_empty() {
             return Task::none();
         }
         Task::perform(
             async move {
-                let result = Self::stretch_audio_clip_with_timestretch(
-                    &source_path,
-                    &session_root,
-                    &request.clip_name,
-                    request.offset,
-                    request.length,
-                    request.stretch_ratio,
-                )
-                .await
-                .map_err(|e| e.to_string());
-                (request, result)
+                let stretches = requests.into_iter().map(|request| {
+                    let session_root = session_root.clone();
+                    async move {
+                        let source_path = if std::path::Path::new(&request.clip_name).is_absolute()
+                        {
+                            std::path::PathBuf::from(&request.clip_name)
+                        } else {
+                            session_root.join(&request.clip_name)
+                        };
+                        let result = if source_path.exists() {
+                            Self::stretch_audio_clip_with_timestretch(
+                                &source_path,
+                                &session_root,
+                                &request.clip_name,
+                                request.offset,
+                                request.length,
+                                request.stretch_ratio,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
+                        } else {
+                            Err(format!(
+                                "Audio clip source is missing: {}",
+                                source_path.display()
+                            ))
+                        };
+                        (request, result)
+                    }
+                });
+                maolan_widgets::iced::futures::future::join_all(stretches).await
             },
-            |(request, result)| Message::ClipStretchFinished { request, result },
+            |results| Message::ClipStretchFinished { results },
         )
     }
 

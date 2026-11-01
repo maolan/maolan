@@ -1,6 +1,88 @@
 use super::*;
 
 impl Maolan {
+    fn clip_stretch_group_action(&mut self, results: Vec<ClipStretchResult>) -> Option<Action> {
+        let mut actions = Vec::new();
+        for (request, result) in results {
+            match result {
+                Ok((new_name, new_length)) => {
+                    let clip_state = {
+                        let state = self.state.read().expect("state lock poisoned");
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == request.track_idx)
+                            .and_then(|t| t.audio.clips.get(request.clip_idx))
+                            .map(|clip| (clip.name.clone(), clip.start))
+                    };
+                    let Some((current_name, current_start)) = clip_state else {
+                        self.state.write().expect("state lock poisoned").message =
+                            "Stretched clip finished, but the original clip no longer exists"
+                                .to_string();
+                        continue;
+                    };
+                    if current_name != request.clip_name || current_start != request.start {
+                        self.state.write().expect("state lock poisoned").message =
+                            "Discarded stale stretched clip result".to_string();
+                        continue;
+                    }
+                    let fade_in = clamp_fade_samples(
+                        request.fade_enabled,
+                        request.fade_in_samples.min(new_length / 2),
+                    );
+                    let fade_out = clamp_fade_samples(
+                        request.fade_enabled,
+                        request.fade_out_samples.min(new_length / 2),
+                    );
+                    self.state.write().expect("state lock poisoned").message = format!(
+                        "Stretched audio clip '{}' to {:.2}x",
+                        request.clip_name, request.stretch_ratio
+                    );
+                    actions.extend([
+                        Action::SetClipBounds {
+                            track_name: request.track_idx.clone(),
+                            clip_index: request.clip_idx,
+                            kind: Kind::Audio,
+                            start: request.start,
+                            length: new_length,
+                            offset: 0,
+                        },
+                        Action::SetClipSourceName {
+                            track_name: request.track_idx.clone(),
+                            kind: Kind::Audio,
+                            clip_index: request.clip_idx,
+                            name: new_name,
+                        },
+                        Action::SetClipFade {
+                            track_name: request.track_idx,
+                            clip_index: request.clip_idx,
+                            kind: Kind::Audio,
+                            fade_enabled: request.fade_enabled,
+                            fade_in_samples: fade_in,
+                            fade_out_samples: fade_out,
+                        },
+                    ]);
+                }
+                Err(e) => {
+                    let mut state = self.state.write().expect("state lock poisoned");
+                    if let Some(track) = state
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == request.track_idx)
+                        && let Some(clip) = track.audio.clips.get_mut(request.clip_idx)
+                        && clip.name == request.clip_name
+                    {
+                        clip.start = request.original_start;
+                        clip.length = request.length;
+                        clip.offset = request.offset;
+                    }
+                    state.message = format!("Failed to stretch clip '{}': {e}", request.clip_name);
+                }
+            }
+        }
+        (!actions.is_empty()).then_some(Action::ApplyGroupedActions(actions))
+    }
+
     pub(super) fn handle_clips_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::MarkerLaneCreate { sample } => {
@@ -450,82 +532,12 @@ impl Maolan {
                     };
                 return Task::none();
             }
-            Message::ClipStretchFinished { request, result } => match result {
-                Ok((new_name, new_length)) => {
-                    let clip_state = {
-                        let state = self.state.read().expect("state lock poisoned");
-                        state
-                            .tracks
-                            .iter()
-                            .find(|t| t.name == request.track_idx)
-                            .and_then(|t| t.audio.clips.get(request.clip_idx))
-                            .map(|clip| (clip.name.clone(), clip.start))
-                    };
-                    let Some((current_name, current_start)) = clip_state else {
-                        self.state.write().expect("state lock poisoned").message =
-                            "Stretched clip finished, but the original clip no longer exists"
-                                .to_string();
-                        return Task::none();
-                    };
-                    if current_name != request.clip_name || current_start != request.start {
-                        self.state.write().expect("state lock poisoned").message =
-                            "Discarded stale stretched clip result".to_string();
-                        return Task::none();
-                    }
-                    let fade_in = clamp_fade_samples(
-                        request.fade_enabled,
-                        request.fade_in_samples.min(new_length / 2),
-                    );
-                    let fade_out = clamp_fade_samples(
-                        request.fade_enabled,
-                        request.fade_out_samples.min(new_length / 2),
-                    );
-                    self.state.write().expect("state lock poisoned").message = format!(
-                        "Stretched audio clip '{}' to {:.2}x",
-                        request.clip_name, request.stretch_ratio
-                    );
-                    return self.send(Action::ApplyGroupedActions(vec![
-                        Action::SetClipBounds {
-                            track_name: request.track_idx.clone(),
-                            clip_index: request.clip_idx,
-                            kind: Kind::Audio,
-                            start: request.start,
-                            length: new_length,
-                            offset: 0,
-                        },
-                        Action::SetClipSourceName {
-                            track_name: request.track_idx.clone(),
-                            kind: Kind::Audio,
-                            clip_index: request.clip_idx,
-                            name: new_name,
-                        },
-                        Action::SetClipFade {
-                            track_name: request.track_idx,
-                            clip_index: request.clip_idx,
-                            kind: Kind::Audio,
-                            fade_enabled: request.fade_enabled,
-                            fade_in_samples: fade_in,
-                            fade_out_samples: fade_out,
-                        },
-                    ]));
-                }
-                Err(e) => {
-                    let mut state = self.state.write().expect("state lock poisoned");
-                    if let Some(track) = state
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == request.track_idx)
-                        && let Some(clip) = track.audio.clips.get_mut(request.clip_idx)
-                        && clip.name == request.clip_name
-                    {
-                        clip.start = request.original_start;
-                        clip.length = request.length;
-                        clip.offset = request.offset;
-                    }
-                    state.message = format!("Failed to stretch clip '{}': {e}", request.clip_name);
+            Message::ClipStretchFinished { results } => {
+                let Some(action) = self.clip_stretch_group_action(results) else {
                     return Task::none();
-                }
-            },
+                };
+                return self.send(action);
+            }
             Message::ClipOpenPitchCorrectionFinished { request, result } => {
                 self.generate.clip_pitch_correction_in_progress = false;
                 self.generate.clip_pitch_correction_progress = 0.0;
@@ -1565,7 +1577,7 @@ impl Maolan {
                         }
                     }
                     if stretch_mode && kind == Kind::Audio {
-                        let mut tasks = Vec::new();
+                        let mut requests = Vec::new();
                         for (
                             track_name,
                             clip_index,
@@ -1601,10 +1613,10 @@ impl Maolan {
                                     })
                             };
                             if let Some(request) = stretch_request {
-                                tasks.push(self.start_clip_stretch_request(request));
+                                requests.push(request);
                             }
                         }
-                        return Task::batch(tasks);
+                        return self.start_clip_stretch_requests(requests);
                     }
                     let mut actions = Vec::new();
                     for (track_name, clip_index, start, length, offset, _, initial_length) in bounds
@@ -2246,5 +2258,78 @@ impl Maolan {
         }
         self.update_children(&message);
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stretch_request(track_name: &str) -> ClipStretchRequest {
+        ClipStretchRequest {
+            track_idx: track_name.to_string(),
+            clip_idx: 0,
+            clip_name: format!("{track_name}.wav"),
+            start: 100,
+            original_start: 100,
+            length: 4_800,
+            offset: 0,
+            input_channel: 0,
+            muted: false,
+            fade_enabled: false,
+            fade_in_samples: 0,
+            fade_out_samples: 0,
+            stretch_ratio: 2.0,
+        }
+    }
+
+    #[test]
+    fn out_of_order_clip_stretches_share_one_history_group() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            for track_name in ["a", "b"] {
+                let mut track = Track::new(track_name.to_string(), 0.0, 2, 2, 0, 0);
+                track.audio.clips.push(crate::state::AudioClip {
+                    name: format!("{track_name}.wav"),
+                    start: 100,
+                    length: 4_800,
+                    ..Default::default()
+                });
+                state.tracks.push(track);
+            }
+        }
+
+        let action = app
+            .clip_stretch_group_action(vec![
+                (
+                    stretch_request("b"),
+                    Ok(("audio/b_stretch.wav".to_string(), 9_600)),
+                ),
+                (
+                    stretch_request("a"),
+                    Ok(("audio/a_stretch.wav".to_string(), 9_600)),
+                ),
+            ])
+            .expect("successful stretches produce an action");
+
+        let Action::ApplyGroupedActions(actions) = action else {
+            panic!("stretch results should form one history group");
+        };
+        assert_eq!(actions.len(), 6);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(action, Action::SetClipBounds { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(action, Action::SetClipSourceName { .. }))
+                .count(),
+            2
+        );
     }
 }
