@@ -2169,6 +2169,8 @@ impl Maolan {
             Message::PianoScaleRootSelected(root) => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.piano_scale_root = root;
+                state.piano_scale_chord_selection =
+                    crate::message::PianoScaleChordSelection::Scale(state.piano_scale);
                 if state.piano_hide_out_of_scale {
                     state.reset_piano_row_interaction();
                 }
@@ -2178,11 +2180,30 @@ impl Maolan {
             Message::PianoScaleSelected(scale) => {
                 let mut state = self.state.write().expect("state lock poisoned");
                 state.piano_scale = scale;
+                state.piano_scale_chord_selection =
+                    crate::message::PianoScaleChordSelection::Scale(scale);
                 if state.piano_hide_out_of_scale {
                     state.reset_piano_row_interaction();
                 }
                 drop(state);
                 return self.sync_piano_scrollbars();
+            }
+            Message::PianoScaleChordSelected(selection) => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.piano_scale_chord_selection = selection;
+                match selection {
+                    crate::message::PianoScaleChordSelection::Scale(scale) => {
+                        state.piano_scale = scale;
+                        if state.piano_hide_out_of_scale {
+                            state.reset_piano_row_interaction();
+                        }
+                        drop(state);
+                        return self.sync_piano_scrollbars();
+                    }
+                    crate::message::PianoScaleChordSelection::Chord(kind) => {
+                        state.piano_chord_kind = kind;
+                    }
+                }
             }
             Message::PianoHideOutOfScale(hide) => {
                 let mut state = self.state.write().expect("state lock poisoned");
@@ -2196,12 +2217,6 @@ impl Maolan {
                     .write()
                     .expect("state lock poisoned")
                     .piano_show_note_names = show;
-            }
-            Message::PianoChordKindSelected(kind) => {
-                self.state
-                    .write()
-                    .expect("state lock poisoned")
-                    .piano_chord_kind = kind;
             }
             Message::PianoVelocityShapeAmountChanged(value) => {
                 self.state

@@ -28,6 +28,7 @@ use maolan_widgets::iced_aw::{
 };
 use maolan_widgets::{
     controller::{self, ControllerKindOption},
+    multi_toggler::{LabelPosition, horizontal_multi_toggler},
     note_area::{
         NoteArea, PianoGridScrollCallbacks, PianoGridScrollLayout, PianoGridScrolls,
         piano_grid_scrollers,
@@ -133,7 +134,7 @@ impl MIDIEdit {
         let humanize_time_amount = state.piano_humanize_time_amount.clamp(0.0, 1.0);
         let humanize_velocity_amount = state.piano_humanize_velocity_amount.clamp(0.0, 1.0);
         let groove_amount = state.piano_groove_amount.clamp(0.0, 1.0);
-        let chord_kind = state.piano_chord_kind;
+        let scale_chord_selection = state.piano_scale_chord_selection;
         let velocity_shape_amount = state.piano_velocity_shape_amount.clamp(0.0, 1.0);
         let controller_lane = state.piano_controller_lane;
         let scale_root = state.piano_scale_root;
@@ -1109,25 +1110,19 @@ impl MIDIEdit {
             background: Some(Background::Color(Color::from_rgba(0.11, 0.11, 0.13, 1.0))),
             ..container::Style::default()
         });
-        let edit_tools_strip = container(
+        let view_specific_controls: Element<'_, Message> = if matches!(
+            editor_view_mode,
+            crate::message::MidiEditorViewMode::DrumGrid
+        ) {
+            checkbox(show_note_names)
+                .label("Note names")
+                .on_toggle(Message::PianoShowNoteNames)
+                .size(14)
+                .width(Length::Fill)
+                .into()
+        } else {
             column![
-                text("MIDI Tools").size(12),
-                pick_list(
-                    vec![
-                        crate::message::MidiEditorViewMode::PianoRoll,
-                        crate::message::MidiEditorViewMode::DrumGrid,
-                    ],
-                    Some(editor_view_mode),
-                    Message::MidiEditorViewModeSelected,
-                )
-                .width(Length::Fill),
-                checkbox(show_note_names)
-                    .label("Note names")
-                    .on_toggle(Message::PianoShowNoteNames)
-                    .size(14)
-                    .width(Length::Fill),
                 row![
-                    text("Scale").size(11),
                     pick_list(
                         crate::consts::message_lists::PIANO_SCALE_ROOT_ALL.to_vec(),
                         Some(scale_root),
@@ -1135,9 +1130,9 @@ impl MIDIEdit {
                     )
                     .width(Length::Fixed(64.0)),
                     pick_list(
-                        crate::message::PianoScale::ALL.to_vec(),
-                        Some(scale),
-                        Message::PianoScaleSelected,
+                        crate::message::PianoScaleChordSelection::all(),
+                        Some(scale_chord_selection),
+                        Message::PianoScaleChordSelected,
                     )
                     .width(Length::Fixed(150.0)),
                 ]
@@ -1148,19 +1143,34 @@ impl MIDIEdit {
                     .on_toggle(Message::PianoHideOutOfScale)
                     .size(14)
                     .width(Length::Fill),
-                row![button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),]
-                    .spacing(6),
                 row![
+                    button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),
                     button(text("Chord").size(11)).on_press(Message::PianoChordSelectedNotes),
-                    pick_list(
-                        crate::consts::message_lists::PIANO_CHORD_KIND_ALL.to_vec(),
-                        Some(chord_kind),
-                        Message::PianoChordKindSelected
-                    )
-                    .width(Length::Fixed(86.0)),
+                    button(text("Legato").size(11)).on_press(Message::PianoLegatoSelectedNotes),
                 ]
                 .spacing(6),
-                button(text("Legato").size(11)).on_press(Message::PianoLegatoSelectedNotes),
+            ]
+            .spacing(8)
+            .into()
+        };
+        let edit_tools_strip = container(
+            column![
+                horizontal_multi_toggler(
+                    ["Piano", "Drums"],
+                    usize::from(matches!(
+                        editor_view_mode,
+                        crate::message::MidiEditorViewMode::DrumGrid
+                    )),
+                    |index| {
+                        Message::MidiEditorViewModeSelected(if index == 0 {
+                            crate::message::MidiEditorViewMode::PianoRoll
+                        } else {
+                            crate::message::MidiEditorViewMode::DrumGrid
+                        })
+                    },
+                )
+                .label_position(LabelPosition::Right),
+                view_specific_controls,
                 row![
                     button(text("VelShape").size(11))
                         .on_press(Message::PianoVelocityShapeSelectedNotes),

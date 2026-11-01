@@ -234,8 +234,8 @@ pub mod state_platform_linux {
 
 pub mod message_lists {
     use crate::message::{
-        ExportBitDepth, ExportDither, ExportNormalizeMode, ExportRenderMode, PianoChordKind,
-        PianoNrpnKind, PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
+        ExportBitDepth, ExportDither, ExportNormalizeMode, ExportRenderMode, PianoNrpnKind,
+        PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
     };
 
     pub const SNAP_MODE_ALL: [SnapMode; 9] = [
@@ -271,13 +271,6 @@ pub mod message_lists {
         PianoScaleRoot::A,
         PianoScaleRoot::ASharp,
         PianoScaleRoot::B,
-    ];
-    pub const PIANO_CHORD_KIND_ALL: [PianoChordKind; 5] = [
-        PianoChordKind::MajorTriad,
-        PianoChordKind::MinorTriad,
-        PianoChordKind::Dominant7,
-        PianoChordKind::Major7,
-        PianoChordKind::Minor7,
     ];
     pub const PIANO_NRPN_KIND_ALL: [PianoNrpnKind; 3] = [
         PianoNrpnKind::Brightness,
@@ -426,7 +419,6 @@ mod tests {
     fn message_lists_are_populated() {
         assert_eq!(message_lists::SNAP_MODE_ALL.len(), 9);
         assert_eq!(message_lists::PIANO_SCALE_ROOT_ALL.len(), 12);
-        assert_eq!(message_lists::PIANO_CHORD_KIND_ALL.len(), 5);
         assert_eq!(message_lists::EXPORT_BIT_DEPTH_ALL.len(), 4);
         assert_eq!(message_lists::EXPORT_RENDER_MODE_ALL.len(), 3);
     }

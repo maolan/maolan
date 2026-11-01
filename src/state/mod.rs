@@ -13,8 +13,9 @@ mod track;
 
 use crate::config;
 use crate::message::{
-    PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScale, PianoScaleRoot,
-    PianoVelocityKind, TrackAutomationMode, TrackAutomationTarget,
+    PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScale,
+    PianoScaleChordSelection, PianoScaleRoot, PianoVelocityKind, TrackAutomationMode,
+    TrackAutomationTarget,
 };
 
 pub use clip::{AudioClip, ClipPeaks, MIDIClip, generate_clip_id};
@@ -1686,6 +1687,7 @@ pub struct StateData {
     pub piano_scale: PianoScale,
     pub piano_hide_out_of_scale: bool,
     pub piano_chord_kind: PianoChordKind,
+    pub piano_scale_chord_selection: PianoScaleChordSelection,
     pub piano_velocity_shape_amount: f32,
     pub piano_selected_sysex: Option<usize>,
     pub piano_sysex_hex_input: String,
@@ -1980,6 +1982,7 @@ impl Default for StateData {
             piano_scale: PianoScale::Major,
             piano_hide_out_of_scale: false,
             piano_chord_kind: PianoChordKind::MajorTriad,
+            piano_scale_chord_selection: PianoScaleChordSelection::Scale(PianoScale::Major),
             piano_velocity_shape_amount: 1.0,
             piano_selected_sysex: None,
             piano_sysex_hex_input: String::new(),
