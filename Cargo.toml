@@ -1,7 +1,7 @@
 [package]
 name = "maolan"
 default-run = "maolan"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "Rust DAW application for recording, editing, routing, automation, export, and plugin hosting"
 authors = ["Maolan Team"]
@@ -9,7 +9,6 @@ license = "BSD-2-Clause"
 readme = "README.md"
 repository = "https://github.com/maolan/maolan"
 homepage = "https://maolan.rs"
-documentation = "https://maolan.rs"
 keywords = ["audio", "midi", "daw", "clap", "lv2"]
 categories = ["multimedia::audio"]
 
@@ -23,10 +22,9 @@ crossterm = "0.29.0"
 dirs = "7.0.0"
 ebur128 = "0.1"
 hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", "rustls-tls"] }
-i24 = "2.3.5"
 maolan-generate = "0.0.19"
 maolan-editor = { version = "0.1.4", default-features = false, features = ["embedded"] }
-maolan-engine = { version = "0.4.19", features = ["audio", "midi", "plugins", "mixosc"] }
+maolan-engine = { version = "0.4.20", features = ["audio", "midi", "plugins", "mixosc"] }
 maolan-pitch = "0.0.3"
 maolan-plugin-host = "0.1.2"
 maolan-widgets = "0.1.3"

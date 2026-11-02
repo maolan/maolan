@@ -491,18 +491,27 @@ impl Track {
         let mut y = layout.header_height;
         match kind {
             maolan_engine::kind::Kind::Audio => {
-                for i in 0..lane.min(layout.audio_lanes) {
-                    y += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                for height in layout
+                    .lane_heights
+                    .iter()
+                    .take(lane.min(layout.audio_lanes))
+                {
+                    y += height + TRACK_SUBTRACK_GAP;
                 }
                 y
             }
             maolan_engine::kind::Kind::MIDI => {
-                for i in 0..layout.audio_lanes {
-                    y += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                for height in layout.lane_heights.iter().take(layout.audio_lanes) {
+                    y += height + TRACK_SUBTRACK_GAP;
                 }
                 let base = layout.audio_lanes;
-                for i in 0..lane.min(layout.midi_lanes) {
-                    y += layout.lane_heights[base + i] + TRACK_SUBTRACK_GAP;
+                for height in layout
+                    .lane_heights
+                    .iter()
+                    .skip(base)
+                    .take(lane.min(layout.midi_lanes))
+                {
+                    y += height + TRACK_SUBTRACK_GAP;
                 }
                 y
             }
@@ -521,8 +530,13 @@ impl Track {
                     return 0;
                 }
                 let mut acc = 0.0;
-                for i in 0..layout.audio_lanes {
-                    let span = layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                for (i, height) in layout
+                    .lane_heights
+                    .iter()
+                    .take(layout.audio_lanes)
+                    .enumerate()
+                {
+                    let span = height + TRACK_SUBTRACK_GAP;
                     if local < acc + span {
                         return i;
                     }
@@ -535,14 +549,20 @@ impl Track {
                     return 0;
                 }
                 let mut acc = 0.0;
-                for i in 0..layout.audio_lanes {
-                    acc += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+                for height in layout.lane_heights.iter().take(layout.audio_lanes) {
+                    acc += height + TRACK_SUBTRACK_GAP;
                 }
                 let midi_local = (local - acc).max(0.0);
                 let base = layout.audio_lanes;
                 let mut macc = 0.0;
-                for i in 0..layout.midi_lanes {
-                    let span = layout.lane_heights[base + i] + TRACK_SUBTRACK_GAP;
+                for (i, height) in layout
+                    .lane_heights
+                    .iter()
+                    .skip(base)
+                    .take(layout.midi_lanes)
+                    .enumerate()
+                {
+                    let span = height + TRACK_SUBTRACK_GAP;
                     if midi_local < macc + span {
                         return i;
                     }
@@ -560,11 +580,16 @@ impl Track {
         let layout = self.lane_layout();
         let mut y = layout.header_height;
         let base = layout.audio_lanes + layout.midi_lanes;
-        for i in 0..base {
-            y += layout.lane_heights[i] + TRACK_SUBTRACK_GAP;
+        for height in layout.lane_heights.iter().take(base) {
+            y += height + TRACK_SUBTRACK_GAP;
         }
-        for i in 0..lane.min(layout.automation_lanes) {
-            y += layout.lane_heights[base + i] + TRACK_SUBTRACK_GAP;
+        for height in layout
+            .lane_heights
+            .iter()
+            .skip(base)
+            .take(lane.min(layout.automation_lanes))
+        {
+            y += height + TRACK_SUBTRACK_GAP;
         }
         y
     }

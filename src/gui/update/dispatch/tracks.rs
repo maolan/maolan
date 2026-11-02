@@ -44,94 +44,6 @@ fn track_drop_preview(
     })
 }
 
-#[cfg(test)]
-mod drop_preview_tests {
-    use super::*;
-    use crate::state::{Track, TrackDropPreview};
-    use maolan_widgets::iced::Rectangle;
-
-    fn track(name: &str) -> Track {
-        Track::new(name.into(), 0.0, 0, 2, 0, 0)
-    }
-
-    fn zone(name: &str, height: f32) -> (Id, Rectangle) {
-        (
-            Id::from(name.to_owned()),
-            Rectangle {
-                height,
-                ..Rectangle::default()
-            },
-        )
-    }
-
-    #[test]
-    fn track_drop_preview_and_commit_place_fourth_before_second() {
-        let mut app = Maolan::default();
-        app.state.write().unwrap().tracks =
-            ["First", "Second", "Third", "Fourth"].map(track).to_vec();
-        app.track = Some("Fourth".into());
-        let zones = vec![zone("workspace-drop-zone", 500.0), zone("Second", 80.0)];
-        let _ = app.handle_tracks_message(Message::HandleTrackPreviewZones {
-            track_name: "Fourth".into(),
-            zones: zones.clone(),
-        });
-        assert_eq!(
-            app.state.read().unwrap().track_drop_preview,
-            Some(TrackDropPreview::Before("Second".into()))
-        );
-        let _ = app.handle_tracks_message(Message::HandleTrackZones(vec![zones[1].clone()]));
-        let state = app.state.read().unwrap();
-        assert_eq!(
-            state
-                .tracks
-                .iter()
-                .map(|t| t.name.as_str())
-                .collect::<Vec<_>>(),
-            ["First", "Fourth", "Second", "Third"]
-        );
-        assert!(state.track_drop_preview.is_none());
-        assert!(app.track.is_none());
-    }
-
-    #[test]
-    fn track_drop_preview_prefers_nested_row_and_rejects_own_descendants() {
-        let mut folder = track("Folder");
-        folder.is_folder = true;
-        let mut child = track("Child");
-        child.parent_track = Some("Folder".into());
-        let tracks = vec![folder, child, track("Other")];
-        let zones = vec![zone("Folder", 200.0), zone("Child", 80.0)];
-        assert_eq!(
-            track_drop_preview(&tracks, "Other", &zones),
-            Some(TrackDropPreview::Before("Child".into()))
-        );
-        assert_eq!(track_drop_preview(&tracks, "Folder", &zones), None);
-        assert_eq!(
-            track_drop_preview(&tracks, "Other", &zones[..1]),
-            Some(TrackDropPreview::IntoFolder("Folder".into()))
-        );
-        assert_eq!(
-            track_drop_preview(&tracks, "Other", &[zone("workspace-drop-zone", 500.0)]),
-            Some(TrackDropPreview::End)
-        );
-    }
-
-    #[test]
-    fn track_drop_preview_ignores_late_reports_after_cancel() {
-        let mut app = Maolan::default();
-        app.state.write().unwrap().tracks = vec![track("First"), track("Second")];
-        app.track = Some("First".into());
-        let report = Message::HandleTrackPreviewZones {
-            track_name: "First".into(),
-            zones: vec![zone("Second", 80.0)],
-        };
-        let _ = app.handle_tracks_message(report.clone());
-        let _ = app.handle_tracks_message(Message::TrackDragCanceled);
-        let _ = app.handle_tracks_message(report);
-        assert!(app.state.read().unwrap().track_drop_preview.is_none());
-    }
-}
-
 #[derive(Clone, Copy)]
 enum TrackMonitorKind {
     Disk,
@@ -1362,5 +1274,93 @@ impl Maolan {
         }
         self.update_children(&message);
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod drop_preview_tests {
+    use super::*;
+    use crate::state::{Track, TrackDropPreview};
+    use maolan_widgets::iced::Rectangle;
+
+    fn track(name: &str) -> Track {
+        Track::new(name.into(), 0.0, 0, 2, 0, 0)
+    }
+
+    fn zone(name: &str, height: f32) -> (Id, Rectangle) {
+        (
+            Id::from(name.to_owned()),
+            Rectangle {
+                height,
+                ..Rectangle::default()
+            },
+        )
+    }
+
+    #[test]
+    fn track_drop_preview_and_commit_place_fourth_before_second() {
+        let mut app = Maolan::default();
+        app.state.write().unwrap().tracks =
+            ["First", "Second", "Third", "Fourth"].map(track).to_vec();
+        app.track = Some("Fourth".into());
+        let zones = vec![zone("workspace-drop-zone", 500.0), zone("Second", 80.0)];
+        let _ = app.handle_tracks_message(Message::HandleTrackPreviewZones {
+            track_name: "Fourth".into(),
+            zones: zones.clone(),
+        });
+        assert_eq!(
+            app.state.read().unwrap().track_drop_preview,
+            Some(TrackDropPreview::Before("Second".into()))
+        );
+        let _ = app.handle_tracks_message(Message::HandleTrackZones(vec![zones[1].clone()]));
+        let state = app.state.read().unwrap();
+        assert_eq!(
+            state
+                .tracks
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            ["First", "Fourth", "Second", "Third"]
+        );
+        assert!(state.track_drop_preview.is_none());
+        assert!(app.track.is_none());
+    }
+
+    #[test]
+    fn track_drop_preview_prefers_nested_row_and_rejects_own_descendants() {
+        let mut folder = track("Folder");
+        folder.is_folder = true;
+        let mut child = track("Child");
+        child.parent_track = Some("Folder".into());
+        let tracks = vec![folder, child, track("Other")];
+        let zones = vec![zone("Folder", 200.0), zone("Child", 80.0)];
+        assert_eq!(
+            track_drop_preview(&tracks, "Other", &zones),
+            Some(TrackDropPreview::Before("Child".into()))
+        );
+        assert_eq!(track_drop_preview(&tracks, "Folder", &zones), None);
+        assert_eq!(
+            track_drop_preview(&tracks, "Other", &zones[..1]),
+            Some(TrackDropPreview::IntoFolder("Folder".into()))
+        );
+        assert_eq!(
+            track_drop_preview(&tracks, "Other", &[zone("workspace-drop-zone", 500.0)]),
+            Some(TrackDropPreview::End)
+        );
+    }
+
+    #[test]
+    fn track_drop_preview_ignores_late_reports_after_cancel() {
+        let mut app = Maolan::default();
+        app.state.write().unwrap().tracks = vec![track("First"), track("Second")];
+        app.track = Some("First".into());
+        let report = Message::HandleTrackPreviewZones {
+            track_name: "First".into(),
+            zones: vec![zone("Second", 80.0)],
+        };
+        let _ = app.handle_tracks_message(report.clone());
+        let _ = app.handle_tracks_message(Message::TrackDragCanceled);
+        let _ = app.handle_tracks_message(report);
+        assert!(app.state.read().unwrap().track_drop_preview.is_none());
     }
 }
