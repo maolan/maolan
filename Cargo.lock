@@ -349,9 +349,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
+checksum = "f426a31126c735126297bc5ea7a521263c9faff4f63ca415267ee625651c4f37"
 dependencies = [
  "async-task",
  "concurrent-queue",
@@ -381,9 +381,9 @@ dependencies = [
 
 [[package]]
 name = "async-lock"
-version = "3.4.2"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
+checksum = "0876700b0d007ad25d5508865a4259c3af9af6d296bf663a0d586d0bc3369f6f"
 dependencies = [
  "event-listener",
  "event-listener-strategy",
@@ -1519,9 +1519,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
+checksum = "375989decec1a0fa424442bed520fa12ede43a48475ce8c7417d2c69b32b5f6b"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -2000,9 +2000,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.3"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ba106e844045ddc02c20768ac4b0b7cb45f2cc2ecbd833ac9f5dacb183c2055"
+checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
 dependencies = [
  "cfg-if",
 ]
@@ -4548,16 +4548,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "i24"
-version = "2.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e22122006ada38509ff99640386102f27a31e7f7239ae2151e30852f1741031"
-dependencies = [
- "bytemuck",
- "num-traits",
-]
-
-[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5844,7 +5834,7 @@ dependencies = [
 
 [[package]]
 name = "maolan"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "alsa",
  "chrono",
@@ -5852,7 +5842,6 @@ dependencies = [
  "dirs 7.0.0",
  "ebur128",
  "hf-hub",
- "i24",
  "maolan-editor",
  "maolan-engine",
  "maolan-generate",
@@ -5869,7 +5858,7 @@ dependencies = [
  "rubato",
  "serde",
  "serde_json",
- "timestretch 0.16.0",
+ "timestretch",
  "tokio",
  "toml",
  "tracing",
@@ -5908,9 +5897,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.19"
+version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca272a99ab34fc8af491e0b9509cea7760896bc58ded6c51ecfe73ebfa590ced"
+checksum = "9fd39d1ecc3d4da78544338fae11391605191b95c6f792dc5543e521a4cd6976"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5918,7 +5907,6 @@ dependencies = [
  "audioadapter-buffers",
  "basedrop",
  "block",
- "byteorder",
  "fearless_simd",
  "fearless_simd_macros",
  "jack",
@@ -5941,10 +5929,9 @@ dependencies = [
  "serde",
  "serde_json",
  "symphonia 0.6.1",
- "timestretch 0.15.1",
+ "timestretch",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "uuid",
  "windows 0.62.2",
 ]
@@ -7954,7 +7941,7 @@ dependencies = [
  "serde",
  "tar",
  "thiserror 2.0.21",
- "zip 9.2.1",
+ "zip 9.2.2",
 ]
 
 [[package]]
@@ -10267,19 +10254,6 @@ dependencies = [
 
 [[package]]
 name = "timestretch"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "051aa4151a42c6c47896c900fc596b6b4efb0579184e13232c356e65763f32c1"
-dependencies = [
- "arc-swap",
- "ebur128",
- "rustfft",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "timestretch"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad484075af6caf97e09f3f869bed42c99ff4fea501f6df6ad65d5bb8c7186808"
@@ -10613,7 +10587,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tar",
- "ureq 3.5.0",
+ "ureq 3.5.1",
  "walkdir",
 ]
 
@@ -11039,9 +11013,9 @@ checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
 name = "unicode-script"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "383ad40bb927465ec0ce7720e033cb4ca06912855fc35db31b5755d0de75b1ee"
+checksum = "aa04c955db05429d464c74d495c1ee677e1866e783a4c3747f9c0cef7756cabf"
 
 [[package]]
 name = "unicode-segmentation"
@@ -11125,9 +11099,9 @@ dependencies = [
 
 [[package]]
 name = "ureq"
-version = "3.5.0"
+version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cde93ff05758a36a851a398a772b0b79a82fbe3c186a46f2696baaeaf84c966b"
+checksum = "e7be76686bdf7198002062423ca0d8cf9b75a27c8e1de804513b97e97b555d9d"
 dependencies = [
  "base64 0.23.1",
  "log",
@@ -11141,9 +11115,9 @@ dependencies = [
 
 [[package]]
 name = "ureq-proto"
-version = "0.6.5"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841583fc36089d7d59419568ae157f43a5a03a2e5a81ba87c77d1596ef46e922"
+checksum = "622dce33c252115466d83f63e9744a18f12b4406aae51a01c15ad8fcf1185eb3"
 dependencies = [
  "base64 0.23.1",
  "http",
@@ -12986,14 +12960,15 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.2.1"
+version = "9.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848dad21639597378c3be94c59fd4de683f0f6d8a5387575896e1245737d4f37"
+checksum = "e408c6cc4699dd017d53dc080cd51c2cea2b5354af57a1479bd265ed42911487"
 dependencies = [
  "crc32fast",
  "flate2",
  "getrandom 0.4.3",
  "indexmap",
+ "libc",
  "memchr",
  "nix 0.31.3",
  "typed-path",

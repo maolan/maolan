@@ -2081,8 +2081,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let visual_lane_count = layout.lane_heights.len();
     if !track.collapsed() && visual_lane_count >= 2 {
         let mut y = layout.header_height;
-        for divider in 0..(visual_lane_count - 1) {
-            y += layout.lane_heights[divider] + TRACK_SUBTRACK_GAP;
+        for (divider, height) in layout
+            .lane_heights
+            .iter()
+            .take(visual_lane_count - 1)
+            .enumerate()
+        {
+            y += height + TRACK_SUBTRACK_GAP;
             let handle_y = (y - TRACK_SUBTRACK_GAP / 2.0 - lane_divider_h / 2.0).max(0.0);
             let handle = mouse_area(
                 container("")
