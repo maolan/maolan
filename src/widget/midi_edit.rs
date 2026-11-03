@@ -130,13 +130,14 @@ impl MIDIEdit {
     ) -> Element<'_, Message> {
         let state = self.state.read().expect("state lock poisoned");
         let zoom_x = state.piano_zoom_x;
-        let zoom_y = state.piano_zoom_y;
+        let mut zoom_y = state.piano_zoom_y;
         let humanize_time_amount = state.piano_humanize_time_amount.clamp(0.0, 1.0);
         let humanize_velocity_amount = state.piano_humanize_velocity_amount.clamp(0.0, 1.0);
         let groove_amount = state.piano_groove_amount.clamp(0.0, 1.0);
         let scale_chord_selection = state.piano_scale_chord_selection;
         let velocity_shape_amount = state.piano_velocity_shape_amount.clamp(0.0, 1.0);
         let controller_lane = state.piano_controller_lane;
+        let controller_lane_full_height = state.piano_controller_lane_full_height;
         let scale_root = state.piano_scale_root;
         let scale = state.piano_scale;
         let hide_out_of_scale = state.piano_hide_out_of_scale;
@@ -167,6 +168,36 @@ impl MIDIEdit {
             .and_then(|p| state.tracks.iter().find(|t| t.name == p.track_idx))
             .map(|t| t.midi.editor_view_mode)
             .unwrap_or_default();
+
+        if controller_lane_full_height {
+            let (row_count, row_height_per_zoom) = if matches!(
+                editor_view_mode,
+                crate::message::MidiEditorViewMode::DrumGrid
+            ) {
+                let mut drum_rows: std::collections::HashSet<u8> =
+                    roll.notes.iter().map(|note| note.pitch).collect();
+                drum_rows.extend(
+                    crate::consts::gm_drum_map::GM_DRUM_MAP
+                        .iter()
+                        .map(|(pitch, _)| *pitch),
+                );
+                if show_note_names {
+                    drum_rows.extend(visible_names.keys().copied());
+                }
+                (drum_rows.len(), 24.0)
+            } else {
+                (
+                    pitch_rows.pitches().len(),
+                    WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32,
+                )
+            };
+            let natural_notes_h = row_count as f32 * (row_height_per_zoom * zoom_y).max(1.0);
+            let normal_ctrl_h =
+                (controller::controller_lane_line_count(controller_lane).max(1) as f32).max(140.0);
+            let expanded_height = natural_notes_h + normal_ctrl_h + 3.0;
+            zoom_y = (expanded_height / row_count.max(1) as f32 / row_height_per_zoom)
+                .max(1.0 / row_height_per_zoom);
+        }
 
         let keyboard_scroll: Element<'_, Message> = if matches!(
             editor_view_mode,
@@ -250,7 +281,11 @@ impl MIDIEdit {
 
             for (note_idx, note) in roll.notes.iter().enumerate() {
                 if let Some(row_idx) = drum_rows.iter().position(|&p| p == note.pitch) {
-                    let color = maolan_widgets::piano::note_color(note.velocity, note.channel);
+                    let color = if controller_lane_full_height {
+                        Color::BLACK
+                    } else {
+                        maolan_widgets::piano::note_color(note.velocity, note.channel)
+                    };
                     let is_selected = state.piano_selected_notes.contains(&note_idx);
                     let x = note.start_sample as f32 * pps;
                     let y = row_idx as f32 * drum_row_h + (drum_row_h - 10.0) / 2.0;
@@ -407,7 +442,7 @@ impl MIDIEdit {
             container(sidebar_rows)
                 .width(Length::Fixed(KEYBOARD_WIDTH))
                 .height(Length::Fill)
-                .style(|_theme| container::Style {
+                .style(move |_theme| container::Style {
                     background: Some(Background::Color(Color {
                         r: 0.12,
                         g: 0.12,
@@ -452,6 +487,11 @@ impl MIDIEdit {
                         .height(Length::Fixed(notes_h))
                         .into(),
                     );
+                    let piano_roll = if controller_lane_full_height {
+                        piano_roll.with_note_color(Color::BLACK)
+                    } else {
+                        piano_roll
+                    };
                     let piano_roll = if hide_out_of_scale {
                         piano_roll.with_scale_filter(scale_root.semitone(), scale.intervals())
                     } else {
@@ -574,7 +614,11 @@ impl MIDIEdit {
         };
 
         let ctrl_line_count = controller::controller_lane_line_count(controller_lane).max(1);
-        let ctrl_h = (ctrl_line_count as f32).max(140.0);
+        let ctrl_h = if controller_lane_full_height {
+            notes_h
+        } else {
+            (ctrl_line_count as f32).max(140.0)
+        };
         let ctrl_row_h = (ctrl_h / ctrl_line_count as f32).max(1.0);
         let pps_ctrl = (pixels_per_sample * zoom_x).max(0.0001);
         let ctrl_w = (roll.clip_length_samples as f32 * pps_ctrl).max(1.0);
@@ -583,12 +627,16 @@ impl MIDIEdit {
             pin(container("")
                 .width(Length::Fixed(ctrl_w))
                 .height(Length::Fixed(ctrl_h))
-                .style(|_theme| container::Style {
+                .style(move |_theme| container::Style {
                     background: Some(Background::Color(Color {
                         r: 0.16,
                         g: 0.16,
                         b: 0.18,
-                        a: 0.9,
+                        a: if controller_lane_full_height {
+                            0.2
+                        } else {
+                            0.9
+                        },
                     })),
                     ..container::Style::default()
                 }))
@@ -978,7 +1026,20 @@ impl MIDIEdit {
                 })
                 .into(),
         };
-        let controller_header = column![controller_picker, controller_number_picker].spacing(2);
+        let controller_header = column![
+            controller_picker,
+            controller_number_picker,
+            button(
+                text(if controller_lane_full_height {
+                    "Restore height"
+                } else {
+                    "Full height"
+                })
+                .size(10)
+            )
+            .on_press(Message::PianoControllerLaneFullHeightToggled),
+        ]
+        .spacing(2);
         let controller_key = container(controller_header)
             .width(Length::Fixed(KEYBOARD_WIDTH))
             .height(Length::Fixed(ctrl_h))
@@ -1017,12 +1078,16 @@ impl MIDIEdit {
             container(ctrl_content)
                 .width(Length::Shrink)
                 .height(Length::Fixed(ctrl_h))
-                .style(|_theme| container::Style {
+                .style(move |_theme| container::Style {
                     background: Some(Background::Color(Color {
                         r: 0.12,
                         g: 0.12,
                         b: 0.13,
-                        a: 1.0,
+                        a: if controller_lane_full_height {
+                            0.0
+                        } else {
+                            1.0
+                        },
                     })),
                     ..container::Style::default()
                 }),
@@ -1033,7 +1098,11 @@ impl MIDIEdit {
         ))
         .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
         .width(Length::Fill)
-        .height(Length::Fixed(ctrl_h));
+        .height(if controller_lane_full_height {
+            Length::Fill
+        } else {
+            Length::Fixed(ctrl_h)
+        });
 
         let selected_sysex = state.piano_selected_sysex;
         let sysex_rows = roll
@@ -1223,24 +1292,41 @@ impl MIDIEdit {
             ..container::Style::default()
         });
 
+        let mut editor_rows = column![];
+        if controller_lane_full_height {
+            let notes_backdrop = row![keyboard_scroll, note_scroll]
+                .height(Length::Fill)
+                .width(Length::Fill);
+            let full_height_controller = row![controller_key, ctrl_scroll]
+                .height(Length::Fill)
+                .width(Length::Fill);
+            editor_rows = editor_rows.push(
+                Stack::from_vec(vec![notes_backdrop.into(), full_height_controller.into()])
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            );
+        } else {
+            editor_rows = editor_rows.push(
+                row![keyboard_scroll, note_scroll]
+                    .height(Length::Fill)
+                    .width(Length::Fill),
+            );
+            editor_rows =
+                editor_rows.push(row![controller_key, ctrl_scroll].height(Length::Shrink));
+            editor_rows = editor_rows.push(row![
+                container("")
+                    .width(Length::Fixed(KEYBOARD_WIDTH))
+                    .height(Length::Fixed(16.0)),
+                h_scroll,
+            ]);
+        }
         let mut layout = row![
             row![
                 edit_tools_strip,
-                column![
-                    row![keyboard_scroll, note_scroll]
-                        .height(Length::Fill)
-                        .width(Length::Fill),
-                    row![controller_key, ctrl_scroll],
-                    row![
-                        container("")
-                            .width(Length::Fixed(KEYBOARD_WIDTH))
-                            .height(Length::Fixed(16.0)),
-                        h_scroll,
-                    ]
-                ]
-                .spacing(3)
-                .width(Length::Fill)
-                .height(Length::Fill),
+                editor_rows
+                    .spacing(3)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
             ]
             .spacing(MAIN_SPLIT_SPACING)
             .width(Length::Fill)

@@ -68,7 +68,7 @@ impl Maolan {
                     Task::none()
                 };
                 self.toolbar.update(&message);
-                let was_playing = self.transport.playing;
+                let was_running = self.transport.is_running();
                 self.transport.stop_meter_stop_decay();
                 self.transport.playing = true;
                 self.transport.paused = false;
@@ -77,11 +77,13 @@ impl Maolan {
                 if self.transport.record_armed {
                     self.start_recording_preview();
                 }
-                let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(true))];
-                if !was_playing {
-                    tasks.push(self.send(Action::Play));
-                }
-                stop_live.chain(Task::batch(tasks))
+                let enable_clips = self.send(Action::SetClipPlaybackEnabled(true));
+                let play = if was_running {
+                    enable_clips
+                } else {
+                    enable_clips.chain(self.send(Action::Play))
+                };
+                stop_live.chain(play)
             }
             Message::TransportPause => {
                 if session_view_active {

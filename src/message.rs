@@ -1806,6 +1806,7 @@ pub enum Message {
     },
     DrumSelectRectEnd,
     PianoControllerLaneSelected(PianoControllerLane),
+    PianoControllerLaneFullHeightToggled,
     MidiEditorViewModeSelected(MidiEditorViewMode),
     PianoControllerKindSelected(u8),
     TrackMidiLaneChannelSelected {

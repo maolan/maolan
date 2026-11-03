@@ -459,6 +459,10 @@ pub struct PluginParamState {
 }
 
 impl TransportUiState {
+    pub(crate) fn is_running(&self) -> bool {
+        self.playing && !self.paused
+    }
+
     pub(crate) fn samples_per_beat(&self, state: &State) -> f32 {
         let state = state.read().expect("state lock poisoned");
         self.samples_per_beat_from(&state)
