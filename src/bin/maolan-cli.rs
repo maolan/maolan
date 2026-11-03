@@ -270,11 +270,11 @@ impl App {
                         self.sticky_status = true;
                     }
                 } else {
-                    let was_playing = self.playing;
+                    let was_running = self.playing && !self.paused;
                     self.playing = true;
                     self.paused = false;
                     self.status = "Playing".to_string();
-                    if let Err(err) = send_transport_play(client, was_playing).await {
+                    if let Err(err) = send_transport_play(client, was_running).await {
                         self.status = err;
                         self.sticky_status = true;
                     }
@@ -1268,11 +1268,11 @@ async fn maybe_request_meters(app: &mut App, client: &Client) {
     app.last_meter_request = Some(now);
 }
 
-async fn send_transport_play(client: &Client, was_playing: bool) -> Result<(), String> {
+async fn send_transport_play(client: &Client, was_running: bool) -> Result<(), String> {
     client
         .send(EngineMessage::Request(Action::SetClipPlaybackEnabled(true)))
         .await?;
-    if !was_playing {
+    if !was_running {
         client.send(EngineMessage::Request(Action::Play)).await?;
     }
     Ok(())

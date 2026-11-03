@@ -116,17 +116,11 @@ fn load_session_restore_actions_from_value(
         push_track_restore_actions(&mut actions, track)?;
     }
 
-    #[cfg(not(miri))]
     let clap_plugins = scan_plugins::<ClapPluginInfo>("clap").unwrap_or_default();
-    #[cfg(miri)]
-    let clap_plugins = Vec::new();
-    #[cfg(not(miri))]
     let vst3_plugins = scan_plugins::<Vst3PluginInfo>("vst3").unwrap_or_default();
-    #[cfg(miri)]
-    let vst3_plugins = Vec::new();
-    #[cfg(all(not(miri), target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     let au_plugins = scan_plugins::<maolan_engine::au::AuPluginInfo>("au").unwrap_or_default();
-    #[cfg(any(miri, not(target_os = "macos")))]
+    #[cfg(not(target_os = "macos"))]
     let au_plugins = Vec::new();
     let graph_actions = crate::session_restore::plugin_support::load_session_graph_restore_actions(
         session,

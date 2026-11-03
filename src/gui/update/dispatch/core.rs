@@ -37,7 +37,7 @@ impl Maolan {
                 } else {
                     Task::none()
                 };
-                let was_playing = self.transport.playing;
+                let was_running = self.transport.is_running();
                 self.toolbar.update(message);
                 self.transport.playing = true;
                 self.transport.paused = false;
@@ -45,11 +45,13 @@ impl Maolan {
                 if self.transport.record_armed {
                     self.start_recording_preview();
                 }
-                let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(true))];
-                if !was_playing {
-                    tasks.push(self.send(Action::Play));
-                }
-                Some(stop_live.chain(Task::batch(tasks)))
+                let enable_clips = self.send(Action::SetClipPlaybackEnabled(true));
+                let play = if was_running {
+                    enable_clips
+                } else {
+                    enable_clips.chain(self.send(Action::Play))
+                };
+                Some(stop_live.chain(play))
             }
             Message::ToggleLoop => {
                 if self.transport.loop_range_samples.is_none() {
@@ -86,6 +88,17 @@ impl Maolan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paused_transport_is_not_running() {
+        let transport = crate::gui::field_groups::TransportUiState {
+            playing: true,
+            paused: true,
+            ..Default::default()
+        };
+
+        assert!(!transport.is_running());
+    }
 
     #[test]
     fn handle_none_message_returns_none_task() {

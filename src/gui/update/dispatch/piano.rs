@@ -132,6 +132,10 @@ impl Maolan {
                 state.piano_sysex_panel_open =
                     matches!(lane, crate::message::PianoControllerLane::SysEx);
             }
+            Message::PianoControllerLaneFullHeightToggled => {
+                let mut state = self.state.write().expect("state lock poisoned");
+                state.piano_controller_lane_full_height = !state.piano_controller_lane_full_height;
+            }
             Message::MidiEditorViewModeSelected(mode) => {
                 let state = self.state.read().expect("state lock poisoned");
                 if let Some(piano) = state.piano.as_ref() {

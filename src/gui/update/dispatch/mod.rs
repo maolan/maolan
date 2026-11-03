@@ -1462,6 +1462,7 @@ impl Maolan {
             | Message::PianoScrollYChanged(_)
             | Message::PianoSysExScrollYChanged(_)
             | Message::PianoControllerLaneSelected(_)
+            | Message::PianoControllerLaneFullHeightToggled
             | Message::MidiEditorViewModeSelected(_)
             | Message::PianoControllerKindSelected(_)
             | Message::PianoVelocityKindSelected(_)
