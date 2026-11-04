@@ -3562,9 +3562,9 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "finl_unicode"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80bb028c8b4148c9ee0cca68fcd9add6044e81d3619f48577ddf13a263d047a2"
+checksum = "09ded33109e99472f809cb7495544506eea45e366725dacf2a383e184f660456"
 
 [[package]]
 name = "fixedbitset"
@@ -5856,7 +5856,7 @@ dependencies = [
  "maolan-generate",
  "maolan-pitch",
  "maolan-plugin-host",
- "maolan-widgets 0.1.4",
+ "maolan-widgets",
  "midly",
  "mixosc",
  "nix 0.31.3",
@@ -5895,7 +5895,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc33537a863a890bffd1c54e12e249fe2f83fbc39be801d7eff06da3299718e6"
 dependencies = [
  "maolan-engine",
- "maolan-widgets 0.1.4",
+ "maolan-widgets",
  "rfd",
  "rubato",
  "serde",
@@ -5906,9 +5906,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.20"
+version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd39d1ecc3d4da78544338fae11391605191b95c6f792dc5543e521a4cd6976"
+checksum = "4677ceab6d2a7ca601a1769916fe04210663162a0fba757659014a349d3e6747"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -5937,7 +5937,7 @@ dependencies = [
  "rubato",
  "serde",
  "serde_json",
- "symphonia 0.6.1",
+ "symphonia",
  "timestretch",
  "tokio",
  "tracing",
@@ -5967,7 +5967,7 @@ dependencies = [
  "sentencepiece-rust",
  "serde",
  "serde_json",
- "symphonia 0.6.1",
+ "symphonia",
  "tokie",
 ]
 
@@ -5989,11 +5989,11 @@ dependencies = [
 
 [[package]]
 name = "maolan-lv2"
-version = "0.0.3"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0b84a12dcb56529c9f563c9e812d6a58ea386d632c81356c3204c1cbea1f108"
+checksum = "65d3051b04a79d472393e254a0461c0043bcc8f8ce2d402981db906d261c8625"
 dependencies = [
- "dirs 6.0.0",
+ "dirs 7.0.0",
  "libloading 0.9.0",
  "oxrdf",
  "oxttl",
@@ -6018,9 +6018,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-host"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "957e02bb56436010f38889e2b155742fc9a83a46de898030b25961625ad0631c"
+checksum = "8df4c4e84519d882d3eb8ec9e2106a0ab7bd8b398ed1b696ebcfdd2efedbfd31"
 dependencies = [
  "arc-swap",
  "crossbeam-channel",
@@ -6039,27 +6039,12 @@ dependencies = [
 
 [[package]]
 name = "maolan-plugin-protocol"
-version = "0.0.20"
+version = "0.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0121a96c6d6bcdeb39d3ab7b005b076ea241ad6c5a0e7c644b942aab73f9d9f"
+checksum = "37ef01f71e922f81b59f74d42b875e9a251f208a5aca76fbf9d9cff3b788b2fb"
 dependencies = [
  "libc",
- "tracing",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "maolan-widgets"
-version = "0.0.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f6736326aefec6c26942724d7c4f2b5827492ad6ab46c4d65e2b1d94dca67f4"
-dependencies = [
- "iced",
- "iced_aw",
- "iced_drop",
- "iced_fonts",
- "serde",
- "symphonia 0.5.5",
 ]
 
 [[package]]
@@ -6073,7 +6058,7 @@ dependencies = [
  "iced_drop",
  "iced_fonts",
  "serde",
- "symphonia 0.6.1",
+ "symphonia",
 ]
 
 [[package]]
@@ -6237,11 +6222,11 @@ dependencies = [
 
 [[package]]
 name = "mixosc"
-version = "0.0.16"
+version = "0.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03e72a6ec358ee32131f3b1ccbbd1c56d8549a8130f50d9e57a4985f3cdf9e7b"
+checksum = "4927c8f31a3b020c91722a47b9ad61ee70e5bd694f882eef34a8427bf9a2cb7d"
 dependencies = [
- "maolan-widgets 0.0.36",
+ "maolan-widgets",
  "tokio",
 ]
 
@@ -9573,54 +9558,24 @@ checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
 
 [[package]]
 name = "symphonia"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5773a4c030a19d9bfaa090f49746ff35c75dfddfa700df7a5939d5e076a57039"
-dependencies = [
- "lazy_static",
- "symphonia-bundle-flac 0.5.5",
- "symphonia-codec-adpcm 0.5.5",
- "symphonia-codec-pcm 0.5.5",
- "symphonia-codec-vorbis 0.5.5",
- "symphonia-core 0.5.5",
- "symphonia-format-mkv 0.5.5",
- "symphonia-format-ogg 0.5.5",
- "symphonia-format-riff 0.5.5",
- "symphonia-metadata 0.5.5",
-]
-
-[[package]]
-name = "symphonia"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7edef6a96b696d4e0cab5ee9ebb7ca155ed95f30a6b45bbb8b97d2727f02424"
 dependencies = [
  "lazy_static",
- "symphonia-bundle-flac 0.6.1",
+ "symphonia-bundle-flac",
  "symphonia-bundle-mp3",
  "symphonia-codec-aac",
- "symphonia-codec-adpcm 0.6.1",
+ "symphonia-codec-adpcm",
  "symphonia-codec-alac",
- "symphonia-codec-pcm 0.6.1",
- "symphonia-codec-vorbis 0.6.1",
- "symphonia-core 0.6.1",
+ "symphonia-codec-pcm",
+ "symphonia-codec-vorbis",
+ "symphonia-core",
  "symphonia-format-isomp4",
- "symphonia-format-mkv 0.6.1",
- "symphonia-format-ogg 0.6.1",
- "symphonia-format-riff 0.6.1",
- "symphonia-metadata 0.6.1",
-]
-
-[[package]]
-name = "symphonia-bundle-flac"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c91565e180aea25d9b80a910c546802526ffd0072d0b8974e3ebe59b686c9976"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-format-mkv",
+ "symphonia-format-ogg",
+ "symphonia-format-riff",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -9631,8 +9586,8 @@ checksum = "6405d5c34ff6f8f7ca08a4101efe66d21e180f7322ef9359900a0e55698a7892"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.1",
- "symphonia-metadata 0.6.1",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -9643,7 +9598,7 @@ checksum = "98ea5ffc8716bff677dfb3b01b420c7b758de901a72b8c330bf2040ab74b4add"
 dependencies = [
  "lazy_static",
  "log",
- "symphonia-core 0.6.1",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -9655,17 +9610,7 @@ dependencies = [
  "lazy_static",
  "log",
  "symphonia-common",
- "symphonia-core 0.6.1",
-]
-
-[[package]]
-name = "symphonia-codec-adpcm"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dddc50e2bbea4cfe027441eece77c46b9f319748605ab8f3443350129ddd07f"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -9675,7 +9620,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "445932ecb0c59362fde9c082dd63a75380650c5077fdb8b80b8cac850442a74c"
 dependencies = [
  "log",
- "symphonia-core 0.6.1",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -9686,17 +9631,7 @@ checksum = "920a78f96f3cf62932d0c497959c0cc2100ef36b03c7ca1417b260f432a482d8"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.1",
-]
-
-[[package]]
-name = "symphonia-codec-pcm"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e89d716c01541ad3ebe7c91ce4c8d38a7cf266a3f7b2f090b108fb0cb031d95"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -9706,18 +9641,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e04ba75686acbe43542fdd374571195f0530c0b7785ca25cc6840e9c6c4b6eea"
 dependencies = [
  "log",
- "symphonia-core 0.6.1",
-]
-
-[[package]]
-name = "symphonia-codec-vorbis"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f025837c309cd69ffef572750b4a2257b59552c5399a5e49707cc5b1b85d1c73"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -9728,7 +9652,7 @@ checksum = "73d90b4fcf796137cc683c538282804ff9629f8ad9dbfd881fcbba331ac4e986"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.1",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -9738,21 +9662,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acc3fcc18ec9b8cdd48614e259c4cf0d27b71d41e5d9b120b42c5adab12d7c4"
 dependencies = [
  "log",
- "symphonia-core 0.6.1",
- "symphonia-metadata 0.6.1",
-]
-
-[[package]]
-name = "symphonia-core"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea00cc4f79b7f6bb7ff87eddc065a1066f3a43fe1875979056672c9ef948c2af"
-dependencies = [
- "arrayvec",
- "bitflags 1.3.2",
- "bytemuck",
- "lazy_static",
- "log",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -9778,21 +9689,8 @@ checksum = "0e681a70e1870d34e02abf1dbc51e4267c3f1827801474e8870be8c689fc4dc3"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.1",
- "symphonia-metadata 0.6.1",
-]
-
-[[package]]
-name = "symphonia-format-mkv"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "122d786d2c43a49beb6f397551b4a050d8229eaa54c7ddf9ee4b98899b8742d0"
-dependencies = [
- "lazy_static",
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -9804,19 +9702,7 @@ dependencies = [
  "lazy_static",
  "log",
  "symphonia-common",
- "symphonia-core 0.6.1",
-]
-
-[[package]]
-name = "symphonia-format-ogg"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b4955c67c1ed3aa8ae8428d04ca8397fbef6a19b2b051e73b5da8b1435639cb"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -9827,20 +9713,8 @@ checksum = "0b5495e7f7e3c7035328d82b6d6e377eef289bb0c4105bdeb557fc93a833f994"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.1",
- "symphonia-metadata 0.6.1",
-]
-
-[[package]]
-name = "symphonia-format-riff"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2d7c3df0e7d94efb68401d81906eae73c02b40d5ec1a141962c592d0f11a96f"
-dependencies = [
- "extended",
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -9851,20 +9725,8 @@ checksum = "1ff70929083a8c1a5f6cd7c904b6071c7914ad04739b510c2f7239dfc9b7dabe"
 dependencies = [
  "extended",
  "log",
- "symphonia-core 0.6.1",
- "symphonia-metadata 0.6.1",
-]
-
-[[package]]
-name = "symphonia-metadata"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36306ff42b9ffe6e5afc99d49e121e0bd62fe79b9db7b9681d48e29fa19e6b16"
-dependencies = [
- "encoding_rs",
- "lazy_static",
- "log",
- "symphonia-core 0.5.5",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -9877,17 +9739,7 @@ dependencies = [
  "log",
  "regex-lite",
  "smallvec",
- "symphonia-core 0.6.1",
-]
-
-[[package]]
-name = "symphonia-utils-xiph"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee27c85ab799a338446b68eec77abf42e1a6f1bb490656e121c6e27bfbab9f16"
-dependencies = [
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -10481,9 +10333,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.8+spec-1.1.0"
+version = "1.2.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
+checksum = "c5ffcdf8f50436dbbfd675c1fe1b8e0854f42b7defea8584bdebe1aee900e561"
 dependencies = [
  "indexmap",
  "serde_core",
@@ -10505,9 +10357,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.17+spec-1.1.0"
+version = "0.25.18+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
+checksum = "1ec6e78bd70db9420d8d212fa9dc97f116448a1ceff5d00eabb991d407e21396"
 dependencies = [
  "indexmap",
  "toml_datetime",
@@ -10526,9 +10378,9 @@ dependencies = [
 
 [[package]]
 name = "toml_writer"
-version = "1.1.3+spec-1.1.0"
+version = "1.2.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
+checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "torch-sys"

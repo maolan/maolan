@@ -272,24 +272,26 @@ impl Graph {
         is_input: bool,
     ) -> Option<Point> {
         let size = Self::plugin_box_size(plugin);
+        let kind = Self::plugin_port_kind(plugin, port_idx, is_input);
         let py = if is_input {
-            PluginGraph::plugin_input_port_y(
-                plugin,
-                size.height,
-                pos.y,
-                Self::plugin_port_kind(plugin, port_idx, true),
-                port_idx,
-            )
+            PluginGraph::plugin_input_port_y(plugin, size.height, pos.y, kind, port_idx)
         } else {
-            PluginGraph::plugin_output_port_y(
-                plugin,
-                size.height,
-                pos.y,
-                Self::plugin_port_kind(plugin, port_idx, false),
-                port_idx,
-            )
+            PluginGraph::plugin_output_port_y(plugin, size.height, pos.y, kind, port_idx)
         };
-        py.map(|y| Point::new(if is_input { pos.x } else { pos.x + size.width }, y))
+        py.map(|y| {
+            let x = if kind == Kind::Audio {
+                if is_input {
+                    PluginGraph::plugin_input_port_x(plugin, pos.x, port_idx)
+                } else {
+                    PluginGraph::plugin_output_port_x(plugin, pos.x, port_idx)
+                }
+            } else if is_input {
+                pos.x
+            } else {
+                pos.x + size.width
+            };
+            Point::new(x, y)
+        })
     }
 
     fn plugin_port_kind(plugin: &PluginGraphPlugin, flat_port: usize, is_input: bool) -> Kind {
@@ -1541,10 +1543,10 @@ impl Graph {
     ) -> TrackPortEdge {
         let (kind, engine_port) = Self::track_port_to_engine_index(track, flat_port, is_input);
         match (is_input, kind) {
-            (true, Kind::Audio) if engine_port >= track.primary_audio_ins() => {
+            (true, Kind::Audio) if engine_port >= track.primary_audio_ins() => TrackPortEdge::Top,
+            (false, Kind::Audio) if engine_port >= track.primary_audio_outs() => {
                 TrackPortEdge::Bottom
             }
-            (false, Kind::Audio) if engine_port >= track.primary_audio_outs() => TrackPortEdge::Top,
             (true, _) => TrackPortEdge::Left,
             (false, _) => TrackPortEdge::Right,
         }
@@ -1559,11 +1561,11 @@ impl Graph {
         let edge = Self::track_port_edge(track, flat_port, true);
         let (kind, engine_port) = Self::track_port_to_engine_index(track, flat_port, true);
         match edge {
-            TrackPortEdge::Bottom => {
+            TrackPortEdge::Top => {
                 let returns = track.return_count().max(1);
                 let slot = engine_port.saturating_sub(track.primary_audio_ins());
                 let px = pos.x + (size.width / (returns + 1) as f32) * (slot + 1) as f32;
-                Point::new(px, pos.y + size.height)
+                Point::new(px, pos.y)
             }
             _ => {
                 let py = PluginGraph::edge_port_y(
@@ -1589,11 +1591,11 @@ impl Graph {
         let edge = Self::track_port_edge(track, flat_port, false);
         let (kind, engine_port) = Self::track_port_to_engine_index(track, flat_port, false);
         match edge {
-            TrackPortEdge::Top => {
+            TrackPortEdge::Bottom => {
                 let sends = track.send_count().max(1);
                 let slot = engine_port.saturating_sub(track.primary_audio_outs());
                 let px = pos.x + (size.width / (sends + 1) as f32) * (slot + 1) as f32;
-                Point::new(px, pos.y)
+                Point::new(px, pos.y + size.height)
             }
             _ => {
                 let py = PluginGraph::edge_port_y(
@@ -5421,6 +5423,23 @@ mod tests {
 
         if primary > 0 {
             assert_eq!(Graph::track_port_kind(&track, 0, false), Kind::Audio);
+        }
+    }
+
+    #[test]
+    fn track_auxiliary_inputs_are_on_top_and_outputs_on_bottom() {
+        let mut track = crate::state::Track::new("test".to_string(), 0.0, 4, 4, 0, 0);
+        track.primary_audio_ins = 2;
+        track.primary_audio_outs = 2;
+        let size = Graph::track_box_size(&track);
+        let pos = track.position;
+
+        for port in 2..4 {
+            assert_eq!(Graph::track_port_position(&track, port, pos, size).y, pos.y);
+            assert_eq!(
+                Graph::track_output_port_position(&track, port, pos, size).y,
+                pos.y + size.height
+            );
         }
     }
 
