@@ -68,11 +68,11 @@ impl Graph {
     pub(crate) fn plugin_height(plugin: &PluginGraphPlugin) -> f32 {
         (MIN_PLUGIN_H * 0.5)
             .max(Self::required_height_for_ports(
-                plugin.audio_inputs,
+                plugin.main_audio_inputs.min(plugin.audio_inputs),
                 AUDIO_PORT_RADIUS,
             ))
             .max(Self::required_height_for_ports(
-                plugin.audio_outputs,
+                plugin.main_audio_outputs.min(plugin.audio_outputs),
                 AUDIO_PORT_RADIUS,
             ))
             .max(Self::required_height_for_ports(
@@ -216,14 +216,21 @@ impl Graph {
         kind: Kind,
         port: usize,
     ) -> Option<f32> {
-        Self::edge_port_y(
-            y,
-            plugin_h,
-            plugin.audio_inputs,
-            plugin.midi_inputs,
-            kind,
-            port,
-        )
+        let main_audio = plugin.main_audio_inputs.min(plugin.audio_inputs);
+        if kind == Kind::Audio && port >= main_audio {
+            return (port < plugin.audio_inputs).then_some(y);
+        }
+        Self::edge_port_y(y, plugin_h, main_audio, plugin.midi_inputs, kind, port)
+    }
+
+    pub(crate) fn plugin_input_port_x(plugin: &PluginGraphPlugin, x: f32, port: usize) -> f32 {
+        let main_audio = plugin.main_audio_inputs.min(plugin.audio_inputs);
+        if port < main_audio {
+            return x;
+        }
+        let auxiliary_count = plugin.audio_inputs - main_audio;
+        let slot = port - main_audio;
+        x + (PLUGIN_W / (auxiliary_count + 1) as f32) * (slot + 1) as f32
     }
 
     pub(crate) fn plugin_output_port_y(
@@ -233,14 +240,21 @@ impl Graph {
         kind: Kind,
         port: usize,
     ) -> Option<f32> {
-        Self::edge_port_y(
-            y,
-            plugin_h,
-            plugin.audio_outputs,
-            plugin.midi_outputs,
-            kind,
-            port,
-        )
+        let main_audio = plugin.main_audio_outputs.min(plugin.audio_outputs);
+        if kind == Kind::Audio && port >= main_audio {
+            return (port < plugin.audio_outputs).then_some(y + plugin_h);
+        }
+        Self::edge_port_y(y, plugin_h, main_audio, plugin.midi_outputs, kind, port)
+    }
+
+    pub(crate) fn plugin_output_port_x(plugin: &PluginGraphPlugin, x: f32, port: usize) -> f32 {
+        let main_audio = plugin.main_audio_outputs.min(plugin.audio_outputs);
+        if port < main_audio {
+            return x + PLUGIN_W;
+        }
+        let auxiliary_count = plugin.audio_outputs - main_audio;
+        let slot = port - main_audio;
+        x + (PLUGIN_W / (auxiliary_count + 1) as f32) * (slot + 1) as f32
     }
 
     fn track_input_port_color(track: &crate::state::Track, port: usize) -> Color {
@@ -411,7 +425,7 @@ impl canvas::Program<Message> for Graph {
                             port,
                             is_input: true,
                             kind: Kind::Audio,
-                            pos: Point::new(pos.x, py),
+                            pos: Point::new(Self::plugin_input_port_x(plugin, pos.x, port), py),
                         });
                     }
                 }
@@ -424,7 +438,7 @@ impl canvas::Program<Message> for Graph {
                             port,
                             is_input: false,
                             kind: Kind::Audio,
-                            pos: Point::new(pos.x + PLUGIN_W, py),
+                            pos: Point::new(Self::plugin_output_port_x(plugin, pos.x, port), py),
                         });
                     }
                 }
@@ -535,7 +549,12 @@ impl canvas::Program<Message> for Graph {
                                     ) else {
                                         continue;
                                     };
-                                    Point::new(pos.x + PLUGIN_W, py)
+                                    let x = if conn.kind == Kind::Audio {
+                                        Self::plugin_output_port_x(plugin, pos.x, conn.from_port)
+                                    } else {
+                                        pos.x + PLUGIN_W
+                                    };
+                                    Point::new(x, py)
                                 }
                             };
                         let end =
@@ -580,7 +599,12 @@ impl canvas::Program<Message> for Graph {
                                     ) else {
                                         continue;
                                     };
-                                    Point::new(pos.x, py)
+                                    let x = if conn.kind == Kind::Audio {
+                                        Self::plugin_input_port_x(plugin, pos.x, conn.to_port)
+                                    } else {
+                                        pos.x
+                                    };
+                                    Point::new(x, py)
                                 }
                             };
 
@@ -1077,8 +1101,9 @@ impl canvas::Program<Message> for Graph {
                     else {
                         continue;
                     };
+                    let x = Self::plugin_input_port_x(plugin, pos.x, port);
                     let is_hovered = cursor_position.is_some_and(|cursor| {
-                        cursor.distance(Point::new(pos.x, py)) <= PORT_HIT_RADIUS
+                        cursor.distance(Point::new(x, py)) <= PORT_HIT_RADIUS
                     });
                     let kind_ok = should_highlight_port(
                         is_hovered,
@@ -1092,7 +1117,7 @@ impl canvas::Program<Message> for Graph {
                     };
                     frame.fill(
                         &Path::circle(
-                            Point::new(pos.x, py),
+                            Point::new(x, py),
                             hover_radius(AUDIO_PORT_RADIUS, can_highlight),
                         ),
                         Self::plugin_input_port_color(plugin, port),
@@ -1104,8 +1129,9 @@ impl canvas::Program<Message> for Graph {
                     else {
                         continue;
                     };
+                    let x = Self::plugin_output_port_x(plugin, pos.x, port);
                     let is_hovered = cursor_position.is_some_and(|cursor| {
-                        cursor.distance(Point::new(pos.x + PLUGIN_W, py)) <= PORT_HIT_RADIUS
+                        cursor.distance(Point::new(x, py)) <= PORT_HIT_RADIUS
                     });
                     let kind_ok = should_highlight_port(
                         is_hovered,
@@ -1119,7 +1145,7 @@ impl canvas::Program<Message> for Graph {
                     };
                     frame.fill(
                         &Path::circle(
-                            Point::new(pos.x + PLUGIN_W, py),
+                            Point::new(x, py),
                             hover_radius(AUDIO_PORT_RADIUS, can_highlight),
                         ),
                         Self::plugin_output_port_color(plugin, port),
@@ -1215,7 +1241,12 @@ impl canvas::Program<Message> for Graph {
                         ) else {
                             continue;
                         };
-                        Point::new(pos.x + PLUGIN_W, py)
+                        let x = if conn.kind == Kind::Audio {
+                            Self::plugin_output_port_x(plugin, pos.x, conn.from_port)
+                        } else {
+                            pos.x + PLUGIN_W
+                        };
+                        Point::new(x, py)
                     }
                 };
                 let end = match &conn.to_node {
@@ -1251,7 +1282,12 @@ impl canvas::Program<Message> for Graph {
                         ) else {
                             continue;
                         };
-                        Point::new(pos.x, py)
+                        let x = if conn.kind == Kind::Audio {
+                            Self::plugin_input_port_x(plugin, pos.x, conn.to_port)
+                        } else {
+                            pos.x
+                        };
+                        Point::new(x, py)
                     }
                 };
                 let dist = (end.x - start.x).abs() / 2.0;
@@ -1404,7 +1440,12 @@ impl canvas::Program<Message> for Graph {
                                 ) else {
                                     continue;
                                 };
-                                Point::new(pos.x, py)
+                                let x = if connecting.kind == Kind::Audio {
+                                    Self::plugin_input_port_x(plugin, pos.x, from_port)
+                                } else {
+                                    pos.x
+                                };
+                                Point::new(x, py)
                             } else {
                                 let Some(py) = Self::plugin_output_port_y(
                                     plugin,
@@ -1415,7 +1456,12 @@ impl canvas::Program<Message> for Graph {
                                 ) else {
                                     continue;
                                 };
-                                Point::new(pos.x + PLUGIN_W, py)
+                                let x = if connecting.kind == Kind::Audio {
+                                    Self::plugin_output_port_x(plugin, pos.x, from_port)
+                                } else {
+                                    pos.x + PLUGIN_W
+                                };
+                                Point::new(x, py)
                             }
                         }
                     };
@@ -1596,6 +1642,25 @@ mod tests {
     use std::sync::Arc;
     use std::sync::RwLock;
 
+    fn plugin_with_auxiliary_ports() -> PluginGraphPlugin {
+        PluginGraphPlugin {
+            node: PluginGraphNode::ClapPluginInstance(7),
+            instance_id: 7,
+            format: "CLAP".to_string(),
+            uri: "/plugins/test.clap".to_string(),
+            plugin_id: "test.plugin".to_string(),
+            name: "Test".to_string(),
+            main_audio_inputs: 2,
+            main_audio_outputs: 2,
+            audio_inputs: 4,
+            audio_outputs: 4,
+            midi_inputs: 0,
+            midi_outputs: 0,
+            state: None,
+            bypassed: false,
+        }
+    }
+
     fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
         let (message, _redraw, status) = action.into_inner();
         (message, status)
@@ -1678,7 +1743,7 @@ mod tests {
             plugin_id: String::new(),
             name: String::new(),
             main_audio_inputs: 0,
-            main_audio_outputs: 0,
+            main_audio_outputs: 8,
             audio_inputs: 0,
             audio_outputs: 8,
             midi_inputs: 0,
@@ -1898,5 +1963,94 @@ mod tests {
         let rect = Graph::track_output_rect(bounds);
         assert!(rect.width > 0.0);
         assert!(rect.height > 0.0);
+    }
+
+    #[test]
+    fn auxiliary_audio_ports_are_orange_and_on_top_or_bottom() {
+        let plugin = plugin_with_auxiliary_ports();
+        let pos = Point::new(100.0, 50.0);
+        let height = Graph::plugin_height(&plugin);
+
+        for port in 2..4 {
+            assert_eq!(
+                Graph::plugin_input_port_y(&plugin, height, pos.y, Kind::Audio, port),
+                Some(pos.y)
+            );
+            assert_eq!(
+                Graph::plugin_output_port_y(&plugin, height, pos.y, Kind::Audio, port),
+                Some(pos.y + height)
+            );
+            assert_eq!(
+                Graph::plugin_input_port_color(&plugin, port),
+                aux_port_color()
+            );
+            assert_eq!(
+                Graph::plugin_output_port_color(&plugin, port),
+                aux_port_color()
+            );
+        }
+
+        let first_return_x = Graph::plugin_input_port_x(&plugin, pos.x, 2);
+        let second_return_x = Graph::plugin_input_port_x(&plugin, pos.x, 3);
+        assert!(first_return_x > pos.x && first_return_x < second_return_x);
+        assert!(second_return_x < pos.x + PLUGIN_W);
+        assert_eq!(Graph::plugin_input_port_x(&plugin, pos.x, 0), pos.x);
+        assert_eq!(
+            Graph::plugin_output_port_x(&plugin, pos.x, 0),
+            pos.x + PLUGIN_W
+        );
+        assert_eq!(
+            Graph::plugin_input_port_color(&plugin, 0),
+            audio_port_color()
+        );
+    }
+
+    #[test]
+    fn auxiliary_ports_do_not_increase_side_port_height() {
+        let auxiliary = plugin_with_auxiliary_ports();
+        let mut main_only = auxiliary.clone();
+        main_only.audio_inputs = main_only.main_audio_inputs;
+        main_only.audio_outputs = main_only.main_audio_outputs;
+        assert_eq!(
+            Graph::plugin_height(&auxiliary),
+            Graph::plugin_height(&main_only)
+        );
+    }
+
+    #[test]
+    fn top_auxiliary_input_is_clickable() {
+        let plugin = plugin_with_auxiliary_ports();
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(700.0, 400.0));
+        {
+            let mut data = state.write().expect("state lock poisoned");
+            data.plugin_graph_track = Some("Track".to_string());
+            data.plugin_graph_plugins.push(plugin.clone());
+        }
+        let pos = {
+            let data = state.read().expect("state lock poisoned");
+            Graph::plugin_pos(&data, &plugin, 0, bounds)
+        };
+        let height = Graph::plugin_height(&plugin);
+        let point = Point::new(
+            Graph::plugin_input_port_x(&plugin, pos.x, 2),
+            Graph::plugin_input_port_y(&plugin, height, pos.y, Kind::Audio, 2).unwrap(),
+        );
+        let graph = Graph::new(state.clone());
+
+        graph.update(
+            &mut GraphState::default(),
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(point),
+        );
+
+        let data = state.read().expect("state lock poisoned");
+        let connecting = data
+            .plugin_graph_connecting
+            .as_ref()
+            .expect("auxiliary input should start a connection");
+        assert_eq!(connecting.from_port, 2);
+        assert!(connecting.is_input);
     }
 }
