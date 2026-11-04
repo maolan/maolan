@@ -1111,11 +1111,11 @@ impl Maolan {
                                                         + applied_length_delta
                                                 };
                                                 let max_length = match kind {
-                                                    Kind::Audio => clip
+                                                    Kind::Audio if !stretch_mode => clip
                                                         .max_length_samples
                                                         .max(member.initial_length)
                                                         as isize,
-                                                    Kind::MIDI => isize::MAX,
+                                                    Kind::Audio | Kind::MIDI => isize::MAX,
                                                 };
                                                 let min_length = min_length_samples as isize;
                                                 clip.length = new_length
@@ -1126,10 +1126,20 @@ impl Maolan {
                                                     member.initial_start + member.initial_length;
                                                 let max_start = right_edge
                                                     .saturating_sub(min_length_samples as usize);
-                                                let new_start = (member.initial_start as isize
-                                                    + applied_start_delta)
-                                                    .clamp(0, max_start as isize)
-                                                    as usize;
+                                                let new_start = if stretch_mode {
+                                                    let stretched_length = (member.initial_length
+                                                        as f32
+                                                        * stretch_ratio)
+                                                        .round()
+                                                        .max(min_length_samples)
+                                                        as usize;
+                                                    right_edge.saturating_sub(stretched_length)
+                                                } else {
+                                                    (member.initial_start as isize
+                                                        + applied_start_delta)
+                                                        .clamp(0, max_start as isize)
+                                                        as usize
+                                                };
                                                 let new_length = (right_edge - new_start)
                                                     .max(min_length_samples as usize);
                                                 let start_delta =
@@ -2281,6 +2291,99 @@ mod tests {
             fade_out_samples: 0,
             stretch_ratio: 2.0,
         }
+    }
+
+    fn group_stretch_app(is_right_side: bool) -> Maolan {
+        let mut app = Maolan::default();
+        app.size.width = 2_000.0;
+        app.size.height = 800.0;
+        app.ui.zoom_visible_bars = 1.0;
+        app.timing.snap_mode = SnapMode::NoSnap;
+        let mut state = app.state.write().expect("state lock poisoned");
+        for (track_name, start, length) in [("a", 10_000, 4_800), ("b", 20_000, 2_400)] {
+            let mut track = Track::new(track_name.to_string(), 0.0, 2, 2, 0, 0);
+            track.audio.clips.push(crate::state::AudioClip {
+                name: format!("{track_name}.wav"),
+                start,
+                length,
+                max_length_samples: length,
+                source_length_samples: length,
+                ..Default::default()
+            });
+            state.tracks.push(track);
+        }
+        let group = state
+            .tracks
+            .iter()
+            .map(|track| {
+                let clip = &track.audio.clips[0];
+                crate::state::ClipResizeGroupMember {
+                    clip: crate::state::ClipId {
+                        track_idx: track.name.clone(),
+                        clip_idx: 0,
+                        kind: Kind::Audio,
+                    },
+                    initial_start: clip.start,
+                    initial_length: clip.length,
+                    initial_offset: clip.offset,
+                }
+            })
+            .collect();
+        state.resizing = Some(Resizing::Clip {
+            kind: Kind::Audio,
+            track_name: "a".to_string(),
+            index: 0,
+            is_right_side,
+            stretch_mode: true,
+            initial_value: if is_right_side { 4_800.0 } else { 10_000.0 },
+            initial_mouse_x: 0.0,
+            initial_length: 4_800.0,
+            initial_start: 10_000,
+            initial_offset: 0,
+            group,
+        });
+        drop(state);
+        app
+    }
+
+    fn move_group_stretch(app: &mut Maolan, delta_samples: f32) {
+        let x = delta_samples * app.pixels_per_sample();
+        let _ = app.handle_clips_message(Message::MouseMoved(mouse::Event::CursorMoved {
+            position: maolan_widgets::iced::Point::new(x, 0.0),
+        }));
+    }
+
+    #[test]
+    fn right_edge_group_stretch_can_extend_full_length_audio_clips() {
+        let mut app = group_stretch_app(true);
+        move_group_stretch(&mut app, 4_800.0);
+
+        let state = app.state.read().expect("state lock poisoned");
+        let dragged = &state.tracks[0].audio.clips[0];
+        let member = &state.tracks[1].audio.clips[0];
+        assert!(
+            dragged.length.abs_diff(9_600) <= 1,
+            "dragged length was {}",
+            dragged.length
+        );
+        assert!(
+            member.length.abs_diff(4_800) <= 1,
+            "member length was {}",
+            member.length
+        );
+    }
+
+    #[test]
+    fn left_edge_group_stretch_uses_dragged_ratio() {
+        let mut app = group_stretch_app(false);
+        move_group_stretch(&mut app, -2_400.0);
+
+        let state = app.state.read().expect("state lock poisoned");
+        let dragged = &state.tracks[0].audio.clips[0];
+        let member = &state.tracks[1].audio.clips[0];
+        assert!(dragged.length.abs_diff(7_200) <= 1);
+        assert!(member.length.abs_diff(3_600) <= 1);
+        assert!(member.start.abs_diff(18_800) <= 1);
     }
 
     #[test]
