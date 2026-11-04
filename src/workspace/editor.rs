@@ -62,6 +62,37 @@ fn widget_audio_clip_data(
     }
 }
 
+fn audio_clip_stretch_ratio(
+    state: &StateData,
+    track_name: &str,
+    clip_index: usize,
+    clip_length: usize,
+) -> f32 {
+    let Some(crate::state::Resizing::Clip {
+        kind: Kind::Audio,
+        track_name: resized_track,
+        index,
+        stretch_mode: true,
+        initial_length,
+        group,
+        ..
+    }) = &state.resizing
+    else {
+        return 1.0;
+    };
+    let initial_length = if resized_track == track_name && *index == clip_index {
+        *initial_length
+    } else if let Some(member) = group
+        .iter()
+        .find(|member| member.clip.track_idx == track_name && member.clip.clip_idx == clip_index)
+    {
+        member.initial_length as f32
+    } else {
+        return 1.0;
+    };
+    (clip_length as f32 / initial_length.max(1.0)).max(0.01)
+}
+
 fn widget_midi_clip_data(clip: &crate::state::MIDIClip) -> WidgetMIDIClipData {
     WidgetMIDIClipData {
         name: clip.name.clone(),
@@ -1339,19 +1370,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 },
             );
 
-            let stretch_ratio = match &state.resizing {
-                Some(crate::state::Resizing::Clip {
-                    kind: Kind::Audio,
-                    track_name: t,
-                    index: i,
-                    stretch_mode: true,
-                    initial_length,
-                    ..
-                }) if t == &track_name_cloned && *i == index => {
-                    (clip.length as f32 / initial_length.max(1.0)).max(0.01)
-                }
-                _ => 1.0,
-            };
+            let stretch_ratio =
+                audio_clip_stretch_ratio(state, &track_name_cloned, index, clip.length);
 
             if !dragged_to_other_track {
                 let track_name_for_drag = track_name_cloned.clone();
@@ -2786,6 +2806,37 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_stretch_preview_uses_each_clips_initial_length() {
+        let mut state = StateData::default();
+        state.resizing = Some(crate::state::Resizing::Clip {
+            kind: Kind::Audio,
+            track_name: "a".to_string(),
+            index: 0,
+            is_right_side: true,
+            stretch_mode: true,
+            initial_value: 4_800.0,
+            initial_mouse_x: 0.0,
+            initial_length: 4_800.0,
+            initial_start: 0,
+            initial_offset: 0,
+            group: vec![crate::state::ClipResizeGroupMember {
+                clip: crate::state::ClipId {
+                    track_idx: "b".to_string(),
+                    clip_idx: 0,
+                    kind: Kind::Audio,
+                },
+                initial_start: 0,
+                initial_length: 2_400,
+                initial_offset: 0,
+            }],
+        });
+
+        assert_eq!(audio_clip_stretch_ratio(&state, "a", 0, 9_600), 2.0);
+        assert_eq!(audio_clip_stretch_ratio(&state, "b", 0, 4_800), 2.0);
+        assert_eq!(audio_clip_stretch_ratio(&state, "other", 0, 4_800), 1.0);
+    }
 
     #[test]
     fn automation_point_color_returns_correct_colors() {
