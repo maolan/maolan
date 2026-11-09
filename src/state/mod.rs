@@ -25,7 +25,6 @@ use maolan_engine::au::{AuPluginInfo, AuPluginState};
 pub use maolan_engine::kind::Kind;
 #[cfg(unix)]
 use maolan_engine::lv2::Lv2PluginInfo;
-pub use maolan_engine::message::MidiLearnBinding;
 use maolan_engine::message::{
     ConnectableConnection, PluginGraphConnection, PluginGraphNode, PluginGraphPlugin,
     PluginGraphSnapshot,
