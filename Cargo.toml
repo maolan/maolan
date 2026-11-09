@@ -24,7 +24,7 @@ ebur128 = "0.1"
 hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", "rustls-tls"] }
 maolan-generate = "0.0.19"
 maolan-editor = { version = "0.1.4", default-features = false, features = ["embedded"] }
-maolan-engine = { version = "0.4.21", features = ["audio", "midi", "plugins", "mixosc"] }
+maolan-engine = { version = "0.4.22", features = ["audio", "midi", "plugins", "mixosc"] }
 maolan-pitch = "0.0.3"
 maolan-plugin-host = "0.1.3"
 maolan-widgets = "0.1.4"

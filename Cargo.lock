@@ -5906,9 +5906,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.21"
+version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4677ceab6d2a7ca601a1769916fe04210663162a0fba757659014a349d3e6747"
+checksum = "0f1d8ea933fe7f6507b675eb008c000cb2f117c46c3a91274546aaede128308b"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -6049,14 +6049,16 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b28fef2a7dfdd65bf19acd69b3bed07232cc1af5081c23dc86b6e4c690d17d5e"
+checksum = "b93e91ffe56a67ea22d8b5851439545a6398919802b635793ccd673cdb2bf360"
 dependencies = [
+ "bytemuck",
  "iced",
  "iced_aw",
  "iced_drop",
  "iced_fonts",
+ "iced_wgpu",
  "serde",
  "symphonia",
 ]
@@ -7154,15 +7156,6 @@ name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "ordered-float"
-version = "5.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f59006ce1e204c30956638535b74d317bca99477b9356dfaec54c37f6f600ab"
 dependencies = [
  "num-traits",
 ]
@@ -9976,7 +9969,7 @@ dependencies = [
  "nix 0.29.0",
  "num-derive",
  "num-traits",
- "ordered-float 4.6.0",
+ "ordered-float",
  "pest",
  "pest_derive",
  "phf",
@@ -11505,7 +11498,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f2ab60e120fd6eaa68d9567f3226e876684639d22a4219b313ff69ec0ccd5ac"
 dependencies = [
  "log",
- "ordered-float 4.6.0",
+ "ordered-float",
  "strsim",
  "thiserror 1.0.69",
  "wezterm-dynamic-derive",
@@ -11746,7 +11739,7 @@ dependencies = [
  "ndk-sys",
  "objc",
  "once_cell",
- "ordered-float 5.5.1",
+ "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
@@ -11797,7 +11790,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "once_cell",
- "ordered-float 5.5.1",
+ "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",

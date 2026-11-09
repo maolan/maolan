@@ -200,7 +200,7 @@ impl Tempo {
     }
 
     pub fn view(&self, args: TempoViewArgs) -> Element<'_, Message> {
-        canvas(TempoCanvas {
+        maolan_widgets::cached_canvas::cached_canvas(TempoCanvas {
             bpm: args.bpm,
             time_signature: args.time_signature,
             pixels_per_sample: args.pixels_per_sample,

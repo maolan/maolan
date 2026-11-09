@@ -843,7 +843,7 @@ fn track_bar_grid_overlay(
     pixels_per_sample: f32,
 ) -> Element<'static, Message> {
     let bar_pixels = (samples_per_bar.max(1.0) * pixels_per_sample).max(1.0);
-    canvas(TrackBarGridCanvas { bar_pixels })
+    maolan_widgets::cached_canvas::cached_canvas(TrackBarGridCanvas { bar_pixels })
         .width(Length::Fill)
         .height(Length::Fixed(height))
         .into()
@@ -958,7 +958,7 @@ fn track_lane_background_overlay(
     audio_lanes: usize,
     midi_lanes: usize,
 ) -> Element<'static, Message> {
-    canvas(TrackLaneBackgroundCanvas {
+    maolan_widgets::cached_canvas::cached_canvas(TrackLaneBackgroundCanvas {
         header_height,
         lane_heights,
         audio_lanes,
@@ -1075,7 +1075,7 @@ fn drum_clip_notes_overlay(
     clip_width: f32,
     clip_height: f32,
 ) -> Element<'static, Message> {
-    canvas(DrumClipNotesCanvas {
+    maolan_widgets::cached_canvas::cached_canvas(DrumClipNotesCanvas {
         notes,
         clip_offset_samples,
         clip_visible_length_samples,
@@ -1247,12 +1247,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     );
     if track.is_folder && !track.folder_open && track.has_folder_children(&state.tracks) {
         clips.push(
-            pin(canvas(FolderPreviewCanvas {
-                root: folder_preview_node(track, &state.tracks),
-                pixels_per_sample,
-            })
-            .width(Length::Fill)
-            .height(Length::Fixed(height)))
+            pin(
+                maolan_widgets::cached_canvas::cached_canvas(FolderPreviewCanvas {
+                    root: folder_preview_node(track, &state.tracks),
+                    pixels_per_sample,
+                })
+                .width(Length::Fill)
+                .height(Length::Fixed(height)),
+            )
             .position(Point::new(0.0, 0.0))
             .into(),
         );
@@ -1275,7 +1277,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 })
                 .collect();
             clips.push(
-                pin(canvas(CurveEditor {
+                pin(maolan_widgets::cached_canvas::cached_canvas(CurveEditor {
                     context: (track_name_cloned.clone(), lane.target.clone()),
                     points: curve_points,
                     pixels_per_sample,
@@ -2448,7 +2450,7 @@ impl Editor {
         let max_scroll_samples = (timeline_samples as f32 - visible_samples).max(0.0);
         let visible_start_samples = editor_scroll_x.clamp(0.0, 1.0) * max_scroll_samples;
 
-        canvas(SessionOverviewCanvas {
+        maolan_widgets::cached_canvas::cached_canvas(SessionOverviewCanvas {
             tracks,
             timeline_samples,
             visible_start_samples,
