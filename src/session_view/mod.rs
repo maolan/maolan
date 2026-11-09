@@ -1,6 +1,5 @@
 pub mod rename;
 
-use crate::state::MidiLearnBinding;
 use crate::{
     menu,
     message::Message,
@@ -18,7 +17,6 @@ use maolan_widgets::iced::{
 };
 use maolan_widgets::iced_fonts::lucide::{play, square};
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 
 pub struct SessionView;
 
@@ -29,105 +27,11 @@ pub struct SessionViewInput {
     pub slot_runtimes: SlotRuntimes,
     pub unused_audio_clips: Vec<crate::state::AudioClip>,
     pub unused_midi_clips: Vec<crate::state::MIDIClip>,
-    pub selected_slots: HashSet<(String, usize)>,
     pub selected: HashSet<String>,
     pub selected_scene: Option<usize>,
     pub current_scene: Option<usize>,
-    pub midi_learn: SessionMidiLearnBindings,
     pub master_track: Option<crate::state::Track>,
     pub session_scene_context_menu: Option<crate::state::SessionSceneContextMenuState>,
-}
-
-impl SessionViewInput {
-    fn render_hash(&self) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-
-        for track in &self.tracks {
-            track.name.hash(&mut hasher);
-            track.height.to_bits().hash(&mut hasher);
-            track.is_folder.hash(&mut hasher);
-            track.folder_open.hash(&mut hasher);
-            track.parent_track.hash(&mut hasher);
-        }
-
-        self.session.scenes.len().hash(&mut hasher);
-        for scene in &self.session.scenes {
-            scene.name.hash(&mut hasher);
-        }
-
-        for track in &self.tracks {
-            if let Some(slots) = self.session.slots.get(&track.name) {
-                for (scene_index, slot) in slots.iter().enumerate() {
-                    track.name.hash(&mut hasher);
-                    scene_index.hash(&mut hasher);
-                    slot.clip
-                        .as_ref()
-                        .map(|clip_ref| clip_ref.clip_id.as_str())
-                        .hash(&mut hasher);
-                    slot.play_stop_icon.hash(&mut hasher);
-                    slot.clip_name.hash(&mut hasher);
-                    let selected = self
-                        .selected_slots
-                        .contains(&(track.name.clone(), scene_index));
-                    selected.hash(&mut hasher);
-                    if let Some(runtime) =
-                        self.slot_runtimes.get(&(track.name.clone(), scene_index))
-                    {
-                        runtime.state.hash(&mut hasher);
-                        runtime.play_position_samples.hash(&mut hasher);
-                        runtime.elapsed_samples.hash(&mut hasher);
-                    }
-                    let has_midi_learn = self
-                        .midi_learn
-                        .slots
-                        .contains_key(&(track.name.clone(), scene_index));
-                    has_midi_learn.hash(&mut hasher);
-                }
-            }
-        }
-
-        self.midi_learn.scenes.len().hash(&mut hasher);
-        for scene_index in self.midi_learn.scenes.keys() {
-            scene_index.hash(&mut hasher);
-        }
-
-        for clip in &self.unused_audio_clips {
-            clip.id.hash(&mut hasher);
-            clip.length.hash(&mut hasher);
-        }
-        for clip in &self.unused_midi_clips {
-            clip.id.hash(&mut hasher);
-            clip.length.hash(&mut hasher);
-        }
-
-        self.selected.len().hash(&mut hasher);
-        let mut selected_names: Vec<&String> = self.selected.iter().collect();
-        selected_names.sort();
-        for name in selected_names {
-            name.hash(&mut hasher);
-        }
-
-        self.selected_scene.hash(&mut hasher);
-        self.current_scene.hash(&mut hasher);
-
-        if let Some(master) = &self.master_track {
-            master.name.hash(&mut hasher);
-            master.audio.outs.hash(&mut hasher);
-            master.level.to_bits().hash(&mut hasher);
-            master.balance.to_bits().hash(&mut hasher);
-            for value in &master.meter_out_db {
-                value.to_bits().hash(&mut hasher);
-            }
-        }
-
-        if let Some(menu) = &self.session_scene_context_menu {
-            menu.scene_index.hash(&mut hasher);
-            menu.anchor.x.to_bits().hash(&mut hasher);
-            menu.anchor.y.to_bits().hash(&mut hasher);
-        }
-
-        hasher.finish()
-    }
 }
 
 impl SessionView {
@@ -140,8 +44,7 @@ impl SessionView {
         render_input
             .tracks
             .retain(|t| t.name != crate::consts::state_ids::METRONOME_TRACK_ID);
-        let hash = render_input.render_hash();
-        lazy(hash, move |_| Self::build_body(render_input.clone())).into()
+        Self::build_body(render_input)
     }
 
     fn build_body(args: SessionViewInput) -> maolan_widgets::iced::Element<'static, Message> {
@@ -196,12 +99,6 @@ impl SessionView {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct SessionMidiLearnBindings {
-    pub slots: HashMap<(String, usize), MidiLearnBinding>,
-    pub scenes: HashMap<usize, MidiLearnBinding>,
-}
-
 const SCENE_CONTEXT_MENU_WIDTH: f32 = 140.0;
 
 fn scene_context_menu_overlay(
@@ -229,7 +126,7 @@ fn scene_context_menu_overlay(
         .into()
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 struct SlotState {
     play_stop_icon: Option<bool>,
     clip_name: Option<String>,
@@ -268,7 +165,7 @@ fn playing_scenes(slot_runtimes: &SlotRuntimes) -> HashSet<usize> {
 
 /// How a Master column slot is shown: plain, selected (border only), or
 /// playing (background and border). `No` marks non-master slots.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 enum MasterSlot {
     No,
     Idle,
@@ -280,6 +177,28 @@ fn slot_button(
     track_name: String,
     scene_index: usize,
     _track_color: Option<Color>,
+    slot: SlotState,
+    master: MasterSlot,
+    label: String,
+) -> maolan_widgets::iced::Element<'static, Message> {
+    lazy(
+        (track_name, scene_index, slot, master, label),
+        |(track_name, scene_index, slot, master, label)| {
+            build_slot_button(
+                track_name.clone(),
+                *scene_index,
+                slot.clone(),
+                *master,
+                label.clone(),
+            )
+        },
+    )
+    .into()
+}
+
+fn build_slot_button(
+    track_name: String,
+    scene_index: usize,
     slot: SlotState,
     master: MasterSlot,
     label: String,
@@ -863,8 +782,6 @@ mod tests {
         let tracks = vec![Track::new("Track 1".to_string(), 0.0, 2, 2, 0, 0)];
         let session = SessionMatrix::default();
         let slot_runtimes = SlotRuntimes::new();
-        let selected_slots = HashSet::new();
-        let midi_learn = SessionMidiLearnBindings::default();
 
         let input = SessionViewInput {
             tracks,
@@ -872,11 +789,9 @@ mod tests {
             slot_runtimes,
             unused_audio_clips: Vec::new(),
             unused_midi_clips: Vec::new(),
-            selected_slots,
             selected: HashSet::new(),
             selected_scene: None,
             current_scene: None,
-            midi_learn,
             master_track: None,
             session_scene_context_menu: None,
         };
@@ -906,9 +821,6 @@ mod tests {
         }
         let tracks = vec![track];
         let slot_runtimes = SlotRuntimes::new();
-        let mut selected_slots = HashSet::new();
-        selected_slots.insert(("Track 1".to_string(), 0));
-        let midi_learn = SessionMidiLearnBindings::default();
 
         let input = SessionViewInput {
             tracks,
@@ -916,11 +828,9 @@ mod tests {
             slot_runtimes,
             unused_audio_clips: Vec::new(),
             unused_midi_clips: Vec::new(),
-            selected_slots,
             selected: HashSet::new(),
             selected_scene: None,
             current_scene: None,
-            midi_learn,
             master_track: None,
             session_scene_context_menu: None,
         };
@@ -937,8 +847,6 @@ mod tests {
         let tracks = vec![folder, child];
         let session = SessionMatrix::default();
         let slot_runtimes = SlotRuntimes::new();
-        let selected_slots = HashSet::new();
-        let midi_learn = SessionMidiLearnBindings::default();
 
         let input = SessionViewInput {
             tracks,
@@ -946,11 +854,9 @@ mod tests {
             slot_runtimes,
             unused_audio_clips: Vec::new(),
             unused_midi_clips: Vec::new(),
-            selected_slots,
             selected: HashSet::new(),
             selected_scene: None,
             current_scene: None,
-            midi_learn,
             master_track: None,
             session_scene_context_menu: None,
         };
@@ -967,8 +873,6 @@ mod tests {
         let tracks = vec![folder, child];
         let session = SessionMatrix::default();
         let slot_runtimes = SlotRuntimes::new();
-        let selected_slots = HashSet::new();
-        let midi_learn = SessionMidiLearnBindings::default();
 
         let input = SessionViewInput {
             tracks,
@@ -976,11 +880,9 @@ mod tests {
             slot_runtimes,
             unused_audio_clips: Vec::new(),
             unused_midi_clips: Vec::new(),
-            selected_slots,
             selected: HashSet::new(),
             selected_scene: None,
             current_scene: None,
-            midi_learn,
             master_track: None,
             session_scene_context_menu: None,
         };
@@ -994,8 +896,6 @@ mod tests {
         master.is_master = true;
         let session = SessionMatrix::default();
         let slot_runtimes = SlotRuntimes::new();
-        let selected_slots = HashSet::new();
-        let midi_learn = SessionMidiLearnBindings::default();
 
         let input = SessionViewInput {
             tracks,
@@ -1003,11 +903,9 @@ mod tests {
             slot_runtimes,
             unused_audio_clips: Vec::new(),
             unused_midi_clips: Vec::new(),
-            selected_slots,
             selected: HashSet::new(),
             selected_scene: None,
             current_scene: None,
-            midi_learn,
             master_track: Some(master),
             session_scene_context_menu: None,
         };
@@ -1095,11 +993,9 @@ mod tests {
                 ..Default::default()
             }],
             unused_midi_clips: Vec::new(),
-            selected_slots: HashSet::new(),
             selected: HashSet::new(),
             selected_scene: None,
             current_scene: None,
-            midi_learn: SessionMidiLearnBindings::default(),
             master_track: None,
             session_scene_context_menu: None,
         };

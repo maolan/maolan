@@ -13,7 +13,11 @@ use maolan_widgets::iced::{
     },
 };
 use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider};
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
+};
 
 const STRIP_SPACING: f32 = 2.0;
 const STRIP_ROW_PADDING_X: f32 = 8.0;
@@ -24,6 +28,12 @@ const FADER_TICK_VALUES: [f32; 12] = [
 const FADER_TICK_OUTER_PAD_Y: f32 = 7.0;
 const FADER_TICK_HANDLE_HEIGHT: f32 = 2.0;
 const FADER_TICK_BORDER_WIDTH: f32 = 1.0;
+
+#[derive(Default)]
+struct MixerFaderTicksState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
 
 #[derive(Clone, Copy)]
 struct MixerFaderTicks {
@@ -57,14 +67,22 @@ impl MixerFaderTicks {
             format!("{level:+.0}")
         }
     }
+
+    fn static_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.fader_height.to_bits().hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 impl canvas::Program<Message> for MixerFaderTicks {
-    type State = ();
+    type State = MixerFaderTicksState;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -74,31 +92,37 @@ impl canvas::Program<Message> for MixerFaderTicks {
             return vec![];
         }
 
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let fader_height = Self::effective_fader_height(self.fader_height, bounds.height);
-        let tick_x = 3.0;
-
-        for level in FADER_TICK_VALUES {
-            let tick_y = Self::tick_y_for_height(level, fader_height)
-                .clamp(0.0, (bounds.height - 1.0).max(0.0));
-            let label_y = (tick_y - 4.0).clamp(0.0, (bounds.height - 10.0).max(0.0));
-            frame.fill(
-                &Path::rectangle(
-                    Point::new(tick_x, tick_y),
-                    maolan_widgets::iced::Size::new(4.0, 1.0),
-                ),
-                Color::from_rgba(0.62, 0.67, 0.77, 0.78),
-            );
-            frame.fill_text(Text {
-                content: Self::label(level),
-                position: Point::new(tick_x + 6.0, label_y),
-                color: Color::from_rgba(0.9, 0.92, 0.96, 0.9),
-                size: 8.0.into(),
-                ..Default::default()
-            });
+        let static_hash = self.static_hash(bounds);
+        if state.last_hash.get() != static_hash {
+            state.cache.clear();
+            state.last_hash.set(static_hash);
         }
+        let geometry = state.cache.draw(renderer, bounds.size(), |frame| {
+            let fader_height = Self::effective_fader_height(self.fader_height, bounds.height);
+            let tick_x = 3.0;
 
-        vec![frame.into_geometry()]
+            for level in FADER_TICK_VALUES {
+                let tick_y = Self::tick_y_for_height(level, fader_height)
+                    .clamp(0.0, (bounds.height - 1.0).max(0.0));
+                let label_y = (tick_y - 4.0).clamp(0.0, (bounds.height - 10.0).max(0.0));
+                frame.fill(
+                    &Path::rectangle(
+                        Point::new(tick_x, tick_y),
+                        maolan_widgets::iced::Size::new(4.0, 1.0),
+                    ),
+                    Color::from_rgba(0.62, 0.67, 0.77, 0.78),
+                );
+                frame.fill_text(Text {
+                    content: Self::label(level),
+                    position: Point::new(tick_x + 6.0, label_y),
+                    color: Color::from_rgba(0.9, 0.92, 0.96, 0.9),
+                    size: 8.0.into(),
+                    ..Default::default()
+                });
+            }
+        });
+
+        vec![geometry]
     }
 }
 
@@ -453,9 +477,11 @@ impl Mixer {
                         if *show_ticks {
                             row![
                                 control,
-                                canvas(MixerFaderTicks { fader_height })
-                                    .width(Length::Fixed(SCALE_WIDTH + 3.0))
-                                    .height(Length::Fill)
+                                maolan_widgets::cached_canvas::cached_canvas(MixerFaderTicks {
+                                    fader_height,
+                                })
+                                .width(Length::Fixed(SCALE_WIDTH + 3.0))
+                                .height(Length::Fill)
                             ]
                             .into()
                         } else {

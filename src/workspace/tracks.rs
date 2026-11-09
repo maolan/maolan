@@ -837,14 +837,6 @@ impl Tracks {
         track.midi_lane_channels.hash(&mut hasher);
         track.level.to_bits().hash(&mut hasher);
         track.balance.to_bits().hash(&mut hasher);
-        if let Some(levels) = &track.meter_out_db {
-            1u8.hash(&mut hasher);
-            for level in levels {
-                level.to_bits().hash(&mut hasher);
-            }
-        } else {
-            0u8.hash(&mut hasher);
-        }
         track.automation_mode.hash(&mut hasher);
         track.midi_learn_vol.hash(&mut hasher);
         track.midi_learn_bal.hash(&mut hasher);
@@ -1239,7 +1231,6 @@ impl Tracks {
         let resize_top = height - resize_handle_height;
         let show_buttons = resize_top >= buttons_bottom;
         let show_volume_slider = show_buttons && resize_top >= slider_bottom;
-        let show_meter = track.meter_out_db.is_some();
 
         let body = row![controls].spacing(8).align_y(Alignment::Start);
 
@@ -1492,19 +1483,6 @@ impl Tracks {
             0.0,
             (height - 8.0 - resize_handle_height).max(0.0),
         )));
-        if show_meter {
-            let meter_height = meter_total_height(track.audio_outs.max(1));
-            let meter_top = slider_bottom + 4.0;
-            let meter = horizontal_meter(
-                track.audio_outs,
-                track.meter_out_db.as_deref().unwrap_or(&[]),
-            );
-            let meter_overlay = container(meter)
-                .width(Length::Fill)
-                .height(Length::Fixed(meter_height))
-                .padding([0, 6]);
-            track_ui = track_ui.push(pin(meter_overlay).position(Point::new(0.0, meter_top)));
-        }
         if show_volume_slider {
             let volume_overlay = container(volume_slider)
                 .width(Length::Fill)
@@ -1585,6 +1563,38 @@ impl Tracks {
             .into()
     }
 
+    fn with_live_meter(
+        content: Element<'static, Message>,
+        track: &TrackViewData,
+    ) -> Element<'static, Message> {
+        let Some(levels) = track.meter_out_db.as_deref() else {
+            return content;
+        };
+        let meter_height = meter_total_height(track.audio_outs.max(1));
+        let meter_top = TRACK_FOLDER_HEADER_HEIGHT + (22.0 + 6.0) + (12.0 + 4.0) + 4.0;
+        let setup_width = if track.setup_open && !track.is_folder {
+            160.0
+        } else {
+            0.0
+        };
+        let meter = container(horizontal_meter(track.audio_outs, levels))
+            .width(Length::Fill)
+            .height(Length::Fixed(meter_height))
+            .padding([0, 6]);
+        let overlay = container(
+            row![meter, Space::new().width(Length::Fixed(setup_width))]
+                .height(Length::Fixed(meter_height)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(meter_height))
+        .padding([0, 6]);
+        let drop_offset = if track.drop_before { 20.0 } else { 0.0 };
+        Stack::new()
+            .push(content)
+            .push(pin(overlay).position(Point::new(0.0, meter_top + drop_offset)))
+            .into()
+    }
+
     fn render_node(
         node: &TrackNode,
         track_width_px: f32,
@@ -1597,7 +1607,7 @@ impl Tracks {
             .map(|child| Self::render_node(child, track_width_px, selected_modulator, true))
             .collect();
 
-        if node.children.is_empty() && !force_direct {
+        let content = if node.children.is_empty() && !force_direct {
             let hash = Self::track_row_render_hash(
                 &node.data,
                 track_width_px,
@@ -1625,7 +1635,8 @@ impl Tracks {
                 selected_modulator,
                 child_elements,
             )
-        }
+        };
+        Self::with_live_meter(content, &node.data)
     }
 
     fn apply_drop_preview(
@@ -1971,6 +1982,23 @@ mod tests {
         assert_eq!(roots[0].data.visible_height, 180.0);
         assert!(roots[0].children[0].data.drop_before);
         assert_eq!(roots[0].children[0].data.visible_height, 80.0);
+    }
+
+    #[test]
+    fn meter_levels_do_not_invalidate_static_track_row() {
+        let first = TrackViewData {
+            meter_out_db: Some(vec![-12.0, -18.0]),
+            ..TrackViewData::default()
+        };
+        let second = TrackViewData {
+            meter_out_db: Some(vec![-1.0, -42.0]),
+            ..TrackViewData::default()
+        };
+
+        assert_eq!(
+            Tracks::track_row_render_hash(&first, 200.0, 0, None),
+            Tracks::track_row_render_hash(&second, 200.0, 0, None)
+        );
     }
 
     #[test]

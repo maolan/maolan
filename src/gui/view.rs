@@ -5,7 +5,7 @@ use crate::{
     consts::state_ids::METRONOME_TRACK_ID,
     menu::MenuViewState,
     message::{Message, Show},
-    session_view::{SessionMidiLearnBindings, SessionView},
+    session_view::SessionView,
     state::View,
     toolbar::ToolbarViewState,
     workspace::WorkspaceViewArgs,
@@ -540,21 +540,15 @@ impl Maolan {
                                     master_track.balance = state.hw_out_balance;
                                     master_track.meter_out_db = state.hw_out_meter_db.clone();
                                     master_track.is_master = true;
-                                    let midi_learn = SessionMidiLearnBindings {
-                                        slots: state.session_midi_learn_slots.clone(),
-                                        scenes: state.session_midi_learn_scenes.clone(),
-                                    };
                                     SessionView::view(crate::session_view::SessionViewInput {
                                         tracks: state.tracks.clone(),
                                         session: state.session.clone(),
                                         slot_runtimes: state.slot_runtimes.clone(),
                                         unused_audio_clips: state.unused_audio_clips.clone(),
                                         unused_midi_clips: state.unused_midi_clips.clone(),
-                                        selected_slots: state.selected_slots.clone(),
                                         selected: state.selected.clone(),
                                         selected_scene: state.selected_scene,
                                         current_scene: state.current_scene,
-                                        midi_learn,
                                         master_track: Some(master_track),
                                         session_scene_context_menu: state
                                             .session_scene_context_menu
