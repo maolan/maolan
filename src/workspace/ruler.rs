@@ -139,7 +139,7 @@ impl Ruler {
             clip_start_samples,
             zoom_target,
         } = args;
-        canvas(RulerCanvas {
+        maolan_widgets::cached_canvas::cached_canvas(RulerCanvas {
             playhead_x,
             beat_pixels,
             pixels_per_sample,

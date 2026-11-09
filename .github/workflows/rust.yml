@@ -62,9 +62,6 @@ jobs:
         if: contains(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y software-properties-common
-          sudo add-apt-repository -y ppa:rncbc/libs-noble
-          sudo apt-get update
           sudo apt-get install -y \
             pkg-config \
             jackd2 \
