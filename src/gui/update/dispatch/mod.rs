@@ -1574,8 +1574,6 @@ impl Maolan {
             | Message::ConnectionPositionsChanged
             | Message::ConnectionViewSelectConnection(_)
             | Message::Connections
-            | Message::OpenTrackPlugins(_)
-            | Message::OpenFolderConnections(_)
             | Message::SessionViewConnectionsOpen(_)
             | Message::SessionViewConnectionsClose
             | Message::EditorConnectionsOpen(_)

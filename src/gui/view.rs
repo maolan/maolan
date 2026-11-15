@@ -15,8 +15,8 @@ use maolan_widgets::iced::{
     Alignment, Border, Color, Length, Theme,
     advanced::text::{Highlighter, highlighter},
     widget::{
-        Space, Stack, button, column, container, mouse_area, pick_list, progress_bar, row,
-        scrollable, text, text_editor, text_input,
+        Space, Stack, button, column, container, mouse_area, progress_bar, row, scrollable, text,
+        text_editor, text_input,
     },
 };
 use std::ops::Range;
@@ -335,32 +335,11 @@ impl Maolan {
                             *cache = state.message.clone();
                         }
                     }
-                    let plugin_graph_track = state.plugin_graph_track.clone();
                     let plugin_graph_clip = state.plugin_graph_clip.clone();
                     let connections_folder = state.connections_folder.clone();
                     let session_view_connections_active = state.session_view_connections.is_some();
                     let editor_connections_active =
                         state.editor_connections.is_some() && self.ui.editor_visible;
-                    {
-                        let mut cache = self.ui.track_names_cache.borrow_mut();
-                        let unchanged = {
-                            let filtered =
-                                state.tracks.iter().filter(|t| t.name != METRONOME_TRACK_ID);
-                            cache.len() == filtered.clone().count()
-                                && cache
-                                    .iter()
-                                    .zip(filtered.map(|t| t.name.as_str()))
-                                    .all(|(cached, name)| cached == name)
-                        };
-                        if !unchanged {
-                            *cache = state
-                                .tracks
-                                .iter()
-                                .filter(|t| t.name != METRONOME_TRACK_ID)
-                                .map(|t| t.name.clone())
-                                .collect();
-                        }
-                    }
                     let clip_header = plugin_graph_clip.as_ref().map(|target| {
                         let clip_label = state
                             .tracks
@@ -789,22 +768,11 @@ impl Maolan {
                         }));
                     }
                     if matches!(view_kind, View::TrackPlugins) {
-                        let track_selector: maolan_widgets::iced::Element<'_, Message> =
-                            if let Some(ref header) = clip_header {
-                                text(header.clone()).into()
-                            } else {
-                                pick_list(
-                                    self.ui.track_names_cache.borrow().clone(),
-                                    plugin_graph_track,
-                                    Message::OpenTrackPlugins,
-                                )
-                                .placeholder("Select track...")
-                                .into()
-                            };
+                        let header = clip_header.unwrap_or_else(|| "Track Plugins".to_string());
                         content = content.push(
                             container(
                                 row![
-                                    track_selector,
+                                    text(header),
                                     button("Plugin List")
                                         .on_press(Message::Show(Show::TrackPluginList))
                                 ]

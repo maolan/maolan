@@ -357,7 +357,6 @@ pub struct UiState {
     pub log_viewer_highlights: LogHighlightSettings,
     /// Cached filtered track-name list for the track-picker; rebuilt only when
     /// the names in state no longer match.
-    pub track_names_cache: std::cell::RefCell<Vec<String>>,
     /// Last status message shown in the status bar; re-cloned from state only
     /// when the message changed.
     pub status_message_cache: std::cell::RefCell<String>,
@@ -389,7 +388,6 @@ impl Default for UiState {
                 "[INFO] Thank you for using Maolan!",
             ),
             log_viewer_highlights: LogHighlightSettings::default(),
-            track_names_cache: std::cell::RefCell::new(Vec::new()),
             status_message_cache: std::cell::RefCell::new(String::new()),
         }
     }

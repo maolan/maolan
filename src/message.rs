@@ -1624,8 +1624,6 @@ pub enum Message {
     AudioEditor(maolan_editor::app::Message),
     HwMixer(mixosc::app::Message),
     LogViewAction(text_editor::Action),
-    OpenTrackPlugins(String),
-    OpenFolderConnections(String),
     SessionViewConnectionsOpen(String),
     SessionViewConnectionsClose,
     EditorConnectionsOpen(String),

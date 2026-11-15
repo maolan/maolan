@@ -124,8 +124,16 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
         "maolan-plugin-host"
     };
 
-    if dir.file_name()? == "deps" {
-        let profile_dir = dir.parent()?;
+    let profile_dir = if dir.file_name()? == "deps" {
+        dir.parent()
+    } else if dir.file_name()? == "out" && dir.parent()?.parent()?.parent()?.file_name()? == "build"
+    {
+        dir.parent()?.parent()?.parent()?.parent()
+    } else {
+        None
+    };
+
+    if let Some(profile_dir) = profile_dir {
         candidates.push(profile_dir.join(host_name));
 
         if let Some(daw_dir) = profile_dir.parent()?.parent() {
@@ -147,8 +155,8 @@ fn find_plugin_host_binary() -> Option<PathBuf> {
     }
 
     #[cfg(test)]
-    if dir.file_name()? == "deps" {
-        return build_plugin_host_binary(dir.parent()?, host_name);
+    if let Some(profile_dir) = profile_dir {
+        return build_plugin_host_binary(profile_dir, host_name);
     }
 
     None

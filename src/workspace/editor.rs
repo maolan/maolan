@@ -2247,6 +2247,13 @@ pub(super) fn clip_context_menu_overlay(
                     },
                 ),
                 crate::menu::menu_item(
+                    "Clip Plugins",
+                    Message::OpenClipPlugins {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                    },
+                ),
+                crate::menu::menu_item(
                     if muted { "Unmute" } else { "Mute" },
                     Message::ClipSetMuted {
                         track_idx: track_idx.clone(),
