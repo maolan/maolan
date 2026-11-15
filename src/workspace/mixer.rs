@@ -736,11 +736,7 @@ impl Mixer {
         };
         mouse_area(shell)
             .on_press(Message::SelectTrackFromMixer(track.name.clone()))
-            .on_double_click(if track.is_folder {
-                Message::OpenFolderConnections(track.name.clone())
-            } else {
-                Message::OpenTrackPlugins(track.name.clone())
-            })
+            .on_double_click(Message::EditorConnectionsOpen(track.name.clone()))
             .into()
     }
 
