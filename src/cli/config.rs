@@ -1,3 +1,4 @@
+use maolan_engine::preferences::AudioDevicePreferences;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -35,8 +36,17 @@ impl CliConfig {
         }
         let contents = std::fs::read_to_string(&config_path)
             .map_err(|err| format!("Failed to read {}: {err}", config_path.display()))?;
-        toml::from_str(&contents)
-            .map_err(|err| format!("Failed to parse {}: {err}", config_path.display()))
+        let mut config: Self = toml::from_str(&contents)
+            .map_err(|err| format!("Failed to parse {}: {err}", config_path.display()))?;
+        let device_preferences = AudioDevicePreferences::from_toml_str(&contents)
+            .map_err(|err| format!("Failed to parse {}: {err}", config_path.display()))?;
+        config.default_output_device_id = device_preferences
+            .default_output_device_id()
+            .map(ToOwned::to_owned);
+        config.default_input_device_id = device_preferences
+            .default_input_device_id()
+            .map(ToOwned::to_owned);
+        Ok(config)
     }
 }
 

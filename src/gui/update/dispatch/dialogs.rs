@@ -114,8 +114,11 @@ impl Maolan {
                 cfg.default_snap_mode = self.prefs_snap_mode;
                 cfg.default_midi_snap_mode = self.prefs_midi_snap_mode;
                 cfg.default_audio_bit_depth = self.prefs_audio_bit_depth;
-                cfg.default_output_device_id = self.prefs_default_output_device_id.clone();
-                cfg.default_input_device_id = self.prefs_default_input_device_id.clone();
+                #[cfg(target_os = "freebsd")]
+                {
+                    cfg.default_output_device_id = self.prefs_default_output_device_id.clone();
+                    cfg.default_input_device_id = self.prefs_default_input_device_id.clone();
+                }
                 let prefs = super::super::super::AppPreferences {
                     osc_enabled: cfg.osc_enabled,
                     waveform_log_scale: cfg.waveform_log_scale,
