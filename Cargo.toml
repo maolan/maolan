@@ -23,7 +23,7 @@ dirs = "7.0.0"
 ebur128 = "0.1"
 hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", "rustls-tls"] }
 maolan-generate = "0.0.19"
-maolan-editor = { version = "0.1.5", default-features = false, features = ["embedded"] }
+maolan-editor = { version = "0.1.6", default-features = false, features = ["embedded"] }
 maolan-engine = { version = "0.4.24", features = ["audio", "midi", "plugins", "mixosc"] }
 maolan-pitch = "0.0.3"
 maolan-plugin-host = "0.1.3"
