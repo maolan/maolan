@@ -1,6 +1,7 @@
 use crate::consts::audio_defaults;
 use crate::keyboard_shortcuts::ShortcutBindings;
 use crate::message::SnapMode;
+use maolan_engine::preferences::AudioDevicePreferences;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -82,7 +83,14 @@ impl Config {
         }
 
         let contents = fs::read_to_string(config_path)?;
-        let config: Config = toml::from_str(&contents)?;
+        let mut config: Config = toml::from_str(&contents)?;
+        let device_preferences = AudioDevicePreferences::from_toml_str(&contents)?;
+        config.default_output_device_id = device_preferences
+            .default_output_device_id()
+            .map(ToOwned::to_owned);
+        config.default_input_device_id = device_preferences
+            .default_input_device_id()
+            .map(ToOwned::to_owned);
         Ok(config)
     }
 
@@ -105,6 +113,13 @@ impl Config {
         }
 
         let toml_string = toml::to_string_pretty(&config)?;
+        #[cfg(target_os = "freebsd")]
+        let toml_string = {
+            let device_preferences = AudioDevicePreferences::from_toml_str(&toml_string)?;
+            device_preferences
+                .update_toml_str(&toml_string)
+                .map_err(std::io::Error::other)?
+        };
         fs::write(config_path, toml_string)?;
         Ok(())
     }

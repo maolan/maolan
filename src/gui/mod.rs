@@ -9089,7 +9089,7 @@ mod tests {
             .expect("cleanup");
 
         assert_eq!(report.deleted_clips, vec!["clip-2".to_string()]);
-        assert!(report.deleted_files.contains(&"audio/gone.wav".to_string()));
+        assert!(report.deleted_files.iter().any(|i| i == "audio/gone.wav"));
         assert!(!session_root.join("audio/gone.wav").exists());
         assert!(
             state
