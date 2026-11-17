@@ -5866,17 +5866,17 @@ dependencies = [
 
 [[package]]
 name = "maolan-editor"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32c4f1be6612e4c5b9194cfe812210fee97676b9d6eb7f11d10d6d4b1a2947bc"
+checksum = "538ad062373e4e615f6ff9e8bc7933d51df785b100d07f092b75735519e20f6e"
 dependencies = [
- "maolan-engine",
  "maolan-widgets",
  "rfd 0.18.0",
  "rubato",
  "serde",
  "serde_json",
  "tokio",
+ "toml",
 ]
 
 [[package]]
