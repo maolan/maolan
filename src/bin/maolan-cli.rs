@@ -1554,6 +1554,35 @@ async fn initialize_interactive_app(
     Ok(())
 }
 
+async fn configure_midi_sync(client: &Client, config: &CliConfig) {
+    let _ = client
+        .send(EngineMessage::Request(Action::SetMidiTimecodeEnabled(
+            config.midi_timecode_enabled,
+        )))
+        .await;
+    let _ = client
+        .send(EngineMessage::Request(Action::SetMidiTimecodeOffset(
+            config.midi_timecode_offset_seconds,
+        )))
+        .await;
+    let _ = client
+        .send(EngineMessage::Request(Action::SetMidiTimecodeOutput {
+            enabled: config.midi_timecode_output_enabled,
+            frame_rate: config.midi_timecode_frame_rate,
+        }))
+        .await;
+    let _ = client
+        .send(EngineMessage::Request(Action::SetMidiClockEnabled(
+            config.midi_clock_enabled,
+        )))
+        .await;
+    let _ = client
+        .send(EngineMessage::Request(Action::SetMidiClockOutput(
+            config.midi_clock_output_enabled,
+        )))
+        .await;
+}
+
 async fn run_record_once(
     options: &CliOptions,
     config: &CliConfig,
@@ -1589,6 +1618,7 @@ async fn run_timed_playback_once(
             config.osc_enabled,
         )))
         .await;
+    configure_midi_sync(&client, config).await;
     let mut rx = client.subscribe().await;
     let mut app = App::new(
         Some(session_dir.clone()),
@@ -1877,6 +1907,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.osc_enabled,
         )))
         .await;
+    configure_midi_sync(&client, &config).await;
     let mut rx = client.subscribe().await;
     let (export_tx, mut export_rx) = unbounded_channel();
     let mut app = App::new(
@@ -2018,6 +2049,7 @@ mod tests {
             default_output_device_id: Some("config-device".to_string()),
             default_input_device_id: Some("config-input".to_string()),
             oss_calibrations: Vec::new(),
+            ..CliConfig::default()
         };
 
         let action = resolve_open_audio_action(&options, &config).expect("open audio action");
@@ -2057,6 +2089,7 @@ mod tests {
             default_output_device_id: Some("config-device".to_string()),
             default_input_device_id: Some("config-input".to_string()),
             oss_calibrations: Vec::new(),
+            ..CliConfig::default()
         };
 
         let action = resolve_open_audio_action(&options, &config).expect("open audio action");

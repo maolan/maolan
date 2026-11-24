@@ -3,7 +3,8 @@ use maolan_engine::{
     kind::Kind,
     message::{
         Action, AudioClipData, DEFAULT_FADE_SAMPLES, GlobalMidiLearnTarget, MidiClipData,
-        MidiLearnBinding, PitchCorrectionPointData, TrackMidiLearnTarget, clamp_fade_samples,
+        MidiLearnBinding, PitchCorrectionPointData, TempoPoint, TimeSignaturePoint,
+        TrackMidiLearnTarget, clamp_fade_samples,
     },
     plugins::scan_plugins,
     vst3::Vst3PluginInfo,
@@ -117,6 +118,58 @@ fn load_session_restore_actions_from_value(
             .get("time_signature_denom")
             .and_then(Value::as_u64)
             .unwrap_or(4) as u16;
+        let tempo_points = transport
+            .get("tempo_points")
+            .and_then(Value::as_array)
+            .map(|points| {
+                points
+                    .iter()
+                    .map(|point| {
+                        Ok(TempoPoint {
+                            sample: point
+                                .get("sample")
+                                .and_then(Value::as_u64)
+                                .ok_or("Tempo point is missing a valid sample")?
+                                as usize,
+                            bpm: point
+                                .get("bpm")
+                                .and_then(Value::as_f64)
+                                .ok_or("Tempo point is missing a valid BPM")?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let time_signature_points = transport
+            .get("time_signature_points")
+            .and_then(Value::as_array)
+            .map(|points| {
+                points
+                    .iter()
+                    .map(|point| {
+                        Ok(TimeSignaturePoint {
+                            sample: point
+                                .get("sample")
+                                .and_then(Value::as_u64)
+                                .ok_or("Time-signature point is missing a valid sample")?
+                                as usize,
+                            numerator: point
+                                .get("numerator")
+                                .and_then(Value::as_u64)
+                                .ok_or("Time-signature point is missing a valid numerator")?
+                                as u16,
+                            denominator: point
+                                .get("denominator")
+                                .and_then(Value::as_u64)
+                                .ok_or("Time-signature point is missing a valid denominator")?
+                                as u16,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         actions.push(Action::SetLoopRange(loop_range));
         actions.push(Action::SetLoopEnabled(loop_enabled));
         actions.push(Action::SetPunchRange(punch_range));
@@ -126,6 +179,12 @@ fn load_session_restore_actions_from_value(
             numerator,
             denominator,
         });
+        if !tempo_points.is_empty() || !time_signature_points.is_empty() {
+            actions.push(Action::SetTempoMap {
+                tempo_points,
+                time_signature_points,
+            });
+        }
     }
 
     let tracks = session
@@ -220,7 +279,7 @@ pub fn load_export_session_data(
         .ok_or_else(|| "Session is missing 'tracks' array".to_string())?
         .iter()
         .map(parse_export_track)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(ExportSessionData {
         tracks,
         connections: parse_export_connections(session.get("connections"))?,
@@ -706,7 +765,7 @@ fn parse_export_track(track: &Value) -> Result<ExportTrack, String> {
             clips
                 .iter()
                 .map(parse_audio_clip_data)
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Result<Vec<_>, String>>()
         })
         .transpose()?
         .unwrap_or_default();

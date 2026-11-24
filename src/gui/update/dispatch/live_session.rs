@@ -984,7 +984,7 @@ impl Maolan {
                 .map(|action| self.send(action))
                 .collect();
             if let Some(bpm) = scene_tempo {
-                let bpm = bpm.clamp(20.0, 300.0);
+                let bpm = bpm.clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
                 if (bpm - current_tempo).abs() > 0.01 {
                     tasks.push(Task::done(Message::TempoInputChanged(format!(
                         "{:.2}",
@@ -999,7 +999,7 @@ impl Maolan {
                 self.toggle_session_slot(&track_name, scene_index);
             }
             if let Some(bpm) = scene_tempo {
-                let bpm = bpm.clamp(20.0, 300.0);
+                let bpm = bpm.clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
                 if (bpm - current_tempo).abs() > 0.01 {
                     return Task::batch(vec![
                         Task::done(Message::TempoInputChanged(format!("{:.2}", bpm))),

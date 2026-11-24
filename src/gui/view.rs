@@ -2,7 +2,7 @@ use super::{LogHighlight, LogHighlightSettings, Maolan, last_message_status_text
 use crate::{
     clips_pane::ClipsPane,
     connections,
-    consts::state_ids::METRONOME_TRACK_ID,
+    consts::{MAX_TEMPO_BPM, MIN_TEMPO_BPM, state_ids::METRONOME_TRACK_ID},
     menu::MenuViewState,
     message::{Message, Show},
     session_view::SessionView,
@@ -162,13 +162,18 @@ impl Maolan {
     }
 
     fn playhead_bar_beat(&self, state: &crate::state::StateData, sample: usize) -> (u64, u64) {
-        let mut bpm = state
-            .tempo_points
-            .iter()
-            .rfind(|p| p.sample == 0)
-            .map(|p| p.bpm)
-            .unwrap_or(state.tempo)
-            .clamp(20.0, 300.0);
+        let mut bpm = self
+            .transport
+            .external_tempo_bpm
+            .unwrap_or_else(|| {
+                state
+                    .tempo_points
+                    .iter()
+                    .rfind(|p| p.sample == 0)
+                    .map(|p| p.bpm)
+                    .unwrap_or(state.tempo)
+            })
+            .clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
         let (mut numerator, mut denominator) = state
             .time_signature_points
             .iter()
@@ -189,11 +194,15 @@ impl Maolan {
         let mut bar_progress_quarters = 0.0_f64;
 
         while cursor < sample {
-            let next_tempo = state
-                .tempo_points
-                .get(tempo_idx)
-                .map(|p| p.sample)
-                .unwrap_or(usize::MAX);
+            let next_tempo = if self.transport.external_tempo_bpm.is_some() {
+                usize::MAX
+            } else {
+                state
+                    .tempo_points
+                    .get(tempo_idx)
+                    .map(|p| p.sample)
+                    .unwrap_or(usize::MAX)
+            };
             let next_tsig = state
                 .time_signature_points
                 .get(tsig_idx)
@@ -221,7 +230,7 @@ impl Maolan {
                 if point.sample != cursor {
                     break;
                 }
-                bpm = point.bpm.clamp(20.0, 300.0);
+                bpm = point.bpm.clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
                 tempo_idx += 1;
             }
             while let Some(point) = state.time_signature_points.get(tsig_idx) {
@@ -752,6 +761,7 @@ impl Maolan {
                             midi_snap_mode: self.timing.midi_snap_mode,
                             step_recording_active: self.transport.step_recording_active,
                             tempo_input: self.timing.tempo_input.clone(),
+                            follows_midi_clock: self.prefs_midi_clock_master == Some(false),
                             tsig_num_input: self.timing.time_signature_num_input.clone(),
                             tsig_denom_input: self.timing.time_signature_denom_input.clone(),
                             playhead_time_label,
@@ -1122,5 +1132,53 @@ impl Maolan {
                 .into(),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mtc_bar_conversion_uses_saved_tempo_only_until_clock_tempo_exists() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            state.tempo = 300.0;
+            state.tempo_points = vec![crate::state::TempoPoint {
+                sample: 0,
+                bpm: 300.0,
+            }];
+        }
+
+        {
+            let state = app.state.read().expect("state lock poisoned");
+            assert_eq!(app.playhead_bar_beat(&state, 96_000), (2, 3));
+        }
+        app.transport.external_tempo_bpm = Some(120.0);
+        let state = app.state.read().expect("state lock poisoned");
+        assert_eq!(app.playhead_bar_beat(&state, 96_000), (1, 1));
+    }
+
+    #[test]
+    fn external_clock_tempo_drives_timeline_and_playhead_bars() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.write().expect("state lock poisoned");
+            state.tempo = 300.0;
+            state.tempo_points = vec![crate::state::TempoPoint {
+                sample: 0,
+                bpm: 300.0,
+            }];
+        }
+        app.transport.external_tempo_bpm = Some(120.0);
+        app.transport.timeline_scale_bpm = Some(120.0);
+
+        assert_eq!(app.transport.samples_per_bar(&app.state), 96_000.0);
+        app.transport.external_tempo_bpm = Some(121.0);
+        assert_eq!(app.transport.samples_per_bar(&app.state), 96_000.0);
+        let state = app.state.read().expect("state lock poisoned");
+        assert_eq!(app.playhead_bar_beat(&state, 288_000), (3, 1));
+        assert_eq!(state.tempo_points[0].bpm, 300.0);
     }
 }

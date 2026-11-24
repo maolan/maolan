@@ -1364,6 +1364,10 @@ impl Maolan {
             | Message::PreferencesMidiSnapModeSelected(_)
             | Message::PreferencesBitDepthSelected(_)
             | Message::PreferencesOscEnabledToggled(_)
+            | Message::PreferencesMidiTimecodeModeSelected(_)
+            | Message::PreferencesMidiClockModeSelected(_)
+            | Message::PreferencesMidiTimecodeFrameRateSelected(_)
+            | Message::PreferencesMidiTimecodeOffsetChanged(_)
             | Message::PreferencesOutputDeviceSelected(_)
             | Message::PreferencesInputDeviceSelected(_)
             | Message::PreferencesSave
@@ -2737,6 +2741,17 @@ mod tests {
         assert_eq!(piano.notes[1].start_sample, 200);
         assert_eq!(piano.notes[1].pitch, 38);
         assert!(state.piano_selected_notes.is_empty());
+    }
+
+    #[test]
+    fn midi_clock_and_timecode_follow_preferences_can_be_combined() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::PreferencesMidiTimecodeModeSelected(Some(false)));
+        let _ = app.update(Message::PreferencesMidiClockModeSelected(Some(false)));
+
+        assert_eq!(app.prefs_midi_timecode_master, Some(false));
+        assert_eq!(app.prefs_midi_clock_master, Some(false));
     }
 
     #[test]

@@ -34,6 +34,7 @@ pub struct ToolbarViewState {
     pub midi_snap_mode: SnapMode,
     pub step_recording_active: bool,
     pub tempo_input: String,
+    pub follows_midi_clock: bool,
     pub tsig_num_input: String,
     pub tsig_denom_input: String,
     pub playhead_time_label: String,
@@ -336,11 +337,18 @@ impl Toolbar {
                         };
                     step_button
                 },
-                text_input("BPM", &view_state.tempo_input)
-                    .id(Self::tempo_input_id())
-                    .on_input(Message::TempoInputChanged)
-                    .on_submit(Message::TempoInputCommit)
-                    .width(Length::Fixed(72.0)),
+                {
+                    let input = text_input("BPM", &view_state.tempo_input)
+                        .id(Self::tempo_input_id())
+                        .width(Length::Fixed(72.0));
+                    if view_state.follows_midi_clock {
+                        input
+                    } else {
+                        input
+                            .on_input(Message::TempoInputChanged)
+                            .on_submit(Message::TempoInputCommit)
+                    }
+                },
                 with_tooltip(
                     button(hand())
                         .style(Self::button_style(true, false, Color::TRANSPARENT))

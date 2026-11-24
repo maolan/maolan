@@ -3,6 +3,8 @@ use maolan_widgets::iced::Color;
 use std::{sync::LazyLock, time::Duration};
 
 pub const APP_BACKGROUND_COLOR: Color = Color::from_rgb8(23, 31, 48);
+pub const MIN_TEMPO_BPM: f32 = maolan_engine::midi::clock::MIN_CLOCK_BPM as f32;
+pub const MAX_TEMPO_BPM: f32 = maolan_engine::midi::clock::MAX_CLOCK_BPM as f32;
 
 pub mod gui {
     use super::Duration;

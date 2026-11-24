@@ -5,7 +5,7 @@ impl Maolan {
         if state.tempo_points.iter().all(|p| p.sample != 0) {
             state.tempo_points.push(TempoPoint {
                 sample: 0,
-                bpm: state.tempo.clamp(20.0, 300.0),
+                bpm: state.tempo.clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM),
             });
             state.tempo_points.sort_unstable_by_key(|p| p.sample);
         }
@@ -73,7 +73,7 @@ impl Maolan {
                         .map(|p| p.bpm)
                         .unwrap_or(state.tempo)
                 };
-                let tempo = (current_bpm + delta).clamp(20.0, 300.0);
+                let tempo = (current_bpm + delta).clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
                 if !selected_samples.is_empty() {
                     for point in state.tempo_points.iter_mut() {
                         if selected_samples.contains(&point.sample) {
@@ -776,7 +776,7 @@ impl Maolan {
                         "Invalid BPM value".to_string();
                     return Task::none();
                 };
-                let bpm = parsed.clamp(20.0, 300.0);
+                let bpm = parsed.clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
                 let sample = self.transport.transport_samples.max(0.0) as usize;
                 let mut state = self.state.write().expect("state lock poisoned");
                 let (_, numerator, denominator) = Self::timing_at_sample(&state, sample);
@@ -841,7 +841,7 @@ impl Maolan {
                     let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
 
                     if avg_interval > 0.0 {
-                        let bpm = (60.0 / avg_interval).clamp(20.0, 300.0);
+                        let bpm = (60.0 / avg_interval).clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
                         let sample = self.transport.transport_samples.max(0.0) as usize;
                         let mut state = self.state.write().expect("state lock poisoned");
                         let (_, numerator, denominator) = Self::timing_at_sample(&state, sample);
