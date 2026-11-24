@@ -112,7 +112,7 @@ impl Maolan {
                 true
             }
             Action::SetTempo(bpm) => {
-                let bpm = (*bpm as f32).clamp(20.0, 300.0);
+                let bpm = (*bpm as f32).clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
                 let mut state = self.state.write().expect("state lock poisoned");
                 let (base_bpm, _, _) = Self::timing_at_sample(&state, 0);
                 state.tempo = base_bpm;
@@ -182,7 +182,69 @@ impl Maolan {
 mod tests {
     use super::*;
     use crate::gui::TrackAutomationRuntime;
-    use std::collections::{HashMap, HashSet};
+    use std::{
+        collections::{HashMap, HashSet},
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn midi_clock_follow_displays_tempo_at_maximum() {
+        let mut app = Maolan {
+            prefs_midi_clock_master: Some(false),
+            ..Maolan::default()
+        };
+
+        assert!(app.handle_response_timing_state_action(&Action::SetTempo(400.0)));
+
+        assert_eq!(app.timing.tempo_input, "400.00");
+        assert_eq!(app.timing.last_sent_tempo_bpm, Some(400.0));
+        assert_eq!(app.transport.external_tempo_bpm, None);
+        assert_eq!(app.transport.timeline_scale_bpm, None);
+    }
+
+    #[test]
+    fn midi_clock_tempo_latches_only_after_it_is_stable() {
+        let mut app = Maolan::default();
+        let start = Instant::now();
+        app.transport.set_external_tempo_bpm_at(60.0, start);
+        app.transport
+            .set_external_tempo_bpm_at(120.0, start + Duration::from_millis(100));
+        app.transport
+            .set_external_tempo_bpm_at(120.0, start + Duration::from_millis(400));
+
+        assert_eq!(app.transport.timeline_scale_bpm, None);
+
+        app.transport
+            .set_external_tempo_bpm_at(120.0, start + Duration::from_millis(600));
+
+        assert_eq!(app.transport.external_tempo_bpm, Some(120.0));
+        assert_eq!(app.transport.timeline_scale_bpm, Some(120.0));
+        assert_eq!(app.transport.timeline_scale_candidate, None);
+    }
+
+    #[test]
+    fn stable_tempo_corrects_a_materially_wrong_timeline_scale() {
+        let mut app = Maolan {
+            transport: TransportUiState {
+                timeline_scale_bpm: Some(60.0),
+                ..Default::default()
+            },
+            ..Maolan::default()
+        };
+        let start = Instant::now();
+        app.transport.set_external_tempo_bpm_at(120.0, start);
+        app.transport
+            .set_external_tempo_bpm_at(120.0, start + Duration::from_millis(400));
+        assert_eq!(app.transport.timeline_scale_bpm, Some(60.0));
+
+        app.transport
+            .set_external_tempo_bpm_at(120.0, start + Duration::from_millis(600));
+        assert_eq!(app.transport.timeline_scale_bpm, Some(120.0));
+
+        app.transport
+            .set_external_tempo_bpm_at(119.0, start + Duration::from_millis(1_200));
+        assert_eq!(app.transport.timeline_scale_bpm, Some(120.0));
+    }
 
     #[test]
     fn play_response_sets_transport_running_state() {

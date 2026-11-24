@@ -1,5 +1,5 @@
 use crate::keyboard_shortcuts::{ShortcutAction, ShortcutBinding};
-use maolan_engine::{kind::Kind, message::Action};
+use maolan_engine::{kind::Kind, message::Action, midi::mtc::FrameRate};
 use maolan_widgets::curve_editor::{CurveEditorMessage, CurvePoint as CurveEditorPoint};
 use maolan_widgets::iced::{
     Point, Rectangle, Size, mouse,
@@ -1349,6 +1349,10 @@ pub enum Message {
     PreferencesMidiSnapModeSelected(SnapMode),
     PreferencesBitDepthSelected(usize),
     PreferencesOscEnabledToggled(bool),
+    PreferencesMidiTimecodeModeSelected(Option<bool>),
+    PreferencesMidiClockModeSelected(Option<bool>),
+    PreferencesMidiTimecodeFrameRateSelected(FrameRate),
+    PreferencesMidiTimecodeOffsetChanged(String),
     PreferencesOutputDeviceSelected(PreferencesDeviceOption),
     PreferencesInputDeviceSelected(PreferencesDeviceOption),
     PreferencesSave,

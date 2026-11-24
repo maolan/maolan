@@ -13,10 +13,13 @@ use self::types::{MidiMappingsFile, MidiMappingsGlobalFile, MidiMappingsTrackFil
 use crate::state::AudioDeviceOption;
 use crate::{
     connections,
-    consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
     consts::gui_update_mod::ATTACK_ALPHA,
     consts::state_ids::METRONOME_TRACK_ID,
     consts::widget_piano::PITCH_MAX,
+    consts::{
+        MAX_TEMPO_BPM, MIN_TEMPO_BPM,
+        gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
+    },
     message::{
         ClipPitchCorrectionRequest, ClipStretchRequest, ClipStretchResult, ExportNormalizeMode,
         ExportRenderMode, Message, PianoScale, Show, TrackAutomationMode, TrackAutomationTarget,
@@ -1216,7 +1219,7 @@ impl Maolan {
             .max_by_key(|p| p.sample)
             .map(|p| p.bpm)
             .unwrap_or(state.tempo)
-            .clamp(20.0, 300.0);
+            .clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM);
         let (num, den) = state
             .time_signature_points
             .iter()

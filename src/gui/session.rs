@@ -3,7 +3,7 @@ use super::{
     field_groups::TransferState,
 };
 use crate::{
-    consts::state_ids::METRONOME_TRACK_ID,
+    consts::{MAX_TEMPO_BPM, MIN_TEMPO_BPM, state_ids::METRONOME_TRACK_ID},
     message::Message,
     state::{AudioBackendOption, Connection, ConnectionViewSelection},
 };
@@ -2808,7 +2808,7 @@ impl Maolan {
                         let bpm = entry.get("bpm")?.as_f64()? as f32;
                         Some(crate::state::TempoPoint {
                             sample,
-                            bpm: bpm.clamp(20.0, 300.0),
+                            bpm: bpm.clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM),
                         })
                     })
                     .collect::<Vec<_>>()

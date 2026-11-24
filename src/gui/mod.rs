@@ -8,7 +8,6 @@ mod view;
 
 use crate::{
     add_track, clip_rename, config,
-    consts::audio_defaults,
     consts::gui as gui_consts,
     consts::gui_mod::{
         AUDIO_BIT_DEPTH_OPTIONS, BINS_PER_UPDATE, CHUNK_FRAMES, CLIENT, MAX_PEAK_BINS,
@@ -20,6 +19,7 @@ use crate::{
     },
     consts::state_ids::METRONOME_TRACK_ID,
     consts::widget_piano::PITCH_MAX,
+    consts::{MAX_TEMPO_BPM, MIN_TEMPO_BPM, audio_defaults},
     hw,
     keyboard_shortcuts::{ShortcutAction, ShortcutBindings},
     menu,
@@ -47,7 +47,7 @@ use maolan_engine::message::{
     Action, ConnectableConnection, ConnectableRef, Message as EngineMessage, OfflineAutomationLane,
     OfflineAutomationPoint, OfflineAutomationTarget, OfflineBounceStem, OfflineStemOutput,
 };
-use maolan_widgets::horizontal_slider::horizontal_slider;
+use maolan_engine::midi::mtc::FrameRate;
 use maolan_widgets::iced::{
     Color, Length, Size, Task,
     advanced::text::Span,
@@ -58,6 +58,10 @@ use maolan_widgets::iced::{
 };
 use maolan_widgets::iced_aw::helpers::color_picker_with_change;
 use maolan_widgets::numeric_input::{number_input, number_input_f32};
+use maolan_widgets::{
+    horizontal_slider::horizontal_slider,
+    multi_toggler::{LabelPosition, horizontal_multi_toggler},
+};
 use midly::{
     Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
     num::{u15, u24, u28},
@@ -488,6 +492,12 @@ fn build_offline_automation_lanes(
 #[derive(Debug, Clone)]
 struct AppPreferences {
     osc_enabled: bool,
+    midi_timecode_enabled: bool,
+    midi_timecode_output_enabled: bool,
+    midi_clock_enabled: bool,
+    midi_clock_output_enabled: bool,
+    midi_timecode_frame_rate: FrameRate,
+    midi_timecode_offset_seconds: f64,
     waveform_log_scale: bool,
     default_export_sample_rate_hz: u32,
     default_snap_mode: SnapMode,
@@ -503,6 +513,12 @@ impl Default for AppPreferences {
     fn default() -> Self {
         Self {
             osc_enabled: false,
+            midi_timecode_enabled: false,
+            midi_timecode_output_enabled: false,
+            midi_clock_enabled: false,
+            midi_clock_output_enabled: false,
+            midi_timecode_frame_rate: FrameRate::Fps30,
+            midi_timecode_offset_seconds: 0.0,
             waveform_log_scale: true,
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
@@ -711,6 +727,10 @@ pub struct Maolan {
     mixer_level_edit_input: String,
     waveform_log_scale: bool,
     prefs_osc_enabled: bool,
+    prefs_midi_timecode_master: Option<bool>,
+    prefs_midi_clock_master: Option<bool>,
+    prefs_midi_timecode_frame_rate: FrameRate,
+    prefs_midi_timecode_offset_input: String,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
     prefs_midi_snap_mode: SnapMode,
@@ -723,6 +743,12 @@ fn load_preferences() -> AppPreferences {
     let cfg = config::Config::load().unwrap_or_default();
     AppPreferences {
         osc_enabled: cfg.osc_enabled,
+        midi_timecode_enabled: cfg.midi_timecode_enabled,
+        midi_timecode_output_enabled: cfg.midi_timecode_output_enabled,
+        midi_clock_enabled: cfg.midi_clock_enabled,
+        midi_clock_output_enabled: cfg.midi_clock_output_enabled,
+        midi_timecode_frame_rate: cfg.midi_timecode_frame_rate,
+        midi_timecode_offset_seconds: cfg.midi_timecode_offset_seconds,
         waveform_log_scale: cfg.waveform_log_scale,
         default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
         default_snap_mode: cfg.default_snap_mode,
@@ -829,6 +855,33 @@ impl Default for Maolan {
                 .blocking_send(EngineMessage::Request(Action::SetOscEnabled(
                     prefs.osc_enabled,
                 )));
+            let _ = CLIENT.sender.blocking_send(EngineMessage::Request(
+                Action::SetMidiTimecodeEnabled(prefs.midi_timecode_enabled),
+            ));
+            let _ =
+                CLIENT
+                    .sender
+                    .blocking_send(EngineMessage::Request(Action::SetMidiTimecodeOffset(
+                        prefs.midi_timecode_offset_seconds,
+                    )));
+            let _ = CLIENT.sender.blocking_send(EngineMessage::Request(
+                Action::SetMidiTimecodeOutput {
+                    enabled: prefs.midi_timecode_output_enabled,
+                    frame_rate: prefs.midi_timecode_frame_rate,
+                },
+            ));
+            let _ =
+                CLIENT
+                    .sender
+                    .blocking_send(EngineMessage::Request(Action::SetMidiClockEnabled(
+                        prefs.midi_clock_enabled,
+                    )));
+            let _ =
+                CLIENT
+                    .sender
+                    .blocking_send(EngineMessage::Request(Action::SetMidiClockOutput(
+                        prefs.midi_clock_output_enabled,
+                    )));
         }
         let mut menu = menu::Menu::default();
         menu.update_templates(scan_templates());
@@ -886,6 +939,18 @@ impl Default for Maolan {
             mixer_level_edit_input: String::new(),
             waveform_log_scale: prefs.waveform_log_scale,
             prefs_osc_enabled: prefs.osc_enabled,
+            prefs_midi_timecode_master: if prefs.midi_timecode_output_enabled {
+                Some(true)
+            } else {
+                prefs.midi_timecode_enabled.then_some(false)
+            },
+            prefs_midi_clock_master: if prefs.midi_clock_output_enabled {
+                Some(true)
+            } else {
+                prefs.midi_clock_enabled.then_some(false)
+            },
+            prefs_midi_timecode_frame_rate: prefs.midi_timecode_frame_rate,
+            prefs_midi_timecode_offset_input: prefs.midi_timecode_offset_seconds.to_string(),
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
             prefs_midi_snap_mode: prefs.default_midi_snap_mode,
@@ -3021,7 +3086,7 @@ impl Maolan {
             .filter(|tag| !tag.is_empty())
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        parts.push(format!("{:.0}bpm", bpm.clamp(20.0, 300.0)));
+        parts.push(format!("{:.0}bpm", bpm.clamp(MIN_TEMPO_BPM, MAX_TEMPO_BPM)));
         parts.push(format!(
             "{}/{} tempo signature",
             time_signature_num.max(1),
@@ -6825,6 +6890,68 @@ impl Maolan {
         );
         preferences_column = preferences_column.push(
             row![
+                text("MIDI timecode (MTC):"),
+                horizontal_multi_toggler(
+                    ["Off", "Follow", "Master"],
+                    match self.prefs_midi_timecode_master {
+                        Some(true) => 2,
+                        Some(false) => 1,
+                        None => 0,
+                    },
+                    |index| {
+                        Message::PreferencesMidiTimecodeModeSelected(match index {
+                            2 => Some(true),
+                            1 => Some(false),
+                            _ => None,
+                        })
+                    },
+                )
+                .label_position(LabelPosition::Right),
+                text("Frame rate:"),
+                pick_list(
+                    [
+                        FrameRate::Fps24,
+                        FrameRate::Fps25,
+                        FrameRate::Fps2997Drop,
+                        FrameRate::Fps30,
+                    ],
+                    Some(self.prefs_midi_timecode_frame_rate),
+                    Message::PreferencesMidiTimecodeFrameRateSelected,
+                )
+                .width(Length::Fixed(220.0)),
+                text("Offset (seconds):"),
+                text_input("0", &self.prefs_midi_timecode_offset_input)
+                    .on_input(Message::PreferencesMidiTimecodeOffsetChanged)
+                    .width(Length::Fixed(90.0)),
+            ]
+            .spacing(10)
+            .align_y(maolan_widgets::iced::Alignment::Center),
+        );
+        preferences_column = preferences_column.push(
+            row![
+                text("MIDI Clock:"),
+                horizontal_multi_toggler(
+                    ["Off", "Follow", "Master"],
+                    match self.prefs_midi_clock_master {
+                        Some(true) => 2,
+                        Some(false) => 1,
+                        None => 0,
+                    },
+                    |index| {
+                        Message::PreferencesMidiClockModeSelected(match index {
+                            2 => Some(true),
+                            1 => Some(false),
+                            _ => None,
+                        })
+                    },
+                )
+                .label_position(LabelPosition::Right),
+            ]
+            .spacing(10)
+            .align_y(maolan_widgets::iced::Alignment::Center),
+        );
+        preferences_column = preferences_column.push(
+            row![
                 text("Default export sample rate (Hz):"),
                 pick_list(
                     STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
@@ -10466,6 +10593,7 @@ mod tests {
                 last_sent_time_signature: None,
                 ..Default::default()
             },
+            prefs_midi_clock_master: None,
             ..Maolan::default()
         };
 

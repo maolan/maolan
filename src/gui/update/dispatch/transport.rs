@@ -204,6 +204,13 @@ impl Maolan {
                         self.transport.paused = snapshot.playing && !snapshot.transport_running;
                         self.transport.transport_samples = snapshot.sample as f64;
                         self.transport.playback_rate_hz = self.transport.playback_rate_hz.max(1.0);
+                        if self.prefs_midi_clock_master == Some(false)
+                            && let Some(bpm) = snapshot.external_tempo_bpm
+                        {
+                            self.transport.set_external_tempo_bpm(bpm as f32);
+                        } else {
+                            self.transport.clear_external_tempo_bpm();
+                        }
                         self.timing.tempo_input = format!("{:.2}", snapshot.tempo_bpm);
                         self.timing.time_signature_num_input = snapshot.tsig_num.to_string();
                         self.timing.time_signature_denom_input = snapshot.tsig_denom.to_string();
@@ -256,17 +263,18 @@ impl Maolan {
                         .timing
                         .last_sent_time_signature
                         .is_none_or(|prev| prev != (num as u16, den as u16));
-                    if tempo_changed {
+                    if tempo_changed && self.prefs_midi_clock_master != Some(false) {
                         self.timing.tempo_input = format!("{:.2}", bpm);
                     }
                     if ts_changed {
                         self.timing.time_signature_num_input = num.to_string();
                         self.timing.time_signature_denom_input = den.to_string();
                     }
-                    if self
-                        .timing
-                        .last_sent_tempo_bpm
-                        .is_none_or(|prev| (prev - bpm as f64).abs() > 0.0001)
+                    if self.prefs_midi_clock_master != Some(false)
+                        && self
+                            .timing
+                            .last_sent_tempo_bpm
+                            .is_none_or(|prev| (prev - bpm as f64).abs() > 0.0001)
                     {
                         self.timing.last_sent_tempo_bpm = Some(bpm as f64);
                         tasks.push(self.send(Action::SetTempo(bpm as f64)));

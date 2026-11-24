@@ -26,6 +26,9 @@ pub struct TransportUiState {
     pub last_playback_tick: Option<Instant>,
     pub pending_transport_position: Option<(Instant, usize)>,
     pub playback_rate_hz: f64,
+    pub external_tempo_bpm: Option<f32>,
+    pub timeline_scale_bpm: Option<f32>,
+    pub timeline_scale_candidate: Option<(f32, Instant)>,
     pub loop_enabled: bool,
     pub loop_range_samples: Option<(usize, usize)>,
     pub session_range_samples: Option<(usize, usize)>,
@@ -52,6 +55,9 @@ impl Default for TransportUiState {
             last_playback_tick: None,
             pending_transport_position: None,
             playback_rate_hz: 48_000.0,
+            external_tempo_bpm: None,
+            timeline_scale_bpm: None,
+            timeline_scale_candidate: None,
             loop_enabled: false,
             loop_range_samples: None,
             session_range_samples: None,
@@ -461,13 +467,50 @@ impl TransportUiState {
         self.playing && !self.paused
     }
 
+    pub(crate) fn set_external_tempo_bpm(&mut self, bpm: f32) {
+        self.set_external_tempo_bpm_at(bpm, Instant::now());
+    }
+
+    pub(crate) fn set_external_tempo_bpm_at(&mut self, bpm: f32, now: Instant) {
+        self.external_tempo_bpm = Some(bpm);
+        let scale_needs_update = self.timeline_scale_bpm.is_none_or(|scale| {
+            let tolerance = (scale.abs() * 0.05).max(1.0);
+            (scale - bpm).abs() > tolerance
+        });
+        if !scale_needs_update {
+            self.timeline_scale_candidate = None;
+            return;
+        }
+        match self.timeline_scale_candidate {
+            Some((candidate, since))
+                if candidate == bpm
+                    && now.saturating_duration_since(since) >= Duration::from_millis(500) =>
+            {
+                self.timeline_scale_bpm = Some(bpm);
+                self.timeline_scale_candidate = None;
+            }
+            Some((candidate, _)) if candidate == bpm => {}
+            _ => self.timeline_scale_candidate = Some((bpm, now)),
+        }
+    }
+
+    pub(crate) fn clear_external_tempo_bpm(&mut self) {
+        self.external_tempo_bpm = None;
+        self.timeline_scale_bpm = None;
+        self.timeline_scale_candidate = None;
+    }
+
     pub(crate) fn samples_per_beat(&self, state: &State) -> f32 {
         let state = state.read().expect("state lock poisoned");
         self.samples_per_beat_from(&state)
     }
 
     fn samples_per_beat_from(&self, state: &StateData) -> f32 {
-        let tempo = state.tempo.max(1.0);
+        let tempo = self
+            .timeline_scale_bpm
+            .or(self.external_tempo_bpm)
+            .unwrap_or(state.tempo)
+            .max(1.0);
         let denom = state.time_signature_denom.max(1) as f32;
         let quarter = self.playback_rate_hz as f32 * 60.0 / tempo;
         quarter * (4.0 / denom)

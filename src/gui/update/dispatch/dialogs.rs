@@ -97,6 +97,18 @@ impl Maolan {
             Message::PreferencesOscEnabledToggled(enabled) => {
                 self.prefs_osc_enabled = enabled;
             }
+            Message::PreferencesMidiTimecodeModeSelected(mode) => {
+                self.prefs_midi_timecode_master = mode;
+            }
+            Message::PreferencesMidiClockModeSelected(mode) => {
+                self.prefs_midi_clock_master = mode;
+            }
+            Message::PreferencesMidiTimecodeFrameRateSelected(frame_rate) => {
+                self.prefs_midi_timecode_frame_rate = frame_rate;
+            }
+            Message::PreferencesMidiTimecodeOffsetChanged(ref value) => {
+                self.prefs_midi_timecode_offset_input = value.clone();
+            }
             Message::PreferencesOutputDeviceSelected(ref device) => {
                 self.prefs_default_output_device_id = (device.id
                     != super::super::super::PREF_DEVICE_AUTO_ID)
@@ -108,8 +120,24 @@ impl Maolan {
                     .then(|| device.id.clone());
             }
             Message::PreferencesSave => {
+                let offset_seconds = match self.prefs_midi_timecode_offset_input.parse::<f64>() {
+                    Ok(value) if value.is_finite() && value.abs() <= 86_400.0 => value,
+                    _ => {
+                        self.error("MTC offset must be a number between -86400 and 86400 seconds");
+                        return Task::none();
+                    }
+                };
+                if self.prefs_midi_clock_master != Some(false) {
+                    self.transport.clear_external_tempo_bpm();
+                }
                 let mut cfg = crate::config::Config::load().unwrap_or_default();
                 cfg.osc_enabled = self.prefs_osc_enabled;
+                cfg.midi_timecode_enabled = self.prefs_midi_timecode_master == Some(false);
+                cfg.midi_timecode_output_enabled = self.prefs_midi_timecode_master == Some(true);
+                cfg.midi_clock_enabled = self.prefs_midi_clock_master == Some(false);
+                cfg.midi_clock_output_enabled = self.prefs_midi_clock_master == Some(true);
+                cfg.midi_timecode_frame_rate = self.prefs_midi_timecode_frame_rate;
+                cfg.midi_timecode_offset_seconds = offset_seconds;
                 cfg.default_export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                 cfg.default_snap_mode = self.prefs_snap_mode;
                 cfg.default_midi_snap_mode = self.prefs_midi_snap_mode;
@@ -121,6 +149,12 @@ impl Maolan {
                 }
                 let prefs = super::super::super::AppPreferences {
                     osc_enabled: cfg.osc_enabled,
+                    midi_timecode_enabled: cfg.midi_timecode_enabled,
+                    midi_timecode_output_enabled: cfg.midi_timecode_output_enabled,
+                    midi_clock_enabled: cfg.midi_clock_enabled,
+                    midi_clock_output_enabled: cfg.midi_clock_output_enabled,
+                    midi_timecode_frame_rate: cfg.midi_timecode_frame_rate,
+                    midi_timecode_offset_seconds: cfg.midi_timecode_offset_seconds,
                     waveform_log_scale: cfg.waveform_log_scale,
                     default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
                     default_snap_mode: cfg.default_snap_mode,
@@ -136,7 +170,23 @@ impl Maolan {
                         self.transfer.export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                         self.timing.snap_mode = self.prefs_snap_mode;
                         self.timing.midi_snap_mode = self.prefs_midi_snap_mode;
-                        let task = self.send(Action::SetOscEnabled(self.prefs_osc_enabled));
+                        let task = Task::batch([
+                            self.send(Action::SetOscEnabled(self.prefs_osc_enabled)),
+                            self.send(Action::SetMidiTimecodeEnabled(
+                                self.prefs_midi_timecode_master == Some(false),
+                            )),
+                            self.send(Action::SetMidiTimecodeOffset(offset_seconds)),
+                            self.send(Action::SetMidiTimecodeOutput {
+                                enabled: self.prefs_midi_timecode_master == Some(true),
+                                frame_rate: self.prefs_midi_timecode_frame_rate,
+                            }),
+                            self.send(Action::SetMidiClockEnabled(
+                                self.prefs_midi_clock_master == Some(false),
+                            )),
+                            self.send(Action::SetMidiClockOutput(
+                                self.prefs_midi_clock_master == Some(true),
+                            )),
+                        ]);
                         {
                             let mut state = self.state.write().expect("state lock poisoned");
                             Self::apply_preferred_devices_to_state(&mut state, &prefs);
