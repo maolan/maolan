@@ -32,11 +32,15 @@ pub enum ShortcutAction {
     CloseEditorConnections,
     CloseMidiEditor,
     ToggleSelectedPluginBypass,
-    ToggleWorkspaceSession,
+    ShowWorkspace,
+    ShowConnections,
+    ShowMixer,
+    ShowSession,
     QuantizeSelectedNotes,
     HumanizeSelectedNotes,
     GrooveSelectedNotes,
     ToggleTransport,
+    ToggleMetronome,
     PauseTransport,
     JumpToStart,
     JumpToEnd,
@@ -49,7 +53,7 @@ pub enum ShortcutAction {
 }
 
 impl ShortcutAction {
-    pub const ALL: [Self; 38] = [
+    pub const ALL: [Self; 42] = [
         Self::NewSession,
         Self::OpenSession,
         Self::SaveSession,
@@ -74,11 +78,15 @@ impl ShortcutAction {
         Self::CloseEditorConnections,
         Self::CloseMidiEditor,
         Self::ToggleSelectedPluginBypass,
-        Self::ToggleWorkspaceSession,
+        Self::ShowWorkspace,
+        Self::ShowConnections,
+        Self::ShowMixer,
+        Self::ShowSession,
         Self::QuantizeSelectedNotes,
         Self::HumanizeSelectedNotes,
         Self::GrooveSelectedNotes,
         Self::ToggleTransport,
+        Self::ToggleMetronome,
         Self::PauseTransport,
         Self::JumpToStart,
         Self::JumpToEnd,
@@ -90,7 +98,7 @@ impl ShortcutAction {
         Self::SessionStopAll,
     ];
 
-    pub const fn message(self, current_view: crate::state::View) -> Message {
+    pub const fn message(self) -> Message {
         match self {
             Self::NewSession => Message::NewSession,
             Self::OpenSession => Message::Show(Show::Open),
@@ -114,17 +122,15 @@ impl ShortcutAction {
             Self::CloseEditorConnections => Message::EditorConnectionsClose,
             Self::CloseMidiEditor => Message::Workspace,
             Self::ToggleSelectedPluginBypass => Message::ToggleSelectedPluginBypass,
-            Self::ToggleWorkspaceSession => {
-                if matches!(current_view, crate::state::View::Session) {
-                    Message::Workspace
-                } else {
-                    Message::Session
-                }
-            }
+            Self::ShowWorkspace => Message::Workspace,
+            Self::ShowConnections => Message::Connections,
+            Self::ShowMixer => Message::Mixer,
+            Self::ShowSession => Message::Session,
             Self::QuantizeSelectedNotes => Message::PianoQuantizeSelectedNotes,
             Self::HumanizeSelectedNotes => Message::PianoHumanizeSelectedNotes,
             Self::GrooveSelectedNotes => Message::PianoGrooveSelectedNotes,
             Self::ToggleTransport => Message::ToggleTransport,
+            Self::ToggleMetronome => Message::ToggleMetronome,
             Self::PauseTransport => Message::TransportPause,
             Self::JumpToStart => Message::JumpToStart,
             Self::JumpToEnd => Message::JumpToEnd,
@@ -296,7 +302,10 @@ pub fn default_binding(action: ShortcutAction) -> ShortcutBinding {
         Action::ToggleSelectedPluginBypass => {
             ShortcutBinding::new(Key::Character("b".into()), false, false)
         }
-        Action::ToggleWorkspaceSession => ShortcutBinding::new(Key::Tab, false, false),
+        Action::ShowWorkspace => ShortcutBinding::new(Key::Character("1".into()), false, false),
+        Action::ShowConnections => ShortcutBinding::new(Key::Character("2".into()), false, false),
+        Action::ShowMixer => ShortcutBinding::new(Key::Character("3".into()), false, false),
+        Action::ShowSession => ShortcutBinding::new(Key::Character("4".into()), false, false),
         Action::QuantizeSelectedNotes => {
             ShortcutBinding::new(Key::Character("q".into()), false, false)
         }
@@ -307,6 +316,7 @@ pub fn default_binding(action: ShortcutAction) -> ShortcutBinding {
             ShortcutBinding::new(Key::Character("g".into()), false, false)
         }
         Action::ToggleTransport => ShortcutBinding::new(Key::Space, false, false),
+        Action::ToggleMetronome => ShortcutBinding::new(Key::Character("t".into()), false, false),
         Action::PauseTransport => ShortcutBinding::new(Key::Space, false, true),
         Action::JumpToStart => ShortcutBinding::new(Key::Home, false, false),
         Action::JumpToEnd => ShortcutBinding::new(Key::End, false, false),
@@ -388,11 +398,15 @@ fn shortcut_priority(current_view: crate::state::View) -> Vec<ShortcutAction> {
         Action::ToggleCutIndicator,
         Action::CreateMarker,
         Action::ToggleSelectedPluginBypass,
-        Action::ToggleWorkspaceSession,
+        Action::ShowWorkspace,
+        Action::ShowConnections,
+        Action::ShowMixer,
+        Action::ShowSession,
         Action::QuantizeSelectedNotes,
         Action::HumanizeSelectedNotes,
         Action::GrooveSelectedNotes,
         Action::ToggleTransport,
+        Action::ToggleMetronome,
         Action::JumpToStart,
         Action::JumpToEnd,
     ]);

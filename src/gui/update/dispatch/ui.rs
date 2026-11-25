@@ -417,6 +417,10 @@ impl Maolan {
                 let view_task = self.queue_midi_clip_preview_loads();
                 return view_task;
             }
+            Message::Mixer => {
+                self.ui.mixer_visible = true;
+                return self.update(Message::Workspace);
+            }
             Message::ToggleMixerVisibility => {
                 self.ui.mixer_visible = !self.ui.mixer_visible;
                 if !self.ui.mixer_visible {

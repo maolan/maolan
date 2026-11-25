@@ -1443,6 +1443,7 @@ impl Maolan {
             | Message::MixerLevelEditInput(_)
             | Message::MixerLevelEditCommit
             | Message::Workspace
+            | Message::Mixer
             | Message::ToggleMixerVisibility
             | Message::ToggleTracksVisibility
             | Message::ToggleEditorVisibility
