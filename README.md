@@ -14,7 +14,7 @@ Maolan is a Rust DAW focused on recording, editing, routing, automation, export,
 
 - Unix builds support CLAP, VST3, and LV2.
 - Windows builds support CLAP and VST3.
-- macOS builds support AU and CLAP.
+- macOS builds support AU, CLAP, VST3, and LV2.
 - Plugin compatibility is host-dependent and should be treated as evolving rather than guaranteed.
 
 ## Build
@@ -27,13 +27,24 @@ For Unix audio integrations, install platform libraries as needed (for example `
 
 ### Compile and run
 
-`maolan/` is a Cargo workspace. Build from that directory:
+Build from the `maolan/` directory:
 
 ```bash
 cd maolan
-cargo build --workspace --release
+cargo build --release
 cargo run --release
 ```
+
+### Binaries
+
+The package produces the following binaries:
+
+- `maolan` — the default GUI application.
+- `maolan-cli` — command-line interface for session and plugin operations.
+- `maolan-calibrate` — loopback latency calibration.
+- `maolan-osc` — small OSC transport helper.
+- `maolan-plugin-host` — out-of-process plugin host, launched automatically by
+  the DAW (not meant to be run directly).
 
 ### Debug logging
 
