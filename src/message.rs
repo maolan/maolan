@@ -1582,6 +1582,7 @@ pub enum Message {
 
     Workspace,
     Connections,
+    Mixer,
     X32,
     Session,
     ToggleMixerVisibility,

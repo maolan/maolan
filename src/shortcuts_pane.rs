@@ -194,6 +194,7 @@ fn piano_shortcuts(
                 keyboard_row(ShortcutAction::GrooveSelectedNotes, "Groove selected notes"),
                 keyboard_row(ShortcutAction::CloseMidiEditor, "Close MIDI editor"),
                 keyboard_row(ShortcutAction::ToggleTransport, "Toggle play/stop"),
+                keyboard_row(ShortcutAction::ToggleMetronome, "Toggle metronome"),
                 keyboard_row(ShortcutAction::PauseTransport, "Pause"),
                 keyboard_row(ShortcutAction::JumpToStart, "Rewind to start"),
                 keyboard_row(ShortcutAction::JumpToEnd, "Rewind to end"),
@@ -288,10 +289,10 @@ fn session_shortcuts(
         section(
             "Keyboard",
             vec![
-                keyboard_row(
-                    ShortcutAction::ToggleWorkspaceSession,
-                    "Toggle Workspace/Session view"
-                ),
+                keyboard_row(ShortcutAction::ShowWorkspace, "Show Workspace view"),
+                keyboard_row(ShortcutAction::ShowConnections, "Show Connections view"),
+                keyboard_row(ShortcutAction::ShowMixer, "Show Mixer view"),
+                keyboard_row(ShortcutAction::ShowSession, "Show Session view"),
                 keyboard_row(
                     ShortcutAction::SessionNavLaunch,
                     "Launch/stop selected slot"
@@ -305,6 +306,7 @@ fn session_shortcuts(
                     ShortcutAction::ToggleTransport,
                     "Play/stop arrangement transport"
                 ),
+                keyboard_row(ShortcutAction::ToggleMetronome, "Toggle metronome"),
             ],
             hint,
             overrides,
@@ -338,6 +340,10 @@ fn workspace_shortcuts(
         section(
             "Session",
             vec![
+                keyboard_row(ShortcutAction::ShowWorkspace, "Show Workspace view"),
+                keyboard_row(ShortcutAction::ShowConnections, "Show Connections view"),
+                keyboard_row(ShortcutAction::ShowMixer, "Show Mixer view"),
+                keyboard_row(ShortcutAction::ShowSession, "Show Session view"),
                 keyboard_row(ShortcutAction::NewSession, "New session"),
                 keyboard_row(ShortcutAction::OpenSession, "Open session"),
                 keyboard_row(ShortcutAction::SaveSession, "Save session"),
@@ -377,6 +383,7 @@ fn workspace_shortcuts(
             "Transport",
             vec![
                 keyboard_row(ShortcutAction::ToggleTransport, "Play/stop"),
+                keyboard_row(ShortcutAction::ToggleMetronome, "Toggle metronome"),
                 keyboard_row(ShortcutAction::PauseTransport, "Pause"),
                 keyboard_row(ShortcutAction::JumpToStart, "Rewind to start"),
                 keyboard_row(ShortcutAction::JumpToEnd, "Rewind to end"),

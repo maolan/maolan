@@ -411,7 +411,7 @@ impl Maolan {
                     if let Some(action) =
                         action_for_binding(&binding, shortcut_overrides, current_view.clone())
                     {
-                        return action.message(current_view);
+                        return action.message();
                     }
                 }
 
@@ -635,6 +635,69 @@ mod tests {
                 view
             ),
             Message::JumpToEnd
+        ));
+    }
+
+    #[test]
+    fn t_toggles_metronome() {
+        assert!(matches!(
+            keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character("t".into()),
+                    modified_key: Key::Character("t".into()),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyT),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: Some("t".into()),
+                    repeat: false,
+                },
+                crate::state::View::Workspace
+            ),
+            Message::ToggleMetronome
+        ));
+    }
+
+    #[test]
+    fn number_keys_switch_views_and_tab_does_nothing() {
+        let cases = [
+            ("1", keyboard::key::Code::Digit1, Message::Workspace),
+            ("2", keyboard::key::Code::Digit2, Message::Connections),
+            ("3", keyboard::key::Code::Digit3, Message::Mixer),
+            ("4", keyboard::key::Code::Digit4, Message::Session),
+        ];
+        for (key, code, expected) in cases {
+            let message = keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Character(key.into()),
+                    modified_key: Key::Character(key.into()),
+                    physical_key: keyboard::key::Physical::Code(code),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: Some(key.into()),
+                    repeat: false,
+                },
+                crate::state::View::Workspace,
+            );
+            assert_eq!(
+                std::mem::discriminant(&message),
+                std::mem::discriminant(&expected)
+            );
+        }
+
+        assert!(matches!(
+            keyboard_message(
+                KeyEvent::KeyPressed {
+                    key: Key::Named(Named::Tab),
+                    modified_key: Key::Named(Named::Tab),
+                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Tab),
+                    location: keyboard::Location::Standard,
+                    modifiers: Modifiers::default(),
+                    text: None,
+                    repeat: false,
+                },
+                crate::state::View::Workspace
+            ),
+            Message::None
         ));
     }
 
