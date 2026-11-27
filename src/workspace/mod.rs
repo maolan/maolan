@@ -645,7 +645,6 @@ impl Workspace {
             });
             let editor = self.editor.clone();
             let editor_args_owned = OwnedEditorViewArgs {
-                session_root: session_root.cloned(),
                 pixels_per_sample,
                 samples_per_bar,
                 active_clip_drag: active_clip_drag.cloned(),

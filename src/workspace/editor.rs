@@ -675,7 +675,6 @@ impl canvas::Program<Message> for FolderPreviewCanvas {
 
 struct TrackNodeViewArgs<'a> {
     state: &'a StateData,
-    session_root: Option<&'a PathBuf>,
     pixels_per_sample: f32,
     samples_per_bar: f32,
     active_clip_drag: Option<&'a DraggedClip>,
@@ -698,7 +697,6 @@ fn view_track_node(
     column = column.push(view_track_elements(TrackElementViewArgs {
         state: args.state,
         track: node.track,
-        session_root: args.session_root,
         pixels_per_sample: args.pixels_per_sample,
         samples_per_bar: args.samples_per_bar,
         active_clip_drag: args.active_clip_drag,
@@ -720,7 +718,6 @@ fn view_track_node(
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
     track: &'a Track,
-    session_root: Option<&'a PathBuf>,
     pixels_per_sample: f32,
     samples_per_bar: f32,
     active_clip_drag: Option<&'a DraggedClip>,
@@ -1147,7 +1144,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let TrackElementViewArgs {
         state,
         track,
-        session_root,
         pixels_per_sample,
         samples_per_bar,
         active_clip_drag,
@@ -1380,7 +1376,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 clips.push(
                     pin(
                         AudioClipWidget::new(widget_audio_clip_data(clip, stretch_ratio))
-                            .with_session_root(session_root)
                             .with_pixels_per_sample(pixels_per_sample)
                             .with_size(clip_width, clip_height)
                             .with_label(display_clip_label.clone())
@@ -1510,7 +1505,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 };
                 clips.push(
                     pin(AudioClipWidget::new(widget_audio_clip_data(clip, 1.0))
-                        .with_session_root(session_root)
                         .with_size(clip_width, clip_height)
                         .with_label(display_clip_label.clone())
                         .log_scaled(waveform_log_scale)
@@ -1890,7 +1884,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     clips.push(
                         pin(
                             AudioClipWidget::new(widget_audio_clip_data(source_clip, 1.0))
-                                .with_session_root(session_root)
                                 .with_size(clip_width, clip_height)
                                 .with_label(display_clip_label)
                                 .log_scaled(waveform_log_scale)
@@ -2048,7 +2041,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             container(Stack::with_children(vec![
                 AudioClipWidget::<Message>::waveform_overlay_scaled(
                     preview_peaks,
-                    None,
                     0,
                     preview_length,
                     preview_length,
@@ -2418,7 +2410,6 @@ pub struct EditorViewArgs<'a> {
 
 #[derive(Clone)]
 pub struct OwnedEditorViewArgs {
-    pub session_root: Option<PathBuf>,
     pub pixels_per_sample: f32,
     pub samples_per_bar: f32,
     pub active_clip_drag: Option<DraggedClip>,
@@ -2633,7 +2624,6 @@ impl Editor {
 
     pub fn into_view_owned(self, args: OwnedEditorViewArgs) -> Element<'static, Message> {
         let OwnedEditorViewArgs {
-            session_root,
             pixels_per_sample,
             samples_per_bar,
             active_clip_drag,
@@ -2648,7 +2638,6 @@ impl Editor {
             waveform_log_scale,
         } = args;
         let state_handle = self.state;
-        let session_root_ref = session_root.as_ref();
         let active_clip_drag_ref = active_clip_drag.as_ref();
         let active_target_track_ref = active_target_track.as_deref();
         let recording_preview_peaks_ref = recording_preview_peaks.as_ref();
@@ -2672,7 +2661,6 @@ impl Editor {
         {
             let track_node_args = TrackNodeViewArgs {
                 state: &state,
-                session_root: session_root_ref,
                 pixels_per_sample,
                 samples_per_bar,
                 active_clip_drag: active_clip_drag_ref,
