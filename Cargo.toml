@@ -24,7 +24,7 @@ ebur128 = "0.1"
 hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", "rustls-tls"] }
 maolan-generate = "0.0.23"
 maolan-editor = { version = "0.1.7", default-features = false, features = ["embedded"] }
-maolan-engine = { version = "0.4.27", features = ["audio", "midi", "plugins", "mixosc"] }
+maolan-engine = { version = "0.4.29", features = ["audio", "midi", "plugins", "mixosc"] }
 maolan-pitch = "0.0.3"
 maolan-plugin-host = "0.1.3"
 maolan-widgets = "0.1.7"
@@ -44,9 +44,6 @@ timestretch = "0.16.0"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 uuid = { version = "1.29", features = ["v4"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-alsa = "0.12.1"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.3", features = ["signal", "process", "user"] }

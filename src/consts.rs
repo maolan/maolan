@@ -210,14 +210,6 @@ pub mod gui_update_dispatch_transport {
     pub const AUTOSAVE_KEEP_COUNT: usize = 10;
 }
 
-#[cfg(target_os = "linux")]
-pub mod state_platform_linux {
-    pub const SAMPLE_RATE_CANDIDATES: [u32; 12] = [
-        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
-        384_000,
-    ];
-}
-
 pub mod message_lists {
     use crate::message::{
         ExportBitDepth, ExportDither, ExportNormalizeMode, ExportRenderMode, PianoNrpnKind,

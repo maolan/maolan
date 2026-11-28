@@ -922,143 +922,22 @@ mod calibrator {
     }
 
     #[cfg(target_os = "linux")]
-    fn alsa_period_range(
-        device: &str,
-        direction: alsa::Direction,
-        channels: usize,
-        args: &Args,
-    ) -> Result<(usize, usize), String> {
-        use alsa::ValueOr;
-        use alsa::pcm::{Access, Format, HwParams, PCM};
-
-        let pcm = PCM::new(device, direction, false)
-            .map_err(|error| format!("cannot open ALSA {direction:?} device {device}: {error}"))?;
-        let params = HwParams::any(&pcm).map_err(|error| error.to_string())?;
-        if params.set_access(Access::MMapInterleaved).is_err() {
-            params
-                .set_access(Access::RWInterleaved)
-                .map_err(|error| error.to_string())?;
-        }
-        let formats = match args.bits {
-            32 => vec![
-                if cfg!(target_endian = "little") {
-                    Format::S32LE
-                } else {
-                    Format::S32BE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S32BE
-                } else {
-                    Format::S32LE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S24LE
-                } else {
-                    Format::S24BE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S24BE
-                } else {
-                    Format::S24LE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S16LE
-                } else {
-                    Format::S16BE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S16BE
-                } else {
-                    Format::S16LE
-                },
-                Format::S8,
-            ],
-            24 => vec![
-                if cfg!(target_endian = "little") {
-                    Format::S24LE
-                } else {
-                    Format::S24BE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S24BE
-                } else {
-                    Format::S24LE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S16LE
-                } else {
-                    Format::S16BE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S16BE
-                } else {
-                    Format::S16LE
-                },
-                Format::S8,
-            ],
-            16 => vec![
-                if cfg!(target_endian = "little") {
-                    Format::S16LE
-                } else {
-                    Format::S16BE
-                },
-                if cfg!(target_endian = "little") {
-                    Format::S16BE
-                } else {
-                    Format::S16LE
-                },
-                Format::S8,
-            ],
-            _ => vec![Format::S8],
-        };
-        if !formats
-            .into_iter()
-            .any(|format| params.set_format(format).is_ok())
-        {
-            return Err(format!(
-                "ALSA {direction:?} device {device} has no supported integer format"
-            ));
-        }
-        let actual_channels = params
-            .set_channels_near(channels.max(1) as u32)
-            .map_err(|error| error.to_string())?;
-        if actual_channels < channels as u32 {
-            return Err(format!(
-                "ALSA {direction:?} device {device} supports {actual_channels} channels, but channel {channels} was requested"
-            ));
-        }
-        params
-            .set_rate(args.rate as u32, ValueOr::Nearest)
-            .map_err(|error| error.to_string())?;
-        let min = params
-            .get_period_size_min()
-            .map_err(|error| error.to_string())? as usize;
-        let max = params
-            .get_period_size_max()
-            .map_err(|error| error.to_string())? as usize;
-        if min == 0 || max < min {
-            return Err(format!(
-                "ALSA {direction:?} device {device} reported an invalid period range"
-            ));
-        }
-        Ok((min, max))
-    }
-
-    #[cfg(target_os = "linux")]
     fn supported_periods(args: &Args) -> Result<Vec<usize>, String> {
-        use alsa::Direction;
+        use maolan_engine::audio_devices::{AlsaDirection, probe_alsa_period_range};
 
-        let (input_min, input_max) = alsa_period_range(
+        let (input_min, input_max) = probe_alsa_period_range(
             &args.input_device,
-            Direction::Capture,
+            AlsaDirection::Capture,
             args.input_channel,
-            args,
+            args.rate,
+            args.bits,
         )?;
-        let (output_min, output_max) = alsa_period_range(
+        let (output_min, output_max) = probe_alsa_period_range(
             &args.output_device,
-            Direction::Playback,
+            AlsaDirection::Playback,
             args.output_channel,
-            args,
+            args.rate,
+            args.bits,
         )?;
         let min = input_min.max(output_min);
         let max = input_max.min(output_max);
@@ -1127,27 +1006,15 @@ mod calibrator {
 
     #[cfg(target_os = "linux")]
     fn list_devices() {
-        let Ok(pcms) = std::fs::read_to_string("/proc/asound/pcm") else {
-            eprintln!("maolan-calibrate: cannot read /proc/asound/pcm; is ALSA available?");
-            return;
-        };
-        for line in pcms.lines() {
-            let Some((identity, description)) = line.split_once(':') else {
-                continue;
-            };
-            let Some((card, device)) = identity.trim().split_once('-') else {
-                continue;
-            };
-            let (Ok(card), Ok(device)) = (card.parse::<u32>(), device.parse::<u32>()) else {
-                continue;
-            };
-            let has_input = description.contains("capture ");
-            let has_output = description.contains("playback ");
+        for device in maolan_engine::audio_devices::discover_alsa_audio_devices() {
             println!(
-                "hw:{card},{device}  {}  input={} output={}",
-                description.trim(),
-                has_input,
-                has_output,
+                "{}  {}  input={} output={}  rates={:?}  bits={:?}",
+                device.id,
+                device.label,
+                device.supports_input,
+                device.supports_output,
+                device.supported_sample_rates,
+                device.supported_bits,
             );
         }
     }
