@@ -12,7 +12,11 @@ use maolan_widgets::iced::{
         column, container, lazy, mouse_area, row, scrollable, text, text_input,
     },
 };
-use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider};
+use maolan_widgets::{
+    meters,
+    pan_slider::{ReadoutPosition, pan_slider},
+    slider::slider,
+};
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
@@ -214,12 +218,6 @@ impl Mixer {
         }
     }
 
-    fn format_balance(balance: f32) -> &'static str {
-        let b = balance.clamp(-1.0, 1.0);
-        let idx = ((b * 100.0).round() as i32 + 100).clamp(0, 200) as usize;
-        BALANCE_LABELS[idx]
-    }
-
     fn value_pill<'a>(
         track_name: String,
         content: &'static str,
@@ -288,14 +286,12 @@ impl Mixer {
             track_name: track_name.clone(),
             target: TrackAutomationTarget::Balance,
         });
-        let slider = mouse_area(
-            horizontal_slider(-1.0..=1.0, value, move |value| {
-                view_api::track_balance(on_change_track.clone(), value)
-            })
-            .width(Length::Fixed(PAN_SLIDER_WIDTH))
-            .height(Length::Fixed(PAN_ROW_HEIGHT))
-            .double_click_reset(0.0),
-        )
+        let slider = mouse_area(pan_slider(
+            value,
+            move |value| view_api::track_balance(on_change_track.clone(), value),
+            Message::None,
+            Some(ReadoutPosition::Left),
+        ))
         .on_right_press(view_api::track_midi_learn_balance(learn_track));
         let control: Element<'static, Message> = if assignable {
             Stack::new()
@@ -311,15 +307,7 @@ impl Mixer {
         } else {
             slider.into()
         };
-        row![
-            container(text(Self::format_balance(value)).size(9))
-                .width(Length::Fixed(24.0))
-                .align_x(Alignment::Center),
-            control,
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into()
+        control
     }
 
     fn quantized_balance_hundredths(balance: f32) -> i16 {
@@ -1221,32 +1209,6 @@ mod tests {
     fn format_level_db_valid_range() {
         let label = Mixer::format_level_db(0.0);
         assert!(!label.is_empty());
-    }
-
-    #[test]
-    fn format_balance_center() {
-        let label = Mixer::format_balance(0.0);
-        assert_eq!(label, "C");
-    }
-
-    #[test]
-    fn format_balance_left() {
-        let label = Mixer::format_balance(-0.5);
-        assert!(label.starts_with('L'));
-    }
-
-    #[test]
-    fn format_balance_right() {
-        let label = Mixer::format_balance(0.5);
-        assert!(label.starts_with('R'));
-    }
-
-    #[test]
-    fn format_balance_clamps() {
-        let label_min = Mixer::format_balance(-10.0);
-        let label_max = Mixer::format_balance(10.0);
-        assert!(!label_min.is_empty());
-        assert!(!label_max.is_empty());
     }
 
     #[test]

@@ -1538,9 +1538,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.11.3"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02f0e023adb368345ce0ca6cdfc0f24a06554468d0e8503e14a0841de79bfa69"
+checksum = "95e45cf2980b2d467be49a9ed942c9179b701063a7ca3d037de7ee9bd67f8d66"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -3569,9 +3569,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
+checksum = "3e44f110d1777dc6559a51e7d45083945ded4f1bf3305494350f693b6d20b9c8"
 
 [[package]]
 name = "finl_unicode"
@@ -4675,9 +4675,9 @@ dependencies = [
 
 [[package]]
 name = "iced_drop"
-version = "0.2.59"
+version = "0.2.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaf898bb059c076ca03c26cd4e70ef52303e9321a60062f7d12dd14a30859038"
+checksum = "13dbf1505e032a8bbd86cf3b7a627314ebd9be8563a3ed1495facb8d0298b8ff"
 dependencies = [
  "iced_core",
  "iced_runtime",
@@ -5560,9 +5560,9 @@ checksum = "02b614978e47ce529faee66579f2b2fe19c94aa96d910a6a9a8043b2b02d8175"
 
 [[package]]
 name = "llvm-sys"
-version = "231.0.2"
+version = "231.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77d743201f766af6ecdd95a2e6dbb295af7f72848098e3828fee8853da034c15"
+checksum = "051fee12a4388020fba8c64970b0939eb3a2e7fce87aa161f6c6ec4c8f204105"
 dependencies = [
  "anyhow",
  "cc",
@@ -5947,9 +5947,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab8f1fa0d6a52285842226e8578631157471a485a003b8c73aeca3533f2eb2c0"
+checksum = "5f08e81dc23ef2499b6a6fd03a64399bc4762909507b893c0c8ea6298650073c"
 dependencies = [
  "bytemuck",
  "iced",

@@ -165,7 +165,6 @@ pub mod workspace_mixer {
     pub const READOUT_WIDTH: f32 = 72.0;
     pub const FADER_WIDTH: f32 = 14.0;
     pub const SCALE_WIDTH: f32 = 22.0;
-    pub const PAN_SLIDER_WIDTH: f32 = 52.0;
     pub const PAN_ROW_HEIGHT: f32 = 12.0;
     pub const STRIP_NAME_CHAR_PX: f32 = 6.3;
     pub const METER_BAR_WIDTH: f32 = 3.0;
@@ -178,21 +177,6 @@ pub mod workspace_mixer {
         for i in 0..=1100 {
             let level = -90.0 + (i as f32) * 0.1;
             let s: &'static str = Box::leak(format!("{:+.1} dB", level).into_boxed_str());
-            labels.push(s);
-        }
-        labels
-    });
-
-    pub static BALANCE_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-        let mut labels = Vec::with_capacity(201);
-        for i in -100..=100 {
-            let s: &'static str = if i == 0 {
-                "C"
-            } else if i < 0 {
-                Box::leak(format!("L{}", -i).into_boxed_str())
-            } else {
-                Box::leak(format!("R{}", i).into_boxed_str())
-            };
             labels.push(s);
         }
         labels
@@ -399,12 +383,6 @@ mod tests {
     fn workspace_mixer_level_labels_is_populated() {
         assert!(!workspace_mixer::LEVEL_LABELS.is_empty());
         assert!(workspace_mixer::LEVEL_LABELS.len() > 1000);
-    }
-
-    #[test]
-    fn workspace_mixer_balance_labels_is_populated() {
-        assert!(!workspace_mixer::BALANCE_LABELS.is_empty());
-        assert_eq!(workspace_mixer::BALANCE_LABELS.len(), 201);
     }
 
     #[test]
