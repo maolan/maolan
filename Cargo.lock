@@ -80,9 +80,9 @@ dependencies = [
 
 [[package]]
 name = "ahash"
-version = "0.8.14"
+version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54dae3d1d7b8956f3506c4e999a74e77f932a59153ccf38ab8cf96db74bb9dc0"
+checksum = "3019c0b8d883a8a17df3129e417ef463c087807d245e8881a31d583dee1c0519"
 dependencies = [
  "cfg-if",
  "getrandom 0.4.3",
@@ -5741,7 +5741,6 @@ dependencies = [
 name = "maolan"
 version = "0.4.3"
 dependencies = [
- "alsa",
  "chrono",
  "crossterm",
  "dirs 7.0.0",
@@ -5801,9 +5800,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.4.27"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4d719514d35d0c442ddf44fda37e074c594821d4e2d56c52523fe5794c805cb"
+checksum = "cc720390cf42c728fcc47e69a326b6be30640d250e32b323c83a54809d4d69cf"
 dependencies = [
  "alsa",
  "arc-swap",
@@ -7938,7 +7937,7 @@ dependencies = [
  "serde",
  "tar",
  "thiserror 2.0.21",
- "zip 9.8.2",
+ "zip 9.9.0",
 ]
 
 [[package]]
@@ -12779,9 +12778,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.8.2"
+version = "9.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d8dbe089cf6b0448b78f5fc50139ab5aaa40d08ac07cdc1baf2c13add35fcce"
+checksum = "07db37dec4a7c468df4723fba4cadb4822d1d0f10dbea367100b6a6881b2a9c9"
 dependencies = [
  "constant_time_eq 0.6.2",
  "crc32fast",

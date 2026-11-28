@@ -842,14 +842,6 @@ impl AudioDeviceOption {
         rates
     }
 
-    #[cfg(target_os = "linux")]
-    fn default_sample_rates() -> Vec<i32> {
-        vec![
-            8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
-            192_000, 384_000,
-        ]
-    }
-
     pub fn with_supported_caps(
         id: impl Into<String>,
         label: impl Into<String>,
@@ -901,6 +893,20 @@ impl AudioDeviceOption {
 
     pub fn preferred_bits(&self) -> Option<usize> {
         self.supported_bits.first().copied()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl From<maolan_engine::audio_devices::AudioDeviceDescriptor> for AudioDeviceOption {
+    fn from(device: maolan_engine::audio_devices::AudioDeviceDescriptor) -> Self {
+        Self::with_supported_direction_caps(
+            device.id,
+            device.label,
+            device.supported_bits,
+            device.supported_sample_rates,
+            device.supports_input,
+            device.supports_output,
+        )
     }
 }
 
